@@ -1,6 +1,6 @@
 {
   "name": "logiclens",
-  "version": "0.1.1-beta.8",
+  "version": "0.1.1-beta.9",
   "description": "Supercharge AI coding agents with multi-repository semantic dependency, contract tracing, and change impact analysis • local-first.",
   "type": "module",
   "bin": {
