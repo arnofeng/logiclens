@@ -1,6 +1,6 @@
 import path from "node:path";
 import { loadConfig } from "../config/loadConfig.js";
-import { KuzuGraphDB } from "../graph/db.js";
+import { createGraphDB } from "../graph/factory.js";
 import { auditRelationQuality, rejectEvidence, upsertAliasOverride } from "../graph/quality.js";
 import { repoId } from "../utils/path.js";
 import { auditContractQuality } from "../contracts/qualityRules.js";
@@ -29,7 +29,7 @@ export async function qualityCommand(
   }
 
   const config = await loadConfig(cwd);
-  const db = await KuzuGraphDB.open(path.resolve(cwd, config.graph.path));
+  const db = await createGraphDB(config.graph.provider, { path: path.resolve(cwd, config.graph.path) });
   try {
     await db.initSchema(config.systemName);
     

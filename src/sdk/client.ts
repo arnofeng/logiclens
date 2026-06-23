@@ -2,7 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { loadConfig, writeConfig, defaultConfig, configPath } from "../config/loadConfig.js";
 import type { LogicLensConfig } from "../config/schema.js";
-import { KuzuGraphDB, type GraphDB, type Stats } from "../graph/db.js";
+import type { GraphDB, GraphValue, Stats } from "../graph/db.js";
+import { createGraphDB } from "../graph/factory.js";
 import { loadPlugins } from "../plugins/loader.js";
 import type { LogicLensPlugin } from "../plugins/types.js";
 import {
@@ -23,7 +24,7 @@ import { rebuildRepoDependencies } from "../graph/rebuildRelations.js";
 import { discoverGitRepos } from "../repos/repoDiscovery.js";
 import { toRepoNode } from "../repos/repoRegistry.js";
 import type { DiscoveredRepo } from "../repos/repoDiscovery.js";
-import type { GraphValue } from "../graph/db.js";
+
 
 // Options types for index:
 import type { IndexOptions } from "../commands/index.js";
@@ -149,7 +150,7 @@ export class LogicLensClient {
     }
     if (!this.dbInstance) {
       const graphPath = path.resolve(this.cwd, this.config.graph.path);
-      this.dbInstance = await KuzuGraphDB.open(graphPath);
+      this.dbInstance = await createGraphDB(this.config.graph.provider, { path: graphPath });
       await this.dbInstance.initSchema(this.config.systemName);
     }
     return this.dbInstance;
