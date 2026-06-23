@@ -16,27 +16,27 @@ import {
 
 export const javaPackageExtractor: ContractExtractor = {
   name: "builtin:java-package",
+  languages: ["java"],
   async extract(context) {
     const result = createCrossRepoExtraction();
     const manifests = (await Promise.all(context.repos.map(readRepoPackageManifests))).flat();
     const identities = buildOwnership(context.repos, manifests, context.aliasOverrides);
 
     for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
-      if (file.language === "java") {
-        const packageName = file.facts?.packageName ?? javaPackageFromPath(file.path);
-        if (packageName) {
-          const packageContract = contract("package", packageName, `Java package ${packageName}`);
-          const evidenceNode = evidence({
-            repoId: file.repoId,
-            fileId: file.fileId,
-            filePath: file.path,
-            line: 1,
-            raw: `package ${packageName}`,
-            rule: "java-package-path",
-            confidence: confidenceFor("probable-package-path")
-          });
-          pushContractEvidence(result, file.repoId, packageContract, "owner", evidenceNode);
-        }
+      if (file.language !== "java") continue
+      const packageName = file.facts?.packageName ?? javaPackageFromPath(file.path);
+      if (packageName) {
+        const packageContract = contract("package", packageName, `Java package ${packageName}`);
+        const evidenceNode = evidence({
+          repoId: file.repoId,
+          fileId: file.fileId,
+          filePath: file.path,
+          line: 1,
+          raw: `package ${packageName}`,
+          rule: "java-package-path",
+          confidence: confidenceFor("probable-package-path")
+        });
+        pushContractEvidence(result, file.repoId, packageContract, "owner", evidenceNode);
       }
 
       for (const importRef of file.imports) {
