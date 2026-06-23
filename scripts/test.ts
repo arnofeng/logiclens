@@ -1,8 +1,8 @@
-import { readdirSync } from "node:fs";
+import { readdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-const root = process.cwd();
+const root = realpathSync(process.cwd()).replace(/^[a-z]:/, (match) => match.toUpperCase());
 const vitestBin = path.join(root, "node_modules", "vitest", "vitest.mjs");
 const baseArgs = ["vitest", "run", "--pool", "forks", "--maxWorkers=1", "--reporter", "verbose"];
 
