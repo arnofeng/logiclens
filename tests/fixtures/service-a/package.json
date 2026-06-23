@@ -1,0 +1,7 @@
+{
+  "name": "@fixture/service-a",
+  "version": "1.0.0",
+  "dependencies": {
+    "@fixture/service-b": "workspace:*"
+  }
+}

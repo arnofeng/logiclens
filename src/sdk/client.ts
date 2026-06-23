@@ -1,0 +1,683 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import { loadConfig, writeConfig, defaultConfig, configPath } from "../config/loadConfig.js";
+import type { LogicLensConfig } from "../config/schema.js";
+import { KuzuGraphDB, type Stats } from "../graph/db.js";
+import { loadPlugins } from "../plugins/loader.js";
+import type { LogicLensPlugin } from "../plugins/types.js";
+import {
+  listDependencies,
+  listContracts,
+  listUnresolvedEvidence,
+  traceContract,
+  traceEntity,
+  type DependencyRow,
+  type ContractSummaryRow,
+  type ContractTraceRow,
+  type EntityTraceRow,
+  type UnresolvedEvidenceRow
+} from "../graph/queries.js";
+import { retrieveForQuestion, type RetrievalResult } from "../rag/retrieve.js";
+import { answerQuestion } from "../rag/answer.js";
+import { rebuildRepoDependencies } from "../graph/rebuildRelations.js";
+import { discoverGitRepos } from "../repos/repoDiscovery.js";
+import { toRepoNode } from "../repos/repoRegistry.js";
+import type { DiscoveredRepo } from "../repos/repoDiscovery.js";
+import type { KuzuValue } from "kuzu";
+
+// Options types for index:
+import type { IndexOptions } from "../commands/index.js";
+import { runIndexing, type IndexResult } from "../commands/index.js";
+import { FileWatcher, type PendingFile, type WatchOptions, type WatchStatus } from "../watch/watcher.js";
+import { shouldEnableWatcher } from "../watch/policy.js";
+import { SingleProcessIndexQueue, type IndexQueueSource, type IndexQueueStatusSnapshot } from "../indexing/scheduler.js";
+
+/**
+ * Represents the result of a trace command, which can be either a contract trace
+ * or an entity trace.
+ */
+export type TraceResult = {
+  type: "contract";
+  rows: ContractTraceRow[];
+} | {
+  type: "entity";
+  rows: EntityTraceRow[];
+};
+
+/**
+ * Represents the result of an impact analysis, including contract traces,
+ * entity traces, matched code seeds, call edges, related document sections,
+ * and a list of recommended files to inspect.
+ */
+export type ImpactResult = {
+  symbolOrEntity: string;
+  contractTrace: ContractTraceRow[];
+  entityTrace: EntityTraceRow[];
+  seeds: any[];
+  edges: any[];
+  sections: any[];
+  recommendedFiles: string[];
+};
+
+/**
+ * Custom logging interface for LogicLensClient to delegate stdout, stderr,
+ * warnings, errors, and progress updates.
+ */
+export type LogicLensLogger = {
+  log: (message: string) => void;
+  warn: (message: string) => void;
+  error: (...args: any[]) => void;
+  writeStderr?: (message: string) => void;
+  createProgressBar?: (label: string, total: number) => any;
+};
+
+const defaultLogger: Required<LogicLensLogger> = {
+  log: () => {},
+  warn: () => {},
+  error: () => {},
+  writeStderr: () => {},
+  createProgressBar: () => {
+    return {
+      tick: () => {},
+      update: () => {},
+      complete: () => {},
+      reporter: () => () => {}
+    };
+  }
+};
+
+/**
+ * Configuration options for creating a LogicLensClient.
+ */
+export type LogicLensClientOptions = {
+  /** The current working directory / project root path */
+  cwd?: string;
+  /** Explicit logiclens configuration object; if omitted, loaded from .logiclens/config.yaml */
+  config?: LogicLensConfig;
+  /** Inline plugin instances to register programmatically */
+  plugins?: LogicLensPlugin[];
+  /** Whether to load plugins configured in the YAML configuration (defaults to true) */
+  loadConfiguredPlugins?: boolean;
+  /** Custom logger implementation */
+  logger?: LogicLensLogger;
+};
+
+export type LogicLensIndexOptions = IndexOptions & {
+  queueSource?: IndexQueueSource;
+  queueLabel?: string;
+};
+
+/**
+ * Programmatic Node.js ESM client for LogicLens to perform workspace initialization,
+ * indexing, relationship rebuilds, and dependency/impact querying.
+ */
+export class LogicLensClient {
+  private config: LogicLensConfig;
+  private cwd: string;
+  private dbInstance?: KuzuGraphDB;
+  private closed = false;
+  private pluginsLoaded = false;
+  private options: LogicLensClientOptions;
+  private logger: Required<LogicLensLogger>;
+  private watcher?: FileWatcher;
+  private indexQueue = new SingleProcessIndexQueue();
+
+  constructor(options: LogicLensClientOptions, config: LogicLensConfig) {
+    this.options = options;
+    this.config = config;
+    this.cwd = options.cwd ?? process.cwd();
+    this.logger = {
+      ...defaultLogger,
+      ...options.logger
+    };
+  }
+
+  /**
+   * Returns the resolved LogicLensConfig for this client.
+   */
+  getConfig(): LogicLensConfig {
+    return this.config;
+  }
+
+  getCwd(): string {
+    return this.cwd;
+  }
+
+  private async getDb(): Promise<KuzuGraphDB> {
+    if (this.closed) {
+      throw new Error("Client is closed");
+    }
+    if (!this.dbInstance) {
+      const graphPath = path.resolve(this.cwd, this.config.graph.path);
+      this.dbInstance = await KuzuGraphDB.open(graphPath);
+      await this.dbInstance.initSchema(this.config.systemName);
+    }
+    return this.dbInstance;
+  }
+
+  /**
+   * Ensures that all configured and inline plugins are loaded and initialized.
+   * This is called automatically before indexing or running extractor-dependent actions.
+   * Runs only once; subsequent calls are ignored.
+   */
+  async ensurePlugins(): Promise<void> {
+    if (this.pluginsLoaded) return;
+    await loadPlugins({
+      cwd: this.cwd,
+      config: this.config,
+      inlinePlugins: this.options.plugins,
+      loadConfiguredPlugins: this.options.loadConfiguredPlugins !== false
+    });
+    this.pluginsLoaded = true;
+  }
+
+  /**
+   * Initializes the workspace by creating the default `.logiclens` directories
+   * (graph database and cache folders) and writing a default configuration file.
+   */
+  async init(): Promise<void> {
+    await fs.mkdir(path.join(this.cwd, ".logiclens", "graph"), { recursive: true });
+    await fs.mkdir(path.join(this.cwd, ".logiclens", "cache"), { recursive: true });
+    
+    const configFile = path.join(this.cwd, ".logiclens", "config.yaml");
+    const template = `# LogicLens Configuration File
+
+systemName: default-system
+
+repos: []
+`;
+    await fs.writeFile(configFile, template, "utf8");
+  }
+
+  /**
+   * Adds a repository to the workspace configuration.
+   * 
+   * @param repoPath - The absolute or relative path to the repository directory.
+   * @param options - Additional options.
+   * @param options.name - The unique name for the repository. Defaults to the directory's basename.
+   * @returns An object containing the resolved name and the stored relative path.
+   */
+  async addRepo(repoPath: string, options?: { name?: string }): Promise<{ name: string; storedPath: string }> {
+    const absolute = path.resolve(this.cwd, repoPath);
+    const name = options?.name ?? path.basename(absolute);
+    const storedPath = path.relative(this.cwd, absolute).replace(/\\/g, "/") || ".";
+    const repos = this.config.repos.filter((repo) => repo.name !== name);
+    repos.push({ name, path: storedPath });
+    this.config = { ...this.config, repos };
+    await writeConfig(this.config, this.cwd);
+    return { name, storedPath };
+  }
+
+  /**
+   * Discovers and adds multiple Git repositories found under a given directory.
+   * Optionally triggers initial indexing on the newly discovered repositories.
+   * 
+   * @param directory - The directory path to search for Git repositories.
+   * @param options - Additional options.
+   * @param options.index - Whether to automatically run indexing on the found repositories.
+   * @param options.changedOnly - If indexing, whether to index only changed files.
+   * @param options.maxFiles - If indexing, the maximum number of files to process per repo.
+   * @param options.writeMode - Index writing mode.
+   * @returns A summary of discovered, skipped, and added repositories.
+   */
+  async addRepos(directory: string, options?: any): Promise<{
+    discovered: DiscoveredRepo[];
+    skipped: { nonDirectories: number; withoutGit: number };
+    addedRepos: { name: string; path: string }[];
+  }> {
+    const absoluteDirectory = path.resolve(this.cwd, directory);
+    const discovery = await discoverGitRepos(absoluteDirectory);
+    
+    const byName = new Map(this.config.repos.map((repo) => [repo.name, repo]));
+    for (const repo of discovery.repos) {
+      const relPath = path.relative(this.cwd, repo.absolutePath).replace(/\\/g, "/") || ".";
+      byName.set(repo.name, { name: repo.name, path: relPath });
+    }
+    const repos = [...byName.values()];
+    this.config = { ...this.config, repos };
+    await writeConfig(this.config, this.cwd);
+
+    const addedRepos = discovery.repos.map((r) => ({
+      name: r.name,
+      path: path.relative(this.cwd, r.absolutePath).replace(/\\/g, "/") || "."
+    }));
+
+    if (options?.index) {
+      for (const repo of discovery.repos) {
+        await this.index({
+          repo: repo.name,
+          changedOnly: options.changedOnly,
+          maxFiles: options.maxFiles,
+          writeMode: options.writeMode
+        });
+      }
+    }
+
+    return {
+      discovered: discovery.repos,
+      skipped: discovery.skipped,
+      addedRepos
+    };
+  }
+
+  /**
+   * Runs the indexing process to parse source files, extract code symbols, doc sections,
+   * entities, and contracts, then loads them into the graph database.
+   * 
+   * @param options - Indexing options such as target repo, maximum files, and incremental mode.
+   * @returns A promise that resolves to the index result.
+   */
+  async index(options?: LogicLensIndexOptions): Promise<IndexResult> {
+    const { queueSource = "manual", queueLabel, ...indexOptions } = options ?? {};
+    return this.indexQueue.enqueue({
+      source: queueSource,
+      label: queueLabel ?? describeIndexOptions(indexOptions),
+      run: async () => {
+        await this.ensurePlugins();
+        const db = await this.getDb();
+        return runIndexing(db, this.config, { ...indexOptions, cwd: this.cwd, logger: this.logger });
+      }
+    });
+  }
+
+  getIndexQueueStatus(): IndexQueueStatusSnapshot {
+    return this.indexQueue.getStatus();
+  }
+
+  /**
+   * Rebuilds relationship edges in the graph database.
+   * Resolves dependencies and contracts across repositories based on the index.
+   * 
+   * @param options - Options to filter by repository or rebuild fully.
+   * @param options.repo - If provided, limits rebuilding to a specific repository.
+   * @param options.full - If true, rebuilds all relations regardless of other options.
+   * @returns The number of rebuilt relationship edges.
+   */
+  async rebuildRelations(options?: { repo?: string; full?: boolean }): Promise<{ rebuiltCount: number }> {
+    const db = await this.getDb();
+    const targetRepoIds = options?.full || !options?.repo
+      ? undefined
+      : this.config.repos.filter((repo) => repo.name === options.repo).map((repo) => toRepoNode(repo, this.cwd).id);
+    
+    if (options?.repo && !options?.full && targetRepoIds?.length === 0) {
+      throw new Error(`Unknown repo: ${options.repo}`);
+    }
+
+    const dependencies = await rebuildRepoDependencies(db, { repoIds: targetRepoIds, logger: this.logger });
+    return { rebuiltCount: dependencies.length };
+  }
+
+  /**
+   * Retrieves summary statistics of the graph database.
+   * Returns counts of repositories, files, code symbols, sections, entities, and edges.
+   * 
+   * @returns A promise resolving to the database statistics.
+   */
+  async stats(): Promise<Stats> {
+    const db = await this.getDb();
+    return db.stats();
+  }
+
+  /**
+   * Lists the repository-level and contract dependencies registered in the graph.
+   * 
+   * @param options - Query parameters.
+   * @param options.limit - The maximum number of rows to retrieve.
+   * @returns An array of dependency rows.
+   */
+  async dependencies(options?: { limit?: number; strength?: "strong" | "weak"; type?: string }): Promise<DependencyRow[]> {
+    const db = await this.getDb();
+    return listDependencies(db, options);
+  }
+
+  /**
+   * Lists auditable extraction sites that looked like external contract calls
+   * but could not be reduced to a stable static contract key.
+   */
+  async unresolvedEvidence(options?: { limit?: number }): Promise<UnresolvedEvidenceRow[]> {
+    const db = await this.getDb();
+    return listUnresolvedEvidence(db, options?.limit);
+  }
+
+  /**
+   * Lists contracts registered in the graph database, optionally filtered by contract kind.
+   * 
+   * @param options - Query parameters.
+   * @param options.kind - The contract kind (e.g., 'package', 'api', 'event', etc.) to filter by.
+   * @param options.limit - The maximum number of rows to retrieve.
+   * @returns An array of contract summary rows.
+   */
+  async contracts(options?: { kind?: string; limit?: number }): Promise<ContractSummaryRow[]> {
+    const db = await this.getDb();
+    
+    const contractKinds = new Set(["package", "api", "event", "dto", "schema", "enum", "config"]);
+    let parsedKind: any = undefined;
+    if (options?.kind) {
+      if (!contractKinds.has(options.kind)) {
+        throw new Error(`Unsupported contract kind "${options.kind}". Expected one of: ${[...contractKinds].join(", ")}`);
+      }
+      parsedKind = options.kind;
+    }
+    
+    return listContracts(db, { kind: parsedKind, limit: options?.limit });
+  }
+
+  /**
+   * Traces a specific contract (e.g., "api:/v1/users") or entity, finding all producers,
+   * consumers, and related references across the workspace.
+   * 
+   * @param target - The trace target string, e.g., "api:grpc:UserService" or "user_service".
+   * @returns The trace result containing rows of either a contract trace or entity trace.
+   */
+  async trace(target: string): Promise<TraceResult> {
+    const db = await this.getDb();
+    const contractKinds = new Set(["package", "api", "event", "dto", "schema", "enum", "config"]);
+    
+    const [kind, ...rest] = target.split(":");
+    const value = rest.join(":");
+    const isContract = contractKinds.has(kind) && value;
+    
+    if (isContract) {
+      const rows = await traceContract(db, kind as any, value);
+      return { type: "contract", rows };
+    } else {
+      const rows = await traceEntity(db, target);
+      return { type: "entity", rows };
+    }
+  }
+
+  /**
+   * Analyzes the potential downstream impact of modifying a code symbol or contract.
+   * Walks the call graph, identifies documented doc sections, and recommends files to check.
+   * 
+   * @param target - The target symbol or entity name to analyze.
+   * @returns The impact analysis result including seeds, edges, doc sections, and recommended files.
+   */
+  async impact(target: string): Promise<ImpactResult> {
+    const db = await this.getDb();
+    const contractKinds = new Set(["package", "api", "event", "dto", "schema", "enum", "config"]);
+    const [kind, ...rest] = target.split(":");
+    const value = rest.join(":");
+    const isContract = contractKinds.has(kind) && value;
+    
+    const parsedContract = isContract ? { kind: kind as any, value } : undefined;
+    const contractTrace = parsedContract ? await traceContract(db, parsedContract.kind, parsedContract.value) : [];
+    const entityTrace = await traceEntity(db, target);
+    
+    const { findImpact, findImpactSections, sectionsDocumentingCode } = await import("../graph/queries.js");
+    const { callEdgesAround } = await import("../graph/subgraph.js");
+    
+    const seeds = await findImpact(db, target);
+    const directSections = await findImpactSections(db, target);
+    const documentedSections = await sectionsDocumentingCode(db, seeds.map((seed) => seed.codeId));
+    const sections = [...new Map([...directSections, ...documentedSections].map((section) => [section.sectionId, section])).values()];
+    const edges = await callEdgesAround(db, seeds.map((seed) => seed.codeId));
+
+    const recommendedFiles = [...new Set([
+      ...seeds.map((seed) => `${seed.repoName}/${seed.filePath}`),
+      ...edges.flatMap((edge) => [edge.fromFile, edge.toFile]),
+      ...sections.map((section) => `${section.repoName}/${section.filePath}`)
+    ])];
+
+    return {
+      symbolOrEntity: target,
+      contractTrace,
+      entityTrace,
+      seeds,
+      edges,
+      sections,
+      recommendedFiles
+    };
+  }
+
+  /**
+   * Executes a raw Cypher query against the underlying graph database.
+   * 
+   * @param cypher - The Cypher query string.
+   * @param params - Optional query parameters.
+   * @returns The query result rows.
+   */
+  async query<T = Record<string, any>>(cypher: string, params?: Record<string, KuzuValue>): Promise<T[]> {
+    const db = await this.getDb();
+    return db.query<T>(cypher, params);
+  }
+
+  /**
+   * Retrieves relevant context (code, docs, entities) from the database to answer a question.
+   * 
+   * @param question - The user query or question.
+   * @returns The structured context retrieval result.
+   */
+  async retrieve(question: string): Promise<RetrievalResult> {
+    const db = await this.getDb();
+    return retrieveForQuestion(db, question, { cwd: this.cwd, config: this.config });
+  }
+
+  /**
+   * Answers a user question by retrieving context and querying the configured LLM.
+   * 
+   * @param question - The question to ask.
+   * @returns The LLM-generated or fallback answer.
+   */
+  async ask(question: string): Promise<string> {
+    const db = await this.getDb();
+    const retrieval = await this.retrieve(question);
+    return answerQuestion(
+      question,
+      retrieval,
+      this.config.llm.model,
+      this.config.llm.apiKey ?? process.env.OPENAI_API_KEY,
+      this.config.llm.baseUrl ?? process.env.OPENAI_BASE_URL,
+      {},
+      {
+        retry: this.config.llm.retry,
+        budget: this.config.llm.budget,
+        rateLimit: this.config.llm.rateLimit
+      }
+    );
+  }
+
+  log(message: string): void {
+    this.logger.log(message);
+  }
+
+  warn(message: string): void {
+    this.logger.warn(message);
+  }
+
+  error(message: string, ...args: any[]): void {
+    this.logger.error(message, ...args);
+  }
+
+  async watch(options?: WatchOptions): Promise<boolean> {
+    if (this.watcher) {
+      return false;
+    }
+    const repoPaths = this.config.repos.map((r) => path.resolve(this.cwd, r.path));
+    const policy = shouldEnableWatcher(repoPaths);
+    if (!policy.allowed) {
+      this.logger.warn(`Watcher not started: ${policy.reason}`);
+      return false;
+    }
+    this.watcher = new FileWatcher(this, options);
+    const started = await this.watcher.start().catch((err) => {
+      this.logger.error("Failed to start file watcher:", err);
+      return false;
+    });
+    if (!started) {
+      this.watcher.stop();
+      this.watcher = undefined;
+      return false;
+    }
+    return true;
+  }
+
+  unwatch(): void {
+    if (this.watcher) {
+      this.watcher.stop();
+      this.watcher = undefined;
+    }
+  }
+
+  isWatching(): boolean {
+    return this.watcher ? this.watcher.isWatching() : false;
+  }
+
+  getPendingFiles(): PendingFile[] {
+    return this.watcher ? this.watcher.getPendingFiles() : [];
+  }
+
+  isWatcherDegraded(): boolean {
+    return this.watcher ? this.watcher.isDegraded() : false;
+  }
+
+  getWatcherDegradedReason(): string | null {
+    return this.watcher ? this.watcher.getDegradedReason() : null;
+  }
+
+  getWatchStatus(catchUp?: WatchStatus["catchUp"]): WatchStatus {
+    return this.watcher
+      ? this.watcher.getStatus(catchUp)
+      : {
+        active: false,
+        degraded: false,
+        degradedReason: null,
+        partial: false,
+        partialReasons: [],
+        mode: this.config.watch.mode,
+        installedWatchers: 0,
+        coveredRepos: [],
+        uncoveredRepos: this.config.repos.map((repo) => repo.name),
+        uncoveredPaths: [],
+        pendingFiles: [],
+        pausedRepos: [],
+        indexQueue: this.getIndexQueueStatus(),
+        catchUp: catchUp ?? {
+          mode: this.config.watch.catchUp,
+          running: false,
+          completed: false,
+          failed: false,
+          pendingRepos: [],
+          completedRepos: []
+        }
+      };
+  }
+
+  /**
+   * Safely closes the database connection. Subsequent client operations will fail.
+   * This method is idempotent.
+   */
+  async close(): Promise<void> {
+    if (this.watcher) {
+      this.watcher.stop();
+      this.watcher = undefined;
+    }
+    if (this.closed) return;
+    await this.indexQueue.onIdle();
+    if (this.dbInstance) {
+      await this.dbInstance.close();
+      this.dbInstance = undefined;
+    }
+    this.closed = true;
+  }
+
+  /**
+   * Uninitializes the workspace by stopping the running MCP server and removing
+   * configuration files, the graph database, cache files, and the semantic index.
+   */
+  async uninit(): Promise<void> {
+    // 1. Close local DB connection first
+    await this.close();
+
+    // 2. Stop running MCP service safely if lock file exists
+    const mcpPidPath = path.join(this.cwd, ".logiclens", "mcp.pid");
+    try {
+      const raw = await fs.readFile(mcpPidPath, "utf8");
+      const info = JSON.parse(raw);
+      const pid = info.pid;
+      
+      if (isProcessAlive(pid)) {
+        this.logger.log(`Stopping running MCP service (PID ${pid})...`);
+        try {
+          process.kill(pid, "SIGTERM");
+        } catch {}
+        
+        // Wait up to 3s for SIGTERM graceful exit
+        if (!(await waitForDeath(pid, 3000))) {
+          this.logger.warn(`MCP service (PID ${pid}) did not exit. Forcing shutdown...`);
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {}
+          await waitForDeath(pid, 2000);
+        }
+      }
+    } catch {
+      // Lock file missing or invalid, skip process killing
+    }
+
+    // 3. Resolve deletion targets
+    const graphPath = path.resolve(this.cwd, this.config.graph.path);
+    const semanticPath = path.resolve(this.cwd, this.config.semantic.jsonPath);
+    const cachePath = path.join(this.cwd, ".logiclens", "cache");
+    const yamlConfigPath = configPath(this.cwd);
+
+    // 4. Remove all files/directories
+    await fs.rm(graphPath, { recursive: true, force: true });
+    await fs.rm(cachePath, { recursive: true, force: true });
+    await fs.rm(semanticPath, { force: true });
+    await fs.rm(yamlConfigPath, { force: true });
+    await fs.rm(mcpPidPath, { force: true });
+
+    // 5. Remove the .logiclens container directory
+    const dotLogicLensDir = path.join(this.cwd, ".logiclens");
+    await fs.rm(dotLogicLensDir, { recursive: true, force: true });
+  }
+}
+
+function describeIndexOptions(options: IndexOptions): string {
+  if (options.repo) return `repo:${options.repo}`;
+  if (options.repos?.length) return `repos:${options.repos.join(",")}`;
+  if (options.changedOnly) return "changed-only";
+  return "all-repos";
+}
+
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: any) {
+    return err.code === "EPERM";
+  }
+}
+
+async function waitForDeath(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return !isProcessAlive(pid);
+}
+
+/**
+ * Factory function to create and configure a new LogicLensClient instance.
+ * Automatically loads workspace configuration unless an explicit configuration is provided.
+ * 
+ * @param options - Client creation options.
+ * @returns A promise that resolves to a new LogicLensClient instance.
+ */
+export async function createLogicLens(options: LogicLensClientOptions = {}): Promise<LogicLensClient> {
+  const cwd = options.cwd ?? process.cwd();
+  let config: LogicLensConfig;
+  if (options.config) {
+    config = options.config;
+  } else {
+    try {
+      config = await loadConfig(cwd);
+    } catch {
+      config = defaultConfig();
+    }
+  }
+  return new LogicLensClient(options, config);
+}
