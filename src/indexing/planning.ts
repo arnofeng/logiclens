@@ -18,8 +18,7 @@ export type IndexPlanningResult = {
 };
 
 async function repoCount(db: GraphDB): Promise<number> {
-  const rows = await db.query<{ count: number }>("MATCH (r:Repo) RETURN count(r) AS count;");
-  return Number(rows[0]?.count ?? 0);
+  return db.repoCount();
 }
 
 export async function planIndexRun(input: {

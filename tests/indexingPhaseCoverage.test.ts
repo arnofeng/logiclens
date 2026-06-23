@@ -33,7 +33,8 @@ function configWithRepos(count: number) {
 
 function dbWithRepoCount(count: number): KuzuGraphDB {
   return {
-    query: vi.fn().mockResolvedValue([{ count }])
+    query: vi.fn().mockResolvedValue([{ count }]),
+    repoCount: vi.fn().mockResolvedValue(count)
   } as unknown as KuzuGraphDB;
 }
 

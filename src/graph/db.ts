@@ -64,6 +64,8 @@ export type GraphWriteBatchJournal = {
   error?: string;
 };
 
+export type ActiveAliasOverride = { alias: string; targetRepoId: string };
+
 export interface GraphDB {
   initSchema(systemName?: string): Promise<void>;
   upsertRepo(repo: RepoNode): Promise<void>;
@@ -103,6 +105,18 @@ export interface GraphDB {
   cleanupGraphWriteBatch(batchId: string): Promise<void>;
   markRepoArtifactsStale(input: { repoId: string; activeFileIds: string[]; batchId: string; indexedAt: string }): Promise<number>;
   upsertIndexState(state: { repoId: string; repoName: string; lastBatchId: string; lastIndexedAt: string; lastCommitSha: string; filesScanned: number; filesChanged: number; filesStale: number; status: string; error?: string; graphWriteAtomicity?: GraphWriteAtomicityMode; graphWriteStatus?: GraphWriteBatchStatus }): Promise<void>;
+  /** Returns a map of known file IDs to their content hashes for a given repo. */
+  knownFileHashes(repoId: string): Promise<Map<string, string>>;
+  /** Returns the total number of Repo nodes in the graph. */
+  repoCount(): Promise<number>;
+  /** Returns all Repo nodes. */
+  listRepos(): Promise<RepoNode[]>;
+  /** Returns all active AliasOverride entries. */
+  listActiveAliasOverrides(): Promise<ActiveAliasOverride[]>;
+  /** Rejects an evidence node by creating feedback and deactivating the evidence and all its related edges. */
+  rejectEvidence(input: { evidenceId: string; reason: string }): Promise<void>;
+  /** Upserts an alias override entry pointing an alias to a target repository. */
+  upsertAliasOverride(input: { alias: string; targetRepoId: string; reason: string }): Promise<void>;
   query<T = Record<string, GraphValue>>(cypher: string, params?: Record<string, GraphValue>): Promise<T[]>;
   stats(): Promise<Stats>;
   close(): Promise<void>;
@@ -625,6 +639,51 @@ export class KuzuGraphDB implements GraphDB {
     await this.query(
       "MERGE (s:IndexState {id: $id}) ON CREATE SET s.repoId=$repoId, s.repoName=$repoName, s.lastBatchId=$lastBatchId, s.lastIndexedAt=$lastIndexedAt, s.lastCommitSha=$lastCommitSha, s.filesScanned=$filesScanned, s.filesChanged=$filesChanged, s.filesStale=$filesStale, s.status=$status, s.error=$error, s.graphWriteAtomicity=$graphWriteAtomicity, s.graphWriteStatus=$graphWriteStatus ON MATCH SET s.repoId=$repoId, s.repoName=$repoName, s.lastBatchId=$lastBatchId, s.lastIndexedAt=$lastIndexedAt, s.lastCommitSha=$lastCommitSha, s.filesScanned=$filesScanned, s.filesChanged=$filesChanged, s.filesStale=$filesStale, s.status=$status, s.error=$error, s.graphWriteAtomicity=$graphWriteAtomicity, s.graphWriteStatus=$graphWriteStatus;",
       { id: `index-state:${state.repoId}`, ...state, error: state.error ?? "", graphWriteAtomicity: state.graphWriteAtomicity ?? "", graphWriteStatus: state.graphWriteStatus ?? "" } as unknown as Record<string, GraphValue>
+    );
+  }
+
+  async knownFileHashes(repoIdValue: string): Promise<Map<string, string>> {
+    const rows = await this.query<{ id: string; hash: string }>(
+      "MATCH (f:File) WHERE f.repoId = $repoId RETURN f.id AS id, f.hash AS hash;",
+      { repoId: repoIdValue }
+    );
+    return new Map(rows.map((row) => [row.id, row.hash]));
+  }
+
+  async repoCount(): Promise<number> {
+    const rows = await this.query<{ count: number }>("MATCH (r:Repo) RETURN count(r) AS count;");
+    return Number(rows[0]?.count ?? 0);
+  }
+
+  async listRepos(): Promise<RepoNode[]> {
+    return this.query<RepoNode>(
+      "MATCH (r:Repo) RETURN r.id AS id, r.name AS name, r.path AS path, r.remoteUrl AS remoteUrl, r.branch AS branch, r.commitSha AS commitSha, r.language AS language, r.indexedAt AS indexedAt, r.summary AS summary;"
+    );
+  }
+
+  async listActiveAliasOverrides(): Promise<ActiveAliasOverride[]> {
+    return this.query<ActiveAliasOverride>(
+      "MATCH (a:AliasOverride) WHERE a.active IS NULL OR a.active = true RETURN a.alias AS alias, a.targetRepoId AS targetRepoId;"
+    );
+  }
+
+  async rejectEvidence(input: { evidenceId: string; reason: string }): Promise<void> {
+    const createdAt = new Date().toISOString();
+    await this.query(
+      "MERGE (f:RelationFeedback {id: $id}) ON CREATE SET f.evidenceId=$evidenceId, f.action=$action, f.reason=$reason, f.createdAt=$createdAt ON MATCH SET f.action=$action, f.reason=$reason, f.createdAt=$createdAt;",
+      { id: `feedback:${input.evidenceId}:reject`, evidenceId: input.evidenceId, action: "reject", reason: input.reason, createdAt }
+    );
+    await this.query("MATCH (e:Evidence) WHERE e.id = $evidenceId SET e.active = false;", { evidenceId: input.evidenceId });
+    for (const rel of ["OWNS_PACKAGE", "PRODUCES", "CONSUMES", "SHARES_CONTRACT", "CONTRACT_MENTIONS", "PARTICIPATES_IN", "WORKFLOW_STEP", "USES_PACKAGE", "DEPENDS_ON"]) {
+      await this.query(`MATCH ()-[r:${rel}]->() WHERE r.evidenceId = $evidenceId SET r.active = false;`, { evidenceId: input.evidenceId });
+    }
+  }
+
+  async upsertAliasOverride(input: { alias: string; targetRepoId: string; reason: string }): Promise<void> {
+    const createdAt = new Date().toISOString();
+    await this.query(
+      "MERGE (a:AliasOverride {id: $id}) ON CREATE SET a.alias=$alias, a.targetRepoId=$targetRepoId, a.reason=$reason, a.createdAt=$createdAt, a.active=true ON MATCH SET a.targetRepoId=$targetRepoId, a.reason=$reason, a.createdAt=$createdAt, a.active=true;",
+      { id: `alias:${input.alias.toLowerCase()}`, alias: input.alias, targetRepoId: input.targetRepoId, reason: input.reason, createdAt }
     );
   }
 

@@ -29,11 +29,7 @@ function errorMessage(error: unknown): string {
 }
 
 async function knownFileHashes(db: GraphDB, repoId: string): Promise<Map<string, string>> {
-  const rows = await db.query<{ id: string; hash: string }>(
-    "MATCH (f:File) WHERE f.repoId = $repoId RETURN f.id AS id, f.hash AS hash;",
-    { repoId }
-  );
-  return new Map(rows.map((row) => [row.id, row.hash]));
+  return db.knownFileHashes(repoId);
 }
 
 export async function scanAndParseRepo(input: {

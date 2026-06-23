@@ -68,21 +68,9 @@ export async function auditRelationQuality(db: GraphDB, options: { minConfidence
 }
 
 export async function rejectEvidence(db: GraphDB, input: { evidenceId: string; reason: string }): Promise<void> {
-  const createdAt = new Date().toISOString();
-  await db.query(
-    "MERGE (f:RelationFeedback {id: $id}) ON CREATE SET f.evidenceId=$evidenceId, f.action=$action, f.reason=$reason, f.createdAt=$createdAt ON MATCH SET f.action=$action, f.reason=$reason, f.createdAt=$createdAt;",
-    { id: `feedback:${input.evidenceId}:reject`, evidenceId: input.evidenceId, action: "reject", reason: input.reason, createdAt }
-  );
-  await db.query("MATCH (e:Evidence) WHERE e.id = $evidenceId SET e.active = false;", { evidenceId: input.evidenceId });
-  for (const rel of ["OWNS_PACKAGE", "PRODUCES", "CONSUMES", "SHARES_CONTRACT", "CONTRACT_MENTIONS", "PARTICIPATES_IN", "WORKFLOW_STEP", "USES_PACKAGE", "DEPENDS_ON"]) {
-    await db.query(`MATCH ()-[r:${rel}]->() WHERE r.evidenceId = $evidenceId SET r.active = false;`, { evidenceId: input.evidenceId });
-  }
+  return db.rejectEvidence(input);
 }
 
 export async function upsertAliasOverride(db: GraphDB, input: { alias: string; targetRepoId: string; reason: string }): Promise<void> {
-  const createdAt = new Date().toISOString();
-  await db.query(
-    "MERGE (a:AliasOverride {id: $id}) ON CREATE SET a.alias=$alias, a.targetRepoId=$targetRepoId, a.reason=$reason, a.createdAt=$createdAt, a.active=true ON MATCH SET a.targetRepoId=$targetRepoId, a.reason=$reason, a.createdAt=$createdAt, a.active=true;",
-    { id: `alias:${input.alias.toLowerCase()}`, alias: input.alias, targetRepoId: input.targetRepoId, reason: input.reason, createdAt }
-  );
+  return db.upsertAliasOverride(input);
 }

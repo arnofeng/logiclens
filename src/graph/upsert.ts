@@ -56,13 +56,9 @@ export async function writeGraphFactsWithMerge(db: GraphDB, facts: GraphFactsBat
 export async function upsertParsedFiles(db: GraphDB, parsedFiles: ParsedGraphFile[], optionsInput: boolean | UpsertParsedFilesOptions, repos?: RepoNode[]): Promise<void> {
   const options = normalizeOptions(optionsInput);
   const batchId = options.batchId ?? "";
-  const repoRows = repos ?? await db.query<RepoNode>(
-    "MATCH (r:Repo) RETURN r.id AS id, r.name AS name, r.path AS path, r.remoteUrl AS remoteUrl, r.branch AS branch, r.commitSha AS commitSha, r.language AS language, r.indexedAt AS indexedAt;"
-  );
+  const repoRows = repos ?? await db.listRepos();
   const repoIds = new Set(parsedFiles.map((file) => file.repoId));
-  const aliasOverrides = await db.query<{ alias: string; targetRepoId: string }>(
-    "MATCH (a:AliasOverride) WHERE a.active IS NULL OR a.active = true RETURN a.alias AS alias, a.targetRepoId AS targetRepoId;"
-  );
+  const aliasOverrides = await db.listActiveAliasOverrides();
   const facts = await buildGraphFactsBatch({
     batchId,
     repos: repoRows.filter((repo) => repoIds.has(repo.id)),

@@ -11,7 +11,8 @@ describe("index auto batching", () => {
       indexing: { ...defaultConfig().indexing, batchSize: 0 }
     };
     const mockDb = {
-      query: async () => [{ count: 0 }]
+      query: async () => [{ count: 0 }],
+      repoCount: async () => 0
     } as any;
 
     let success = false;

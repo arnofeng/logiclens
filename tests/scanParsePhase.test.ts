@@ -58,7 +58,8 @@ describe("scan/parse phase", () => {
     const repo = repoFor("scan-parse-skip", cwd);
     const unchangedFileId = fileId(repo.id, "src/index.ts");
     const db = {
-      query: async () => [{ id: unchangedFileId, hash: hashText(source) }]
+      query: async () => [{ id: unchangedFileId, hash: hashText(source) }],
+      knownFileHashes: async () => new Map([[unchangedFileId, hashText(source)]])
     } as unknown as KuzuGraphDB;
 
     const result = await scanAndParseRepo({
