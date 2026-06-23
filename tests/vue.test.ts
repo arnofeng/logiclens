@@ -144,15 +144,15 @@ export default {
 </script>
 `, "utf8");
 
-    const parsed = await parseSourceFile({
+    const parsed = (await parseSourceFile({
       repoId: repoId("vue-repo"),
       absolutePath: largeVuePath,
       relativePath: "src/LargeFile.vue",
       language: "vue"
-    });
+    })) as any;
 
     expect(parsed.language).toBe("vue");
-    expect(parsed.symbols.map((s) => s.name)).toContain("hello");
+    expect(parsed.symbols.map((s: any) => s.name)).toContain("hello");
 
     await fs.rm(dir, { recursive: true, force: true });
   });
