@@ -1,4 +1,4 @@
-import { KuzuGraphDB } from "../graph/db.js";
+import type { GraphDB } from "../graph/db.js";
 import type { LogicLensConfig } from "../config/schema.js";
 import { runIndexQueue } from "../indexing/scheduler.js";
 import { planIndexRun } from "../indexing/planning.js";
@@ -47,7 +47,7 @@ export type IndexResult = {
 };
 
 export async function runIndexing(
-  db: KuzuGraphDB,
+  db: GraphDB,
   config: LogicLensConfig,
   options: IndexOptions & { cwd?: string; logger?: IndexLogger }
 ): Promise<IndexResult> {

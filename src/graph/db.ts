@@ -45,6 +45,12 @@ export type Stats = {
 export type GraphWriteAtomicityMode = "transactional" | "journaled-recoverable" | "best-effort";
 export type GraphWriteBatchStatus = "started" | "committed" | "failed" | "recovered" | "awaiting-cleanup";
 
+/**
+ * Provider-agnostic value type for graph query parameters and results.
+ * Replaces the Kuzu-specific `KuzuValue` in the public `GraphDB` interface.
+ */
+export type GraphValue = string | number | boolean | null | bigint | GraphValue[] | { [key: string]: GraphValue };
+
 export type GraphWriteBatchJournal = {
   batchId: string;
   repoIds: string[];
@@ -97,7 +103,7 @@ export interface GraphDB {
   cleanupGraphWriteBatch(batchId: string): Promise<void>;
   markRepoArtifactsStale(input: { repoId: string; activeFileIds: string[]; batchId: string; indexedAt: string }): Promise<number>;
   upsertIndexState(state: { repoId: string; repoName: string; lastBatchId: string; lastIndexedAt: string; lastCommitSha: string; filesScanned: number; filesChanged: number; filesStale: number; status: string; error?: string; graphWriteAtomicity?: GraphWriteAtomicityMode; graphWriteStatus?: GraphWriteBatchStatus }): Promise<void>;
-  query<T = Record<string, KuzuValue>>(cypher: string, params?: Record<string, KuzuValue>): Promise<T[]>;
+  query<T = Record<string, GraphValue>>(cypher: string, params?: Record<string, GraphValue>): Promise<T[]>;
   stats(): Promise<Stats>;
   close(): Promise<void>;
 }
@@ -210,7 +216,7 @@ export class KuzuGraphDB implements GraphDB {
   async upsertRepo(repo: RepoNode): Promise<void> {
     await this.query(
       "MERGE (r:Repo {id: $id}) ON CREATE SET r.name=$name, r.path=$path, r.remoteUrl=$remoteUrl, r.branch=$branch, r.commitSha=$commitSha, r.language=$language, r.indexedAt=$indexedAt, r.summary=$summary ON MATCH SET r.name=$name, r.path=$path, r.remoteUrl=$remoteUrl, r.branch=$branch, r.commitSha=$commitSha, r.language=$language, r.indexedAt=$indexedAt;",
-      { ...repo, summary: repo.summary ?? "" } as unknown as Record<string, KuzuValue>
+      { ...repo, summary: repo.summary ?? "" } as unknown as Record<string, GraphValue>
     );
     await this.addContains(systemId, repo.id);
   }
@@ -226,7 +232,7 @@ export class KuzuGraphDB implements GraphDB {
   async upsertFile(file: FileNode): Promise<void> {
     await this.query(
       "MERGE (f:File {id: $id}) ON CREATE SET f.repoId=$repoId, f.path=$path, f.language=$language, f.hash=$hash, f.loc=$loc, f.batchId=$batchId, f.indexedAt=$indexedAt, f.active=$active ON MATCH SET f.repoId=$repoId, f.path=$path, f.language=$language, f.hash=$hash, f.loc=$loc, f.batchId=$batchId, f.indexedAt=$indexedAt, f.active=$active;",
-      { ...file, batchId: file.batchId ?? "", indexedAt: file.indexedAt ?? "", active: file.active ?? true } as unknown as Record<string, KuzuValue>
+      { ...file, batchId: file.batchId ?? "", indexedAt: file.indexedAt ?? "", active: file.active ?? true } as unknown as Record<string, GraphValue>
     );
   }
 
@@ -249,7 +255,7 @@ export class KuzuGraphDB implements GraphDB {
     };
     await this.query(
       "MERGE (c:Code {id: $id}) ON CREATE SET c.repoId=$repoId, c.fileId=$fileId, c.kind=$kind, c.name=$name, c.qualifiedName=$qualifiedName, c.startLine=$startLine, c.endLine=$endLine, c.signature=$signature, c.summary=$summary, c.hash=$hash, c.batchId=$batchId, c.indexedAt=$indexedAt, c.active=$active ON MATCH SET c.repoId=$repoId, c.fileId=$fileId, c.kind=$kind, c.name=$name, c.qualifiedName=$qualifiedName, c.startLine=$startLine, c.endLine=$endLine, c.signature=$signature, c.summary=$summary, c.hash=$hash, c.batchId=$batchId, c.indexedAt=$indexedAt, c.active=$active;",
-      params as unknown as Record<string, KuzuValue>
+      params as unknown as Record<string, GraphValue>
     );
   }
 
@@ -271,42 +277,42 @@ export class KuzuGraphDB implements GraphDB {
     };
     await this.query(
       "MERGE (s:Section {id: $id}) ON CREATE SET s.repoId=$repoId, s.fileId=$fileId, s.heading=$heading, s.level=$level, s.startLine=$startLine, s.endLine=$endLine, s.text=$text, s.summary=$summary, s.hash=$hash, s.batchId=$batchId, s.indexedAt=$indexedAt, s.active=$active ON MATCH SET s.repoId=$repoId, s.fileId=$fileId, s.heading=$heading, s.level=$level, s.startLine=$startLine, s.endLine=$endLine, s.text=$text, s.summary=$summary, s.hash=$hash, s.batchId=$batchId, s.indexedAt=$indexedAt, s.active=$active;",
-      params as unknown as Record<string, KuzuValue>
+      params as unknown as Record<string, GraphValue>
     );
   }
 
   async upsertEntity(entity: EntityNode): Promise<void> {
     await this.query(
       "MERGE (e:Entity {id: $id}) ON CREATE SET e.name=$name, e.kind=$kind, e.description=$description ON MATCH SET e.name=$name, e.kind=$kind, e.description=$description;",
-      entity as unknown as Record<string, KuzuValue>
+      entity as unknown as Record<string, GraphValue>
     );
   }
 
   async upsertOperation(operation: OperationNode): Promise<void> {
     await this.query(
       "MERGE (o:Operation {id: $id}) ON CREATE SET o.verb=$verb, o.entityName=$entityName, o.description=$description ON MATCH SET o.verb=$verb, o.entityName=$entityName, o.description=$description;",
-      operation as unknown as Record<string, KuzuValue>
+      operation as unknown as Record<string, GraphValue>
     );
   }
 
   async upsertWorkflow(workflow: WorkflowNode): Promise<void> {
     await this.query(
       "MERGE (w:Workflow {id: $id}) ON CREATE SET w.name=$name, w.description=$description ON MATCH SET w.name=$name, w.description=$description;",
-      workflow as unknown as Record<string, KuzuValue>
+      workflow as unknown as Record<string, GraphValue>
     );
   }
 
   async upsertContract(contract: ContractNode): Promise<void> {
     await this.query(
       "MERGE (c:Contract {id: $id}) ON CREATE SET c.kind=$kind, c.key=$key, c.name=$name, c.description=$description ON MATCH SET c.kind=$kind, c.key=$key, c.name=$name, c.description=$description;",
-      contract as unknown as Record<string, KuzuValue>
+      contract as unknown as Record<string, GraphValue>
     );
   }
 
   async upsertEvidence(evidence: EvidenceNode): Promise<void> {
     await this.query(
       "MERGE (e:Evidence {id: $id}) ON CREATE SET e.repoId=$repoId, e.fileId=$fileId, e.filePath=$filePath, e.line=$line, e.raw=$raw, e.rule=$rule, e.confidence=$confidence, e.batchId=$batchId, e.indexedAt=$indexedAt, e.active=$active ON MATCH SET e.repoId=$repoId, e.fileId=$fileId, e.filePath=$filePath, e.line=$line, e.raw=$raw, e.rule=$rule, e.confidence=$confidence, e.batchId=$batchId, e.indexedAt=$indexedAt, e.active=$active;",
-      { ...evidence, batchId: evidence.batchId ?? "", indexedAt: evidence.indexedAt ?? "", active: evidence.active ?? true } as unknown as Record<string, KuzuValue>
+      { ...evidence, batchId: evidence.batchId ?? "", indexedAt: evidence.indexedAt ?? "", active: evidence.active ?? true } as unknown as Record<string, GraphValue>
     );
   }
 
@@ -321,7 +327,7 @@ export class KuzuGraphDB implements GraphDB {
   async addRepoDependency(edge: RepoDependencyEdge): Promise<void> {
     await this.query(
       "MATCH (a:Repo {id: $fromRepoId}), (b:Repo {id: $toRepoId}) MERGE (a)-[r:DEPENDS_ON {dependencyType: $dependencyType, sourceContractId: $sourceContractId, targetContractId: $targetContractId, evidenceId: $evidenceId, raw: $raw}]->(b) SET r.confidence = $confidence, r.batchId = $batchId, r.active = $active;",
-      { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, KuzuValue>
+      { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, GraphValue>
     );
   }
 
@@ -347,7 +353,7 @@ export class KuzuGraphDB implements GraphDB {
         "MATCH (a:Repo {id: edge.fromRepoId}), (b:Repo {id: edge.toRepoId}) " +
         "MERGE (a)-[r:DEPENDS_ON {dependencyType: edge.dependencyType, sourceContractId: edge.sourceContractId, targetContractId: edge.targetContractId, evidenceId: edge.evidenceId, raw: edge.raw}]->(b) " +
         "SET r.confidence = edge.confidence, r.batchId = edge.batchId, r.active = edge.active;",
-        { batch: params as unknown as KuzuValue }
+        { batch: params as unknown as GraphValue }
       );
     }
   }
@@ -355,28 +361,28 @@ export class KuzuGraphDB implements GraphDB {
   async addPackageUsage(edge: PackageUsageEdge): Promise<void> {
     await this.query(
       "MATCH (r:Repo {id: $repoId}), (c:Contract {id: $packageContractId}) MERGE (r)-[u:USES_PACKAGE {packageName: $packageName, evidenceId: $evidenceId, raw: $raw}]->(c) SET u.confidence = $confidence, u.batchId = $batchId, u.active = $active;",
-      { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, KuzuValue>
+      { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, GraphValue>
     );
   }
 
   async addContractEntity(edge: ContractEntityEdge): Promise<void> {
     await this.query(
       "MATCH (c:Contract {id: $contractId}), (e:Entity {id: $entityId}) MERGE (c)-[r:CONTRACT_MENTIONS {evidenceId: $evidenceId}]->(e) SET r.confidence = $confidence, r.batchId = $batchId, r.active = $active;",
-      { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, KuzuValue>
+      { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, GraphValue>
     );
   }
 
   async addOperationRepo(edge: OperationRepoEdge): Promise<void> {
     await this.query(
       "MATCH (r:Repo {id: $repoId}), (o:Operation {id: $operationId}) MERGE (r)-[p:PARTICIPATES_IN {role: $role, evidenceId: $evidenceId}]->(o) SET p.confidence = $confidence, p.batchId = $batchId, p.active = $active;",
-      { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, KuzuValue>
+      { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, GraphValue>
     );
   }
 
   async addWorkflowOperation(edge: WorkflowOperationEdge): Promise<void> {
     await this.query(
       "MATCH (w:Workflow {id: $workflowId}), (o:Operation {id: $operationId}) MERGE (w)-[s:WORKFLOW_STEP {step: $step, evidenceId: $evidenceId}]->(o) SET s.confidence = $confidence, s.batchId = $batchId, s.active = $active;",
-      { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, KuzuValue>
+      { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, GraphValue>
     );
   }
 
@@ -400,11 +406,11 @@ export class KuzuGraphDB implements GraphDB {
   }
 
   async addImport(edge: ImportEdge): Promise<void> {
-    await this.query("MATCH (a:File {id: $fromFileId}), (b:File {id: $toFileId}) MERGE (a)-[r:IMPORTS {module: $module, raw: $raw}]->(b) SET r.batchId = $batchId, r.active = $active;", { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, KuzuValue>);
+    await this.query("MATCH (a:File {id: $fromFileId}), (b:File {id: $toFileId}) MERGE (a)-[r:IMPORTS {module: $module, raw: $raw}]->(b) SET r.batchId = $batchId, r.active = $active;", { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, GraphValue>);
   }
 
   async addCall(edge: CallEdge): Promise<void> {
-    await this.query("MATCH (a:Code {id: $fromCodeId}), (b:Code {id: $toCodeId}) MERGE (a)-[r:CALLS {raw: $raw}]->(b) SET r.confidence = $confidence, r.resolution = $resolution, r.batchId = $batchId, r.active = $active;", { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, KuzuValue>);
+    await this.query("MATCH (a:Code {id: $fromCodeId}), (b:Code {id: $toCodeId}) MERGE (a)-[r:CALLS {raw: $raw}]->(b) SET r.confidence = $confidence, r.resolution = $resolution, r.batchId = $batchId, r.active = $active;", { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, GraphValue>);
   }
 
   async addMention(codeIdValue: string, entityIdValue: string, confidence: number): Promise<void> {
@@ -618,11 +624,11 @@ export class KuzuGraphDB implements GraphDB {
   async upsertIndexState(state: { repoId: string; repoName: string; lastBatchId: string; lastIndexedAt: string; lastCommitSha: string; filesScanned: number; filesChanged: number; filesStale: number; status: string; error?: string; graphWriteAtomicity?: GraphWriteAtomicityMode; graphWriteStatus?: GraphWriteBatchStatus }): Promise<void> {
     await this.query(
       "MERGE (s:IndexState {id: $id}) ON CREATE SET s.repoId=$repoId, s.repoName=$repoName, s.lastBatchId=$lastBatchId, s.lastIndexedAt=$lastIndexedAt, s.lastCommitSha=$lastCommitSha, s.filesScanned=$filesScanned, s.filesChanged=$filesChanged, s.filesStale=$filesStale, s.status=$status, s.error=$error, s.graphWriteAtomicity=$graphWriteAtomicity, s.graphWriteStatus=$graphWriteStatus ON MATCH SET s.repoId=$repoId, s.repoName=$repoName, s.lastBatchId=$lastBatchId, s.lastIndexedAt=$lastIndexedAt, s.lastCommitSha=$lastCommitSha, s.filesScanned=$filesScanned, s.filesChanged=$filesChanged, s.filesStale=$filesStale, s.status=$status, s.error=$error, s.graphWriteAtomicity=$graphWriteAtomicity, s.graphWriteStatus=$graphWriteStatus;",
-      { id: `index-state:${state.repoId}`, ...state, error: state.error ?? "", graphWriteAtomicity: state.graphWriteAtomicity ?? "", graphWriteStatus: state.graphWriteStatus ?? "" } as unknown as Record<string, KuzuValue>
+      { id: `index-state:${state.repoId}`, ...state, error: state.error ?? "", graphWriteAtomicity: state.graphWriteAtomicity ?? "", graphWriteStatus: state.graphWriteStatus ?? "" } as unknown as Record<string, GraphValue>
     );
   }
 
-  async query<T = Record<string, KuzuValue>>(cypher: string, params?: Record<string, KuzuValue>): Promise<T[]> {
+  async query<T = Record<string, GraphValue>>(cypher: string, params?: Record<string, GraphValue>): Promise<T[]> {
     const conn = this.connection();
     if (params && Object.keys(params).length > 0) {
       const statement = await conn.prepare(cypher);

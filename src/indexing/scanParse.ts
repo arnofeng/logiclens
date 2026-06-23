@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import type { KuzuGraphDB } from "../graph/db.js";
+import type { GraphDB } from "../graph/db.js";
 import { parseSourceFile } from "../parsers/parserRegistry.js";
 import type { ParsedGraphFile, RepoNode } from "../parsers/types.js";
 import { scanRepoFiles, type ScannedFile } from "../repos/fileScanner.js";
@@ -28,7 +28,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function knownFileHashes(db: KuzuGraphDB, repoId: string): Promise<Map<string, string>> {
+async function knownFileHashes(db: GraphDB, repoId: string): Promise<Map<string, string>> {
   const rows = await db.query<{ id: string; hash: string }>(
     "MATCH (f:File) WHERE f.repoId = $repoId RETURN f.id AS id, f.hash AS hash;",
     { repoId }
@@ -37,7 +37,7 @@ async function knownFileHashes(db: KuzuGraphDB, repoId: string): Promise<Map<str
 }
 
 export async function scanAndParseRepo(input: {
-  db?: KuzuGraphDB;
+  db?: GraphDB;
   repo: RepoNode;
   config: LogicLensConfig;
   changedOnly?: boolean;

@@ -1,5 +1,5 @@
 import type { LogicLensConfig } from "../config/schema.js";
-import type { KuzuGraphDB } from "../graph/db.js";
+import type { GraphDB } from "../graph/db.js";
 import { runIndexPhase } from "./phases.js";
 import type { IndexWriteMode } from "./context.js";
 import type { IndexOptions } from "../commands/index.js";
@@ -17,13 +17,13 @@ export type IndexPlanningResult = {
   runPath: IndexRunPath;
 };
 
-async function repoCount(db: KuzuGraphDB): Promise<number> {
+async function repoCount(db: GraphDB): Promise<number> {
   const rows = await db.query<{ count: number }>("MATCH (r:Repo) RETURN count(r) AS count;");
   return Number(rows[0]?.count ?? 0);
 }
 
 export async function planIndexRun(input: {
-  db: KuzuGraphDB;
+  db: GraphDB;
   config: LogicLensConfig;
   options: IndexOptions;
 }): Promise<IndexPlanningResult> {

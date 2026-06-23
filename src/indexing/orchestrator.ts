@@ -1,5 +1,5 @@
 import { createBatchId } from "../graph/batchWriter.js";
-import type { GraphDB, KuzuGraphDB } from "../graph/db.js";
+import type { GraphDB } from "../graph/db.js";
 import type { LogicLensConfig } from "../config/schema.js";
 import type { ParsedGraphFile, RepoNode } from "../parsers/types.js";
 import { toRepoNode } from "../repos/repoRegistry.js";
@@ -73,7 +73,7 @@ function countsByRepo(results: ScanParseRepoResult[]): BatchCounts {
 }
 
 async function scanParseRepos(input: {
-  db?: KuzuGraphDB;
+  db?: GraphDB;
   ctx: IndexRunContext;
   repoConfigs: LogicLensConfig["repos"];
   options: IndexOptions;
@@ -248,7 +248,7 @@ async function commitFailedRepos(input: {
 }
 
 export async function runBatchedFullIndex(input: {
-  db: KuzuGraphDB;
+  db: GraphDB;
   ctx: IndexRunContext;
   repoBatches: LogicLensConfig["repos"][];
   options: IndexOptions;
@@ -312,7 +312,7 @@ export async function runBatchedFullIndex(input: {
 }
 
 export async function runFullCopyBulkIndex(input: {
-  db: KuzuGraphDB;
+  db: GraphDB;
   ctx: IndexRunContext;
   planning: IndexPlanningResult;
   options: IndexOptions;
@@ -352,7 +352,7 @@ export async function runFullCopyBulkIndex(input: {
 }
 
 export async function runPerRepoIndex(input: {
-  db: KuzuGraphDB;
+  db: GraphDB;
   ctx: IndexRunContext;
   repoConfig: LogicLensConfig["repos"][number];
   options: IndexOptions;

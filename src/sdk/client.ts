@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { loadConfig, writeConfig, defaultConfig, configPath } from "../config/loadConfig.js";
 import type { LogicLensConfig } from "../config/schema.js";
-import { KuzuGraphDB, type Stats } from "../graph/db.js";
+import { KuzuGraphDB, type GraphDB, type Stats } from "../graph/db.js";
 import { loadPlugins } from "../plugins/loader.js";
 import type { LogicLensPlugin } from "../plugins/types.js";
 import {
@@ -23,7 +23,7 @@ import { rebuildRepoDependencies } from "../graph/rebuildRelations.js";
 import { discoverGitRepos } from "../repos/repoDiscovery.js";
 import { toRepoNode } from "../repos/repoRegistry.js";
 import type { DiscoveredRepo } from "../repos/repoDiscovery.js";
-import type { KuzuValue } from "kuzu";
+import type { GraphValue } from "../graph/db.js";
 
 // Options types for index:
 import type { IndexOptions } from "../commands/index.js";
@@ -114,7 +114,7 @@ export type LogicLensIndexOptions = IndexOptions & {
 export class LogicLensClient {
   private config: LogicLensConfig;
   private cwd: string;
-  private dbInstance?: KuzuGraphDB;
+  private dbInstance?: GraphDB;
   private closed = false;
   private pluginsLoaded = false;
   private options: LogicLensClientOptions;
@@ -143,7 +143,7 @@ export class LogicLensClient {
     return this.cwd;
   }
 
-  private async getDb(): Promise<KuzuGraphDB> {
+  private async getDb(): Promise<GraphDB> {
     if (this.closed) {
       throw new Error("Client is closed");
     }
@@ -437,7 +437,7 @@ repos: []
    * @param params - Optional query parameters.
    * @returns The query result rows.
    */
-  async query<T = Record<string, any>>(cypher: string, params?: Record<string, KuzuValue>): Promise<T[]> {
+  async query<T = Record<string, GraphValue>>(cypher: string, params?: Record<string, GraphValue>): Promise<T[]> {
     const db = await this.getDb();
     return db.query<T>(cypher, params);
   }
