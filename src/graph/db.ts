@@ -461,6 +461,7 @@ export class KuzuGraphDB implements GraphDB {
   async clearRepoIndexedArtifacts(repoId: string): Promise<void> {
     const params = { repoId };
     const statements = [
+      // 1. Delete single-source rel edges (safe to DELETE then re-COPY)
       "MATCH (:Repo {id: $repoId})-[r:OWNS_PACKAGE]->(:Contract) DELETE r;",
       "MATCH (:Repo {id: $repoId})-[r:PRODUCES]->(:Contract) DELETE r;",
       "MATCH (:Repo {id: $repoId})-[r:CONSUMES]->(:Contract) DELETE r;",
@@ -484,14 +485,21 @@ export class KuzuGraphDB implements GraphDB {
       "MATCH (:Section)-[r:DOCUMENTS]->(c:Code) WHERE c.repoId = $repoId DELETE r;",
       "MATCH (s:Section)-[r:REFERENCES]->(:File) WHERE s.repoId = $repoId DELETE r;",
       "MATCH (:Section)-[r:REFERENCES]->(f:File) WHERE f.repoId = $repoId DELETE r;",
-      "MATCH (:System)-[r:CONTAINS]->(:Repo {id: $repoId}) DELETE r;",
+      // 2. Clean incoming CONTAINS edges to nodes we are about to delete.
+      //    Do NOT delete from the CONTAINS multi-source rel table directly —
+      //    Kuzu segfaults when COPY/MERGE follows DELETE on multi-source rel tables.
+      //    Instead, remove incoming edges first, then delete the target nodes
+      //    (which cascades their outgoing edges automatically).
       "MATCH (:Repo {id: $repoId})-[r:CONTAINS]->(:File) DELETE r;",
       "MATCH (:File)-[r:CONTAINS]->(c:Code) WHERE c.repoId = $repoId DELETE r;",
       "MATCH (:File)-[r:CONTAINS]->(s:Section) WHERE s.repoId = $repoId DELETE r;",
+      // 3. Delete stale nodes — outgoing CONTAINS edges are cascaded by node deletion.
       "MATCH (e:Evidence) WHERE e.repoId = $repoId DELETE e;",
       "MATCH (c:Code) WHERE c.repoId = $repoId DELETE c;",
       "MATCH (s:Section) WHERE s.repoId = $repoId DELETE s;",
       "MATCH (f:File) WHERE f.repoId = $repoId DELETE f;"
+      // NOTE: System->Repo CONTAINS edge is NOT deleted here. The append-copy
+      // writer uses MERGE which is idempotent for this single edge.
     ];
     for (const statement of statements) await this.query(statement, params);
   }

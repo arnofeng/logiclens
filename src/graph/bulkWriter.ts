@@ -203,6 +203,24 @@ async function copyRelationTable(db: GraphDB, filePath: string, table: CsvTableN
   await db.query(`COPY ${table} FROM "${toKuzuPath(filePath)}" (PARALLEL=false);`);
 }
 
+async function upsertPairTable(db: GraphDB, filePath: string, spec: PairCopySpec): Promise<void> {
+  const numColumns = spec.rows[0]?.length ?? 2;
+  const columns = Array.from({ length: numColumns }, (_, i) => `COLUMN${i}`);
+  const withClause = columns.map((col, i) => {
+    if (i === 0) return `${col} AS fromId`;
+    if (i === 1) return `${col} AS toId`;
+    if (col === "COLUMN2" && spec.table === "MENTIONS") return `${col} AS confidence`;
+    return col;
+  }).join(", ");
+  // For tables with extra properties (e.g. MENTIONS has confidence), include them in the MERGE property map
+  const mergeProperties = spec.table === "MENTIONS" ? " {confidence: confidence}" : "";
+  await db.query(
+    `LOAD FROM "${toKuzuPath(filePath)}" (PARALLEL=false) WITH ${withClause} ` +
+    `MATCH (a:${spec.from} {id: fromId}), (b:${spec.to} {id: toId}) ` +
+    `MERGE (a)-[r:${spec.table}${mergeProperties}]->(b);`
+  );
+}
+
 export async function writeGraphFactsWithKuzuBulk(db: GraphDB, facts: GraphFactsBatch, options: KuzuBulkWriteOptions): Promise<KuzuBulkWriteResult> {
   if (options.requireEmpty !== false) {
     const existing = await db.query<{ count: number }>("MATCH (r:Repo) RETURN count(r) AS count;");
@@ -293,11 +311,11 @@ export async function writeGraphFactsWithKuzuAppendCopy(db: GraphDB, facts: Grap
       const filePath = await writePairCsv(staging.dir, spec);
       if (!filePath) continue;
       try {
-        options.progress?.({ current: completedSteps, total: totalSteps, label: `copy ${spec.table} ${spec.from}->${spec.to}` });
-        await db.query(`COPY ${spec.table} FROM "${toKuzuPath(filePath)}" (FROM='${spec.from}', TO='${spec.to}', PARALLEL=false);`);
+        options.progress?.({ current: completedSteps, total: totalSteps, label: `upsert ${spec.table} ${spec.from}->${spec.to}` });
+        await upsertPairTable(db, filePath, spec);
         copiedRelationTables.push(spec.table);
         completedSteps += 1;
-        options.progress?.({ current: completedSteps, total: totalSteps, label: `copy ${spec.table} ${spec.from}->${spec.to}` });
+        options.progress?.({ current: completedSteps, total: totalSteps, label: `upsert ${spec.table} ${spec.from}->${spec.to}` });
       } catch (error) {
         throw new Error(`Failed to append-copy ${spec.table} (${spec.from}->${spec.to}) from ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
       }
