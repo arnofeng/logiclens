@@ -5,14 +5,21 @@ describe("ProgressBar", () => {
   const originalWrite = process.stderr.write;
   const originalIsTTY = process.stderr.isTTY;
   const originalColumns = process.stderr.columns;
+  const originalCI = process.env.CI;
 
   afterEach(() => {
     process.stderr.write = originalWrite;
     Object.defineProperty(process.stderr, "isTTY", { configurable: true, value: originalIsTTY });
     Object.defineProperty(process.stderr, "columns", { configurable: true, value: originalColumns });
+    if (originalCI === undefined) {
+      delete process.env.CI;
+    } else {
+      process.env.CI = originalCI;
+    }
   });
 
   it("keeps interactive progress rendering on one terminal line", () => {
+    delete process.env.CI;
     const writes: string[] = [];
     process.stderr.write = ((chunk: string | Uint8Array) => {
       writes.push(String(chunk));
