@@ -682,6 +682,5 @@ export class KuzuGraphDB implements GraphDB {
 function shouldUseManagedKuzuClose(): boolean {
   const mode = process.env.LOGICLENS_KUZU_CLOSE_MODE?.toLowerCase();
   if (mode === "explicit") return false;
-  if (mode === "managed") return true;
-  return process.platform === "win32";
+  return true; // Default to managed close on all platforms to prevent native Kuzu crashes
 }
