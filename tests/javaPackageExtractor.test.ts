@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { javaPackageExtractor } from "../src/extractors/builtin/javaPackageExtractor.js";
 
 describe("javaPackageExtractor", () => {
+  it("declares java as its supported language", () => {
+    expect(javaPackageExtractor.languages).toEqual(["java"]);
+  });
+
   it("has the correct extractor name", () => {
     expect(javaPackageExtractor.name).toBe("builtin:java-package");
   });
@@ -18,7 +22,7 @@ describe("javaPackageExtractor", () => {
           language: "python",
           hash: "hash1",
           loc: 10,
-          imports: [],
+          imports: [{ module: "os", raw: "import os", line: 1 }],
           symbols: [],
           calls: [],
           facts: {}
@@ -31,7 +35,7 @@ describe("javaPackageExtractor", () => {
           language: "typescript",
           hash: "hash2",
           loc: 10,
-          imports: [],
+          imports: [{ module: "react", raw: "import React from 'react'", line: 1 }],
           symbols: [],
           calls: [],
           facts: {}
@@ -131,7 +135,7 @@ describe("javaPackageExtractor", () => {
     expect(result.contracts).toEqual([]);
   });
 
-  it("extracts consumer contract from java file imports", async () => {
+  it("does NOT extract import contracts (handled by importPackageExtractor)", async () => {
     const result = await javaPackageExtractor.extract({
       repos: [],
       parsedFiles: [
@@ -155,14 +159,15 @@ describe("javaPackageExtractor", () => {
       aliasOverrides: []
     });
 
-    // Should have the package contract (owner) + imported package contract (consumer)
-    expect(result.contracts.length).toBeGreaterThanOrEqual(2);
-    const consumerContract = result.contracts.find((c) => c.key === "com.google.common.collect");
-    expect(consumerContract).toBeDefined();
-    expect(consumerContract!.kind).toBe("package");
+    // Only the package contract from facts.packageName, no import contracts
+    expect(result.contracts.length).toBe(1);
+    expect(result.contracts[0].key).toBe("com.example");
+    // No consumer relations — imports are handled by importPackageExtractor
+    const consumerRelations = result.relations.filter((r) => r.kind === "repo-contract" && r.role === "consumer");
+    expect(consumerRelations).toEqual([]);
   });
 
-  it("skips relative imports (starting with dot)", async () => {
+  it("produces owner evidence for the java package", async () => {
     const result = await javaPackageExtractor.extract({
       repos: [],
       parsedFiles: [
@@ -174,10 +179,7 @@ describe("javaPackageExtractor", () => {
           language: "java",
           hash: "hash5",
           loc: 10,
-          imports: [
-            { module: ".Helper", raw: "import .Helper;", line: 2 },
-            { module: "..utils.Util", raw: "import ..utils.Util;", line: 3 }
-          ],
+          imports: [],
           symbols: [],
           calls: [],
           facts: { packageName: "com.example" }
@@ -187,8 +189,53 @@ describe("javaPackageExtractor", () => {
       aliasOverrides: []
     });
 
-    // Only the package contract from facts.packageName, no consumer contracts from relative imports
-    expect(result.contracts.length).toBe(1);
-    expect(result.contracts[0].key).toBe("com.example");
+    expect(result.evidence.length).toBe(1);
+    expect(result.evidence[0]).toMatchObject({
+      repoId: "repo:a",
+      rule: "java-package-path",
+      raw: "package com.example"
+    });
+
+    const ownerRelations = result.relations.filter((r) => r.kind === "repo-contract" && r.role === "owner");
+    expect(ownerRelations.length).toBe(1);
+  });
+
+  it("handles multiple java files from different repos", async () => {
+    const result = await javaPackageExtractor.extract({
+      repos: [],
+      parsedFiles: [
+        {
+          id: "file:java:1",
+          repoId: "repo:a",
+          fileId: "file:java:1",
+          path: "src/main/java/com/service-a/Main.java",
+          language: "java",
+          hash: "hash1",
+          loc: 10,
+          imports: [],
+          symbols: [],
+          calls: [],
+          facts: { packageName: "com.service-a" }
+        },
+        {
+          id: "file:java:2",
+          repoId: "repo:b",
+          fileId: "file:java:2",
+          path: "src/main/java/com/service-b/Main.java",
+          language: "java",
+          hash: "hash2",
+          loc: 10,
+          imports: [],
+          symbols: [],
+          calls: [],
+          facts: { packageName: "com.service-b" }
+        }
+      ],
+      repoResolver: () => undefined,
+      aliasOverrides: []
+    });
+
+    expect(result.contracts.length).toBe(2);
+    expect(result.contracts.map((c) => c.key).sort()).toEqual(["com.service-a", "com.service-b"]);
   });
 });
