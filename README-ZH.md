@@ -1,519 +1,232 @@
 # LogicLens
 
-**LogicLens 是一个本地优先的代码图谱（Code Graph）工具，为跨仓库代码系统构建语义依赖图。**
+<center>
 
-现代代码系统通常分散在很多服务、包、前端、任务、SDK 和共享库里。只看单个仓库，很难回答下面这些问题：
+[![npm version](https://img.shields.io/npm/v/logiclens.svg)](https://www.npmjs.com/package/logiclens)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-- 哪些仓库消费了这个 API、事件、包、DTO、schema 或配置键？
-- 如果我要修改这个 handler、符号或契约，应该优先检查哪些文件？
-- 服务之间是通过 import、package metadata、HTTP 调用、事件还是共享契约连接起来的？
-- AI 编程助手在回答代码问题之前，应该先读取哪些代码和文档上下文？
+</center>
 
-LogicLens 会索引你配置的多个仓库，提取源码符号、调用链和跨仓库契约证据，**构建一张覆盖整个代码系统的知识图谱**。这张图谱以本地 Kuzu 图数据库存储，你可以通过 CLI 查询、Node.js SDK 集成，或通过 stdio MCP Server 暴露给 AI 编程助手，让代码间的复杂关系一目了然。
+**一个本地优先（local-first）的代码图谱（Code Graph）系统，为 AI Coding Agent 提供跨仓库的系统级理解能力。**
+
+[English](README.md) · **中文**
 
 > [!IMPORTANT]
 > **LogicLens 目前处于活跃的 Beta 开发阶段。** 虽然核心索引引擎、CLI、SDK、文件监听器（watcher）和 MCP 服务都已完全可用，但对语言和框架的覆盖仍是逐步增量的。在 API 和 Schema 结构不断完善的过程中，可能会发生一些调整。
 
-## 代码图谱：它会构建什么
+---
 
-LogicLens 的核心是**构建一张代码图谱**——一个结构化的知识图，将分散在多个仓库中的代码实体、依赖关系和契约证据连接在一起。
+## 目录
 
-### 图谱数据来源
+- [⚡ 快速开始](#-快速开始)
+- [🧠 为什么需要 LogicLens](#-为什么需要-logiclens)
+- [🧬 核心理念：代码图谱](#-核心理念代码图谱code-graph)
+- [🔍 CLI 使用示例](#-cli-使用示例)
+- [🤖 MCP 集成（AI Coding Agents）](#-mcp-集成ai-coding-agents)
+- [🧠 SDK（编程方式访问）](#-sdk编程方式访问)
+- [⚙️ 配置](#️-配置)
+- [🧩 SDK 插件](#-sdk-插件)
+- [👍 当前语言和框架支持](#-当前语言和框架支持)
+- [贡献](#贡献)
+- [安全](#安全)
+- [License](#license)
 
-- `.logiclens/config.yaml` 中声明的仓库。
-- 由 `include` 和 `exclude` glob 选择的文件。
-- 代码符号、import、调用关系和文档章节。
-- 框架识别结果和语言事实。
-- package、import、API、event、DTO、schema、enum、config 等契约证据。
-- 可选的语义摘要和 embedding。
+---
 
-### 图谱能力
+## ⚡ 快速开始
 
-这张代码图谱可以支持：
-
-- **跨仓库依赖发现**：一眼看清服务间的依赖拓扑。
-- **契约追踪**：从 API、事件、包等契约出发，找到所有生产者和消费者。
-- **变更影响面分析**：修改前评估波及范围，降低上线风险。
-- **基于图谱的自然语言检索**：用自然语言查询代码关系。
-- **AI Agent 上下文增强**：通过 MCP 为编程助手提供结构化代码上下文。
-- **质量治理**：对低置信度或冲突依赖证据做本地审计和修正。
-
-## 特点
-
-- **本地优先代码图谱**：基于 Kuzu 图数据库构建代码知识图谱，默认存储在 `.logiclens/graph`，数据完全留在本地。
-- **跨仓库工作区**：一个工作区可以指向多个仓库，统一构建覆盖整个代码系统的图谱。
-- **静态代码智能**：提取符号、import、调用、文档、语言事实和框架信号，作为图谱的节点和边。
-- **契约模型**：将跨仓库证据归一为 `api`、`event`、`package`、`dto`、`schema`、`enum`、`config` 等契约类型，丰富图谱语义。
-- **依赖视图**：展示仓库间依赖的强度、类型、证据位置、规则和解析信息。
-- **追踪和影响面分析**：从契约或符号出发，沿图谱路径返回生产者、消费者、相关代码、调用、文档和建议检查文件。
-- **CLI / SDK / MCP**：支持手动查询图谱、Node.js 集成和 AI 编程助手接入。
-- **文件监听**：支持变更文件索引，保持图谱实时更新，并向 MCP 客户端暴露新鲜度元数据。
-- **质量治理**：审计低置信度证据、拒绝误报、注册 alias override，确保图谱准确性。
-- **可选 LLM / embedding 层**：需要时可接入 OpenAI 兼容 chat 和 embedding provider，增强图谱语义能力。
-- **插件 API**：可注册自定义解析器、框架探测器、契约提取器和 CLI 命令，扩展图谱覆盖范围。
-
-## 安装
-
-### 通过 npm 安装
+### 1. 安装 LogicLens
 
 ```bash
 npm install -g logiclens
 logiclens --version
 ```
 
-不全局安装也可以直接使用：
+### 2. 初始化仓库
+
+初始化工作区。这个工作区可以是多个仓库的父目录，也可以只是一个引用其他仓库路径的独立目录。
 
 ```bash
-npx logiclens --help
-```
-
-### 从源码安装
-
-```bash
-git clone https://github.com/arnofeng/logiclens.git
-cd logiclens
-npm install
-npm run build
-npm link
-logiclens --help
-```
-
-本地开发时也可以不 link：
-
-```bash
-npm run dev -- --help
-npm run dev -- init
-```
-
-## 快速开始
-
-创建一个工作区。这个工作区可以是多个仓库的父目录，也可以只是一个引用其他仓库路径的独立目录。
-
-```bash
-mkdir my-workspace
-cd my-workspace
 logiclens init
-```
 
-添加单个仓库：
-
-```bash
-logiclens add-repo ../service-a --name service-a
-```
-
-添加某个目录下第一层 Git 仓库：
-
-```bash
+# 添加某个目录下第一层 Git 仓库
 logiclens add-repos ../services
+# 添加单个仓库
+logiclens add-repo ../service-a --name service-a
+
+logiclens index # 索引所有仓库
 ```
 
-索引所有仓库：
-
-```bash
-logiclens index
-```
-
-查看图：
-
-```bash
-logiclens stats
-logiclens deps --limit 20
-logiclens contracts --limit 20
-```
-
-追踪契约：
-
-```bash
-logiclens trace api:/api/order/:id
-logiclens trace event:OrderCreatedEvent
-```
-
-分析影响面：
-
-```bash
-logiclens impact OrderCreatedEvent
-logiclens impact api:/api/order/:id
-```
-
-基于图上下文提问：
+### 3. 基于图上下文提问
 
 ```bash
 logiclens ask "哪些仓库参与了订单创建流程？"
 ```
 
-编辑代码时保持图数据更新：
+预期输出示例：
 
-```bash
-logiclens watch --debounce-ms 2000
+```
+Based on the code graph, the following repositories are involved
+in the order creation flow:
+
+1. service-a — exposes POST /api/order (producer)
+2. service-b — consumes OrderCreatedEvent (consumer)
+3. gateway — routes /api/order to service-a (router)
 ```
 
-## 使用场景示例
+---
 
-### 分析一组服务
+## 🧠 为什么需要 LogicLens
 
-```bash
-logiclens init
-logiclens add-repos ../company-services --index --batch-size 10 --write-mode auto
-logiclens stats
-logiclens deps --strength strong --limit 50
-logiclens contracts --kind api --limit 50
+现代软件系统已经不再是单一仓库，而是由多个部分组成：
+
+- 微服务（Services）
+- 前端应用（Frontend）
+- SDK / Client
+- 事件系统（Event Bus）
+- 共享库（Shared Packages）
+
+但大多数工具仍然停留在文件级理解和单仓库视角，这会导致一个根本问题：
+
+- 改一个 API，不知道谁在用
+- 改一个事件，不知道影响范围
+- AI Agent 无法理解整个系统结构
+
+### LogicLens vs 传统工具
+
+| | 传统工具 | LogicLens |
+|---|---|---|
+| 视野 | 单仓库 | 跨仓库工作区 |
+| 粒度 | 文件级 | 符号 / 契约级 |
+| 依赖发现 | 手动 grep | 自动图谱遍历 |
+| AI 友好 | ❌ | ✅ MCP 原生集成 |
+| 变更影响 | 凭经验猜 | 图路径追踪 |
+
+---
+
+## 🧬 核心理念：代码图谱（Code Graph）
+
+LogicLens 会自动分析你的多仓库系统，将整个代码系统建模为一个 **图结构（Graph）**：
+
+### 📦 节点（Nodes）
+
+- 仓库（Repo）
+- 文件（File）
+- 符号（Symbol）
+- 代码契约（Contract）— API / Event / DTO / Schema / Package 等契约关系
+
+### 🔗 边（Edges）
+
+- 跨仓库依赖图谱
+- 符号级调用链路（call）
+- 生产 / 消费关系（produce / consume）
+- 服务之间的连接关系（depends-on）
+- 变更影响路径（impact）
+
+### 🚀 能力
+
+- **本地优先**：基于 Kuzu 图数据库构建代码知识图谱，默认存储在 `.logiclens/graph`，数据完全留在本地。
+- **跨仓库工作区**：一个工作区可以指向多个仓库，统一构建覆盖整个代码系统的图谱。
+- **静态代码智能**：提取符号、import、调用、文档、语言事实和框架信号，作为图谱的节点和边。
+- **契约模型**：将跨仓库证据归一为 `api`、`event`、`package`、`dto`、`schema`、`enum`、`config` 等契约类型，丰富图谱语义。
+- **依赖视图**：展示仓库间依赖的强度、类型、证据位置、规则和解析信息。
+- **追踪和影响面分析**：从契约或符号出发，沿图谱路径返回生产者、消费者、相关代码、调用、文档和建议检查文件。
+- **CLI / SDK / MCP**：支持手动查询图谱、Node.js 集成和 AI 编程助手接入。
+- **质量治理**：审计低置信度证据、拒绝误报、注册 alias override，确保图谱准确性。
+- **可选 LLM / embedding 层**：需要时可接入 OpenAI 兼容 chat 和 embedding provider，增强图谱语义能力。
+- **插件 API**：可注册自定义解析器、框架探测器、契约提取器和 CLI 命令，扩展图谱覆盖范围。
+
+**从"代码搜索"升级为"图谱遍历 + 推理"。**
+
+### 🏗️ 系统架构
+
+```text
+代码仓库（Repositories）
+        ↓
+解析器 + 提取器（Parser & Extractor）
+        ↓
+契约模型（API / Event / Schema / Package）
+        ↓
+代码图谱构建器（Code Graph Builder）
+        ↓
+本地图数据库（Kuzu）
+        ↓
+┌────────────┬────────────┬────────────┐
+│   CLI      │    SDK     │    MCP     │
+└────────────┴────────────┴────────────┘
+                ↓
+        AI Coding Agents
 ```
 
-适合在接手一组仓库时，快速得到第一版依赖视图。
+---
 
-### 检查 API 迁移影响
-
-```bash
-logiclens index --changed-only
-logiclens trace api:/api/order/:id
-logiclens impact api:/api/order/:id
-logiclens deps --type api --limit 100
-```
-
-适合在修改 endpoint、route、生成客户端或 HTTP client wrapper 之前使用。
-
-### 查看事件消费者
-
-```bash
-logiclens contracts --kind event --limit 100
-logiclens trace event:OrderCreatedEvent
-logiclens impact OrderCreatedEvent
-```
-
-适合在修改事件名、payload、topic、DTO 或 handler 前使用。
-
-### 给 AI 助手提供新鲜上下文
-
-```bash
-logiclens index
-logiclens mcp
-```
-
-然后把 MCP 兼容客户端连接到这个工作区。MCP Server 会启动文件监听和后台 changed-file catch-up，工具响应中会携带新鲜度元数据。
-
-## 配置
-
-`logiclens init` 会创建 `.logiclens/config.yaml`。这个文件是仓库列表、索引行为、图存储、语义检索、LLM provider、MCP 安全策略和 watcher 行为的事实来源。
-
-### 配置模板
-
-默认情况下，`logiclens init` 会生成一个极简且干净的配置文件：
-
-```yaml
-systemName: default-system
-
-repos:
-  - name: service-a
-    path: ../service-a
-  - name: service-b
-    path: ../service-b
-```
-
-### 高级配置
-
-LogicLens 支持针对性能调优、索引设置、自定义 LLM 重试、以及语义存储提供商等多种高级配置项。
-
-完整支持的参数列表及其默认值，请参阅 [Configuration Guide](docs/configuration.md)（英文说明）。
-
-### 环境变量
-
-```bash
-OPENAI_API_KEY=...
-OPENAI_BASE_URL=https://api.openai.com/v1
-LOGICLENS_NO_WATCH=1
-LOGICLENS_FORCE_WATCH=1
-```
-
-| 变量 | 说明 |
-| --- | --- |
-| `OPENAI_API_KEY` | 当 `llm.apiKey` 或 `embedding.apiKey` 未设置时使用。 |
-| `OPENAI_BASE_URL` | 当 `llm.baseUrl` 或 `embedding.baseUrl` 未设置时使用。 |
-| `LOGICLENS_NO_WATCH=1` | 禁用文件监听。 |
-| `LOGICLENS_FORCE_WATCH=1` | 即使策略通常会阻止 watcher，也强制启用。 |
-
-### 成本和隐私说明
-
-索引、图写入、`stats`、`deps`、`contracts`、`trace`、`impact` 和原始图查询默认都是本地图操作，不需要 LLM provider。
-
-`ask` 会先做图检索，再调用配置的 LLM 生成答案。可选的 LLM 摘要和 embedding 也可能把选中的源码或文档文本发送给你配置的 provider。如果你希望索引过程完全本地化，请保持 `embedding.level: off` 和 `indexing.llmSummaryLevel: off`。
-
-## CLI 使用
-
-查看帮助：
-
-```bash
-logiclens --help
-logiclens <command> --help
-```
-
-### 工作区命令
-
-#### `logiclens init`
-
-创建 `.logiclens/config.yaml`、`.logiclens/graph` 和 `.logiclens/cache`。
-
-```bash
-logiclens init
-```
-
-#### `logiclens uninit`
-
-删除 `.logiclens` 工作区状态，并尝试停止 `.logiclens/mcp.pid` 记录的 MCP 进程。
-
-```bash
-logiclens uninit
-```
-
-#### `logiclens add-repo <path>`
-
-向 `.logiclens/config.yaml` 添加单个仓库。
-
-```bash
-logiclens add-repo ../service-a
-logiclens add-repo ../service-a --name order-service
-```
-
-| Option | 说明 |
-| --- | --- |
-| `--name <name>` | 自定义仓库名。默认使用目录名。 |
-
-#### `logiclens add-repos <directory>`
-
-发现某个目录下第一层 Git 仓库，并添加到工作区配置。
-
-```bash
-logiclens add-repos ../services
-logiclens add-repos ../services --index --changed-only
-logiclens add-repos ../services --index --batch-size 10 --write-mode auto
-```
-
-| Option | 说明 |
-| --- | --- |
-| `--index` | 添加后立即索引发现的仓库。 |
-| `--changed-only` | 索引时尽量只处理已有状态中的变更文件。 |
-| `--max-files <number>` | 每个仓库最多索引多少文件。 |
-| `--batch-size <number>` | 大规模全量导入时每批处理多少仓库。 |
-| `--write-mode <mode>` | 图写入模式：`auto`、`merge`、`bulk`、`bulk-upsert`。默认 `auto`。 |
-
-### 索引命令
-
-#### `logiclens index`
-
-索引已配置仓库。它会扫描文件、解析源码、提取契约、写入图节点和边、在配置时更新语义数据，并重建仓库间依赖边。
-
-```bash
-logiclens index
-logiclens index --repo service-a
-logiclens index --changed-only
-logiclens index --max-files 2000
-logiclens index --batch-size 10 --write-mode auto
-logiclens index --write-mode merge
-```
-
-| Option | 说明 |
-| --- | --- |
-| `--repo <name>` | 只索引一个已配置仓库。 |
-| `--changed-only` | 只重新索引上次状态之后发生变化的文件。适合初次全量索引后的日常使用。 |
-| `--max-files <number>` | 限制本次处理的文件数。适合 smoke test 或超大仓库。 |
-| `--batch-size <number>` | 将大规模全量导入拆成仓库批次。适用于 `auto` 或 `bulk` 写入模式。 |
-| `--write-mode <mode>` | `auto`、`merge`、`bulk` 或 `bulk-upsert`。默认 `auto`。 |
-
-写入模式建议：
-
-| 模式 | 适用场景 |
-| --- | --- |
-| `auto` | 希望 LogicLens 自动选择稳妥路径。推荐默认使用。 |
-| `merge` | 更新已有图，或运行 `--changed-only`。 |
-| `bulk` | 空图全量导入，并希望使用 full-copy bulk 路径。 |
-| `bulk-upsert` | 需要面向已有图数据的批量 upsert 行为。 |
-
-#### `logiclens rebuild-relations`
-
-根据已索引的契约证据重建仓库间依赖边。
-
-```bash
-logiclens rebuild-relations
-logiclens rebuild-relations --repo service-a
-logiclens rebuild-relations --full
-```
-
-| Option | 说明 |
-| --- | --- |
-| `--repo <name>` | 只重建某个仓库的依赖边。 |
-| `--full` | 重建全部依赖边。 |
-
-#### `logiclens watch`
-
-先运行一次 changed-only 补索引，然后监听文件变更。
-
-```bash
-logiclens watch
-logiclens watch --repo service-a
-logiclens watch --debounce-ms 3000
-```
-
-| Option | 说明 |
-| --- | --- |
-| `--debounce-ms <number>` | 文件事件发生后等待多久再索引。 |
-| `--repo <name>` | 只监听和索引某个已配置仓库。 |
-
-### 查询和分析命令
-
-#### `logiclens stats`
-
-打印仓库、文件、代码节点、文档章节、实体和边等图统计信息。
+## 🔍 CLI 使用示例
 
 ```bash
 logiclens stats
+logiclens deps --limit 20
+logiclens contracts --kind api
 ```
 
-#### `logiclens deps`
-
-列出结构化跨仓库依赖和证据。
-
-```bash
-logiclens deps
-logiclens deps --limit 50
-logiclens deps --strength strong
-logiclens deps --strength weak
-logiclens deps --type api --limit 100
-logiclens deps --type event --limit 100
-```
-
-| Option | 说明 |
-| --- | --- |
-| `--strength <strong\|weak>` | 按依赖强度过滤。package、import、API 被视为 strong；event 和 shared-contract 被视为 weak。 |
-| `--type <type>` | 按依赖类型过滤，例如 `package`、`import`、`api`、`event`、`shared-contract`。 |
-| `--limit <number>` | 最大输出数量。 |
-
-#### `logiclens contracts`
-
-列出识别到的契约，以及 producer、consumer、shared 数量。
-
-```bash
-logiclens contracts
-logiclens contracts --kind api --limit 50
-logiclens contracts --kind event --limit 50
-logiclens contracts --kind package --limit 50
-```
-
-| Option | 说明 |
-| --- | --- |
-| `--kind <kind>` | 按 `package`、`api`、`event`、`dto`、`schema`、`enum`、`config` 过滤。 |
-| `--limit <number>` | 最大输出数量。 |
-
-#### `logiclens trace <contractOrEntity>`
-
-追踪契约或实体。
+### 💥 契约追踪
 
 ```bash
 logiclens trace api:/api/order/:id
 logiclens trace event:OrderCreatedEvent
-logiclens trace package:@internal/order-sdk
-logiclens trace OrderService
 ```
 
-带已知 `kind:value` 前缀的目标会被当作契约。其他目标会被当作实体或符号名。
-
-#### `logiclens impact <symbolOrEntity>`
-
-展示某个契约、实体或符号的潜在下游影响。
+### 🔎 影响分析
 
 ```bash
 logiclens impact OrderCreatedEvent
 logiclens impact api:/api/order/:id
-logiclens impact OrderService
 ```
 
-输出包括契约生产者/消费者、实体图上下文、匹配代码、相关调用边、相关文档和建议检查文件。
+---
 
-#### `logiclens ask <question>`
+## 🤖 MCP 集成（AI Coding Agents）
 
-检索图上下文，并调用配置的 LLM 生成答案。
+LogicLens 通过 **Model Context Protocol（MCP）** 将代码图谱暴露给 AI Agent。
+
+### 一键安装
 
 ```bash
-logiclens ask "哪些服务创建订单？"
-logiclens ask "修改 OrderCreatedEvent 前应该检查什么？"
-logiclens ask "哪些仓库依赖支付 API？"
+logiclens install
 ```
 
-如果没有配置 API key，检索仍可能返回 fallback 图上下文，但完整答案生成需要 OpenAI 兼容 provider。
+你可以使用交互式安装程序，在多个 AI 代理（Claude Code、Cursor、Codex CLI、opencode、Hermes Agent、Gemini CLI、Antigravity IDE、Kiro）中自动注册 LogicLens MCP 服务。
 
-#### `logiclens query <cypher>`
+### MCP 工具
 
-对本地图执行原始 Kuzu Cypher 查询。
+| 工具名称 | 功能说明 |
+|---|---|
+| `logiclens_get_stats` | 获取图数据库的汇总统计（仓库数、文件数、代码节点数、调用数等） |
+| `logiclens_get_watch_status` | 获取文件监听器和启动追赶索引的状态 |
+| `logiclens_list_dependencies` | 列出跨仓库依赖及其证据（支持按 strength/type 过滤） |
+| `logiclens_list_contracts` | 列出已识别的契约及其生产者/消费者/共享计数（支持按 kind 过滤） |
+| `logiclens_trace` | 追踪特定契约或实体，找到所有生产者、消费者和引用 |
+| `logiclens_impact_analysis` | 评估修改代码符号或契约的下游影响范围 |
+| `logiclens_ask_question` | 基于 RAG 的问答，检索代码符号、文档、契约、依赖等结构化上下文 |
+| `logiclens_query_cypher` | 对 Kuzu 图数据库执行原始 Cypher 查询（默认只读） |
 
-```bash
-logiclens query "MATCH (r:Repo) RETURN r.name AS name LIMIT 10"
-logiclens query "MATCH (c:Contract) RETURN c.kind AS kind, c.key AS key LIMIT 20"
+### MCP 配置示例
+
+```json
+{
+  "mcpServers": {
+    "logiclens": {
+      "command": "logiclens",
+      "args": ["mcp"]
+    }
+  }
+}
 ```
 
-这个 CLI 命令面向本地可信使用。MCP 中的原始 Cypher 默认只读，除非启用 `mcp.allowUnsafeCypher`。
+---
 
-### 质量治理和诊断命令
+## 🧠 SDK（编程方式访问）
 
-#### `logiclens quality`
-
-审计低置信度关系和冲突 producer。
-
-```bash
-logiclens quality
-logiclens quality --min-confidence 0.7 --limit 50
-```
-
-| Option | 说明 |
-| --- | --- |
-| `--min-confidence <number>` | 低于该置信度的证据会出现在低置信度审计中。 |
-| `--limit <number>` | 最大审计行数。 |
-
-拒绝误报证据：
-
-```bash
-logiclens quality --reject-evidence <evidence-id> --reason "false positive"
-```
-
-注册 alias override：
-
-```bash
-logiclens quality --alias order-api --target-repo service-a --reason "internal service alias"
-```
-
-| Option | 说明 |
-| --- | --- |
-| `--reject-evidence <id>` | 将某条证据标记为 rejected。 |
-| `--reason <text>` | 拒绝或 alias override 的原因。 |
-| `--alias <alias>` | 要映射到仓库的别名。 |
-| `--target-repo <name>` | alias 指向的仓库名。 |
-
-#### `logiclens quality contracts`
-
-审计契约质量规则。
-
-```bash
-logiclens quality contracts
-```
-
-#### `logiclens frameworks`
-
-打印每个仓库检测到的框架和启用的 extractor。
-
-```bash
-logiclens frameworks
-```
-
-当契约提取结果不符合预期时，可以用它检查框架探测器或 extractor 是否启用。
-
-#### `logiclens plugins`
-
-列出已配置插件和注册的扩展钩子。
-
-```bash
-logiclens plugins
-```
-
-## SDK 使用
-
-LogicLens 从 package root 暴露 Node.js ESM SDK。
+LogicLens 提供 Node.js SDK，用于构建自动化系统与 AI 工具链。
 
 ```ts
 import { createLogicLens } from "logiclens";
@@ -537,85 +250,10 @@ try {
 }
 ```
 
-### 使用自定义配置创建 client
-
-```ts
-import { createLogicLens } from "logiclens";
-
-const client = await createLogicLens({
-  cwd: "/absolute/path/to/workspace",
-  config: {
-    systemName: "demo",
-    repos: [{ name: "service-a", path: "../service-a" }],
-    plugins: [],
-    frameworks: { include: [], exclude: [] },
-    include: ["**/*.ts", "**/*.md"],
-    exclude: ["**/node_modules/**", "**/.git/**"],
-    graph: { provider: "kuzu", path: ".logiclens/graph" },
-    llm: {
-      provider: "openai",
-      model: "gpt-4.1-mini",
-      maxSourceCharsPerNode: 6000,
-      retry: { maxRetries: 2, initialDelayMs: 500, maxDelayMs: 8000, jitterRatio: 0.2, timeoutMs: 60000 },
-      budget: {},
-      rateLimit: { minDelayMs: 0 }
-    },
-    embedding: {
-      provider: "openai",
-      model: "text-embedding-3-small",
-      level: "off",
-      batchSize: 64,
-      concurrency: 2,
-      retry: { maxRetries: 2, initialDelayMs: 500, maxDelayMs: 8000, jitterRatio: 0.2, timeoutMs: 60000 },
-      budget: {},
-      rateLimit: { minDelayMs: 0 }
-    },
-    semantic: {
-      provider: "json",
-      jsonPath: ".logiclens/semantic-index.json",
-      chroma: { mode: "local", url: "http://localhost:8000", collection: "logiclens" }
-    },
-    mcp: { allowUnsafeCypher: false, logCalls: false },
-    watch: {
-      enabled: true,
-      mode: "auto",
-      debounceMs: 2000,
-      maxRoots: 256,
-      maxLinuxDirs: 20000,
-      syncConcurrency: 1,
-      catchUp: "background"
-    },
-    indexing: {
-      concurrency: 4,
-      summarizeChangedOnly: true,
-      maxFilesPerRun: 5000,
-      batchSize: 0,
-      llmSummaryLevel: "off"
-    }
-  }
-});
-
-await client.close();
-```
-
-### 常见 SDK 调用
-
-```ts
-await client.addRepos("../services", { index: true, changedOnly: true });
-await client.index({ repo: "service-a", changedOnly: true, writeMode: "merge" });
-await client.rebuildRelations({ full: true });
-
-const deps = await client.dependencies({ type: "api", limit: 100 });
-const unresolved = await client.unresolvedEvidence({ limit: 50 });
-const retrieval = await client.retrieve("订单创建逻辑在哪里实现？");
-const answer = await client.ask("哪些服务消费了 OrderCreatedEvent？");
-const rows = await client.query("MATCH (r:Repo) RETURN r.name AS name LIMIT 10");
-```
-
 ### SDK 方法参考
 
 | 方法 | 用途 |
-| --- | --- |
+|---|---|
 | `client.init()` | 初始化 `.logiclens` 目录和默认配置。 |
 | `client.uninit()` | 删除工作区状态，并尽量停止记录的 MCP 进程。 |
 | `client.addRepo(path, options)` | 添加单个仓库。 |
@@ -638,7 +276,41 @@ const rows = await client.query("MATCH (r:Repo) RETURN r.name AS name LIMIT 10")
 | `client.getWatchStatus()` | 查看 watcher、catch-up、pending files 和队列状态。 |
 | `client.close()` | 关闭 watcher、队列和图数据库资源。 |
 
-### SDK 插件
+---
+
+## ⚙️ 配置
+
+`logiclens init` 会创建 `.logiclens/config.yaml`。这个文件是仓库列表、索引行为、图存储、语义检索、LLM provider、MCP 安全策略和 watcher 行为的事实来源。
+
+### 配置模板
+
+默认情况下，`logiclens init` 会生成一个极简且干净的配置文件：
+
+```yaml
+systemName: default-system
+
+repos:
+  - name: service-a
+    path: ../service-a
+  - name: service-b
+    path: ../service-b
+```
+
+### 高级配置
+
+LogicLens 支持针对性能调优、索引设置、自定义 LLM 重试、以及语义存储提供商等多种高级配置项。
+
+完整支持的参数列表及其默认值，请参阅 [Configuration Guide](docs/configuration.md)。
+
+### 成本和隐私说明
+
+索引、图写入、`stats`、`deps`、`contracts`、`trace`、`impact` 和原始图查询默认都是本地图操作，不需要 LLM provider。
+
+`ask` 会先做图检索，再调用配置的 LLM 生成答案。可选的 LLM 摘要和 embedding 也可能把选中的源码或文档文本发送给你配置的 provider。如果你希望索引过程完全本地化，请保持 `embedding.level: off` 和 `indexing.llmSummaryLevel: off`。
+
+---
+
+## 🧩 SDK 插件
 
 ```ts
 import { createLogicLens, definePlugin } from "logiclens";
@@ -665,126 +337,19 @@ await client.close();
 
 插件可以注册：
 
-- `registerParser(parser)`：自定义语言解析。
-- `registerFrameworkDetector(detector)`：仓库级框架探测。
-- `registerContractExtractor(extractor)`：提取 API、event、package、DTO、schema、enum、config 或自定义契约证据。
-- `registerCliCommand(registerFn)`：扩展 CLI 命令。
+- `registerParser(parser)` — 自定义语言解析。
+- `registerFrameworkDetector(detector)` — 仓库级框架探测。
+- `registerContractExtractor(extractor)` — 提取 API、event、package、DTO、schema、enum、config 或自定义契约证据。
+- `registerCliCommand(registerFn)` — 扩展 CLI 命令。
 
-## MCP 使用
+---
 
-LogicLens 可以作为 stdio Model Context Protocol Server 运行。你可以通过自动配置（推荐）或手动配置进行注册。
-
-### 自动配置（推荐）
-
-你可以使用交互式安装程序，在多个 AI 代理（Claude Code、Cursor、Codex CLI、opencode、Hermes Agent、Gemini CLI、Antigravity IDE、Kiro）中自动注册 LogicLens MCP 服务：
-
-```bash
-logiclens install
-```
-
-如果需要非交互式静默安装（默认安装到全局，并自动授予 Claude 权限）：
-```bash
-# 自动检测本地已安装的 AI 代理并进行全局配置
-logiclens install -y
-
-# 仅在当前项目中为 Claude Code 和 Cursor 进行本地配置
-logiclens install -y -t claude,cursor --location local
-```
-
-卸载已注册的配置：
-```bash
-# 交互式卸载
-logiclens uninstall
-
-# 静默全局卸载
-logiclens uninstall -y
-```
-
-### 手动配置
-
-手动在标准输入输出（stdio）上启动 MCP 服务：
-
-```bash
-logiclens mcp
-```
-
-MCP 客户端配置示例：
-
-```json
-{
-  "mcpServers": {
-    "logiclens": {
-      "command": "logiclens",
-      "args": ["mcp"],
-      "cwd": "/absolute/path/to/your/logiclens-workspace"
-    }
-  }
-}
-```
-
-从源码仓库运行：
-
-```json
-{
-  "mcpServers": {
-    "logiclens": {
-      "command": "node",
-      "args": ["/absolute/path/to/logiclens/bin/logiclens.js", "mcp"],
-      "cwd": "/absolute/path/to/your/logiclens-workspace"
-    }
-  }
-}
-```
-
-### MCP Tools
-
-| Tool | 参数 | 说明 |
-| --- | --- | --- |
-| `logiclens_get_stats` | 无 | 以 JSON 返回图统计信息。 |
-| `logiclens_get_watch_status` | 无 | 返回 watcher、启动补索引、pending file 和索引队列状态。 |
-| `logiclens_list_dependencies` | `strength?`、`type?`、`limit?` | 列出跨仓库依赖。 |
-| `logiclens_list_contracts` | `kind?`、`limit?` | 列出识别到的契约及 producer/consumer/shared 数量。 |
-| `logiclens_trace` | `target` | 追踪契约如 `api:/v1/users`，或实体如 `OrderService`。 |
-| `logiclens_impact_analysis` | `target` | 返回某个符号、实体或契约的下游影响上下文。 |
-| `logiclens_ask_question` | `question` | 为自然语言问题检索结构化代码上下文。 |
-| `logiclens_query_cypher` | `cypher` | 执行 Kuzu Cypher。`mcp.allowUnsafeCypher` 为 false 时默认只读。 |
-
-### MCP 示例
-
-你可以让 AI 助手执行：
-
-```text
-Use logiclens_get_stats to summarize the indexed workspace.
-```
-
-```text
-Use logiclens_trace with target "event:OrderCreatedEvent" and tell me which repositories produce or consume it.
-```
-
-```text
-Use logiclens_impact_analysis for "api:/api/order/:id" and produce a migration checklist.
-```
-
-```text
-Use logiclens_list_dependencies with type "api" and limit 50, then identify risky cross-repository API dependencies.
-```
-
-### 新鲜度行为
-
-MCP Server 启动时，LogicLens 会启动 watcher 和后台 changed-file catch-up。普通工具响应会包含新鲜度元数据，客户端可以判断索引是否可能滞后，例如：
-
-- 启动补索引仍在运行。
-- 补索引失败。
-- watcher 已降级。
-- 文件存在待处理变更。
-- 索引队列正在运行或存在待执行任务。
-
-## 当前语言和框架支持
+## 👍 当前语言和框架支持
 
 当前 LogicLens 会扫描和解析：
 
 | 类型 | 扩展名 |
-| --- | --- |
+|---|---|
 | TypeScript | `.ts`、`.tsx` |
 | JavaScript | `.js`、`.jsx` |
 | Vue | `.vue` |
@@ -797,7 +362,7 @@ MCP Server 启动时，LogicLens 会启动 watcher 和后台 changed-file catch-
 内置框架和契约提取当前主要覆盖：
 
 | 类型 | 当前覆盖 |
-| --- | --- |
+|---|---|
 | JavaScript / TypeScript | `package.json`、import、常见 HTTP client 请求模式、静态可见的生成客户端证据。 |
 | Java | Maven / Gradle 元数据、package facts、Spring MVC 注解和 import。 |
 | Python | 通用 Python 解析，以及基于依赖元数据的 FastAPI 探测。 |
@@ -807,9 +372,9 @@ MCP Server 启动时，LogicLens 会启动 watcher 和后台 changed-file catch-
 
 后续会逐步支持更多语言、框架和生成客户端模式。对于项目内部特有约定，推荐通过插件扩展，而不是等待内置支持。
 
-## 当前局限
+### 当前局限
 
-- LogicLens 仍处于 beta 阶段，图结构、提取器行为和插件 API 仍可能变化。
+- LogicLens 仍处于 Beta 阶段，图结构、提取器行为和插件 API 仍可能变化。
 - 静态分析偏保守。动态 API path、反射、运行时依赖注入、生成代码和框架魔法可能提取不完整，或被报告为 unresolved evidence。
 - 内置框架支持是聚焦的。未支持框架仍可作为源码解析，但契约提取可能较浅，直到添加对应 detector 或 extractor。
 - 跨仓库依赖质量依赖仓库名、包元数据、import、alias 和契约证据。
@@ -817,41 +382,28 @@ MCP Server 启动时，LogicLens 会启动 watcher 和后台 changed-file catch-
 - LLM 答案取决于检索上下文和 provider 行为。需要可审计证据时，优先使用 `trace`、`deps`、`contracts` 和 `impact`。
 - MCP Server 拥有本地工作区访问能力。只应连接到你信任的客户端。
 
-## 开发
-
-```bash
-npm install
-npm run build
-npm run typecheck
-npm test
-```
-
-常用开发命令：
-
-```bash
-npm run dev -- --help
-npm run bench:scale
-npm run audit:prod
-```
-
-发布包校验：
-
-```bash
-npm pack --dry-run --ignore-scripts
-```
+---
 
 ## 贡献
 
 非常欢迎并期待社区的贡献！无论是提交 Bug 报告、优化文档，还是开发新功能、增加语言和框架支持，你的帮助对我们都非常重要。
 
-有关如何开始、设置本地开发环境以及提交 Pull Request 的详细步骤，请参阅英文版 [Contributing Guide](CONTRIBUTING.md)。
+**快速开始：**
+
+1. Fork 本仓库
+2. 创建你的特性分支：`git checkout -b feature/my-feature`
+3. 提交更改：`git commit -m 'feat: add my feature'`
+4. 推送到分支：`git push origin feature/my-feature`
+5. 发起 Pull Request
+
+有关更详细的步骤，请参阅 [Contributing Guide](CONTRIBUTING.md)。
 
 ## 安全
 
 LogicLens 会索引本地源码，并可能把图上下文暴露给 CLI 用户、SDK 调用方和 MCP 客户端。连接 MCP Server 到第三方工具，或启用原始 Cypher 写入时，请特别谨慎。
 
-安全问题报告方式见 `SECURITY.md`。
+安全问题报告方式见 [SECURITY.md](SECURITY.md)。
 
 ## License
 
-MIT，见 `LICENSE`。
+MIT，见 [LICENSE](LICENSE)。

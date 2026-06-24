@@ -1,0 +1,409 @@
+# LogicLens
+
+<center>
+
+[![npm version](https://img.shields.io/npm/v/logiclens.svg)](https://www.npmjs.com/package/logiclens)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+</center>
+
+**A local-first Code Graph system that provides AI Coding Agents with cross-repository, system-level understanding.**
+
+**English** · [中文](README-ZH.md)
+
+> [!IMPORTANT]
+> **LogicLens is currently in active Beta development.** While the core indexing engine, CLI, SDK, watcher, and MCP server are fully functional, language and framework coverage is incrementally expanding. Expect occasional changes as APIs and schema are refined.
+
+---
+
+## Table of Contents
+
+- [⚡ Quick Start](#-quick-start)
+- [🧠 Why LogicLens](#-why-logiclens)
+- [🧬 Core Concept: Code Graph](#-core-concept-code-graph)
+- [🔍 CLI Usage Examples](#-cli-usage-examples)
+- [🤖 MCP Integration (AI Coding Agents)](#-mcp-integration-ai-coding-agents)
+- [🧠 SDK (Programmatic Access)](#-sdk-programmatic-access)
+- [⚙️ Configuration](#️-configuration)
+- [🧩 SDK Plugins](#-sdk-plugins)
+- [👍 Current Language and Framework Support](#-current-language-and-framework-support)
+- [Contributing](#contributing)
+- [Security](#security)
+- [License](#license)
+
+---
+
+## ⚡ Quick Start
+
+### 1. Install LogicLens
+
+```bash
+npm install -g logiclens
+logiclens --version
+```
+
+### 2. Initialize Workspace
+
+Initialize the workspace. This workspace can be a parent directory containing multiple repositories, or a standalone directory that references other repository paths.
+
+```bash
+logiclens init
+
+# Add first-level Git repositories under a directory
+logiclens add-repos ../services
+# Add a single repository
+logiclens add-repo ../service-a --name service-a
+
+logiclens index # Index all repositories
+```
+
+### 3. Ask Questions Based on Graph Context
+
+```bash
+logiclens ask "Which repositories are involved in the order creation flow?"
+```
+
+Example expected output:
+
+```
+Based on the code graph, the following repositories are involved
+in the order creation flow:
+
+1. service-a — exposes POST /api/order (producer)
+2. service-b — consumes OrderCreatedEvent (consumer)
+3. gateway — routes /api/order to service-a (router)
+```
+
+---
+
+## 🧠 Why LogicLens
+
+Modern software systems are no longer monolithic repositories — they consist of multiple parts:
+
+- Services
+- Frontend applications
+- SDKs / Clients
+- Event systems
+- Shared packages
+
+But most tools still operate at file-level understanding and single-repository perspective, leading to fundamental problems:
+
+- Change an API without knowing who uses it
+- Change an event without knowing the impact scope
+- AI Agents cannot understand the overall system structure
+
+### LogicLens vs Traditional Tools
+
+| | Traditional Tools | LogicLens |
+|---|---|---|
+| Scope | Single repository | Cross-repository workspace |
+| Granularity | File-level | Symbol / Contract-level |
+| Dependency Discovery | Manual grep | Automatic graph traversal |
+| AI Friendly | ❌ | ✅ MCP native integration |
+| Change Impact | Guess from experience | Graph path tracing |
+
+---
+
+## 🧬 Core Concept: Code Graph
+
+LogicLens automatically analyzes your multi-repository system and models the entire code system as a **graph structure**:
+
+### 📦 Nodes
+
+- Repository
+- File
+- Symbol
+- Contract — API / Event / DTO / Schema / Package and other contractual relationships
+
+### 🔗 Edges
+
+- Cross-repository dependency graph
+- Symbol-level call chains
+- Produce / Consume relationships
+- Service connection relationships (depends-on)
+- Change impact paths (impact)
+
+### 🚀 Capabilities
+
+- **Local-first**: Builds code knowledge graph on Kuzu graph database, stored locally in `.logiclens/graph` by default — data stays entirely on your machine.
+- **Cross-repository workspace**: One workspace can point to multiple repositories, building a unified graph covering the entire code system.
+- **Static code intelligence**: Extracts symbols, imports, calls, documentation, language facts, and framework signals as graph nodes and edges.
+- **Contract model**: Normalizes cross-repository evidence into contract types like `api`, `event`, `package`, `dto`, `schema`, `enum`, `config`, enriching graph semantics.
+- **Dependency views**: Displays inter-repository dependency strength, type, evidence location, rules, and resolution information.
+- **Trace and impact analysis**: Starting from contracts or symbols, follows graph paths to return producers, consumers, related code, calls, documentation, and recommended files to inspect.
+- **CLI / SDK / MCP**: Supports manual graph queries, Node.js integration, and AI coding assistant connectivity.
+- **Quality governance**: Audits low-confidence evidence, rejects false positives, registers alias overrides to ensure graph accuracy.
+- **Optional LLM / embedding layer**: When needed, integrates OpenAI-compatible chat and embedding providers to enhance graph semantics.
+- **Plugin API**: Registers custom parsers, framework detectors, contract extractors, and CLI commands to extend graph coverage.
+
+**Upgrade from "code search" to "graph traversal + reasoning".**
+
+### 🏗️ System Architecture
+
+```text
+Repositories
+        ↓
+Parser & Extractor
+        ↓
+Contract Model (API / Event / Schema / Package)
+        ↓
+Code Graph Builder
+        ↓
+Local Graph Database (Kuzu)
+        ↓
+┌────────────┬────────────┬────────────┐
+│   CLI      │    SDK     │    MCP     │
+└────────────┴────────────┴────────────┘
+                ↓
+        AI Coding Agents
+```
+
+---
+
+## 🔍 CLI Usage Examples
+
+```bash
+logiclens stats
+logiclens deps --limit 20
+logiclens contracts --kind api
+```
+
+### 💥 Contract Tracing
+
+```bash
+logiclens trace api:/api/order/:id
+logiclens trace event:OrderCreatedEvent
+```
+
+### 🔎 Impact Analysis
+
+```bash
+logiclens impact OrderCreatedEvent
+logiclens impact api:/api/order/:id
+```
+
+---
+
+## 🤖 MCP Integration (AI Coding Agents)
+
+LogicLens exposes the code graph to AI Agents through **Model Context Protocol (MCP)**.
+
+### One-Click Installation
+
+```bash
+logiclens install
+```
+
+You can use the interactive installer to automatically register the LogicLens MCP server in multiple AI agents (Claude Code, Cursor, Codex CLI, opencode, Hermes Agent, Gemini CLI, Antigravity IDE, Kiro).
+
+### MCP Tools
+
+| Tool Name | Description |
+|---|---|
+| `logiclens_get_stats` | Get summary statistics of the graph database (repository count, file count, code node count, call count, etc.) |
+| `logiclens_get_watch_status` | Get file watcher and startup catch-up indexing status |
+| `logiclens_list_dependencies` | List cross-repository dependencies with evidence (filterable by strength/type) |
+| `logiclens_list_contracts` | List identified contracts with producer/consumer/shared counts (filterable by kind) |
+| `logiclens_trace` | Trace a specific contract or entity, finding all producers, consumers, and references |
+| `logiclens_impact_analysis` | Evaluate downstream impact scope when modifying code symbols or contracts |
+| `logiclens_ask_question` | RAG-based Q&A, retrieving structured context from code symbols, documentation, contracts, dependencies, etc. |
+| `logiclens_query_cypher` | Execute raw Cypher queries on the Kuzu graph database (read-only by default) |
+
+### MCP Configuration Example
+
+```json
+{
+  "mcpServers": {
+    "logiclens": {
+      "command": "logiclens",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+---
+
+## 🧠 SDK (Programmatic Access)
+
+LogicLens provides a Node.js SDK for building automation systems and AI toolchains.
+
+```ts
+import { createLogicLens } from "logiclens";
+
+const client = await createLogicLens({ cwd: process.cwd() });
+
+try {
+  await client.init();
+  await client.addRepo("../service-a", { name: "service-a" });
+  await client.index({ changedOnly: false, writeMode: "auto" });
+
+  const stats = await client.stats();
+  const dependencies = await client.dependencies({ strength: "strong", limit: 20 });
+  const contracts = await client.contracts({ kind: "api", limit: 20 });
+  const trace = await client.trace("api:/api/order/:id");
+  const impact = await client.impact("OrderCreatedEvent");
+
+  console.log({ stats, dependencies, contracts, trace, impact });
+} finally {
+  await client.close();
+}
+```
+
+### SDK Method Reference
+
+| Method | Purpose |
+|---|---|
+| `client.init()` | Initialize `.logiclens` directory and default configuration. |
+| `client.uninit()` | Remove workspace state and try to stop recorded MCP processes. |
+| `client.addRepo(path, options)` | Add a single repository. |
+| `client.addRepos(directory, options)` | Discover and add first-level Git repositories. |
+| `client.ensurePlugins()` | Load configured and inline plugins. |
+| `client.index(options)` | Index repositories. |
+| `client.getIndexQueueStatus()` | Check SDK/MCP indexing queue status. |
+| `client.rebuildRelations(options)` | Rebuild dependency edges from indexed evidence. |
+| `client.stats()` | Return graph statistics. |
+| `client.dependencies(options)` | List cross-repository dependencies. |
+| `client.unresolvedEvidence(options)` | List extraction points that cannot be reduced to stable contract keys. |
+| `client.contracts(options)` | List identified contracts. |
+| `client.trace(target)` | Trace a contract or entity. |
+| `client.impact(target)` | Analyze downstream impact scope. |
+| `client.retrieve(question)` | Return structured retrieval context without generating an answer. |
+| `client.ask(question)` | Generate an answer based on retrieval context. |
+| `client.query(cypher, params)` | Execute a Kuzu query. |
+| `client.watch(options)` | Enable automatic changed-file indexing. |
+| `client.unwatch()` | Stop the watcher. |
+| `client.getWatchStatus()` | Check watcher, catch-up, pending files, and queue status. |
+| `client.close()` | Close watcher, queue, and graph database resources. |
+
+---
+
+## ⚙️ Configuration
+
+`logiclens init` creates `.logiclens/config.yaml`. This file is the source of truth for repository lists, indexing behavior, graph storage, semantic retrieval, LLM providers, MCP safety policies, and watcher behavior.
+
+### Configuration Template
+
+By default, `logiclens init` generates a minimal, clean configuration file:
+
+```yaml
+systemName: default-system
+
+repos:
+  - name: service-a
+    path: ../service-a
+  - name: service-b
+    path: ../service-b
+```
+
+### Advanced Configuration
+
+LogicLens supports various advanced configuration options for performance tuning, indexing settings, custom LLM retries, and semantic storage providers.
+
+For the complete list of supported parameters and their default values, see the [Configuration Guide](docs/configuration.md).
+
+### Cost and Privacy Notes
+
+Indexing, graph writes, `stats`, `deps`, `contracts`, `trace`, `impact`, and raw graph queries are all local graph operations by default, not requiring an LLM provider.
+
+`ask` performs graph retrieval first, then calls the configured LLM to generate an answer. Optional LLM summaries and embeddings may also send selected source code or document text to your configured provider. If you want the indexing process to be completely local, keep `embedding.level: off` and `indexing.llmSummaryLevel: off`.
+
+---
+
+## 🧩 SDK Plugins
+
+```ts
+import { createLogicLens, definePlugin } from "logiclens";
+
+const plugin = definePlugin({
+  name: "my-plugin",
+  version: "1.0.0",
+  pluginApiVersion: "1",
+  setup(context) {
+    context.registerCliCommand((program) => {
+      program.command("hello").action(() => console.log("hello from plugin"));
+    });
+  }
+});
+
+const client = await createLogicLens({
+  cwd: process.cwd(),
+  plugins: [plugin]
+});
+
+await client.ensurePlugins();
+await client.close();
+```
+
+Plugins can register:
+
+- `registerParser(parser)` — Custom language parsing.
+- `registerFrameworkDetector(detector)` — Repository-level framework detection.
+- `registerContractExtractor(extractor)` — Extract API, event, package, DTO, schema, enum, config, or custom contract evidence.
+- `registerCliCommand(registerFn)` — Extend CLI commands.
+
+---
+
+## 👍 Current Language and Framework Support
+
+LogicLens currently scans and parses:
+
+| Type | Extensions |
+|---|---|
+| TypeScript | `.ts`, `.tsx` |
+| JavaScript | `.js`, `.jsx` |
+| Vue | `.vue` |
+| Java | `.java` |
+| Python | `.py` |
+| Go | `.go` |
+| Markdown / MDX | `.md`, `.mdx` |
+| Config files | `.yml`, `.yaml`, `.toml`, `.properties` |
+
+Built-in framework and contract extraction currently mainly covers:
+
+| Type | Current Coverage |
+|---|---|
+| JavaScript / TypeScript | `package.json`, imports, common HTTP client request patterns, statically visible generated client evidence. |
+| Java | Maven/Gradle metadata, package facts, Spring MVC annotations and imports. |
+| Python | Generic Python parsing, and FastAPI detection from dependency metadata. |
+| Go | Go modules, generic Go parsing, Gin detection. |
+| Documentation | Markdown/MDX sections that can be linked to code and impact output. |
+| Config | YAML, TOML, properties, and environment/config-style contract evidence. |
+
+More languages, frameworks, and generated client patterns will be supported over time. For project-specific conventions, using plugins is recommended over waiting for built-in support.
+
+### Current Limitations
+
+- LogicLens is still in Beta — graph structure, extractor behavior, and plugin APIs may change.
+- Static analysis is conservative. Dynamic API paths, reflection, runtime dependency injection, generated code, and framework magic may be incompletely extracted, or reported as unresolved evidence.
+- Built-in framework support is focused. Unsupported frameworks can still be parsed as source code, but contract extraction may be shallow until the corresponding detector or extractor is added.
+- Cross-repository dependency quality depends on repository names, package metadata, imports, aliases, and contract evidence.
+- Large workspaces may need `--changed-only`, `--batch-size`, `--max-files`, watcher tuning, or Chroma semantic storage.
+- LLM answers depend on retrieval context and provider behavior. For auditable evidence, prefer using `trace`, `deps`, `contracts`, and `impact`.
+- MCP Server has local workspace access capability. Only connect it to clients you trust.
+
+---
+
+## Contributing
+
+Contributions are very welcome and appreciated! Whether submitting bug reports, optimizing documentation, or developing new features and adding language/framework support, your help is very important to us.
+
+**Quick start:**
+
+1. Fork this repository
+2. Create your feature branch: `git checkout -b feature/my-feature`
+3. Commit your changes: `git commit -m 'feat: add my feature'`
+4. Push to the branch: `git push origin feature/my-feature`
+5. Submit a Pull Request
+
+For more detailed steps, see the [Contributing Guide](CONTRIBUTING.md).
+
+## Security
+
+LogicLens indexes local source code and may expose graph context to CLI users, SDK callers, and MCP clients. Be especially cautious when connecting the MCP Server to third-party tools or enabling raw Cypher writes.
+
+Security issue reporting instructions can be found in [SECURITY.md](SECURITY.md).
+
+## License
+
+MIT, see [LICENSE](LICENSE).

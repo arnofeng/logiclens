@@ -22,35 +22,6 @@ plugins:
     options:
       team: platform
 
-frameworks:
-  include: []
-  exclude: []
-
-include:
-  - "**/*.ts"
-  - "**/*.tsx"
-  - "**/*.js"
-  - "**/*.jsx"
-  - "**/*.java"
-  - "**/*.py"
-  - "**/*.go"
-  - "**/*.md"
-  - "**/*.mdx"
-  - "**/*.yml"
-  - "**/*.yaml"
-  - "**/*.toml"
-  - "**/*.properties"
-  - "**/*.vue"
-
-exclude:
-  - "**/node_modules/**"
-  - "**/dist/**"
-  - "**/build/**"
-  - "**/.next/**"
-  - "**/coverage/**"
-  - "**/target/**"
-  - "**/.git/**"
-
 graph:
   provider: kuzu
   path: .logiclens/graph
@@ -94,17 +65,7 @@ semantic:
     collection: logiclens
 
 mcp:
-  allowUnsafeCypher: false
   logCalls: false
-
-watch:
-  enabled: true
-  mode: auto
-  debounceMs: 2000
-  maxRoots: 256
-  maxLinuxDirs: 20000
-  syncConcurrency: 1
-  catchUp: background
 
 indexing:
   concurrency: 4
@@ -121,16 +82,6 @@ indexing:
 - `systemName`: The unique name for this logiclens project system (defaults to `"default-system"`).
 - `repos`: List of repositories to index and analyze. Each repo contains a `name` and relative/absolute `path`.
 - `plugins`: List of custom plugin configurations.
-
-### File Matching
-
-- `include`: Glob patterns of files to include in parsing.
-- `exclude`: Glob patterns of files or directories to ignore.
-
-### Frameworks
-
-- `frameworks.include`: Specific frameworks to explicitly enable.
-- `frameworks.exclude`: Specific frameworks to explicitly ignore.
 
 ### Graph Database (`graph`)
 
@@ -156,14 +107,7 @@ indexing:
 - `semantic.jsonPath`: The path to store the index when using the local JSON-based vector index.
 
 ### MCP Settings (`mcp`)
-
-- `mcp.allowUnsafeCypher`: If set to `true`, permits write/mutate queries in LLM Cypher actions.
 - `mcp.logCalls`: Logs MCP tool invocations.
-
-### Watcher (`watch`)
-
-- `watch.enabled`: Enables real-time file system watching and hot-reloads.
-- `watch.mode`: The watching path aggregation strategy (`auto`, `repo-roots`, `common-root`, `off`).
 
 ### Indexing (`indexing`)
 
