@@ -162,6 +162,8 @@ Local Graph Database (Kuzu)
 
 ## 🔍 CLI Usage Examples
 
+> For the full list of CLI commands and their options, see the [CLI Command Reference](docs/cli-reference.md).
+
 ```bash
 logiclens stats
 logiclens deps --limit 20
