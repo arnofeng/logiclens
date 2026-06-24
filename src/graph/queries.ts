@@ -1,4 +1,5 @@
-import type { GraphDB } from "./db.js";
+import type { GraphDB, ContractSummaryRow } from "./db.js";
+export type { ContractSummaryRow } from "./db.js";
 import { confidenceBand, type ConfidenceBand } from "../confidence.js";
 import { canonicalContractKey } from "../extractors/crossRepoContracts.js";
 import type { ContractKind, ContractRole } from "../parsers/types.js";
@@ -92,24 +93,6 @@ export type UnresolvedEvidenceRow = {
   rule: string;
   reason: string;
   resolution: "dynamic-unresolved";
-};
-
-/**
- * Summary statistics for a single contract, showing its producer/consumer distribution.
- */
-export type ContractSummaryRow = {
-  /** The contract kind (e.g. 'api', 'event', 'package') */
-  kind: string;
-  /** The canonical key of the contract */
-  key: string;
-  /** The human-readable name of the contract */
-  name: string;
-  /** Number of unique producers of this contract */
-  producers: number;
-  /** Number of unique consumers of this contract */
-  consumers: number;
-  /** Whether the contract is shared across repositories (1 if yes, 0 if no) */
-  shared: number;
 };
 
 /**
@@ -248,20 +231,7 @@ export async function listDependencies(
 }
 
 export async function listContracts(db: GraphDB, options: { limit?: number; kind?: ContractKind } = {}): Promise<ContractSummaryRow[]> {
-  const limit = options.limit ?? 100;
-  const kindFilter = options.kind ? "WHERE c.kind = $kind" : "";
-  return db.query<ContractSummaryRow>(
-    `MATCH (c:Contract)
-     ${kindFilter}
-     RETURN c.kind AS kind, c.key AS key, c.name AS name,
-       COUNT { MATCH (:Repo)-[p:PRODUCES]->(c) WHERE p.active IS NULL OR p.active = true }
-       + COUNT { MATCH (:Repo)-[o:OWNS_PACKAGE]->(c) WHERE o.active IS NULL OR o.active = true } AS producers,
-       COUNT { MATCH (:Repo)-[u:CONSUMES]->(c) WHERE u.active IS NULL OR u.active = true } AS consumers,
-       COUNT { MATCH (:Repo)-[s:SHARES_CONTRACT]->(c) WHERE s.active IS NULL OR s.active = true } AS shared
-     ORDER BY c.kind, c.key
-     LIMIT ${limit};`,
-    options.kind ? { kind: options.kind } : undefined
-  );
+  return db.listContracts(options);
 }
 
 async function traceContractRole(db: GraphDB, contractIds: string[], rel: string, role: ContractRole): Promise<ContractTraceRow[]> {

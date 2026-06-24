@@ -71,8 +71,11 @@ export const configSchema = z.object({
   include: z.array(z.string()).default(defaultInclude),
   exclude: z.array(z.string()).default(defaultExclude),
   graph: z.object({
-    provider: z.literal("kuzu").default("kuzu"),
-    path: z.string().default(".logiclens/graph")
+    provider: z.enum(["kuzu", "neo4j"]).default("kuzu"),
+    path: z.string().default(".logiclens/graph"),
+    url: z.string().optional(),
+    username: optionalSecretString,
+    password: optionalSecretString
   }).default({ provider: "kuzu", path: ".logiclens/graph" }),
   llm: z.object({
     provider: z.literal("openai").default("openai"),

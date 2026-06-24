@@ -89,8 +89,18 @@ export function selectGraphWriter(input: {
   batchedFull?: boolean;
   fullCopyBulk?: boolean;
   graphIsEmpty?: boolean;
+  provider?: string;
 }): GraphWriterSelection {
-  const { writeMode, changedOnly, batchedFull, fullCopyBulk, graphIsEmpty } = input;
+  const { writeMode, changedOnly, batchedFull, fullCopyBulk, graphIsEmpty, provider } = input;
+  // Non-Kuzu providers (e.g. Neo4j) don't support COPY FROM / LOAD FROM bulk
+  // operations, so force merge mode regardless of writeMode.
+  if (provider && provider !== "kuzu") {
+    return {
+      mode: "merge",
+      fast: false,
+      fallbackToMerge: false
+    };
+  }
   if (batchedFull) {
     return {
       mode: graphIsEmpty ? "bulk-copy" : "append-copy",

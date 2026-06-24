@@ -3,7 +3,7 @@ import type { GraphDB } from "./db.js";
 export type GraphProvider = "kuzu" | "neo4j";
 
 export interface GraphDBFactory {
-  open(config: { path?: string; url?: string }): Promise<GraphDB>;
+  open(config: { path?: string; url?: string; username?: string; password?: string }): Promise<GraphDB>;
 }
 
 const factories = new Map<string, GraphDBFactory>();
@@ -13,21 +13,21 @@ export function registerGraphProvider(provider: string, factory: GraphDBFactory)
 }
 
 /**
- * Lazily ensures built-in providers are registered.
- * This avoids requiring callers to manage import ordering for the
- * KuzuDB registration side-effect module.
+ * Lazily ensures the requested provider is registered.
+ * Only imports the module for the given provider, avoiding unnecessary
+ * startup cost (e.g. loading neo4j-driver when only kuzu is needed).
  */
-async function ensureBuiltinProviders(): Promise<void> {
-  if (!factories.has("kuzu")) {
-    await import("./kuzu/register.js");
-  }
+async function ensureProvider(provider: string): Promise<void> {
+  if (factories.has(provider)) return;
+  if (provider === "kuzu") await import("./kuzu/register.js");
+  else if (provider === "neo4j") await import("./neo4j/register.js");
 }
 
 export async function createGraphDB(
   provider: string,
-  config: { path?: string; url?: string }
+  config: { path?: string; url?: string; username?: string; password?: string }
 ): Promise<GraphDB> {
-  await ensureBuiltinProviders();
+  await ensureProvider(provider);
   const factory = factories.get(provider);
   if (!factory) {
     throw new Error(`Unknown graph provider: ${provider}. Registered: ${[...factories.keys()]}`);

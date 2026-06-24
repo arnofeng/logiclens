@@ -150,7 +150,7 @@ export class LogicLensClient {
     }
     if (!this.dbInstance) {
       const graphPath = path.resolve(this.cwd, this.config.graph.path);
-      this.dbInstance = await createGraphDB(this.config.graph.provider, { path: graphPath });
+      this.dbInstance = await createGraphDB(this.config.graph.provider, { path: graphPath, url: this.config.graph.url, username: this.config.graph.username, password: this.config.graph.password });
       await this.dbInstance.initSchema(this.config.systemName);
     }
     return this.dbInstance;

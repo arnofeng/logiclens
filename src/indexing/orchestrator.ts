@@ -295,7 +295,7 @@ export async function runBatchedFullIndex(input: {
         parsedFiles,
         label: `batch ${batchNumber}/${repoBatches.length}`,
         stageLabel: batchLabel,
-        selection: selectGraphWriter({ writeMode: ctx.writeMode, batchedFull: true, graphIsEmpty: graphIsEmpty && batchIndex === 0 })
+        selection: selectGraphWriter({ writeMode: ctx.writeMode, batchedFull: true, graphIsEmpty: graphIsEmpty && batchIndex === 0, provider: ctx.config.graph.provider })
       });
       graphIsEmpty = false;
       const semanticWarning = await runSemanticPipeline({ ctx, batchId, repos: batchRepos, parsedFiles, label: `batch ${batchNumber}/${repoBatches.length}` });
@@ -340,7 +340,7 @@ export async function runFullCopyBulkIndex(input: {
       repos,
       parsedFiles,
       label: "bulk-copy",
-      selection: selectGraphWriter({ writeMode: ctx.writeMode, fullCopyBulk: true })
+      selection: selectGraphWriter({ writeMode: ctx.writeMode, fullCopyBulk: true, provider: ctx.config.graph.provider })
     });
     const semanticWarning = await runSemanticPipeline({ ctx, batchId, repos, parsedFiles, label: "all repos" });
     await commitSucceededRepos({ db, repos, counts: perRepoCounts, batchId, indexedAt, summaryFailures, semanticWarning, graphWrite });
@@ -390,7 +390,7 @@ export async function runPerRepoIndex(input: {
         parsedFiles,
         label: repo.name,
         repoName: repo.name,
-        selection: selectGraphWriter({ writeMode: ctx.writeMode, changedOnly: options.changedOnly })
+        selection: selectGraphWriter({ writeMode: ctx.writeMode, changedOnly: options.changedOnly, provider: ctx.config.graph.provider })
       });
       semanticWarning = await runSemanticPipeline({ ctx, batchId, repos: [repo], parsedFiles, label: repo.name, repoName: repo.name });
     }
