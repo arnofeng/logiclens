@@ -184,11 +184,22 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
     }
   };
 
-  process.on("SIGINT", () => {
+  // Track whether cleanup has already been triggered to avoid double-invocation
+  let cleanupTriggered = false;
+  const triggerCleanup = () => {
+    if (cleanupTriggered) return;
+    cleanupTriggered = true;
     cleanup().catch(() => {}).finally(() => process.exit(0));
-  });
-  process.on("SIGTERM", () => {
-    cleanup().catch(() => {}).finally(() => process.exit(0));
+  };
+
+  process.on("SIGINT", triggerCleanup);
+  process.on("SIGTERM", triggerCleanup);
+
+  // When the MCP host process exits, it closes the stdin pipe (EOF).
+  // StdioServerTransport does not listen for stdin 'end', so we must
+  // detect it ourselves and trigger cleanup.
+  process.stdin.on("end", () => {
+    triggerCleanup();
   });
 
   const server = new McpServer({
