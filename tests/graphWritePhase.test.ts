@@ -78,4 +78,80 @@ describe("graph write phase", () => {
       fallbackToMerge: false
     });
   });
+
+  describe("non-kuzu provider forces merge mode", () => {
+    it("forces merge mode for neo4j provider regardless of writeMode=auto", () => {
+      expect(selectGraphWriter({
+        writeMode: "auto",
+        batchedFull: true,
+        graphIsEmpty: true,
+        provider: "neo4j"
+      })).toEqual({
+        mode: "merge",
+        fast: false,
+        fallbackToMerge: false
+      });
+    });
+
+    it("forces merge mode for neo4j provider with bulk writeMode", () => {
+      expect(selectGraphWriter({
+        writeMode: "bulk",
+        fullCopyBulk: true,
+        provider: "neo4j"
+      })).toEqual({
+        mode: "merge",
+        fast: false,
+        fallbackToMerge: false
+      });
+    });
+
+    it("forces merge mode for neo4j provider with changedOnly", () => {
+      expect(selectGraphWriter({
+        writeMode: "auto",
+        changedOnly: true,
+        provider: "neo4j"
+      })).toEqual({
+        mode: "merge",
+        fast: false,
+        fallbackToMerge: false
+      });
+    });
+
+    it("forces merge mode for any non-kuzu provider name", () => {
+      expect(selectGraphWriter({
+        writeMode: "bulk",
+        fullCopyBulk: true,
+        provider: "custom-db"
+      })).toEqual({
+        mode: "merge",
+        fast: false,
+        fallbackToMerge: false
+      });
+    });
+
+    it("does not force merge mode for kuzu provider", () => {
+      expect(selectGraphWriter({
+        writeMode: "auto",
+        batchedFull: true,
+        graphIsEmpty: true,
+        provider: "kuzu"
+      })).toEqual({
+        mode: "bulk-copy",
+        fast: true,
+        fallbackToMerge: false
+      });
+    });
+
+    it("does not force merge mode when provider is undefined", () => {
+      expect(selectGraphWriter({
+        writeMode: "auto",
+        batchedFull: true,
+        graphIsEmpty: true
+      })).toEqual({
+        mode: "bulk-copy",
+        fast: true,
+        fallbackToMerge: false
+      });
+    });
+  });
 });

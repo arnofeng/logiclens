@@ -120,10 +120,8 @@ describe("indexing phase coverage", () => {
       const db = {
         recoverIncompleteGraphWriteBatches: vi.fn().mockResolvedValue([]),
         beginGraphWriteBatch: vi.fn().mockResolvedValue(undefined),
-        query: vi.fn(async (cypher: string) => {
-          if (cypher.includes("MATCH (r:Repo) RETURN count(r) AS count")) return [{ count: 0 }];
-          throw new Error("bulk write failed");
-        }),
+        repoCount: vi.fn().mockResolvedValue(0),
+        query: vi.fn().mockRejectedValue(new Error("bulk write failed")),
         failGraphWriteBatch: vi.fn().mockResolvedValue(undefined),
         cleanupGraphWriteBatch: vi.fn().mockResolvedValue(undefined),
         upsertIndexState

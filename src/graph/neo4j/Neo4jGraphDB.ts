@@ -35,7 +35,7 @@ import type {
  * Convert a GraphValue to a Neo4j-compatible value.
  * Neo4j driver handles most types natively, but bigint needs conversion.
  */
-function toNeo4jValue(value: GraphValue): unknown {
+export function toNeo4jValue(value: GraphValue): unknown {
   if (typeof value === "bigint") return neo4j.int(value);
   if (Array.isArray(value)) return value.map(toNeo4jValue);
   if (value !== null && typeof value === "object") {
@@ -48,7 +48,7 @@ function toNeo4jValue(value: GraphValue): unknown {
   return value;
 }
 
-function toNeo4jParams(params?: Record<string, GraphValue>): Record<string, unknown> {
+export function toNeo4jParams(params?: Record<string, GraphValue>): Record<string, unknown> {
   if (!params) return {};
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(params)) {
@@ -57,14 +57,14 @@ function toNeo4jParams(params?: Record<string, GraphValue>): Record<string, unkn
   return result;
 }
 
-function toNumber(value: unknown): number {
+export function toNumber(value: unknown): number {
   if (typeof value === "number") return value;
   if (typeof value === "bigint") return Number(value);
   if (neo4j.isInt(value)) return (value as Integer).toNumber();
   return Number(value);
 }
 
-function recordToPlain(record: Neo4jRecord): Record<string, unknown> {
+export function recordToPlain(record: Neo4jRecord): Record<string, unknown> {
   const obj: Record<string, unknown> = {};
   for (const key of record.keys) {
     const strKey = String(key);
@@ -692,7 +692,7 @@ export class Neo4jGraphDB implements GraphDB {
   }
 }
 
-function decodeList(value: string | undefined): string[] {
+export function decodeList(value: string | undefined): string[] {
   if (!value) return [];
   try {
     const parsed = JSON.parse(value);
@@ -702,7 +702,7 @@ function decodeList(value: string | undefined): string[] {
   }
 }
 
-function decodeJournalRow(row: {
+export function decodeJournalRow(row: {
   batchId: string;
   repoIds: string;
   repoNames: string;
