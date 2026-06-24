@@ -15,30 +15,26 @@ describe("javaPackageExtractor", () => {
       repos: [],
       parsedFiles: [
         {
-          id: "file:py:1",
           repoId: "repo:a",
           fileId: "file:py:1",
           path: "src/main.py",
           language: "python",
           hash: "hash1",
           loc: 10,
-          imports: [{ module: "os", raw: "import os", line: 1 }],
+          imports: [{ fileId: "file:py:1", module: "os", raw: "import os", line: 1 }],
           symbols: [],
-          calls: [],
-          facts: {}
+          calls: []
         },
         {
-          id: "file:ts:1",
           repoId: "repo:a",
           fileId: "file:ts:1",
           path: "src/index.ts",
           language: "typescript",
           hash: "hash2",
           loc: 10,
-          imports: [{ module: "react", raw: "import React from 'react'", line: 1 }],
+          imports: [{ fileId: "file:ts:1", module: "react", raw: "import React from 'react'", line: 1 }],
           symbols: [],
-          calls: [],
-          facts: {}
+          calls: []
         }
       ],
       repoResolver: () => undefined,
@@ -55,7 +51,6 @@ describe("javaPackageExtractor", () => {
       repos: [],
       parsedFiles: [
         {
-          id: "file:java:1",
           repoId: "repo:a",
           fileId: "file:java:1",
           path: "src/main/java/com/example/MyService.java",
@@ -65,7 +60,7 @@ describe("javaPackageExtractor", () => {
           imports: [],
           symbols: [],
           calls: [],
-          facts: { packageName: "com.example" }
+          facts: { repoId: "repo:a", fileId: "file:java:1", path: "src/main/java/com/example/MyService.java", language: "java", packageName: "com.example", imports: [], symbols: [], annotations: [], decorators: [], calls: [], literals: [] }
         }
       ],
       repoResolver: () => undefined,
@@ -85,7 +80,6 @@ describe("javaPackageExtractor", () => {
       repos: [],
       parsedFiles: [
         {
-          id: "file:java:2",
           repoId: "repo:a",
           fileId: "file:java:2",
           path: "src/main/java/com/example/service/OrderService.java",
@@ -95,7 +89,7 @@ describe("javaPackageExtractor", () => {
           imports: [],
           symbols: [],
           calls: [],
-          facts: {}
+          facts: { repoId: "repo:a", fileId: "file:java:2", path: "src/main/java/com/example/service/OrderService.java", language: "java", imports: [], symbols: [], annotations: [], decorators: [], calls: [], literals: [] }
         }
       ],
       repoResolver: () => undefined,
@@ -114,7 +108,6 @@ describe("javaPackageExtractor", () => {
       repos: [],
       parsedFiles: [
         {
-          id: "file:java:3",
           repoId: "repo:a",
           fileId: "file:java:3",
           path: "MyService.java",
@@ -124,7 +117,7 @@ describe("javaPackageExtractor", () => {
           imports: [],
           symbols: [],
           calls: [],
-          facts: {}
+          facts: { repoId: "repo:a", fileId: "file:java:3", path: "MyService.java", language: "java", imports: [], symbols: [], annotations: [], decorators: [], calls: [], literals: [] }
         }
       ],
       repoResolver: () => undefined,
@@ -140,7 +133,6 @@ describe("javaPackageExtractor", () => {
       repos: [],
       parsedFiles: [
         {
-          id: "file:java:4",
           repoId: "repo:a",
           fileId: "file:java:4",
           path: "src/main/java/com/example/Consumer.java",
@@ -148,11 +140,11 @@ describe("javaPackageExtractor", () => {
           hash: "hash4",
           loc: 15,
           imports: [
-            { module: "com.google.common.collect.ImmutableList", raw: "import com.google.common.collect.ImmutableList;", line: 3 }
+            { fileId: "file:java:4", module: "com.google.common.collect.ImmutableList", raw: "import com.google.common.collect.ImmutableList;", line: 3 }
           ],
           symbols: [],
           calls: [],
-          facts: { packageName: "com.example" }
+          facts: { repoId: "repo:a", fileId: "file:java:4", path: "src/main/java/com/example/Consumer.java", language: "java", packageName: "com.example", imports: [], symbols: [], annotations: [], decorators: [], calls: [], literals: [] }
         }
       ],
       repoResolver: () => undefined,
@@ -172,7 +164,6 @@ describe("javaPackageExtractor", () => {
       repos: [],
       parsedFiles: [
         {
-          id: "file:java:5",
           repoId: "repo:a",
           fileId: "file:java:5",
           path: "src/main/java/com/example/Main.java",
@@ -182,7 +173,7 @@ describe("javaPackageExtractor", () => {
           imports: [],
           symbols: [],
           calls: [],
-          facts: { packageName: "com.example" }
+          facts: { repoId: "repo:a", fileId: "file:java:5", path: "src/main/java/com/example/Main.java", language: "java", packageName: "com.example", imports: [], symbols: [], annotations: [], decorators: [], calls: [], literals: [] }
         }
       ],
       repoResolver: () => undefined,
@@ -205,7 +196,6 @@ describe("javaPackageExtractor", () => {
       repos: [],
       parsedFiles: [
         {
-          id: "file:java:1",
           repoId: "repo:a",
           fileId: "file:java:1",
           path: "src/main/java/com/service-a/Main.java",
@@ -215,10 +205,9 @@ describe("javaPackageExtractor", () => {
           imports: [],
           symbols: [],
           calls: [],
-          facts: { packageName: "com.service-a" }
+          facts: { repoId: "repo:a", fileId: "file:java:1", path: "src/main/java/com/service-a/Main.java", language: "java", packageName: "com.service-a", imports: [], symbols: [], annotations: [], decorators: [], calls: [], literals: [] }
         },
         {
-          id: "file:java:2",
           repoId: "repo:b",
           fileId: "file:java:2",
           path: "src/main/java/com/service-b/Main.java",
@@ -228,7 +217,7 @@ describe("javaPackageExtractor", () => {
           imports: [],
           symbols: [],
           calls: [],
-          facts: { packageName: "com.service-b" }
+          facts: { repoId: "repo:b", fileId: "file:java:2", path: "src/main/java/com/service-b/Main.java", language: "java", packageName: "com.service-b", imports: [], symbols: [], annotations: [], decorators: [], calls: [], literals: [] }
         }
       ],
       repoResolver: () => undefined,

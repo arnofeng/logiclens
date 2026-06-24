@@ -16,14 +16,13 @@ describe("importPackageExtractor", () => {
       repos: [],
       parsedFiles: [
         {
-          id: "file:md:1",
           repoId: "repo:a",
           fileId: "file:md:1",
           path: "README.md",
           language: "markdown",
           hash: "hash1",
           loc: 5,
-          imports: [{ module: "some-package", raw: "import something from 'some-package'", line: 1 }],
+          imports: [{ fileId: "file:md:1", module: "some-package", raw: "import something from 'some-package'", line: 1 }],
           symbols: [],
           calls: []
         }
@@ -41,7 +40,6 @@ describe("importPackageExtractor", () => {
       repos: [],
       parsedFiles: [
         {
-          id: "file:ts:1",
           repoId: "repo:a",
           fileId: "file:ts:1",
           path: "src/index.ts",
@@ -49,8 +47,8 @@ describe("importPackageExtractor", () => {
           hash: "hash1",
           loc: 10,
           imports: [
-            { module: "./utils", raw: "import { util } from './utils'", line: 1 },
-            { module: "../shared", raw: "import { shared } from '../shared'", line: 2 }
+            { fileId: "file:ts:1", module: "./utils", raw: "import { util } from './utils'", line: 1 },
+            { fileId: "file:ts:1", module: "../shared", raw: "import { shared } from '../shared'", line: 2 }
           ],
           symbols: [],
           calls: []
@@ -68,7 +66,6 @@ describe("importPackageExtractor", () => {
       repos: [],
       parsedFiles: [
         {
-          id: "file:ts:1",
           repoId: "repo:a",
           fileId: "file:ts:1",
           path: "src/app.ts",
@@ -76,7 +73,7 @@ describe("importPackageExtractor", () => {
           hash: "hash1",
           loc: 15,
           imports: [
-            { module: "@fixture/service-b", raw: "import { Payment } from '@fixture/service-b'", line: 3 }
+            { fileId: "file:ts:1", module: "@fixture/service-b", raw: "import { Payment } from '@fixture/service-b'", line: 3 }
           ],
           symbols: [],
           calls: []
@@ -102,7 +99,6 @@ describe("importPackageExtractor", () => {
       repos: [],
       parsedFiles: [
         {
-          id: "file:py:1",
           repoId: "repo:py",
           fileId: "file:py:1",
           path: "src/app.py",
@@ -110,8 +106,8 @@ describe("importPackageExtractor", () => {
           hash: "hash1",
           loc: 10,
           imports: [
-            { module: "fastapi", raw: "from fastapi import FastAPI", line: 1 },
-            { module: "requests", raw: "import requests", line: 2 }
+            { fileId: "file:py:1", module: "fastapi", raw: "from fastapi import FastAPI", line: 1 },
+            { fileId: "file:py:1", module: "requests", raw: "import requests", line: 2 }
           ],
           symbols: [],
           calls: []
@@ -131,7 +127,6 @@ describe("importPackageExtractor", () => {
       repos: [],
       parsedFiles: [
         {
-          id: "file:go:1",
           repoId: "repo:go",
           fileId: "file:go:1",
           path: "src/main.go",
@@ -139,7 +134,7 @@ describe("importPackageExtractor", () => {
           hash: "hash1",
           loc: 10,
           imports: [
-            { module: "net/http", raw: 'import "net/http"', line: 3 }
+            { fileId: "file:go:1", module: "net/http", raw: 'import "net/http"', line: 3 }
           ],
           symbols: [],
           calls: []
@@ -158,7 +153,6 @@ describe("importPackageExtractor", () => {
       repos: [],
       parsedFiles: [
         {
-          id: "file:ts:1",
           repoId: "repo:a",
           fileId: "file:ts:1",
           path: "src/app.ts",
@@ -166,7 +160,7 @@ describe("importPackageExtractor", () => {
           hash: "hash1",
           loc: 5,
           imports: [
-            { module: "@scope/pkg/SubClass", raw: "import { SubClass } from '@scope/pkg/SubClass'", line: 1 }
+            { fileId: "file:ts:1", module: "@scope/pkg/SubClass", raw: "import { SubClass } from '@scope/pkg/SubClass'", line: 1 }
           ],
           symbols: [],
           calls: []
@@ -185,7 +179,6 @@ describe("importPackageExtractor", () => {
       repos: [],
       parsedFiles: [
         {
-          id: "file:java:1",
           repoId: "repo:a",
           fileId: "file:java:1",
           path: "src/main/java/com/example/Consumer.java",
@@ -193,7 +186,7 @@ describe("importPackageExtractor", () => {
           hash: "hash1",
           loc: 10,
           imports: [
-            { module: "com.google.common.collect.ImmutableList", raw: "import com.google.common.collect.ImmutableList;", line: 3 }
+            { fileId: "file:java:1", module: "com.google.common.collect.ImmutableList", raw: "import com.google.common.collect.ImmutableList;", line: 3 }
           ],
           symbols: [],
           calls: []
@@ -212,7 +205,6 @@ describe("importPackageExtractor", () => {
       repos: [],
       parsedFiles: [
         {
-          id: "file:java:1",
           repoId: "repo:a",
           fileId: "file:java:1",
           path: "src/main/java/com/example/Main.java",
@@ -220,7 +212,7 @@ describe("importPackageExtractor", () => {
           hash: "hash1",
           loc: 10,
           imports: [
-            { module: "com.other.Service", raw: "import com.other.Service;", line: 2 }
+            { fileId: "file:java:1", module: "com.other.Service", raw: "import com.other.Service;", line: 2 }
           ],
           symbols: [],
           calls: []
@@ -241,7 +233,6 @@ describe("importPackageExtractor", () => {
       repos: [],
       parsedFiles: [
         {
-          id: "file:ts:1",
           repoId: "repo:a",
           fileId: "file:ts:1",
           path: "src/app.ts",
@@ -249,8 +240,8 @@ describe("importPackageExtractor", () => {
           hash: "hash1",
           loc: 10,
           imports: [
-            { module: "lodash", raw: "import _ from 'lodash'", line: 1 },
-            { module: "react", raw: "import React from 'react'", line: 2 }
+            { fileId: "file:ts:1", module: "lodash", raw: "import _ from 'lodash'", line: 1 },
+            { fileId: "file:ts:1", module: "react", raw: "import React from 'react'", line: 2 }
           ],
           symbols: [],
           calls: []
@@ -270,7 +261,6 @@ describe("importPackageExtractor", () => {
       repos: [],
       parsedFiles: [
         {
-          id: "file:ts:1",
           repoId: "repo:a",
           fileId: "file:ts:1",
           path: "src/app.ts",
@@ -307,7 +297,6 @@ describe("importPackageExtractor", () => {
       repos: [],
       parsedFiles: [
         {
-          id: "file:ts:1",
           repoId: "repo:a",
           fileId: "file:ts:1",
           path: "src/app.ts",
@@ -315,13 +304,12 @@ describe("importPackageExtractor", () => {
           hash: "hash1",
           loc: 10,
           imports: [
-            { module: "@fixture/service-b", raw: "import { X } from '@fixture/service-b'", line: 1 }
+            { fileId: "file:ts:1", module: "@fixture/service-b", raw: "import { X } from '@fixture/service-b'", line: 1 }
           ],
           symbols: [],
           calls: []
         },
         {
-          id: "file:py:1",
           repoId: "repo:b",
           fileId: "file:py:1",
           path: "src/main.py",
@@ -329,13 +317,12 @@ describe("importPackageExtractor", () => {
           hash: "hash2",
           loc: 10,
           imports: [
-            { module: "fastapi", raw: "from fastapi import FastAPI", line: 1 }
+            { fileId: "file:py:1", module: "fastapi", raw: "from fastapi import FastAPI", line: 1 }
           ],
           symbols: [],
           calls: []
         },
         {
-          id: "file:go:1",
           repoId: "repo:c",
           fileId: "file:go:1",
           path: "src/main.go",
@@ -343,7 +330,7 @@ describe("importPackageExtractor", () => {
           hash: "hash3",
           loc: 10,
           imports: [
-            { module: "net/http", raw: 'import "net/http"', line: 3 }
+            { fileId: "file:go:1", module: "net/http", raw: 'import "net/http"', line: 3 }
           ],
           symbols: [],
           calls: []
@@ -363,26 +350,24 @@ describe("importPackageExtractor", () => {
       repos: [],
       parsedFiles: [
         {
-          id: "file:md:1",
           repoId: "repo:a",
           fileId: "file:md:1",
           path: "README.md",
           language: "markdown",
           hash: "hash1",
           loc: 5,
-          imports: [{ module: "some-pkg", raw: "import x from 'some-pkg'", line: 1 }],
+          imports: [{ fileId: "file:md:1", module: "some-pkg", raw: "import x from 'some-pkg'", line: 1 }],
           symbols: [],
           calls: []
         },
         {
-          id: "file:ts:1",
           repoId: "repo:a",
           fileId: "file:ts:1",
           path: "src/index.ts",
           language: "typescript",
           hash: "hash2",
           loc: 10,
-          imports: [{ module: "real-pkg", raw: "import { x } from 'real-pkg'", line: 1 }],
+          imports: [{ fileId: "file:ts:1", module: "real-pkg", raw: "import { x } from 'real-pkg'", line: 1 }],
           symbols: [],
           calls: []
         }
