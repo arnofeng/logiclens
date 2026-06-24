@@ -1,6 +1,6 @@
 # LogicLens
 
-LogicLens is a local-first semantic dependency graph for cross-repository codebases.
+**LogicLens is a local-first Code Graph tool that builds a semantic dependency graph for cross-repository codebases.**
 
 Modern systems are often spread across many services, packages, frontends, jobs, SDKs, and shared libraries. A single repository view is not enough when you need to answer questions like:
 
@@ -9,14 +9,16 @@ Modern systems are often spread across many services, packages, frontends, jobs,
 - Which services are connected by imports, package metadata, HTTP calls, events, or shared contract evidence?
 - What code and documentation should an AI assistant read before it answers a codebase question?
 
-LogicLens indexes your configured repositories, extracts source symbols and cross-repository evidence, and writes the result into a local Kuzu graph. You can query that graph from the CLI, call it from the Node.js SDK, or expose it to AI coding assistants through a stdio MCP server.
+LogicLens indexes your configured repositories, extracts source symbols, call chains, and cross-repository contract evidence, and **builds a knowledge graph that covers your entire code system**. The graph is stored in a local Kuzu database. You can query it from the CLI, integrate it via the Node.js SDK, or expose it to AI coding assistants through a stdio MCP server — making complex codebase relationships visible at a glance.
 
 > [!IMPORTANT]
 > **LogicLens is currently in active Beta development.** While the core indexing engine, CLI, SDK, watcher, and MCP server are fully functional and ready for use, language and framework coverage is intentionally incremental. Expect occasional changes as we refine the APIs and schema.
 
-## What It Builds
+## The Code Graph: What It Builds
 
-LogicLens builds a local graph from:
+At its core, LogicLens **builds a code graph** — a structured knowledge graph that connects code entities, dependency relationships, and contract evidence scattered across multiple repositories.
+
+### Graph Data Sources
 
 - Repositories declared in `.logiclens/config.yaml`.
 - Files selected by `include` and `exclude` glob patterns.
@@ -25,28 +27,30 @@ LogicLens builds a local graph from:
 - Contract evidence such as packages, imports, APIs, events, DTOs, schemas, enums, and config keys.
 - Optional semantic summaries and embeddings when configured.
 
-That graph supports workflows such as:
+### Graph Capabilities
 
-- Cross-repository dependency discovery.
-- API/event/package contract tracing.
-- Change impact analysis.
-- Graph-grounded natural-language retrieval.
-- Agent context gathering through MCP.
-- Local quality governance for low-confidence or conflicting dependency evidence.
+The code graph supports workflows such as:
+
+- **Cross-repository dependency discovery** — see the dependency topology across services at a glance.
+- **Contract tracing** — start from an API, event, or package contract and find all producers and consumers.
+- **Change impact analysis** — assess the blast radius before making changes to reduce deployment risk.
+- **Graph-grounded natural-language retrieval** — query code relationships using natural language.
+- **AI Agent context enrichment** — provide structured codebase context to coding assistants via MCP.
+- **Quality governance** — audit and correct low-confidence or conflicting dependency evidence locally.
 
 ## Features
 
-- **Local-first graph**: stores graph data locally with Kuzu under `.logiclens/graph` by default.
-- **Cross-repository workspace**: manage one workspace that points at many repositories.
-- **Static code intelligence**: extracts symbols, imports, calls, docs, language facts, and framework signals.
-- **Contract model**: normalizes cross-repository evidence into contract kinds such as `api`, `event`, `package`, `dto`, `schema`, `enum`, and `config`.
+- **Local-first code graph**: builds a code knowledge graph on Kuzu, stored locally under `.logiclens/graph` — your data never leaves your machine.
+- **Cross-repository workspace**: manage one workspace that points at many repositories, building a unified graph across your entire code system.
+- **Static code intelligence**: extracts symbols, imports, calls, docs, language facts, and framework signals as graph nodes and edges.
+- **Contract model**: normalizes cross-repository evidence into contract kinds such as `api`, `event`, `package`, `dto`, `schema`, `enum`, and `config`, enriching graph semantics.
 - **Dependency views**: lists repo-to-repo dependencies with strength, type, evidence location, rule, and resolution metadata.
-- **Trace and impact analysis**: starts from a contract or symbol and returns producers, consumers, related code, calls, docs, and files to inspect.
-- **CLI, SDK, MCP**: use LogicLens manually, embed it in Node.js tools, or connect it to AI coding assistants.
-- **File watcher**: performs changed-file indexing and exposes freshness metadata to MCP clients.
-- **Quality controls**: audit low-confidence evidence, reject false positives, and register alias overrides.
-- **Optional LLM/embedding layer**: supports OpenAI-compatible chat and embedding providers when enabled.
-- **Plugin API**: register custom parsers, framework detectors, contract extractors, and CLI commands.
+- **Trace and impact analysis**: starts from a contract or symbol and follows graph paths to return producers, consumers, related code, calls, docs, and files to inspect.
+- **CLI, SDK, MCP**: query the graph manually, integrate via Node.js, or connect to AI coding assistants.
+- **File watcher**: performs changed-file indexing to keep the graph up to date, and exposes freshness metadata to MCP clients.
+- **Quality controls**: audit low-confidence evidence, reject false positives, and register alias overrides to ensure graph accuracy.
+- **Optional LLM/embedding layer**: supports OpenAI-compatible chat and embedding providers when enabled, enhancing graph semantics.
+- **Plugin API**: register custom parsers, framework detectors, contract extractors, and CLI commands to extend graph coverage.
 
 ## Installation
 
