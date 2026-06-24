@@ -28,7 +28,7 @@ import { logicLensVersion } from "./version.js";
 
 const program = new Command();
 
-program.name("logiclens").description("LogicLens multi-repository semantic dependency graph CLI").version(logicLensVersion);
+program.name("logiclens").description("LogicLens cross-repository semantic dependency graph CLI").version(logicLensVersion);
 
 program.command("init").description("Create .logiclens config, graph, and cache directories").action(() => initCommand());
 program.command("uninit").description("Remove .logiclens config, graph, cache, and semantic-index, and stop running MCP server").action(() => uninitCommand());

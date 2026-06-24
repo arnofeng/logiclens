@@ -76,7 +76,7 @@ export function buildRepoSummaryInputs(repos: RepoNode[], parsedFiles: ParsedGra
 }
 
 export function buildRepoSummaryPrompt(input: RepoSummaryInput): string {
-  return `You are summarizing one repository for a multi-repository code graph.
+  return `You are summarizing one repository for a cross-repository code graph.
 
 Return one concise paragraph. Mention repository role, important code/documentation signals, contracts, and cross-repository dependencies.
 
@@ -88,7 +88,7 @@ Cross-repo relations: ${uniq(input.dependencyLines, 30).join("; ")}`;
 }
 
 export function buildSystemSummaryPrompt(repoSummaries: Array<{ repo: RepoNode; summary: string }>, crossRepo: CrossRepoExtraction): string {
-  return `You are summarizing a multi-repository system from a code graph.
+  return `You are summarizing a cross-repository system from a code graph.
 
 Return one concise paragraph. Mention repository roles, major dependencies, and likely core business flow.
 

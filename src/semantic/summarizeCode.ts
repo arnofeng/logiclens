@@ -22,7 +22,7 @@ export type CodeSemanticSummary = {
 };
 
 export function buildSummarizePrompt(input: { repoName: string; filePath: string; language: string; kind: string; name: string; signature?: string; source: string }): string {
-  return `You are analyzing code for a multi-repository semantic dependency and impact graph.
+  return `You are analyzing code for a cross-repository semantic dependency and impact graph.
 
 Return strict JSON only.
 

@@ -34,7 +34,7 @@ function markdownPreview(file: ParsedDocument, maxSourceChars: number): string {
 
 export function buildSummarizeFilePrompt(input: { repoName: string; file: ParsedGraphFile; maxSourceChars: number }): string {
   if (isParsedDocument(input.file)) {
-    return `You are summarizing one documentation file for a multi-repository semantic dependency and impact graph.
+    return `You are summarizing one documentation file for a cross-repository semantic dependency and impact graph.
 
 Return strict JSON only.
 
@@ -53,7 +53,7 @@ Extract:
 }`;
   }
 
-  return `You are summarizing one source file for a multi-repository semantic dependency and impact graph.
+  return `You are summarizing one source file for a cross-repository semantic dependency and impact graph.
 
 Return strict JSON only.
 

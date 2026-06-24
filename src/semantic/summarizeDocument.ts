@@ -13,7 +13,7 @@ export type DocumentSectionSummary = {
 };
 
 export function buildSummarizeDocumentPrompt(input: { repoName: string; filePath: string; heading: string; text: string }): string {
-  return `You are analyzing documentation for a multi-repository semantic dependency and impact graph.
+  return `You are analyzing documentation for a cross-repository semantic dependency and impact graph.
 
 Return strict JSON only.
 

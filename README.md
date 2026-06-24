@@ -1,6 +1,6 @@
 # LogicLens
 
-LogicLens is a local-first semantic dependency graph for multi-repository codebases.
+LogicLens is a local-first semantic dependency graph for cross-repository codebases.
 
 Modern systems are often spread across many services, packages, frontends, jobs, SDKs, and shared libraries. A single repository view is not enough when you need to answer questions like:
 
@@ -37,7 +37,7 @@ That graph supports workflows such as:
 ## Features
 
 - **Local-first graph**: stores graph data locally with Kuzu under `.logiclens/graph` by default.
-- **Multi-repository workspace**: manage one workspace that points at many repositories.
+- **Cross-repository workspace**: manage one workspace that points at many repositories.
 - **Static code intelligence**: extracts symbols, imports, calls, docs, language facts, and framework signals.
 - **Contract model**: normalizes cross-repository evidence into contract kinds such as `api`, `event`, `package`, `dto`, `schema`, `enum`, and `config`.
 - **Dependency views**: lists repo-to-repo dependencies with strength, type, evidence location, rule, and resolution metadata.
