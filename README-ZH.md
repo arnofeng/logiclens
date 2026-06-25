@@ -236,7 +236,8 @@ import { createLogicLens } from "logiclens";
 const client = await createLogicLens({ cwd: process.cwd() });
 
 try {
-  await client.init();
+  // addRepo 只更新该 client 的内存态配置(不落盘)。
+  // 如需持久化工作区配置,请用 CLI:`logiclens init` / `logiclens add-repo`。
   await client.addRepo("../service-a", { name: "service-a" });
   await client.index({ changedOnly: false, writeMode: "auto" });
 
@@ -256,10 +257,8 @@ try {
 
 | 方法 | 用途 |
 |---|---|
-| `client.init()` | 初始化 `.logiclens` 目录和默认配置。 |
-| `client.uninit()` | 删除工作区状态，并尽量停止记录的 MCP 进程。 |
-| `client.addRepo(path, options)` | 添加单个仓库。 |
-| `client.addRepos(directory, options)` | 发现并添加第一层 Git 仓库。 |
+| `client.addRepo(path, options)` | 将单个仓库加入该 client 的内存态配置(不落盘)。 |
+| `client.addRepos(directory, options)` | 发现并将第一层 Git 仓库加入内存态配置(不落盘)。 |
 | `client.ensurePlugins()` | 加载配置插件和 inline 插件。 |
 | `client.index(options)` | 索引仓库。 |
 | `client.getIndexQueueStatus()` | 查看 SDK/MCP 索引队列状态。 |

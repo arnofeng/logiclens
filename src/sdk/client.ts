@@ -1,6 +1,5 @@
-import fs from "node:fs/promises";
 import path from "node:path";
-import { loadConfig, writeConfig, defaultConfig, configPath } from "../config/loadConfig.js";
+import { loadConfig, defaultConfig } from "../config/loadConfig.js";
 import type { LogicLensConfig } from "../config/schema.js";
 import type { GraphDB, GraphValue, Stats } from "../graph/db.js";
 import { createGraphDB } from "../graph/factory.js";
@@ -173,26 +172,11 @@ export class LogicLensClient {
   }
 
   /**
-   * Initializes the workspace by creating the default `.logiclens` directories
-   * (graph database and cache folders) and writing a default configuration file.
-   */
-  async init(): Promise<void> {
-    await fs.mkdir(path.join(this.cwd, ".logiclens", "graph"), { recursive: true });
-    await fs.mkdir(path.join(this.cwd, ".logiclens", "cache"), { recursive: true });
-    
-    const configFile = path.join(this.cwd, ".logiclens", "config.yaml");
-    const template = `# LogicLens Configuration File
-
-systemName: default-system
-
-repos: []
-`;
-    await fs.writeFile(configFile, template, "utf8");
-  }
-
-  /**
-   * Adds a repository to the workspace configuration.
-   * 
+   * Adds a repository to this client's in-memory configuration so it is picked
+   * up by subsequent operations (e.g. `index()`). This does NOT persist to
+   * `config.yaml`; persistence is the CLI layer's responsibility. The mutation
+   * is scoped to this client instance and is discarded when the process exits.
+   *
    * @param repoPath - The absolute or relative path to the repository directory.
    * @param options - Additional options.
    * @param options.name - The unique name for the repository. Defaults to the directory's basename.
@@ -205,55 +189,16 @@ repos: []
     const repos = this.config.repos.filter((repo) => repo.name !== name);
     repos.push({ name, path: storedPath });
     this.config = { ...this.config, repos };
-    await writeConfig(this.config, this.cwd);
     return { name, storedPath };
-  }
-
-  /**
-   * Adds (or updates) a plugin entry in the workspace configuration.
-   *
-   * Re-adding an existing plugin (matched by name) replaces its entry, allowing
-   * its options to be updated without creating a duplicate. This only mutates
-   * configuration; installing the plugin package is handled by the CLI layer.
-   *
-   * @param name - The plugin module name: an npm package or a local path.
-   * @param options - Additional options.
-   * @param options.options - Arbitrary options object passed to the plugin's setup.
-   * @returns The plugin name and whether an existing entry was replaced.
-   */
-  async addPlugin(name: string, options?: { options?: unknown }): Promise<{ name: string; replaced: boolean }> {
-    const replaced = this.config.plugins.some((plugin) => plugin.name === name);
-    const plugins = this.config.plugins.filter((plugin) => plugin.name !== name);
-    const entry: { name: string; options?: unknown } = { name };
-    if (options?.options !== undefined) entry.options = options.options;
-    plugins.push(entry);
-    this.config = { ...this.config, plugins };
-    await writeConfig(this.config, this.cwd);
-    return { name, replaced };
-  }
-
-  /**
-   * Removes a plugin entry from the workspace configuration.
-   *
-   * Only mutates configuration; the installed package (if any) is left in place.
-   *
-   * @param name - The plugin module name to remove.
-   * @returns Whether a matching entry was found and removed.
-   */
-  async removePlugin(name: string): Promise<{ removed: boolean }> {
-    const plugins = this.config.plugins.filter((plugin) => plugin.name !== name);
-    const removed = plugins.length < this.config.plugins.length;
-    if (removed) {
-      this.config = { ...this.config, plugins };
-      await writeConfig(this.config, this.cwd);
-    }
-    return { removed };
   }
 
   /**
    * Discovers and adds multiple Git repositories found under a given directory.
    * Optionally triggers initial indexing on the newly discovered repositories.
-   * 
+   *
+   * Like {@link addRepo}, this only updates this client's in-memory configuration
+   * and does not persist to `config.yaml`; persistence is the CLI layer's job.
+   *
    * @param directory - The directory path to search for Git repositories.
    * @param options - Additional options.
    * @param options.index - Whether to automatically run indexing on the found repositories.
@@ -277,7 +222,6 @@ repos: []
     }
     const repos = [...byName.values()];
     this.config = { ...this.config, repos };
-    await writeConfig(this.config, this.cwd);
 
     const addedRepos = discovery.repos.map((r) => ({
       name: r.name,
@@ -623,57 +567,6 @@ repos: []
     this.closed = true;
   }
 
-  /**
-   * Uninitializes the workspace by stopping the running MCP server and removing
-   * configuration files, the graph database, cache files, and the semantic index.
-   */
-  async uninit(): Promise<void> {
-    // 1. Close local DB connection first
-    await this.close();
-
-    // 2. Stop running MCP service safely if lock file exists
-    const mcpPidPath = path.join(this.cwd, ".logiclens", "mcp.pid");
-    try {
-      const raw = await fs.readFile(mcpPidPath, "utf8");
-      const info = JSON.parse(raw);
-      const pid = info.pid;
-      
-      if (isProcessAlive(pid)) {
-        this.logger.log(`Stopping running MCP service (PID ${pid})...`);
-        try {
-          process.kill(pid, "SIGTERM");
-        } catch {}
-        
-        // Wait up to 3s for SIGTERM graceful exit
-        if (!(await waitForDeath(pid, 3000))) {
-          this.logger.warn(`MCP service (PID ${pid}) did not exit. Forcing shutdown...`);
-          try {
-            process.kill(pid, "SIGKILL");
-          } catch {}
-          await waitForDeath(pid, 2000);
-        }
-      }
-    } catch {
-      // Lock file missing or invalid, skip process killing
-    }
-
-    // 3. Resolve deletion targets
-    const graphPath = path.resolve(this.cwd, this.config.graph.path);
-    const semanticPath = path.resolve(this.cwd, this.config.semantic.jsonPath);
-    const cachePath = path.join(this.cwd, ".logiclens", "cache");
-    const yamlConfigPath = configPath(this.cwd);
-
-    // 4. Remove all files/directories
-    await fs.rm(graphPath, { recursive: true, force: true });
-    await fs.rm(cachePath, { recursive: true, force: true });
-    await fs.rm(semanticPath, { force: true });
-    await fs.rm(yamlConfigPath, { force: true });
-    await fs.rm(mcpPidPath, { force: true });
-
-    // 5. Remove the .logiclens container directory
-    const dotLogicLensDir = path.join(this.cwd, ".logiclens");
-    await fs.rm(dotLogicLensDir, { recursive: true, force: true });
-  }
 }
 
 function describeIndexOptions(options: IndexOptions): string {
@@ -681,25 +574,6 @@ function describeIndexOptions(options: IndexOptions): string {
   if (options.repos?.length) return `repos:${options.repos.join(",")}`;
   if (options.changedOnly) return "changed-only";
   return "all-repos";
-}
-
-function isProcessAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err: any) {
-    return err.code === "EPERM";
-  }
-}
-
-async function waitForDeath(pid: number, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (!isProcessAlive(pid)) return true;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  return !isProcessAlive(pid);
 }
 
 /**

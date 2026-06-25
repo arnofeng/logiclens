@@ -1,5 +1,6 @@
 import path from "node:path";
 import { createLogicLens } from "../sdk/client.js";
+import { writeConfig } from "../config/loadConfig.js";
 import { indexCommand, type IndexOptions } from "./index.js";
 
 export type AddReposOptions = {
@@ -21,8 +22,9 @@ export async function addReposCommand(
   const client = await createLogicLens({ cwd });
   try {
     const result = await client.addRepos(directory, { ...options, index: false });
+    await writeConfig(client.getConfig(), cwd);
     const storedDir = path.relative(cwd, path.resolve(cwd, directory)).replace(/\\/g, "/") || ".";
-    
+
     console.log(`Added ${result.discovered.length} repos from ${storedDir}`);
     console.log(`Skipped ${result.skipped.nonDirectories} non-directories; ${result.skipped.withoutGit} directories without .git`);
 

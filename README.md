@@ -236,7 +236,8 @@ import { createLogicLens } from "logiclens";
 const client = await createLogicLens({ cwd: process.cwd() });
 
 try {
-  await client.init();
+  // addRepo updates this client's in-memory config only (not persisted to disk).
+  // To persist workspace config, use the CLI: `logiclens init` / `logiclens add-repo`.
   await client.addRepo("../service-a", { name: "service-a" });
   await client.index({ changedOnly: false, writeMode: "auto" });
 
@@ -256,10 +257,8 @@ try {
 
 | Method | Purpose |
 |---|---|
-| `client.init()` | Initialize `.logiclens` directory and default configuration. |
-| `client.uninit()` | Remove workspace state and try to stop recorded MCP processes. |
-| `client.addRepo(path, options)` | Add a single repository. |
-| `client.addRepos(directory, options)` | Discover and add first-level Git repositories. |
+| `client.addRepo(path, options)` | Add a single repository to this client's in-memory config (not persisted). |
+| `client.addRepos(directory, options)` | Discover and add first-level Git repositories to in-memory config (not persisted). |
 | `client.ensurePlugins()` | Load configured and inline plugins. |
 | `client.index(options)` | Index repositories. |
 | `client.getIndexQueueStatus()` | Check SDK/MCP indexing queue status. |

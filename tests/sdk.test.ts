@@ -4,60 +4,80 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { createLogicLens, definePlugin } from "../src/index.js";
 import { defaultConfig, writeConfig } from "../src/config/loadConfig.js";
+import { initCommand } from "../src/commands/init.js";
+import { uninitCommand } from "../src/commands/uninit.js";
+import { addRepoCommand } from "../src/commands/addRepo.js";
+import { loadConfig } from "../src/config/loadConfig.js";
 
 async function makeTempWorkspace(): Promise<string> {
   return await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-sdk-test-"));
 }
 
 describe("LogicLens SDK Client & Plugins", () => {
-  it("initializes a client and initializes a workspace", async () => {
+  it("scaffolds a workspace via the init command", async () => {
     const cwd = await makeTempWorkspace();
-    const client = await createLogicLens({ cwd });
-    
-    await client.init();
-    
+    await initCommand(cwd);
+
     // Check files created
     const configExists = await fs.stat(path.join(cwd, ".logiclens", "config.yaml")).then(() => true).catch(() => false);
     expect(configExists).toBe(true);
-    
-    await client.close();
+  });
+
+  it("does not overwrite an existing config when re-running init", async () => {
+    const cwd = await makeTempWorkspace();
+    await initCommand(cwd);
+    const configFile = path.join(cwd, ".logiclens", "config.yaml");
+    await fs.writeFile(configFile, "systemName: custom-system\nrepos: []\n", "utf8");
+
+    await initCommand(cwd);
+
+    expect(await fs.readFile(configFile, "utf8")).toContain("custom-system");
   });
 
   it("uninitializes a workspace and cleans up files", async () => {
     const cwd = await makeTempWorkspace();
-    const client = await createLogicLens({ cwd });
-    
-    await client.init();
-    
+    await initCommand(cwd);
+
     // Create a mock mcp.pid file
     const mcpPidPath = path.join(cwd, ".logiclens", "mcp.pid");
     await fs.writeFile(mcpPidPath, JSON.stringify({ pid: 999999, version: "0.1.0", startedAt: Date.now() }), "utf8");
-    
+
     // Check they exist
     expect(await fs.stat(path.join(cwd, ".logiclens", "config.yaml")).then(() => true).catch(() => false)).toBe(true);
     expect(await fs.stat(mcpPidPath).then(() => true).catch(() => false)).toBe(true);
-    
+
     // Call uninit
-    await client.uninit();
-    
+    await uninitCommand(cwd);
+
     // Verify .logiclens directory is deleted
     const logiclensExists = await fs.stat(path.join(cwd, ".logiclens")).then(() => true).catch(() => false);
     expect(logiclensExists).toBe(false);
   });
 
-  it("adds a repo and updates config", async () => {
+  it("adds a repo to in-memory config without writing to disk", async () => {
     const cwd = await makeTempWorkspace();
     const client = await createLogicLens({ cwd });
-    await client.init();
-    
+
     const result = await client.addRepo("./my-project", { name: "custom-name" });
     expect(result.name).toBe("custom-name");
     expect(result.storedPath).toBe("my-project");
-    
-    const config = client.getConfig();
-    expect(config.repos).toContainEqual({ name: "custom-name", path: "my-project" });
-    
+
+    // In-memory config reflects the new repo...
+    expect(client.getConfig().repos).toContainEqual({ name: "custom-name", path: "my-project" });
+
+    // ...but the SDK must not persist it: config.yaml stays untouched.
+    const configExists = await fs.stat(path.join(cwd, ".logiclens", "config.yaml")).then(() => true).catch(() => false);
+    expect(configExists).toBe(false);
+
     await client.close();
+  });
+
+  it("persists the repo when added via the CLI command", async () => {
+    const cwd = await makeTempWorkspace();
+    await initCommand(cwd);
+    await addRepoCommand("./my-project", { name: "custom-name" }, cwd);
+    const config = await loadConfig(cwd);
+    expect(config.repos).toContainEqual({ name: "custom-name", path: "my-project" });
   });
 
   it("loads inline plugins and runs setup", async () => {

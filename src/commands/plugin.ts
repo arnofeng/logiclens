@@ -1,6 +1,15 @@
-import { createLogicLens } from "../sdk/client.js";
+import { loadConfig, writeConfig, defaultConfig } from "../config/loadConfig.js";
+import type { LogicLensConfig } from "../config/schema.js";
 import { importPluginModule, isLocalPluginName } from "../plugins/loader.js";
 import { detectPackageManager, installPackage } from "../plugins/packageManager.js";
+
+async function loadConfigOrDefault(cwd: string): Promise<LogicLensConfig> {
+  try {
+    return await loadConfig(cwd);
+  } catch {
+    return defaultConfig();
+  }
+}
 
 /**
  * Options accepted by `logiclens plugin add`.
@@ -12,6 +21,14 @@ export type PluginAddOptions = {
   install?: boolean;
   /** Skip importing and validating the plugin after installing */
   skipVerify?: boolean;
+};
+
+/**
+ * Injectable dependencies for `pluginAddCommand`, used to stub the package
+ * install step in tests so the spawn path is not exercised.
+ */
+export type PluginAddDeps = {
+  installPackage: typeof installPackage;
 };
 
 /**
@@ -33,8 +50,14 @@ export function parseNpmSpec(name: string): { spec: string; packageName: string 
  * @param name - The plugin to add: an npm package (optionally `@version`) or a local path.
  * @param options - Command options.
  * @param cwd - The workspace directory.
+ * @param deps - Injectable dependencies (the package installer); defaults to the real one.
  */
-export async function pluginAddCommand(name: string, options: PluginAddOptions = {}, cwd = process.cwd()): Promise<void> {
+export async function pluginAddCommand(
+  name: string,
+  options: PluginAddOptions = {},
+  cwd = process.cwd(),
+  deps: PluginAddDeps = { installPackage }
+): Promise<void> {
   const local = isLocalPluginName(name);
   const { spec, packageName } = local ? { spec: name, packageName: name } : parseNpmSpec(name);
 
@@ -50,7 +73,7 @@ export async function pluginAddCommand(name: string, options: PluginAddOptions =
   if (!local && options.install !== false) {
     const pm = await detectPackageManager(cwd);
     console.log(`Installing ${spec} with ${pm}...`);
-    await installPackage(cwd, spec, pm);
+    await deps.installPackage(cwd, spec, pm);
   }
 
   if (!options.skipVerify) {
@@ -63,13 +86,14 @@ export async function pluginAddCommand(name: string, options: PluginAddOptions =
     }
   }
 
-  const client = await createLogicLens({ cwd });
-  try {
-    const result = await client.addPlugin(packageName, { options: pluginOptions });
-    console.log(`${result.replaced ? "Updated" : "Added"} plugin "${packageName}" in config.`);
-  } finally {
-    await client.close();
-  }
+  const config = await loadConfigOrDefault(cwd);
+  const replaced = config.plugins.some((plugin) => plugin.name === packageName);
+  const plugins = config.plugins.filter((plugin) => plugin.name !== packageName);
+  const entry: { name: string; options?: unknown } = { name: packageName };
+  if (pluginOptions !== undefined) entry.options = pluginOptions;
+  plugins.push(entry);
+  await writeConfig({ ...config, plugins }, cwd);
+  console.log(`${replaced ? "Updated" : "Added"} plugin "${packageName}" in config.`);
 }
 
 /**
@@ -80,12 +104,13 @@ export async function pluginAddCommand(name: string, options: PluginAddOptions =
  * @param cwd - The workspace directory.
  */
 export async function pluginRemoveCommand(name: string, cwd = process.cwd()): Promise<void> {
-  const client = await createLogicLens({ cwd });
-  try {
-    const result = await client.removePlugin(name);
-    if (result.removed) console.log(`Removed plugin "${name}" from config.`);
-    else console.log(`Plugin "${name}" was not found in config.`);
-  } finally {
-    await client.close();
+  const config = await loadConfigOrDefault(cwd);
+  const plugins = config.plugins.filter((plugin) => plugin.name !== name);
+  const removed = plugins.length < config.plugins.length;
+  if (removed) {
+    await writeConfig({ ...config, plugins }, cwd);
+    console.log(`Removed plugin "${name}" from config.`);
+  } else {
+    console.log(`Plugin "${name}" was not found in config.`);
   }
 }
