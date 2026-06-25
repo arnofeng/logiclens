@@ -24,6 +24,7 @@ import { rebuildRepoDependencies } from "../graph/rebuildRelations.js";
 import { discoverGitRepos } from "../repos/repoDiscovery.js";
 import { toRepoNode } from "../repos/repoRegistry.js";
 import type { DiscoveredRepo } from "../repos/repoDiscovery.js";
+import type { RepoNode } from "../parsers/types.js";
 
 
 // Options types for index:
@@ -317,6 +318,16 @@ repos: []
   async stats(): Promise<Stats> {
     const db = await this.getDb();
     return db.stats();
+  }
+
+  /**
+   * Returns the repositories already present in the graph. Useful for cheaply
+   * detecting which configured repos have been indexed before without computing
+   * the full stats payload.
+   */
+  async listRepos(): Promise<RepoNode[]> {
+    const db = await this.getDb();
+    return db.listRepos();
   }
 
   /**
