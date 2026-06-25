@@ -3,7 +3,7 @@ import {
   ProviderCallError,
   createProviderCallRuntime,
   runProviderCall
-} from "../src/providers/openaiProvider.js";
+} from "../src/resilience/providerPolicy.js";
 
 describe("provider call policy", () => {
   it("retries 429 errors with backoff before succeeding", async () => {

@@ -5,7 +5,7 @@ import {
   runProviderCall,
   type ProviderCallRuntime,
   type ProviderPolicy
-} from "../providers/openaiProvider.js";
+} from "../resilience/providerPolicy.js";
 
 export type FileSemanticSummary = {
   summary: string;

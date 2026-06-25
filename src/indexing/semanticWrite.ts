@@ -4,7 +4,7 @@ import type { GraphDB } from "../graph/db.js";
 import type { ParsedGraphFile, RepoNode } from "../parsers/types.js";
 import { indexSemanticText, type SemanticIndexingResult } from "../semantic/semanticIndex.js";
 import type { ProgressReporter } from "../utils/progress.js";
-import { formatProviderStats } from "../providers/openaiProvider.js";
+import { formatProviderStats } from "../resilience/providerPolicy.js";
 import { runIndexPhase } from "./phases.js";
 
 type ProgressBarLike = {

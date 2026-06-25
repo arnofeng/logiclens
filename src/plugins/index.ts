@@ -8,7 +8,7 @@ import type {
   ParseInput,
   ExtractContext
 } from "./types.js";
-import type { ProviderCallRuntime, ProviderCallStats, ProviderPolicy } from "../providers/openaiProvider.js";
+import type { ProviderCallRuntime, ProviderCallStats, ProviderPolicy } from "../resilience/providerPolicy.js";
 
 /**
  * Defines a LogicLens plugin. Provides runtime verification of the plugin API version.

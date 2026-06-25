@@ -9,7 +9,7 @@ import type { ProgressReporter } from "../utils/progress.js";
 import { writeErrorLog } from "../utils/logger.js";
 import { cosineSimilarity, resolveEmbeddingProvider, type EmbeddingVector, type EmbeddingProvider } from "./embeddings.js";
 import { extractHeuristicEntities, extractHeuristicEntitiesFromSection } from "./extractEntities.js";
-import { createProviderCallRuntime, type ProviderCallStats, type ProviderPolicy } from "../providers/openaiProvider.js";
+import { createProviderCallRuntime, type ProviderCallStats, type ProviderPolicy } from "../resilience/providerPolicy.js";
 
 export type SemanticNodeKind = "Code" | "Section" | "Entity" | "File" | "Repo" | "System";
 

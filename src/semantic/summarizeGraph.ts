@@ -8,7 +8,7 @@ import {
   ProviderCallError,
   type ProviderCallRuntime,
   type ProviderPolicy
-} from "../providers/openaiProvider.js";
+} from "../resilience/providerPolicy.js";
 
 export type GraphSummaryOptions = {
   semantic: boolean;
