@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { defaultConfig, loadConfig, writeConfig } from "../src/config/loadConfig.js";
 import { pluginAddCommand, pluginRemoveCommand, parseNpmSpec, type PluginAddDeps } from "../src/commands/plugin.js";
-import { detectPackageManager, isSafePackageSpec, type PackageManager } from "../src/plugins/packageManager.js";
+import { detectPackageManager, isSafePackageSpec, ensurePluginStore, pluginStoreDir, type PackageManager } from "../src/plugins/packageManager.js";
 import { importPluginModule } from "../src/plugins/loader.js";
 
 const FIXTURE_PLUGIN = path.resolve("tests/fixtures/plugins/grpc-plugin.mjs");
@@ -18,6 +18,14 @@ function recordingInstaller(): { calls: Array<{ cwd: string; spec: string; pm: P
     calls,
     deps: { installPackage: async (cwd, spec, pm) => { calls.push({ cwd, spec, pm }); } }
   };
+}
+
+/** Writes a minimal installed package (valid plugin) under `<root>/node_modules/<name>`. */
+async function writeFakePackage(root: string, name: string, version: string): Promise<void> {
+  const pkgDir = path.join(root, "node_modules", name);
+  await fs.mkdir(pkgDir, { recursive: true });
+  await fs.writeFile(path.join(pkgDir, "package.json"), JSON.stringify({ name, version, main: "index.mjs" }), "utf8");
+  await fs.writeFile(path.join(pkgDir, "index.mjs"), `export default { name: ${JSON.stringify(name)}, version: ${JSON.stringify(version)}, pluginApiVersion: "1", setup() {} };\n`, "utf8");
 }
 
 async function makeWorkspace(): Promise<string> {
@@ -160,6 +168,50 @@ describe("plugin add install orchestration", () => {
 
     expect(calls).toEqual([]);
     expect((await loadConfig(cwd)).plugins).toEqual([{ name: "@scope/some-plugin" }]);
+  });
+});
+
+describe("plugin store", () => {
+  it("ensurePluginStore seeds a private package.json under .logiclens/plugins", async () => {
+    const cwd = await makeWorkspace();
+    const dir = await ensurePluginStore(cwd);
+
+    expect(dir).toBe(pluginStoreDir(cwd));
+    expect(dir).toBe(path.join(cwd, ".logiclens", "plugins"));
+    const manifest = JSON.parse(await fs.readFile(path.join(dir, "package.json"), "utf8"));
+    expect(manifest).toMatchObject({ name: "logiclens-plugins", private: true });
+  });
+
+  it("resolves a bare specifier from the plugin store node_modules", async () => {
+    const cwd = await makeWorkspace();
+    // Simulate an installed package inside the private plugin store.
+    const pkgDir = path.join(pluginStoreDir(cwd), "node_modules", "fake-store-plugin");
+    await fs.mkdir(pkgDir, { recursive: true });
+    await fs.writeFile(path.join(pkgDir, "package.json"), JSON.stringify({ name: "fake-store-plugin", version: "1.0.0", main: "index.mjs" }), "utf8");
+    await fs.writeFile(path.join(pkgDir, "index.mjs"), `export default { name: "fake-store-plugin", version: "1.0.0", pluginApiVersion: "1", setup() {} };\n`, "utf8");
+
+    const { plugin, resolvedPath } = await importPluginModule("fake-store-plugin", cwd);
+    expect(plugin).toMatchObject({ name: "fake-store-plugin", version: "1.0.0" });
+    expect(resolvedPath).toContain(path.join(".logiclens", "plugins", "node_modules"));
+  });
+
+  it("falls back to the workspace node_modules when not in the plugin store", async () => {
+    const cwd = await makeWorkspace();
+    await writeFakePackage(cwd, "fake-ws-plugin", "2.0.0");
+
+    const { plugin, resolvedPath } = await importPluginModule("fake-ws-plugin", cwd);
+    expect(plugin).toMatchObject({ name: "fake-ws-plugin", version: "2.0.0" });
+    expect(resolvedPath).not.toContain(path.join(".logiclens", "plugins"));
+  });
+
+  it("prefers the plugin store over the workspace node_modules", async () => {
+    const cwd = await makeWorkspace();
+    await writeFakePackage(cwd, "dup-plugin", "2.0.0");
+    await writeFakePackage(pluginStoreDir(cwd), "dup-plugin", "9.9.9");
+
+    const { plugin, resolvedPath } = await importPluginModule("dup-plugin", cwd);
+    expect(plugin).toMatchObject({ version: "9.9.9" });
+    expect(resolvedPath).toContain(path.join(".logiclens", "plugins", "node_modules"));
   });
 });
 

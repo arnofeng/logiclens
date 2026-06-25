@@ -23,7 +23,7 @@ async function waitForDeath(pid: number, timeoutMs: number): Promise<boolean> {
 
 /**
  * Removes the `.logiclens` workspace: stops a running MCP server (via its pid
- * lock file) and deletes the config, graph database, cache, and semantic index.
+ * lock file) and deletes the config, graph database, and semantic index.
  *
  * Workspace teardown lives in the CLI layer (not the SDK) so that embedding the
  * SDK can never delete a user's workspace as a side effect.
@@ -61,14 +61,12 @@ export async function uninitCommand(cwd = process.cwd()): Promise<void> {
   // Resolve and remove all workspace artifacts.
   const graphPath = path.resolve(cwd, config.graph.path);
   const semanticPath = path.resolve(cwd, config.semantic.jsonPath);
-  const cachePath = path.join(cwd, ".logiclens", "cache");
 
   await fs.rm(graphPath, { recursive: true, force: true });
-  await fs.rm(cachePath, { recursive: true, force: true });
   await fs.rm(semanticPath, { force: true });
   await fs.rm(configPath(cwd), { force: true });
   await fs.rm(mcpPidPath, { force: true });
   await fs.rm(path.join(cwd, ".logiclens"), { recursive: true, force: true });
 
-  console.log("Uninitialized LogicLens workspace successfully (removed config, graph DB, cache, and stopped running MCP service).");
+  console.log("Uninitialized LogicLens workspace successfully (removed config, graph DB, and stopped running MCP service).");
 }

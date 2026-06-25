@@ -58,7 +58,7 @@ logiclens <command> --help
 
 ### `logiclens init`
 
-Create a `.logiclens/` workspace in the current directory, including default configuration file, graph database directory, and cache directory.
+Create a `.logiclens/` workspace in the current directory, including default configuration file and graph database directory.
 
 ```bash
 logiclens init
@@ -353,7 +353,7 @@ logiclens plugin add my-logiclens-plugin@1.2.0 --options '{"team":"platform"}'
 logiclens plugin add ./plugins/internal.mjs
 ```
 
-For npm packages, the package is installed into the workspace using the detected package manager (pnpm / yarn / npm, by lockfile), the plugin is imported and validated, and then the entry is written to config. Local paths skip installation.
+For npm packages, the package is installed into LogicLens's private plugin store at `.logiclens/plugins/` (using the detected package manager — pnpm / yarn / npm, by lockfile), so it never pollutes your project's or analyzed repos' dependencies. The plugin is then imported and validated, and the entry is written to config. Local paths skip installation. The plugin store is removed together with the workspace on `logiclens uninit`.
 
 **Options**:
 

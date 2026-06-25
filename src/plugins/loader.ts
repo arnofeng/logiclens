@@ -6,6 +6,7 @@ import type { Command } from "commander";
 import { loadConfig } from "../config/loadConfig.js";
 import type { LogicLensConfig } from "../config/schema.js";
 import { cliCommandRegistry, contractExtractorRegistry, embeddingProviderRegistry, frameworkDetectorRegistry, parserRegistry } from "./registry.js";
+import { pluginStoreDir } from "./packageManager.js";
 import { registerBuiltinEmbeddingProviders } from "../semantic/builtinProviders.js";
 import type { LoadedPlugin, LogicLensPlugin, PluginContext } from "./types.js";
 
@@ -43,16 +44,23 @@ async function resolvePluginImport(name: string, cwd: string): Promise<{ importI
     if (stat?.isDirectory()) resolved = path.join(resolved, "index.js");
     return { importId: pathToFileURL(resolved).href, resolvedPath: resolved };
   }
-  // Bare npm specifier: resolve from the workspace cwd first so packages installed
-  // into the workspace node_modules are found even when logiclens is installed
-  // globally. Fall back to the bare specifier (resolved relative to logiclens).
-  try {
-    const requireFromCwd = createRequire(path.join(cwd, "package.json"));
-    const resolved = requireFromCwd.resolve(name);
-    return { importId: pathToFileURL(resolved).href, resolvedPath: resolved };
-  } catch {
-    return { importId: name, resolvedPath: name };
+  // Bare npm specifier. Resolve from LogicLens's private plugin store first
+  // (where `plugin add` installs packages), then the workspace node_modules,
+  // so packages are found even when logiclens is installed globally. Fall back
+  // to the bare specifier (resolved relative to logiclens) as a last resort.
+  const anchors = [
+    path.join(pluginStoreDir(cwd), "package.json"),
+    path.join(cwd, "package.json")
+  ];
+  for (const anchor of anchors) {
+    try {
+      const resolved = createRequire(anchor).resolve(name);
+      return { importId: pathToFileURL(resolved).href, resolvedPath: resolved };
+    } catch {
+      // Try the next anchor.
+    }
   }
+  return { importId: name, resolvedPath: name };
 }
 
 function findPlugin(moduleExports: Record<string, unknown>, moduleName: string): LogicLensPlugin {
