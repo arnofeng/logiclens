@@ -7,7 +7,7 @@ import { systemId } from "../graph/schema.js";
 import { hashText } from "../utils/hash.js";
 import type { ProgressReporter } from "../utils/progress.js";
 import { writeErrorLog } from "../utils/logger.js";
-import { cosineSimilarity, embedText, embedTexts, type EmbeddingVector } from "./embeddings.js";
+import { cosineSimilarity, resolveEmbeddingProvider, type EmbeddingVector, type EmbeddingProvider } from "./embeddings.js";
 import { extractHeuristicEntities, extractHeuristicEntitiesFromSection } from "./extractEntities.js";
 import { createProviderCallRuntime, type ProviderCallStats, type ProviderPolicy } from "../providers/openaiProvider.js";
 
@@ -31,7 +31,7 @@ export type SemanticSearchResult = SemanticRecord & {
 export interface SemanticIndex {
   records(): Promise<SemanticRecord[]>;
   upsert(records: SemanticRecord[]): Promise<void>;
-  search(query: string, options?: { model?: string; apiKey?: string; baseUrl?: string; limit?: number; providerPolicy?: ProviderPolicy }): Promise<SemanticSearchResult[]>;
+  search(query: string, options?: { embeddingProvider?: EmbeddingProvider; limit?: number; providerPolicy?: ProviderPolicy }): Promise<SemanticSearchResult[]>;
 }
 
 export type SemanticIndexFallbackEvent = {
@@ -106,9 +106,9 @@ export class JsonSemanticIndex implements SemanticIndex {
     });
   }
 
-  async search(query: string, options: { model?: string; apiKey?: string; baseUrl?: string; limit?: number; providerPolicy?: ProviderPolicy } = {}): Promise<SemanticSearchResult[]> {
+  async search(query: string, options: { embeddingProvider?: EmbeddingProvider; limit?: number; providerPolicy?: ProviderPolicy } = {}): Promise<SemanticSearchResult[]> {
     const records = await this.read();
-    const queryEmbedding = await embedText(query, options.model, options.apiKey, options.baseUrl, options.providerPolicy);
+    const queryEmbedding = options.embeddingProvider ? await options.embeddingProvider.embedText(query) : undefined;
     const terms = query.toLowerCase().split(/[^a-z0-9_\u4e00-\u9fa5]+/).filter(Boolean);
     const scored = records.map((record) => {
       const vectorScore = queryEmbedding && record.embedding ? cosineSimilarity(queryEmbedding, record.embedding) : 0;
@@ -198,8 +198,8 @@ export class ChromaSemanticIndex implements SemanticIndex {
     });
   }
 
-  async search(query: string, options: { model?: string; apiKey?: string; baseUrl?: string; limit?: number; providerPolicy?: ProviderPolicy } = {}): Promise<SemanticSearchResult[]> {
-    const queryEmbedding = await embedText(query, options.model, options.apiKey, options.baseUrl, options.providerPolicy);
+  async search(query: string, options: { embeddingProvider?: EmbeddingProvider; limit?: number; providerPolicy?: ProviderPolicy } = {}): Promise<SemanticSearchResult[]> {
+    const queryEmbedding = options.embeddingProvider ? await options.embeddingProvider.embedText(query) : undefined;
     if (!queryEmbedding) return [];
     const collection = await this.collectionHandle();
     const result = await collection.query<ChromaMetadata>({
@@ -265,7 +265,7 @@ export class FallbackSemanticIndex implements SemanticIndex {
     }
   }
 
-  async search(query: string, options: { model?: string; apiKey?: string; baseUrl?: string; limit?: number; providerPolicy?: ProviderPolicy } = {}): Promise<SemanticSearchResult[]> {
+  async search(query: string, options: { embeddingProvider?: EmbeddingProvider; limit?: number; providerPolicy?: ProviderPolicy } = {}): Promise<SemanticSearchResult[]> {
     try {
       const rows = await this.primary.search(query, options);
       if (rows.length > 0) return rows;
@@ -395,9 +395,11 @@ function consumeSemanticFallbackEvents(index: SemanticIndex): SemanticIndexFallb
   return [];
 }
 
-export async function indexSemanticText(input: { cwd?: string; repos: RepoNode[]; parsedFiles: ParsedGraphFile[]; model?: string; apiKey?: string; baseUrl?: string; config?: Pick<LogicLensConfig, "semantic" | "embedding">; progress?: ProgressReporter }): Promise<SemanticIndexingResult> {
+export async function indexSemanticText(input: { cwd?: string; repos: RepoNode[]; parsedFiles: ParsedGraphFile[]; embeddingProvider?: EmbeddingProvider; config?: Pick<LogicLensConfig, "semantic" | "embedding">; progress?: ProgressReporter }): Promise<SemanticIndexingResult> {
   const level = input.config?.embedding.level ?? "all";
-  if (level === "off") return { records: 0, changed: 0, cached: 0, fallbackEvents: [] };
+  const providerName = input.config?.embedding.provider ?? "off";
+  if (level === "off" || providerName === "off") return { records: 0, changed: 0, cached: 0, fallbackEvents: [] };
+  const provider = input.embeddingProvider ?? resolveEmbeddingProvider(providerName);
   const index = defaultSemanticIndex(input.cwd, input.config);
   const timestamp = new Date().toISOString();
   const existing = new Map((await index.records()).map((record) => [record.nodeId, record]));
@@ -422,7 +424,7 @@ export async function indexSemanticText(input: { cwd?: string; repos: RepoNode[]
   let completedBatches = 0;
   let completedRecords = cachedCount;
   await runConcurrent(batches, concurrency, async (batch) => {
-    const embeddings = await embedTexts(batch.map(({ record }) => record.sourceText), { model: input.model, apiKey: input.apiKey, baseURL: input.baseUrl, providerRuntime });
+    const embeddings = await provider.embedTexts(batch.map(({ record }) => record.sourceText), providerRuntime);
     for (const [offset, embedding] of embeddings.entries()) {
       const item = batch[offset]!;
       records[item.index] = { ...item.record, embedding };

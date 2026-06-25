@@ -16,9 +16,6 @@ export type IndexRunContext = {
   };
   embedding: {
     enabled: boolean;
-    apiKey?: string;
-    baseUrl?: string;
-    model: string;
   };
 };
 
@@ -55,10 +52,7 @@ export function createIndexRunContext(input: {
       summaryLevel: config.indexing.llmSummaryLevel
     },
     embedding: {
-      enabled: config.embedding.level !== "off",
-      apiKey: config.embedding.apiKey ?? process.env.OPENAI_API_KEY,
-      baseUrl: config.embedding.baseUrl ?? process.env.OPENAI_BASE_URL,
-      model: config.embedding.model
+      enabled: config.embedding.level !== "off" && config.embedding.provider !== "off"
     }
   };
 }

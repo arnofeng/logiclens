@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { planQuestion } from "../src/rag/planner.js";
 import { retrieveForQuestion } from "../src/rag/retrieve.js";
 import { scoreCallResolution } from "../src/extractors/resolveReferences.js";
@@ -74,5 +74,21 @@ describe("rag helpers", () => {
       expect.objectContaining({ repoName: "his-fontend", role: "consumer", key: "/smart/backorder" })
     ]));
     expect(queries.some((sql) => sql.includes("MATCH (c:Contract) WHERE c.kind = $kind AND c.key = $key"))).toBe(true);
+  });
+
+  it("warns and degrades gracefully when the configured embedding provider is unregistered", async () => {
+    const db = { async query() { return []; } };
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const retrieval = await retrieveForQuestion(db as never, "anything?", {
+      config: {
+        embedding: { level: "file", provider: "does-not-exist" },
+        semantic: { provider: "json", jsonPath: ".logiclens/test-missing-provider-index.json" }
+      } as never
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Semantic search disabled"));
+    expect(retrieval.semantic).toEqual([]);
+    warnSpy.mockRestore();
   });
 });

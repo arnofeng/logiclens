@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import { configSchema } from "../src/config/schema.js";
 import { extractHeuristicEntities } from "../src/semantic/extractEntities.js";
 import { buildSemanticRecords, FallbackSemanticIndex, indexSemanticText, JsonSemanticIndex, type SemanticIndex, type SemanticRecord } from "../src/semantic/semanticIndex.js";
+import { NullEmbeddingProvider } from "../src/semantic/embeddings.js";
+import type { EmbeddingProvider } from "../src/plugins/types.js";
 import type { CodeSymbol, ParsedGraphFile, RepoNode } from "../src/parsers/types.js";
 
 describe("semantic heuristics", () => {
@@ -28,7 +30,8 @@ describe("semantic heuristics", () => {
   it("supports json and chroma semantic index configuration", () => {
     const defaultConfig = configSchema.parse({});
     expect(defaultConfig.llm.baseUrl).toBeUndefined();
-    expect(defaultConfig.embedding.model).toBe("text-embedding-3-small");
+    expect(defaultConfig.embedding.provider).toBe("off");
+    expect(defaultConfig.embedding.model).toBeUndefined();
     expect(defaultConfig.embedding.level).toBe("off");
     expect(defaultConfig.embedding.batchSize).toBe(64);
     expect(defaultConfig.embedding.concurrency).toBe(2);
@@ -274,11 +277,17 @@ describe("semantic heuristics", () => {
     }];
     const events: { current: number; total: number; label?: string }[] = [];
 
+    const fakeProvider: EmbeddingProvider = {
+      name: "fake",
+      async embedTexts(texts) { return texts.map((_, i) => [i]); },
+      async embedText(text) { return [text.length]; }
+    };
     await indexSemanticText({
       cwd,
       repos: [repo],
       parsedFiles,
-      config: configSchema.parse({ embedding: { level: "node" } }),
+      embeddingProvider: fakeProvider,
+      config: configSchema.parse({ embedding: { provider: "fake", level: "node" } }),
       progress: (event) => events.push(event)
     });
 

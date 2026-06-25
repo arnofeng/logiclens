@@ -4,7 +4,8 @@ import { pathToFileURL } from "node:url";
 import type { Command } from "commander";
 import { loadConfig } from "../config/loadConfig.js";
 import type { LogicLensConfig } from "../config/schema.js";
-import { cliCommandRegistry, contractExtractorRegistry, frameworkDetectorRegistry, parserRegistry } from "./registry.js";
+import { cliCommandRegistry, contractExtractorRegistry, embeddingProviderRegistry, frameworkDetectorRegistry, parserRegistry } from "./registry.js";
+import { registerBuiltinEmbeddingProviders } from "../semantic/builtinProviders.js";
 import type { LoadedPlugin, LogicLensPlugin, PluginContext } from "./types.js";
 
 const loadedPluginKeys = new Set<string>();
@@ -22,6 +23,8 @@ export type PluginLoadResult = {
   extractorCount: number;
   /** The number of custom CLI command hooks registered by the loaded plugins */
   cliCommandCount: number;
+  /** The number of embedding providers registered by the loaded plugins */
+  embeddingProviderCount: number;
 };
 
 function isLocalPluginName(name: string): boolean {
@@ -68,6 +71,7 @@ export async function loadPlugins(input: LoadPluginsInput = {}): Promise<PluginL
   const parserStartCount = parserRegistry.parsers().length;
   const extractorStartCount = contractExtractorRegistry.extractors().length;
   const cliStartCount = cliCommandRegistry.count();
+  const embeddingStartCount = embeddingProviderRegistry.providers().length;
 
   // 1. Load config plugins (unless disabled)
   if (input.loadConfiguredPlugins !== false) {
@@ -97,7 +101,8 @@ export async function loadPlugins(input: LoadPluginsInput = {}): Promise<PluginL
           registerParser: (parser) => parserRegistry.register(parser),
           registerContractExtractor: (extractor) => contractExtractorRegistry.register(extractor),
           registerCliCommand: (registerFn) => cliCommandRegistry.register(registerFn),
-          registerFrameworkDetector: (detector) => frameworkDetectorRegistry.register(detector)
+          registerFrameworkDetector: (detector) => frameworkDetectorRegistry.register(detector),
+          registerEmbeddingProvider: (provider) => embeddingProviderRegistry.register(provider)
         };
         await plugin.setup(context, pluginConfig.options);
         loadedPluginKeys.add(loadKey);
@@ -139,7 +144,8 @@ export async function loadPlugins(input: LoadPluginsInput = {}): Promise<PluginL
           registerParser: (parser) => parserRegistry.register(parser),
           registerContractExtractor: (extractor) => contractExtractorRegistry.register(extractor),
           registerCliCommand: (registerFn) => cliCommandRegistry.register(registerFn),
-          registerFrameworkDetector: (detector) => frameworkDetectorRegistry.register(detector)
+          registerFrameworkDetector: (detector) => frameworkDetectorRegistry.register(detector),
+          registerEmbeddingProvider: (provider) => embeddingProviderRegistry.register(provider)
         };
         await plugin.setup(context, undefined);
         loadedPluginKeys.add(loadKey);
@@ -159,13 +165,17 @@ export async function loadPlugins(input: LoadPluginsInput = {}): Promise<PluginL
     }
   }
 
+  // 3. Register built-in providers (after plugins, so plugin overrides win)
+  registerBuiltinEmbeddingProviders(config);
+
   if (input.program) cliCommandRegistry.apply(input.program);
 
   return {
     loaded,
     parserCount: parserRegistry.parsers().length - parserStartCount,
     extractorCount: contractExtractorRegistry.extractors().length - extractorStartCount,
-    cliCommandCount: cliCommandRegistry.count() - cliStartCount
+    cliCommandCount: cliCommandRegistry.count() - cliStartCount,
+    embeddingProviderCount: embeddingProviderRegistry.providers().length - embeddingStartCount
   };
 }
 

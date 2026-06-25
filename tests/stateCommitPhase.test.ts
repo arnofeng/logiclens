@@ -102,7 +102,6 @@ describe("semantic write and stale mark phases", () => {
       parsedFiles: [],
       config: {} as LogicLensConfig,
       enabled: false,
-      model: "text-embedding-3-small",
       label: repo.name,
       repoName: repo.name,
       batchId: "batch:1",

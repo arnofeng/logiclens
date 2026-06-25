@@ -1,62 +1,35 @@
-import OpenAI from "openai";
-import {
-  createProviderCallRuntime,
-  estimatedTokensFromText,
-  runProviderCall,
-  ProviderCallError,
-  type ProviderCallRuntime,
-  type ProviderPolicy
-} from "../providers/openaiProvider.js";
+import type { EmbeddingProvider, EmbeddingVector } from "../plugins/types.js";
+import { embeddingProviderRegistry, type EmbeddingProviderRegistry } from "../plugins/registry.js";
 
-export type EmbeddingVector = number[];
+export type { EmbeddingVector };
+export type { EmbeddingProvider };
 
-export type EmbedTextOptions = {
-  model?: string;
-  apiKey?: string;
-  baseURL?: string;
-  providerPolicy?: ProviderPolicy;
-  providerRuntime?: ProviderCallRuntime;
-};
+export class NullEmbeddingProvider implements EmbeddingProvider {
+  readonly name = "off";
 
-export async function embedText(text: string, model = "text-embedding-3-small", apiKey?: string, baseURL?: string, providerPolicy?: ProviderPolicy): Promise<EmbeddingVector | undefined> {
-  return (await embedTexts([text], { model, apiKey, baseURL, providerPolicy }))[0];
-}
+  async embedTexts(texts: string[]): Promise<(EmbeddingVector | undefined)[]> {
+    return texts.map(() => undefined);
+  }
 
-export async function embedTexts(texts: string[], options: EmbedTextOptions = {}): Promise<(EmbeddingVector | undefined)[]> {
-  if (!options.apiKey) return texts.map(() => undefined);
-  const client = new OpenAI({ apiKey: options.apiKey, baseURL: options.baseURL });
-  const runtime = options.providerRuntime ?? createProviderCallRuntime(options.providerPolicy);
-  return embedTextsWithSplit(client, texts.map((text) => text.slice(0, 8000)), options.model ?? "text-embedding-3-small", runtime);
-}
-
-async function embedTextsWithSplit(
-  client: OpenAI,
-  texts: string[],
-  model: string,
-  providerRuntime: ProviderCallRuntime
-): Promise<(EmbeddingVector | undefined)[]> {
-  if (texts.length === 0) return [];
-  try {
-    const response = await runProviderCall({
-      label: "embedding.create",
-      runtime: providerRuntime,
-      estimatedTokens: estimatedTokensFromText(texts),
-      fn: (signal) => client.embeddings.create({ model, input: texts }, { signal })
-    });
-    return texts.map((_, index) => response.data[index]?.embedding);
-  } catch (error) {
-    if (!shouldSplitEmbeddingBatchError(error)) throw error;
-    if (texts.length === 1) return [undefined];
-    const middle = Math.ceil(texts.length / 2);
-    const left = await embedTextsWithSplit(client, texts.slice(0, middle), model, providerRuntime);
-    const right = await embedTextsWithSplit(client, texts.slice(middle), model, providerRuntime);
-    return [...left, ...right];
+  async embedText(_text: string): Promise<EmbeddingVector | undefined> {
+    return undefined;
   }
 }
 
-function shouldSplitEmbeddingBatchError(error: unknown): boolean {
-  if (!(error instanceof ProviderCallError)) return false;
-  return error.kind === "permanent-failed" && (error.status === 400 || error.status === 413);
+export function resolveEmbeddingProvider(
+  providerName: string,
+  registry: EmbeddingProviderRegistry = embeddingProviderRegistry
+): EmbeddingProvider {
+  if (providerName === "off") return new NullEmbeddingProvider();
+  const provider = registry.resolve(providerName);
+  if (!provider) {
+    const available = registry.names();
+    const hint = available.length > 0
+      ? ` Available providers: ${available.join(", ")}.`
+      : " No embedding providers are registered. Install and configure an embedding plugin.";
+    throw new Error(`Embedding provider "${providerName}" is not registered.${hint}`);
+  }
+  return provider;
 }
 
 export function cosineSimilarity(a: EmbeddingVector, b: EmbeddingVector): number {

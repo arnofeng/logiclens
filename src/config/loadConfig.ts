@@ -88,10 +88,10 @@ export function pruneConfig(config: LogicLensConfig): any {
   // Embedding
   if (config.embedding) {
     const embPruned: any = {};
-    if (config.embedding.provider !== "openai") embPruned.provider = config.embedding.provider;
+    if (config.embedding.provider !== "off") embPruned.provider = config.embedding.provider;
     if (config.embedding.apiKey !== undefined) embPruned.apiKey = config.embedding.apiKey;
     if (config.embedding.baseUrl !== undefined) embPruned.baseUrl = config.embedding.baseUrl;
-    if (config.embedding.model !== "text-embedding-3-small") embPruned.model = config.embedding.model;
+    if (config.embedding.model !== undefined) embPruned.model = config.embedding.model;
     if (config.embedding.level !== "off") embPruned.level = config.embedding.level;
     if (config.embedding.batchSize !== 64) embPruned.batchSize = config.embedding.batchSize;
     if (config.embedding.concurrency !== 2) embPruned.concurrency = config.embedding.concurrency;

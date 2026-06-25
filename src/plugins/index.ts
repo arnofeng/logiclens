@@ -3,9 +3,12 @@ import type {
   PluginContext,
   LanguageParser,
   ContractExtractor,
+  EmbeddingProvider,
+  EmbeddingVector,
   ParseInput,
   ExtractContext
 } from "./types.js";
+import type { ProviderCallRuntime, ProviderCallStats, ProviderPolicy } from "../providers/openaiProvider.js";
 
 /**
  * Defines a LogicLens plugin. Provides runtime verification of the plugin API version.
@@ -27,6 +30,11 @@ export type {
   PluginContext,
   LanguageParser,
   ContractExtractor,
+  EmbeddingProvider,
+  EmbeddingVector,
   ParseInput,
-  ExtractContext
+  ExtractContext,
+  ProviderCallRuntime,
+  ProviderCallStats,
+  ProviderPolicy
 };

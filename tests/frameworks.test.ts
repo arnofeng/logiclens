@@ -166,7 +166,8 @@ describe("framework detection", () => {
       registerParser: () => {},
       registerContractExtractor: () => {},
       registerCliCommand: () => {},
-      registerFrameworkDetector: (detector: any) => frameworkDetectorRegistry.register(detector)
+      registerFrameworkDetector: (detector: any) => frameworkDetectorRegistry.register(detector),
+      registerEmbeddingProvider: () => {}
     };
     costomPlugin.default.setup(context);
 

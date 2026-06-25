@@ -7,6 +7,7 @@ import { defaultConfig } from "../src/config/loadConfig.js";
 import type { LogicLensConfig } from "../src/config/schema.js";
 import { KuzuGraphDB } from "../src/graph/db.js";
 import { listContracts, listDependencies } from "../src/graph/queries.js";
+import { embeddingProviderRegistry } from "../src/plugins/registry.js";
 
 function fixturePath(name: string): string {
   return path.resolve("tests/fixtures", name).replace(/\\/g, "/");
@@ -101,8 +102,14 @@ describe("batched indexing", () => {
 
   it("records semantic index fallback warnings in index state", async () => {
     await withDb(async (db, cwd) => {
+      embeddingProviderRegistry.register({
+        name: "test-fallback",
+        async embedTexts(texts) { return texts.map(() => undefined); },
+        async embedText() { return undefined; }
+      });
+
       const config = configFor(["service-a"]);
-      config.embedding = { ...config.embedding, level: "file" };
+      config.embedding = { ...config.embedding, provider: "test-fallback", level: "file" };
       config.semantic = {
         ...config.semantic,
         provider: "chroma",

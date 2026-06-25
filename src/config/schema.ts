@@ -88,17 +88,17 @@ export const configSchema = z.object({
     rateLimit: providerRateLimitSchema
   }).default({ provider: "openai", model: "gpt-4.1-mini", maxSourceCharsPerNode: 6000, retry: defaultProviderRetry, budget: {}, rateLimit: defaultProviderRateLimit }),
   embedding: z.object({
-    provider: z.literal("openai").default("openai"),
+    provider: z.string().default("off"),
     apiKey: optionalSecretString,
     baseUrl: optionalUrlString,
-    model: z.string().default("text-embedding-3-small"),
+    model: z.string().optional(),
     level: z.enum(["off", "repo", "docs", "file", "node", "all"]).default("off"),
     batchSize: z.number().int().positive().default(64),
     concurrency: z.number().int().positive().default(2),
     retry: providerRetrySchema,
     budget: providerBudgetSchema,
     rateLimit: providerRateLimitSchema
-  }).default({ provider: "openai", model: "text-embedding-3-small", level: "off", batchSize: 64, concurrency: 2, retry: defaultProviderRetry, budget: {}, rateLimit: defaultProviderRateLimit }),
+  }).default({ provider: "off", level: "off", batchSize: 64, concurrency: 2, retry: defaultProviderRetry, budget: {}, rateLimit: defaultProviderRateLimit }),
   semantic: z.object({
     provider: z.enum(["json", "chroma"]).default("json"),
     jsonPath: z.string().default(".logiclens/semantic-index.json"),

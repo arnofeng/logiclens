@@ -36,30 +36,22 @@ export async function runSemanticWritePhase(input: {
   parsedFiles: ParsedGraphFile[];
   config: LogicLensConfig;
   enabled: boolean;
-  model: string;
-  apiKey?: string;
-  baseUrl?: string;
   label: string;
   repoName?: string;
   batchId?: string;
   createProgressBar: (label: string, total: number) => ProgressBarLike;
   warn: (message: string) => void;
 }): Promise<SemanticWriteResult> {
-  const { cwd, repos, parsedFiles, config, enabled, model, apiKey, baseUrl, label, repoName, batchId, createProgressBar, warn } = input;
+  const { cwd, repos, parsedFiles, config, enabled, label, repoName, batchId, createProgressBar, warn } = input;
   const result = await runIndexPhase({ phase: "semantic-write", repoName, batchId }, async () => {
     if (!enabled) return { indexed: false, fallbackEvents: 0 };
 
     const embeddingProgress = createProgressBar(`Embeddings ${label}`, 1);
     try {
-      // The semantic index may downgrade from the configured backend to local
-      // JSON storage; keep that as a warning so graph indexing still succeeds.
       const semanticResult = await indexSemanticText({
         cwd,
         repos,
         parsedFiles,
-        model,
-        apiKey,
-        baseUrl,
         config,
         progress: embeddingProgress.reporter()
       });

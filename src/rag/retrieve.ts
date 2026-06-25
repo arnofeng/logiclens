@@ -15,6 +15,7 @@ import {
 } from "../graph/queries.js";
 import type { LogicLensConfig } from "../config/schema.js";
 import { defaultSemanticIndex, type SemanticSearchResult } from "../semantic/semanticIndex.js";
+import { resolveEmbeddingProvider } from "../semantic/embeddings.js";
 import { planQuestion } from "./planner.js";
 
 /**
@@ -77,10 +78,16 @@ export async function retrieveForQuestion(db: GraphDB, question: string, options
   const uniqueSections = [...new Map(sectionRows.map((row) => [row.sectionId, row])).values()].slice(0, 20);
   const uniqueEntities = [...new Map(entityRows.map((row) => [`${row.repoName}:${row.sourceKind}:${row.name}:${row.role}`, row])).values()].slice(0, 30);
   const dependencies = plan.kind === "workflow" || plan.kind === "dependency" || plan.kind === "impact" ? await listDependencies(db, 50) : [];
+  const providerName = options.config?.embedding.provider ?? "off";
+  let embeddingProvider;
+  try {
+    embeddingProvider = providerName !== "off" ? resolveEmbeddingProvider(providerName) : undefined;
+  } catch (error) {
+    console.warn(`Semantic search disabled: ${error instanceof Error ? error.message : String(error)}`);
+    embeddingProvider = undefined;
+  }
   const semantic = await defaultSemanticIndex(options.cwd, options.config).search(question, {
-    model: options.config?.embedding.model,
-    apiKey: options.config?.embedding.apiKey ?? process.env.OPENAI_API_KEY,
-    baseUrl: options.config?.embedding.baseUrl ?? process.env.OPENAI_BASE_URL,
+    embeddingProvider,
     providerPolicy: options.config?.embedding ? {
       retry: options.config.embedding.retry,
       budget: options.config.embedding.budget,

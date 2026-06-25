@@ -132,7 +132,7 @@ describe("indexing phase coverage", () => {
         logger: { createProgressBar: () => ({ tick: () => {}, update: () => {}, complete: () => {}, reporter: () => () => {} }) },
         writeMode: "bulk",
         llm: { summaryLevel: "off" },
-        embedding: { enabled: false, model: "text-embedding-3-small" }
+        embedding: { enabled: false }
       };
 
       await expect(runFullCopyBulkIndex({

@@ -2,6 +2,15 @@ import type { Command } from "commander";
 import type { LogicLensConfig } from "../config/schema.js";
 import type { ExtractorFactBundle } from "../extractors/crossRepoContracts.js";
 import type { ParsedGraphFile, RepoNode } from "../parsers/types.js";
+import type { ProviderCallRuntime } from "../providers/openaiProvider.js";
+
+export type EmbeddingVector = number[];
+
+export interface EmbeddingProvider {
+  readonly name: string;
+  embedTexts(texts: string[], runtime?: ProviderCallRuntime): Promise<(EmbeddingVector | undefined)[]>;
+  embedText(text: string, runtime?: ProviderCallRuntime): Promise<EmbeddingVector | undefined>;
+}
 
 /**
  * Represents the input provided to a LanguageParser to parse a source file.
@@ -139,6 +148,7 @@ export interface PluginContext {
    * Registers a custom framework detector.
    */
   registerFrameworkDetector(detector: FrameworkDetector): void;
+  registerEmbeddingProvider(provider: EmbeddingProvider): void;
 }
 
 /**
