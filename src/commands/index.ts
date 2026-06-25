@@ -104,6 +104,27 @@ export async function runIndexing(
   };
 }
 
+/**
+ * Decides which target repos must be refused because a full (non-incremental)
+ * index would rebuild already-indexed data. A full re-index of an existing repo
+ * is the slow per-repo append-copy path and can leave orphaned shared nodes
+ * behind, so callers should prefer --changed-only or a clean graph rebuild.
+ *
+ * Returns the names of targeted repos that are already indexed. An empty array
+ * means the run is allowed (new repos, or --changed-only runs).
+ */
+export function findBlockedReindexTargets(input: {
+  changedOnly?: boolean;
+  repo?: string;
+  configuredRepoNames: string[];
+  indexedRepoNames: string[];
+}): string[] {
+  if (input.changedOnly) return [];
+  const indexed = new Set(input.indexedRepoNames);
+  const targets = input.repo ? [input.repo] : input.configuredRepoNames;
+  return targets.filter((name) => indexed.has(name));
+}
+
 export async function indexCommand(options: IndexOptions, cwd = process.cwd()): Promise<void> {
   const client = await createLogicLens({
     cwd,
@@ -116,6 +137,25 @@ export async function indexCommand(options: IndexOptions, cwd = process.cwd()): 
     }
   });
   try {
+    // Refuse a full re-index of already-indexed repos and point at the cheaper
+    // alternatives: --changed-only for incremental updates, or deleting the
+    // graph for a clean bulk-copy rebuild. A first index of a newly added repo
+    // still goes through.
+    if (!options.changedOnly) {
+      const blocked = findBlockedReindexTargets({
+        changedOnly: options.changedOnly,
+        repo: options.repo,
+        configuredRepoNames: client.getConfig().repos.map((repo) => repo.name),
+        indexedRepoNames: (await client.listRepos()).map((repo) => repo.name)
+      });
+      if (blocked.length > 0) {
+        const graphPath = client.getConfig().graph.path;
+        console.error(`Already indexed: ${blocked.join(", ")}.`);
+        console.error(`Use "logiclens index --changed-only" to update incrementally, or delete the graph (${graphPath}) and re-run "logiclens index" for a clean full rebuild.`);
+        process.exitCode = 1;
+        return;
+      }
+    }
     const result = await client.index(options);
     console.log(`Indexed ${client.getConfig().repos.length} repos`);
     console.log(`Files scanned: ${result.filesScanned}`);
