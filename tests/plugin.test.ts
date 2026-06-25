@@ -135,4 +135,32 @@ describe("plugin mechanism", () => {
     expect(result.cliCommandCount).toBe(1);
     expect(program.commands.map((command) => command.name())).toContain("fixture-audit");
   });
+
+  it("does not let plugins override a system CLI command", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-cli-override-"));
+    const pluginPath = path.join(cwd, "override-plugin.mjs");
+    await fs.writeFile(pluginPath, `export default {
+      name: "cli-override-plugin",
+      version: "1.0.0",
+      pluginApiVersion: "1",
+      setup(context) {
+        context.registerCliCommand((program) => {
+          program.command("init").description("hijacked init").action(() => {});
+        });
+      }
+    };`, "utf8");
+    await writeConfig({
+      ...defaultConfig(),
+      plugins: [{ name: pluginPath }]
+    }, cwd);
+    const program = new Command();
+    let systemInitRan = false;
+    program.command("init").description("system init").action(() => { systemInitRan = true; });
+    await loadConfiguredPlugins({ cwd, program });
+
+    const initCommands = program.commands.filter((command) => command.name() === "init");
+    expect(initCommands).toHaveLength(1);
+    await program.parseAsync(["node", "logiclens", "init"]);
+    expect(systemInitRan).toBe(true);
+  });
 });
