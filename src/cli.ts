@@ -18,6 +18,7 @@ import { rebuildRelationsCommand } from "./commands/rebuildRelations.js";
 import { statsCommand } from "./commands/stats.js";
 import { traceCommand } from "./commands/trace.js";
 import { pluginsCommand } from "./commands/plugins.js";
+import { pluginAddCommand, pluginRemoveCommand, type PluginAddOptions } from "./commands/plugin.js";
 import { mcpCommand } from "./commands/mcp.js";
 import { frameworksCommand } from "./commands/frameworks.js";
 import { watchCommand } from "./commands/watch.js";
@@ -60,7 +61,25 @@ program
   .description("Audit and govern relation quality / contract quality")
   .action((action: string | undefined, options: { minConfidence?: number; limit?: number; rejectEvidence?: string; reason?: string; alias?: string; targetRepo?: string }) => qualityCommand(action, options));
 program.command("rebuild-relations").option("--repo <name>").option("--full").description("Rebuild repo-to-repo dependency edges from indexed contract evidence").action((options: { repo?: string; full?: boolean }) => rebuildRelationsCommand(options));
-program.command("plugins").description("List configured LogicLens plugins and registered extension hooks").action(() => pluginsCommand());
+const plugin = program.command("plugin").description("Manage LogicLens plugins");
+plugin
+  .command("add")
+  .argument("<name>", "Plugin to add: an npm package (optionally @version) or a local path")
+  .option("--options <json>", "JSON options object stored with the plugin entry")
+  .option("--no-install", "Only write config; skip installing the package")
+  .option("--skip-verify", "Skip importing and validating the plugin after install")
+  .description("Install a plugin package and register it in .logiclens/config.yaml")
+  .action((name: string, options: PluginAddOptions) => pluginAddCommand(name, options));
+plugin
+  .command("remove")
+  .alias("rm")
+  .argument("<name>", "Plugin name to remove (as stored in config)")
+  .description("Remove a plugin entry from .logiclens/config.yaml")
+  .action((name: string) => pluginRemoveCommand(name));
+plugin
+  .command("list")
+  .description("List configured LogicLens plugins and registered extension hooks")
+  .action(() => pluginsCommand());
 program.command("frameworks").description("List detected frameworks and enabled contract extractors for each repository").action(() => frameworksCommand());
 program
   .command("mcp")

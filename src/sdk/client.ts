@@ -210,6 +210,47 @@ repos: []
   }
 
   /**
+   * Adds (or updates) a plugin entry in the workspace configuration.
+   *
+   * Re-adding an existing plugin (matched by name) replaces its entry, allowing
+   * its options to be updated without creating a duplicate. This only mutates
+   * configuration; installing the plugin package is handled by the CLI layer.
+   *
+   * @param name - The plugin module name: an npm package or a local path.
+   * @param options - Additional options.
+   * @param options.options - Arbitrary options object passed to the plugin's setup.
+   * @returns The plugin name and whether an existing entry was replaced.
+   */
+  async addPlugin(name: string, options?: { options?: unknown }): Promise<{ name: string; replaced: boolean }> {
+    const replaced = this.config.plugins.some((plugin) => plugin.name === name);
+    const plugins = this.config.plugins.filter((plugin) => plugin.name !== name);
+    const entry: { name: string; options?: unknown } = { name };
+    if (options?.options !== undefined) entry.options = options.options;
+    plugins.push(entry);
+    this.config = { ...this.config, plugins };
+    await writeConfig(this.config, this.cwd);
+    return { name, replaced };
+  }
+
+  /**
+   * Removes a plugin entry from the workspace configuration.
+   *
+   * Only mutates configuration; the installed package (if any) is left in place.
+   *
+   * @param name - The plugin module name to remove.
+   * @returns Whether a matching entry was found and removed.
+   */
+  async removePlugin(name: string): Promise<{ removed: boolean }> {
+    const plugins = this.config.plugins.filter((plugin) => plugin.name !== name);
+    const removed = plugins.length < this.config.plugins.length;
+    if (removed) {
+      this.config = { ...this.config, plugins };
+      await writeConfig(this.config, this.cwd);
+    }
+    return { removed };
+  }
+
+  /**
    * Discovers and adds multiple Git repositories found under a given directory.
    * Optionally triggers initial indexing on the newly discovered repositories.
    * 

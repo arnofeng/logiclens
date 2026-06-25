@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import type { Command } from "commander";
 import { loadConfig } from "../config/loadConfig.js";
@@ -27,16 +28,31 @@ export type PluginLoadResult = {
   embeddingProviderCount: number;
 };
 
-function isLocalPluginName(name: string): boolean {
+/**
+ * Returns whether a plugin name refers to a local filesystem path (rather than
+ * an npm package): a relative path, an absolute POSIX path, or a Windows drive path.
+ */
+export function isLocalPluginName(name: string): boolean {
   return name.startsWith(".") || name.startsWith("/") || /^[A-Za-z]:[\\/]/.test(name);
 }
 
 async function resolvePluginImport(name: string, cwd: string): Promise<{ importId: string; resolvedPath: string }> {
-  if (!isLocalPluginName(name)) return { importId: name, resolvedPath: name };
-  let resolved = path.resolve(cwd, name);
-  const stat = await fs.stat(resolved).catch(() => undefined);
-  if (stat?.isDirectory()) resolved = path.join(resolved, "index.js");
-  return { importId: pathToFileURL(resolved).href, resolvedPath: resolved };
+  if (isLocalPluginName(name)) {
+    let resolved = path.resolve(cwd, name);
+    const stat = await fs.stat(resolved).catch(() => undefined);
+    if (stat?.isDirectory()) resolved = path.join(resolved, "index.js");
+    return { importId: pathToFileURL(resolved).href, resolvedPath: resolved };
+  }
+  // Bare npm specifier: resolve from the workspace cwd first so packages installed
+  // into the workspace node_modules are found even when logiclens is installed
+  // globally. Fall back to the bare specifier (resolved relative to logiclens).
+  try {
+    const requireFromCwd = createRequire(path.join(cwd, "package.json"));
+    const resolved = requireFromCwd.resolve(name);
+    return { importId: pathToFileURL(resolved).href, resolvedPath: resolved };
+  } catch {
+    return { importId: name, resolvedPath: name };
+  }
 }
 
 function findPlugin(moduleExports: Record<string, unknown>, moduleName: string): LogicLensPlugin {
@@ -54,6 +70,27 @@ function findPlugin(moduleExports: Record<string, unknown>, moduleName: string):
   });
   if (!plugin) throw new Error(`Plugin "${moduleName}" does not export a LogicLensPlugin object.`);
   return plugin;
+}
+
+/**
+ * Resolves, imports, and validates a plugin module without running its `setup`.
+ *
+ * Used by `logiclens plugin add` to verify that a freshly installed package
+ * actually exports a usable LogicLensPlugin (correct shape + supported API
+ * version) before it is written into the configuration file.
+ *
+ * @param name - The plugin module name: an npm package or a local path.
+ * @param cwd - The workspace directory used to resolve the module.
+ * @returns The validated plugin and the resolved filesystem path / specifier.
+ */
+export async function importPluginModule(name: string, cwd = process.cwd()): Promise<{ plugin: LogicLensPlugin; resolvedPath: string }> {
+  const resolved = await resolvePluginImport(name, cwd);
+  const moduleExports = await import(resolved.importId) as Record<string, unknown>;
+  const plugin = findPlugin(moduleExports, name);
+  if (plugin.pluginApiVersion && plugin.pluginApiVersion !== "1") {
+    throw new Error(`Plugin "${plugin.name}" declares unsupported pluginApiVersion "${plugin.pluginApiVersion}". Expected "1".`);
+  }
+  return { plugin, resolvedPath: resolved.resolvedPath };
 }
 
 export type LoadPluginsInput = {
