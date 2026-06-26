@@ -9,6 +9,7 @@ export type ConfidenceRule =
   | "probable-http-client-spec"
   | "probable-http-route"
   | "probable-route-merge"
+  | "exact-event-annotation"
   | "probable-event"
   | "probable-event-spec"
   | "heuristic-package-owner-alias"
@@ -39,6 +40,7 @@ const CONFIDENCE_BY_RULE: Record<ConfidenceRule, number> = {
   "probable-http-client-spec": 0.85,
   "probable-http-route": 0.8,
   "probable-route-merge": 0.85,
+  "exact-event-annotation": 0.9,
   "probable-event": 0.85,
   "probable-event-spec": 0.85,
   "heuristic-package-owner-alias": 0.7,

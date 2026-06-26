@@ -9,6 +9,8 @@ import { sdkGeneratedClientExtractor } from "./sdkGeneratedClientExtractor.js";
 import { sharedSymbolExtractor } from "./sharedSymbolExtractor.js";
 import { springMvcExtractor } from "./springMvcExtractor.js";
 import { pythonExtractor } from "./pythonExtractor.js";
+import { pythonEventExtractor } from "./pythonEventExtractor.js";
+import { javaEventExtractor } from "./javaEventExtractor.js";
 import { goExtractor } from "./goExtractor.js";
 
 export const builtinContractExtractors: ContractExtractor[] = [
@@ -22,5 +24,7 @@ export const builtinContractExtractors: ContractExtractor[] = [
   sharedSymbolExtractor,
   envConfigExtractor,
   pythonExtractor,
+  pythonEventExtractor,
+  javaEventExtractor,
   goExtractor
 ];

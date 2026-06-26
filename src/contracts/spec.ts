@@ -17,7 +17,7 @@ export type EventSpec = {
   eventName?: string;
   payloadType?: string;
   keyType?: string;
-  broker?: "kafka" | "rabbitmq" | "redis-stream" | "unknown";
+  broker?: "kafka" | "rabbitmq" | "redis-stream" | "nats" | "unknown";
   version?: string;
 };
 

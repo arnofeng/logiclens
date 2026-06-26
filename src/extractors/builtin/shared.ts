@@ -15,8 +15,9 @@ import type {
 } from "../../parsers/types.js";
 import { contractId, entityId, evidenceId, fileId, normalizeName } from "../../utils/path.js";
 import { normalizeApiPath, canonicalHttpContractKey } from "../../contracts/apiPath.js";
+import { canonicalEventContractKey, type EventBroker } from "../../contracts/event.js";
 import { confidenceFor } from "../../confidence.js";
-import { serializeSpec, type ContractSpec, type HttpEndpointSpec } from "../../contracts/spec.js";
+import { serializeSpec, type ContractSpec, type EventSpec, type HttpEndpointSpec } from "../../contracts/spec.js";
 import type { AliasOverride, CrossRepoExtraction, ExtractorFactBundle } from "../crossRepoContracts.js";
 
 export type PackageJson = {
@@ -83,7 +84,7 @@ export function canonicalContractKey(kind: ContractKind, value: string, method?:
     return canonicalHttpContractKey({ method: method?.trim(), path: trimmed });
   }
   if (kind === "package") return trimmed.toLowerCase();
-  if (kind === "event") return trimmed.toLowerCase();
+  if (kind === "event") return canonicalEventContractKey(trimmed);
   if (kind === "config") return trimmed.toUpperCase();
   return normalizeName(trimmed);
 }
@@ -324,6 +325,73 @@ export function pushApiContractFromPath(input: {
     httpMethod: input.method ? input.method.trim().toUpperCase() : undefined,
     pathTemplate: apiPathTemplate(apiContract.key)
   });
+}
+
+/**
+ * Emits a full event contract: Contract + repo-contract edge + EventSpec
+ * ContractSpec + HAS_SPEC edge + business entity/operation. Shared by every
+ * language's event extractor so producer/consumer specs stay symmetric and the
+ * spec/entity/operation wiring lives in one place (mirrors `pushApiContractFromPath`).
+ *
+ * Returns the created contract + evidence so callers can attach a degradation
+ * audit (e.g. `payload-type-unresolvable`) referencing the same site.
+ */
+export function pushEventContract(input: {
+  result: CrossRepoExtraction;
+  file: ParsedFile;
+  topic: string;
+  role: ContractRole;
+  broker: EventBroker;
+  framework?: string;
+  payloadType?: string;
+  line: number;
+  raw: string;
+  rule: string;
+  confidence: number;
+  sourceSymbolId?: string;
+}): { contractNode: ContractNode; evidenceNode: EvidenceNode } {
+  const eventContract = contract("event", input.topic, `Event topic ${input.topic}`);
+  const evidenceNode = evidence({
+    repoId: input.file.repoId,
+    fileId: input.file.fileId,
+    filePath: input.file.path,
+    line: input.line,
+    raw: input.raw,
+    rule: input.rule,
+    confidence: input.confidence
+  });
+  pushContractEvidence(input.result, input.file.repoId, eventContract, input.role, evidenceNode);
+
+  const eventSpec: EventSpec = {
+    kind: "event",
+    // Use the canonical key so specJson.topic matches the indexed
+    // eventTopic/canonicalKey columns; the original-cased text stays in the raw.
+    topic: eventContract.key,
+    payloadType: input.payloadType,
+    broker: input.broker
+  };
+  pushContractSpec({
+    result: input.result,
+    contractNode: eventContract,
+    spec: eventSpec,
+    repoId: input.file.repoId,
+    fileId: input.file.fileId,
+    evidenceNode,
+    sourceSymbolId: input.sourceSymbolId,
+    framework: input.framework,
+    eventTopic: eventContract.key
+  });
+
+  const entityName = toBusinessEntityName(eventContract);
+  if (entityName) {
+    input.result.entities.push({ id: entityId(entityName), name: entityName, kind: "domain", description: "Domain entity inferred from cross-repo contracts" });
+    input.result.contractEntities.push({ contractId: eventContract.id, entityId: entityId(entityName), evidenceId: evidenceNode.id, confidence: evidenceNode.confidence });
+    const operationId = `operation:${normalizeName(`${operationVerb(eventContract, input.role)}:${entityName}:${eventContract.key}:${input.file.repoId}`)}`;
+    input.result.operations.push({ id: operationId, verb: operationVerb(eventContract, input.role), entityName, description: `${input.role} ${eventContract.kind} ${eventContract.key}` });
+    input.result.operationRepos.push({ operationId, repoId: input.file.repoId, role: input.role, evidenceId: evidenceNode.id, confidence: evidenceNode.confidence });
+  }
+
+  return { contractNode: eventContract, evidenceNode };
 }
 
 async function readPackageManifest(repo: RepoNode, manifestPath: string): Promise<RepoPackageManifest | undefined> {

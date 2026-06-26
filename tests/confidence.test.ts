@@ -19,6 +19,7 @@ describe("confidence rules", () => {
     expect(confidenceBand(confidenceFor("exact-parser-route-spec"))).toBe("exact");
     expect(confidenceBand(confidenceFor("probable-http-client-spec"))).toBe("probable");
     expect(confidenceBand(confidenceFor("probable-event-spec"))).toBe("probable");
+    expect(confidenceBand(confidenceFor("exact-event-annotation"))).toBe("exact");
     expect(confidenceBand(confidenceFor("heuristic-schema-fields"))).toBe("heuristic");
     expect(confidenceBand(confidenceFor("heuristic-generic-type-param"))).toBe("heuristic");
     expect(confidenceBand(confidenceFor("heuristic-request-body-type"))).toBe("heuristic");
@@ -31,6 +32,7 @@ describe("confidence rules", () => {
     expect(confidenceFor("probable-http-client-spec")).toBeLessThan(0.9);
     expect(confidenceFor("probable-event-spec")).toBeGreaterThanOrEqual(0.8);
     expect(confidenceFor("probable-event-spec")).toBeLessThan(0.9);
+    expect(confidenceFor("exact-event-annotation")).toBeGreaterThanOrEqual(0.9);
     expect(confidenceFor("heuristic-schema-fields")).toBeLessThan(0.8);
     expect(confidenceFor("heuristic-generic-type-param")).toBeLessThan(0.8);
     expect(confidenceFor("heuristic-request-body-type")).toBeLessThan(0.8);
