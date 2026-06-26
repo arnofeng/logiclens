@@ -16,6 +16,9 @@ import type {
   RepoContractEdge,
   RepoDependencyEdge,
   RepoNode,
+  ContractSpecNode,
+  ContractSpecEdge,
+  SemanticRelationEdge,
   WorkflowNode,
   WorkflowOperationEdge
 } from "../../parsers/types.js";
@@ -94,7 +97,8 @@ const CONSTRAINT_STATEMENTS = [
   "CREATE CONSTRAINT IF NOT EXISTS FOR (n:IndexState) REQUIRE n.id IS UNIQUE",
   "CREATE CONSTRAINT IF NOT EXISTS FOR (n:GraphWriteBatch) REQUIRE n.id IS UNIQUE",
   "CREATE CONSTRAINT IF NOT EXISTS FOR (n:RelationFeedback) REQUIRE n.id IS UNIQUE",
-  "CREATE CONSTRAINT IF NOT EXISTS FOR (n:AliasOverride) REQUIRE n.id IS UNIQUE"
+  "CREATE CONSTRAINT IF NOT EXISTS FOR (n:AliasOverride) REQUIRE n.id IS UNIQUE",
+  "CREATE CONSTRAINT IF NOT EXISTS FOR (n:ContractSpec) REQUIRE n.id IS UNIQUE"
 ];
 
 const INDEX_STATEMENTS = [
@@ -106,7 +110,15 @@ const INDEX_STATEMENTS = [
   "CREATE INDEX IF NOT EXISTS FOR (e:Evidence) ON (e.repoId)",
   "CREATE INDEX IF NOT EXISTS FOR (e:Evidence) ON (e.fileId)",
   "CREATE INDEX IF NOT EXISTS FOR (i:IndexState) ON (i.repoId)",
-  "CREATE INDEX IF NOT EXISTS FOR (g:GraphWriteBatch) ON (g.batchId)"
+  "CREATE INDEX IF NOT EXISTS FOR (g:GraphWriteBatch) ON (g.batchId)",
+  "CREATE INDEX IF NOT EXISTS FOR (s:ContractSpec) ON (s.contractId)",
+  "CREATE INDEX IF NOT EXISTS FOR (s:ContractSpec) ON (s.specKind)",
+  "CREATE INDEX IF NOT EXISTS FOR (s:ContractSpec) ON (s.httpMethod)",
+  "CREATE INDEX IF NOT EXISTS FOR (s:ContractSpec) ON (s.pathTemplate)",
+  "CREATE INDEX IF NOT EXISTS FOR (s:ContractSpec) ON (s.eventTopic)",
+  "CREATE INDEX IF NOT EXISTS FOR (s:ContractSpec) ON (s.canonicalKey)",
+  "CREATE INDEX IF NOT EXISTS FOR (s:ContractSpec) ON (s.fileId)",
+  "CREATE INDEX IF NOT EXISTS FOR (s:ContractSpec) ON (s.repoId)"
 ];
 
 export class Neo4jGraphDB implements GraphDB {
@@ -319,6 +331,27 @@ export class Neo4jGraphDB implements GraphDB {
     );
   }
 
+  async upsertContractSpec(spec: ContractSpecNode): Promise<void> {
+    await this.query(
+      "MERGE (s:ContractSpec {id: $id}) ON CREATE SET s.contractId=$contractId, s.specKind=$specKind, s.repoId=$repoId, s.fileId=$fileId, s.evidenceId=$evidenceId, s.sourceSymbolId=$sourceSymbolId, s.canonicalKey=$canonicalKey, s.httpMethod=$httpMethod, s.pathTemplate=$pathTemplate, s.eventTopic=$eventTopic, s.framework=$framework, s.version=$version, s.specJson=$specJson, s.confidence=$confidence, s.batchId=$batchId, s.indexedAt=$indexedAt, s.active=$active ON MATCH SET s.contractId=$contractId, s.specKind=$specKind, s.repoId=$repoId, s.fileId=$fileId, s.evidenceId=$evidenceId, s.sourceSymbolId=$sourceSymbolId, s.canonicalKey=$canonicalKey, s.httpMethod=$httpMethod, s.pathTemplate=$pathTemplate, s.eventTopic=$eventTopic, s.framework=$framework, s.version=$version, s.specJson=$specJson, s.confidence=$confidence, s.batchId=$batchId, s.indexedAt=$indexedAt, s.active=$active;",
+      { ...spec, sourceSymbolId: spec.sourceSymbolId ?? "", httpMethod: spec.httpMethod ?? "", pathTemplate: spec.pathTemplate ?? "", eventTopic: spec.eventTopic ?? "", framework: spec.framework ?? "", version: spec.version ?? "", batchId: spec.batchId ?? "", indexedAt: spec.indexedAt ?? "", active: spec.active ?? true } as unknown as Record<string, GraphValue>
+    );
+  }
+
+  async addHasSpec(edge: ContractSpecEdge): Promise<void> {
+    await this.query(
+      "MATCH (c:Contract {id: $contractId}), (s:ContractSpec {id: $specId}) MERGE (c)-[r:HAS_SPEC {evidenceId: $evidenceId}]->(s) SET r.confidence = $confidence, r.batchId = $batchId, r.active = $active;",
+      { contractId: edge.contractId, specId: edge.specId, evidenceId: edge.evidenceId, confidence: edge.confidence, batchId: edge.batchId ?? "", active: edge.active ?? true }
+    );
+  }
+
+  async addSemanticRelation(edge: SemanticRelationEdge): Promise<void> {
+    await this.query(
+      "MATCH (a:ContractSpec {id: $fromSpecId}), (b:ContractSpec {id: $toSpecId}) MERGE (a)-[r:SEMANTIC_REL {kind: $kind, evidenceId: $evidenceId}]->(b) SET r.reason = $reason, r.confidence = $confidence, r.batchId = $batchId, r.active = $active;",
+      { fromSpecId: edge.fromSpecId, toSpecId: edge.toSpecId, kind: edge.kind, evidenceId: edge.evidenceId, reason: edge.reason, confidence: edge.confidence, batchId: edge.batchId ?? "", active: edge.active ?? true }
+    );
+  }
+
   async addContractEvidence(contractIdValue: string, evidenceIdValue: string): Promise<void> {
     await this.query("MATCH (c:Contract {id: $contractId}), (e:Evidence {id: $evidenceId}) MERGE (c)-[:HAS_EVIDENCE]->(e);", { contractId: contractIdValue, evidenceId: evidenceIdValue });
   }
@@ -502,10 +535,10 @@ export class Neo4jGraphDB implements GraphDB {
 
   async cleanupGraphWriteBatch(batchId: string): Promise<void> {
     const params = { batchId, active: false };
-    for (const table of ["File", "Code", "Section", "Evidence"]) {
+    for (const table of ["File", "Code", "Section", "Evidence", "ContractSpec"]) {
       await this.query(`MATCH (n:${table}) WHERE n.batchId = $batchId SET n.active = $active;`, params);
     }
-    for (const rel of ["IMPORTS", "CALLS", "OWNS_PACKAGE", "PRODUCES", "CONSUMES", "SHARES_CONTRACT", "CONTRACT_MENTIONS", "PARTICIPATES_IN", "WORKFLOW_STEP", "USES_PACKAGE", "DEPENDS_ON"]) {
+    for (const rel of ["IMPORTS", "CALLS", "OWNS_PACKAGE", "PRODUCES", "CONSUMES", "SHARES_CONTRACT", "CONTRACT_MENTIONS", "PARTICIPATES_IN", "WORKFLOW_STEP", "USES_PACKAGE", "DEPENDS_ON", "HAS_SPEC", "SEMANTIC_REL"]) {
       await this.query(`MATCH ()-[r:${rel}]->() WHERE r.batchId = $batchId SET r.active = $active;`, params);
     }
   }
@@ -534,9 +567,12 @@ export class Neo4jGraphDB implements GraphDB {
     // Batch-update relationships tied to stale file IDs
     await this.query("UNWIND $staleFileIds AS staleFileId MATCH (a:File)-[r:IMPORTS]->(b:File) WHERE a.id = staleFileId OR b.id = staleFileId SET r.active = $active, r.batchId = $batchId;", batchParams);
     await this.query("UNWIND $staleFileIds AS staleFileId MATCH (a:Code)-[r:CALLS]->(b:Code) WHERE a.fileId = staleFileId OR b.fileId = staleFileId SET r.active = $active, r.batchId = $batchId;", batchParams);
-    for (const rel of ["OWNS_PACKAGE", "PRODUCES", "CONSUMES", "SHARES_CONTRACT", "CONTRACT_MENTIONS", "PARTICIPATES_IN", "WORKFLOW_STEP", "USES_PACKAGE", "DEPENDS_ON"]) {
+    for (const rel of ["OWNS_PACKAGE", "PRODUCES", "CONSUMES", "SHARES_CONTRACT", "CONTRACT_MENTIONS", "PARTICIPATES_IN", "WORKFLOW_STEP", "USES_PACKAGE", "DEPENDS_ON", "HAS_SPEC"]) {
       await this.query(`UNWIND $staleFileIds AS staleFileId MATCH ()-[r:${rel}]->(), (e:Evidence) WHERE r.evidenceId = e.id AND e.fileId = staleFileId SET r.active = $active, r.batchId = $batchId;`, batchParams);
     }
+    await this.query("UNWIND $staleFileIds AS staleFileId MATCH (cs:ContractSpec) WHERE cs.fileId = staleFileId SET cs.active = $active, cs.batchId = $batchId;", batchParams);
+    await this.query("UNWIND $staleFileIds AS staleFileId MATCH (cs:ContractSpec)-[r:SEMANTIC_REL]->() WHERE cs.fileId = staleFileId SET r.active = $active, r.batchId = $batchId;", batchParams);
+    await this.query("UNWIND $staleFileIds AS staleFileId MATCH ()-[r:SEMANTIC_REL]->(cs:ContractSpec) WHERE cs.fileId = staleFileId SET r.active = $active, r.batchId = $batchId;", batchParams);
 
     // Handle stale evidence
     const evidenceRows = input.activeFileIds.length === 0
@@ -552,7 +588,7 @@ export class Neo4jGraphDB implements GraphDB {
     if (staleEvidenceIds.length > 0) {
       const evidenceBatchParams = { staleEvidenceIds, batchId: input.batchId, active: false };
       await this.query("UNWIND $staleEvidenceIds AS evidenceId MATCH (e:Evidence) WHERE e.id = evidenceId SET e.active = $active, e.batchId = $batchId;", evidenceBatchParams);
-      for (const rel of ["OWNS_PACKAGE", "PRODUCES", "CONSUMES", "SHARES_CONTRACT", "CONTRACT_MENTIONS", "PARTICIPATES_IN", "WORKFLOW_STEP", "USES_PACKAGE", "DEPENDS_ON"]) {
+      for (const rel of ["OWNS_PACKAGE", "PRODUCES", "CONSUMES", "SHARES_CONTRACT", "CONTRACT_MENTIONS", "PARTICIPATES_IN", "WORKFLOW_STEP", "USES_PACKAGE", "DEPENDS_ON", "HAS_SPEC"]) {
         await this.query(`UNWIND $staleEvidenceIds AS evidenceId MATCH ()-[r:${rel}]->() WHERE r.evidenceId = evidenceId SET r.active = $active, r.batchId = $batchId;`, evidenceBatchParams);
       }
     }

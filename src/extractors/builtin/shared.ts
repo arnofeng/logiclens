@@ -13,7 +13,7 @@ import type {
   RepoNode
 } from "../../parsers/types.js";
 import { contractId, entityId, evidenceId, fileId, normalizeName } from "../../utils/path.js";
-import { normalizeApiPath } from "../../contracts/apiPath.js";
+import { normalizeApiPath, canonicalHttpContractKey } from "../../contracts/apiPath.js";
 import { confidenceFor } from "../../confidence.js";
 import type { AliasOverride, CrossRepoExtraction, ExtractorFactBundle } from "../crossRepoContracts.js";
 
@@ -64,7 +64,10 @@ export function createCrossRepoExtraction(): CrossRepoExtraction {
     workflows: [],
     operationRepos: [],
     workflowOperations: [],
-    packageUsages: []
+    packageUsages: [],
+    contractSpecs: [],
+    contractSpecEdges: [],
+    semanticRelations: []
   };
 }
 
@@ -72,18 +75,10 @@ export function isParsedCodeFile(file: ParsedGraphFile): file is ParsedFile {
   return file.language !== "markdown";
 }
 
-export function canonicalContractKey(kind: ContractKind, value: string): string {
+export function canonicalContractKey(kind: ContractKind, value: string, method?: string): string {
   const trimmed = value.trim();
   if (kind === "api") {
-    if (trimmed.startsWith("/") || /^https?:\/\//i.test(trimmed)) return normalizeApiPath(trimmed).toLowerCase();
-    return trimmed
-      .replace(/\?.*$/, "")
-      .replace(/\/+/g, "/")
-      .replace(/\/:([A-Za-z_][A-Za-z0-9_]*)/g, "/{$1}")
-      .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, "{$1}")
-      .replace(/\$\{[^}]+\}/g, "{param}")
-      .replace(/\/$/, "")
-      .toLowerCase();
+    return canonicalHttpContractKey({ method: method?.trim(), path: trimmed });
   }
   if (kind === "package") return trimmed.toLowerCase();
   if (kind === "event") return trimmed.toLowerCase();
@@ -91,8 +86,8 @@ export function canonicalContractKey(kind: ContractKind, value: string): string 
   return normalizeName(trimmed);
 }
 
-export function contract(kind: ContractKind, name: string, description = ""): ContractNode {
-  const key = canonicalContractKey(kind, name);
+export function contract(kind: ContractKind, name: string, description = "", method?: string): ContractNode {
+  const key = canonicalContractKey(kind, name, method);
   return { id: contractId(kind, key), kind, key, name, description };
 }
 
@@ -129,7 +124,10 @@ export function toFactBundle(result: CrossRepoExtraction): ExtractorFactBundle {
       ...result.contractEntities.map((edge) => ({ kind: "contract-entity" as const, ...edge })),
       ...result.operationRepos.map((edge) => ({ kind: "operation-repo" as const, ...edge })),
       ...result.workflowOperations.map((edge) => ({ kind: "workflow-operation" as const, ...edge }))
-    ]
+    ],
+    contractSpecs: result.contractSpecs,
+    contractSpecEdges: result.contractSpecEdges,
+    semanticRelations: result.semanticRelations
   };
 }
 
@@ -223,8 +221,9 @@ export function pushApiContractFromPath(input: {
   raw: string;
   rule: string;
   confidence: number;
+  method?: string;
 }): void {
-  const apiContract = contract("api", input.apiPath, `HTTP API ${input.apiPath}`);
+  const apiContract = contract("api", input.apiPath, `HTTP API ${input.apiPath}`, input.method);
   const evidenceNode = evidence({
     repoId: input.file.repoId,
     fileId: input.file.fileId,

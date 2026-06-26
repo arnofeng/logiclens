@@ -18,6 +18,9 @@ import type {
   RepoContractEdge,
   RepoDependencyEdge,
   RepoNode,
+  ContractSpecNode,
+  ContractSpecEdge,
+  SemanticRelationEdge,
   WorkflowNode,
   WorkflowOperationEdge
 } from "../../parsers/types.js";
@@ -315,6 +318,27 @@ export class KuzuGraphDB implements GraphDB {
     );
   }
 
+  async upsertContractSpec(spec: ContractSpecNode): Promise<void> {
+    await this.query(
+      "MERGE (s:ContractSpec {id: $id}) ON CREATE SET s.contractId=$contractId, s.specKind=$specKind, s.repoId=$repoId, s.fileId=$fileId, s.evidenceId=$evidenceId, s.sourceSymbolId=$sourceSymbolId, s.canonicalKey=$canonicalKey, s.httpMethod=$httpMethod, s.pathTemplate=$pathTemplate, s.eventTopic=$eventTopic, s.framework=$framework, s.version=$version, s.specJson=$specJson, s.confidence=$confidence, s.batchId=$batchId, s.indexedAt=$indexedAt, s.active=$active ON MATCH SET s.contractId=$contractId, s.specKind=$specKind, s.repoId=$repoId, s.fileId=$fileId, s.evidenceId=$evidenceId, s.sourceSymbolId=$sourceSymbolId, s.canonicalKey=$canonicalKey, s.httpMethod=$httpMethod, s.pathTemplate=$pathTemplate, s.eventTopic=$eventTopic, s.framework=$framework, s.version=$version, s.specJson=$specJson, s.confidence=$confidence, s.batchId=$batchId, s.indexedAt=$indexedAt, s.active=$active;",
+      { ...spec, sourceSymbolId: spec.sourceSymbolId ?? "", httpMethod: spec.httpMethod ?? "", pathTemplate: spec.pathTemplate ?? "", eventTopic: spec.eventTopic ?? "", framework: spec.framework ?? "", version: spec.version ?? "", batchId: spec.batchId ?? "", indexedAt: spec.indexedAt ?? "", active: spec.active ?? true } as unknown as Record<string, GraphValue>
+    );
+  }
+
+  async addHasSpec(edge: ContractSpecEdge): Promise<void> {
+    await this.query(
+      "MATCH (c:Contract {id: $contractId}), (s:ContractSpec {id: $specId}) MERGE (c)-[r:HAS_SPEC {evidenceId: $evidenceId}]->(s) SET r.confidence = $confidence, r.batchId = $batchId, r.active = $active;",
+      { contractId: edge.contractId, specId: edge.specId, evidenceId: edge.evidenceId, confidence: edge.confidence, batchId: edge.batchId ?? "", active: edge.active ?? true }
+    );
+  }
+
+  async addSemanticRelation(edge: SemanticRelationEdge): Promise<void> {
+    await this.query(
+      "MATCH (a:ContractSpec {id: $fromSpecId}), (b:ContractSpec {id: $toSpecId}) MERGE (a)-[r:SEMANTIC_REL {kind: $kind, evidenceId: $evidenceId}]->(b) SET r.reason = $reason, r.confidence = $confidence, r.batchId = $batchId, r.active = $active;",
+      { fromSpecId: edge.fromSpecId, toSpecId: edge.toSpecId, kind: edge.kind, evidenceId: edge.evidenceId, reason: edge.reason, confidence: edge.confidence, batchId: edge.batchId ?? "", active: edge.active ?? true }
+    );
+  }
+
   async addContractEvidence(contractIdValue: string, evidenceIdValue: string): Promise<void> {
     await this.query("MATCH (c:Contract {id: $contractId}), (e:Evidence {id: $evidenceId}) MERGE (c)-[:HAS_EVIDENCE]->(e);", { contractId: contractIdValue, evidenceId: evidenceIdValue });
   }
@@ -487,10 +511,10 @@ export class KuzuGraphDB implements GraphDB {
 
   async cleanupGraphWriteBatch(batchId: string): Promise<void> {
     const params = { batchId, active: false };
-    for (const table of ["File", "Code", "Section", "Evidence"]) {
+    for (const table of ["File", "Code", "Section", "Evidence", "ContractSpec"]) {
       await this.query(`MATCH (n:${table}) WHERE n.batchId = $batchId SET n.active = $active;`, params);
     }
-    for (const rel of ["IMPORTS", "CALLS", "OWNS_PACKAGE", "PRODUCES", "CONSUMES", "SHARES_CONTRACT", "CONTRACT_MENTIONS", "PARTICIPATES_IN", "WORKFLOW_STEP", "USES_PACKAGE", "DEPENDS_ON"]) {
+    for (const rel of ["IMPORTS", "CALLS", "OWNS_PACKAGE", "PRODUCES", "CONSUMES", "SHARES_CONTRACT", "CONTRACT_MENTIONS", "PARTICIPATES_IN", "WORKFLOW_STEP", "USES_PACKAGE", "DEPENDS_ON", "HAS_SPEC", "SEMANTIC_REL"]) {
       await this.query(`MATCH ()-[r:${rel}]->() WHERE r.batchId = $batchId SET r.active = $active;`, params);
     }
   }
@@ -516,9 +540,12 @@ export class KuzuGraphDB implements GraphDB {
       await this.query("MATCH (e:Evidence) WHERE e.fileId = $staleFileId SET e.active = $active, e.batchId = $batchId, e.indexedAt = $staleIndexedAt;", nodeParams);
       await this.query("MATCH (a:File)-[r:IMPORTS]->(b:File) WHERE a.id = $staleFileId OR b.id = $staleFileId SET r.active = $active, r.batchId = $batchId;", relParams);
       await this.query("MATCH (a:Code)-[r:CALLS]->(b:Code) WHERE a.fileId = $staleFileId OR b.fileId = $staleFileId SET r.active = $active, r.batchId = $batchId;", relParams);
-      for (const rel of ["OWNS_PACKAGE", "PRODUCES", "CONSUMES", "SHARES_CONTRACT", "CONTRACT_MENTIONS", "PARTICIPATES_IN", "WORKFLOW_STEP", "USES_PACKAGE", "DEPENDS_ON"]) {
+      for (const rel of ["OWNS_PACKAGE", "PRODUCES", "CONSUMES", "SHARES_CONTRACT", "CONTRACT_MENTIONS", "PARTICIPATES_IN", "WORKFLOW_STEP", "USES_PACKAGE", "DEPENDS_ON", "HAS_SPEC"]) {
         await this.query(`MATCH ()-[r:${rel}]->(), (e:Evidence) WHERE r.evidenceId = e.id AND e.fileId = $staleFileId SET r.active = $active, r.batchId = $batchId;`, relParams);
       }
+      await this.query("MATCH (cs:ContractSpec) WHERE cs.fileId = $staleFileId SET cs.active = $active, cs.batchId = $batchId;", relParams);
+      await this.query("MATCH (cs:ContractSpec)-[r:SEMANTIC_REL]->(cs2:ContractSpec) WHERE cs.fileId = $staleFileId SET r.active = $active, r.batchId = $batchId;", relParams);
+      await this.query("MATCH (cs2:ContractSpec)-[r:SEMANTIC_REL]->(cs:ContractSpec) WHERE cs.fileId = $staleFileId SET r.active = $active, r.batchId = $batchId;", relParams);
     }
     const evidenceRows = input.activeFileIds.length === 0
       ? await this.query<{ id: string }>(
@@ -532,7 +559,7 @@ export class KuzuGraphDB implements GraphDB {
     for (const evidenceIdValue of evidenceRows.map((row) => row.id)) {
       const relParams = { evidenceId: evidenceIdValue, batchId: input.batchId, active: false };
       await this.query("MATCH (e:Evidence) WHERE e.id = $evidenceId SET e.active = $active, e.batchId = $batchId;", relParams);
-      for (const rel of ["OWNS_PACKAGE", "PRODUCES", "CONSUMES", "SHARES_CONTRACT", "CONTRACT_MENTIONS", "PARTICIPATES_IN", "WORKFLOW_STEP", "USES_PACKAGE", "DEPENDS_ON"]) {
+      for (const rel of ["OWNS_PACKAGE", "PRODUCES", "CONSUMES", "SHARES_CONTRACT", "CONTRACT_MENTIONS", "PARTICIPATES_IN", "WORKFLOW_STEP", "USES_PACKAGE", "DEPENDS_ON", "HAS_SPEC"]) {
         await this.query(`MATCH ()-[r:${rel}]->() WHERE r.evidenceId = $evidenceId SET r.active = $active, r.batchId = $batchId;`, relParams);
       }
     }

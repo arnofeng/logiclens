@@ -12,6 +12,7 @@ vi.mock("../src/graph/facts.js", () => ({
     sectionDescribesRepos: [], sectionDocumentsCode: [], sectionReferencesFile: [],
     repoContracts: [], packageUsages: [], contractEntities: [], operationRepos: [],
     workflowOperations: [], repoDependencies: [],
+    contractSpecs: [], contractSpecEdges: [], semanticRelations: [],
     crossRepo: { contracts: [], evidence: [], repoDependencies: [], packageUsages: [], contractEntities: [], workflowOperations: [] }
   })
 }));
@@ -46,7 +47,8 @@ function createMockDb(overrides: Partial<GraphDB> = {}): GraphDB {
     upsertWorkflow: vi.fn(), upsertContract: vi.fn(), upsertEvidence: vi.fn(),
     addRepoContract: vi.fn(), addRepoDependency: vi.fn(), addRepoDependenciesBatch: vi.fn(),
     addPackageUsage: vi.fn(), addContractEntity: vi.fn(), addOperationRepo: vi.fn(),
-    addWorkflowOperation: vi.fn(), addContractEvidence: vi.fn(), addRepoEvidence: vi.fn(),
+    addWorkflowOperation: vi.fn(), upsertContractSpec: vi.fn(), addHasSpec: vi.fn(),
+    addSemanticRelation: vi.fn(), addContractEvidence: vi.fn(), addRepoEvidence: vi.fn(),
     addContains: vi.fn(), addImport: vi.fn(), addCall: vi.fn(), addMention: vi.fn(),
     addSectionMention: vi.fn(), addSectionDescribesRepo: vi.fn(),
     addSectionDocumentsCode: vi.fn(), addSectionReferencesFile: vi.fn(),

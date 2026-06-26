@@ -3,6 +3,8 @@ import type {
   CodeSymbol,
   ContractKind,
   ContractNode,
+  ContractSpecEdge,
+  ContractSpecNode,
   DocSection,
   EntityNode,
   EvidenceNode,
@@ -15,6 +17,7 @@ import type {
   RepoContractEdge,
   RepoDependencyEdge,
   RepoNode,
+  SemanticRelationEdge,
   WorkflowNode,
   WorkflowOperationEdge
 } from "../parsers/types.js";
@@ -98,6 +101,9 @@ export interface GraphDB {
   addContractEntity(edge: ContractEntityEdge): Promise<void>;
   addOperationRepo(edge: OperationRepoEdge): Promise<void>;
   addWorkflowOperation(edge: WorkflowOperationEdge): Promise<void>;
+  upsertContractSpec(spec: ContractSpecNode): Promise<void>;
+  addHasSpec(edge: ContractSpecEdge): Promise<void>;
+  addSemanticRelation(edge: SemanticRelationEdge): Promise<void>;
   addContractEvidence(contractId: string, evidenceId: string): Promise<void>;
   addRepoEvidence(repoId: string, evidenceId: string): Promise<void>;
   addContains(fromId: string, toId: string): Promise<void>;

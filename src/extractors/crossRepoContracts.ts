@@ -3,6 +3,8 @@ import type {
   ContractKind,
   ContractNode,
   ContractRole,
+  ContractSpecEdge,
+  ContractSpecNode,
   EntityNode,
   EvidenceNode,
   OperationNode,
@@ -11,6 +13,7 @@ import type {
   RepoContractEdge,
   RepoDependencyEdge,
   RepoNode,
+  SemanticRelationEdge,
   WorkflowNode,
   WorkflowOperationEdge
 } from "../parsers/types.js";
@@ -45,6 +48,9 @@ export type ExtractorFactBundle = {
   operations: OperationNode[];
   workflows: WorkflowNode[];
   relations: ExtractedRelation[];
+  contractSpecs: ContractSpecNode[];
+  contractSpecEdges: ContractSpecEdge[];
+  semanticRelations: SemanticRelationEdge[];
 };
 
 export type CrossRepoExtraction = {
@@ -66,6 +72,9 @@ export type CrossRepoExtraction = {
     raw: string;
     confidence: number;
   }[];
+  contractSpecs: ContractSpecNode[];
+  contractSpecEdges: ContractSpecEdge[];
+  semanticRelations: SemanticRelationEdge[];
 };
 
 export type ContractParticipant = RepoContractEdge & {
@@ -78,8 +87,8 @@ export type AliasOverride = {
   targetRepoId: string;
 };
 
-export function canonicalContractKey(kind: ContractKind, value: string): string {
-  return canonicalBuiltinContractKey(kind, value);
+export function canonicalContractKey(kind: ContractKind, value: string, method?: string): string {
+  return canonicalBuiltinContractKey(kind, value, method);
 }
 
 export function dependencyEntries(packageJson: {
@@ -121,8 +130,20 @@ export async function extractRepoContractFacts(
     operationRepos: facts.operationRepos,
     workflowOperations: [],
     repoContracts: facts.repoContracts,
-    packageUsages: facts.packageUsages
+    packageUsages: facts.packageUsages,
+    contractSpecs: facts.contractSpecs,
+    contractSpecEdges: facts.contractSpecEdges,
+    semanticRelations: facts.semanticRelations
   };
+}
+
+function hasHttpMethodPrefix(key: string): boolean {
+  return /^[A-Z]+:/.test(key);
+}
+
+function extractApiPath(key: string): string {
+  const match = key.match(/^[A-Z]+:(.*)$/);
+  return match ? match[1] : key;
 }
 
 export function buildRepoDependenciesFromParticipants(participants: ContractParticipant[], targetRepoIds?: Set<string>): RepoDependencyEdge[] {
@@ -140,9 +161,19 @@ export function buildRepoDependenciesFromParticipants(participants: ContractPart
     result.push(edge);
   };
 
+  const apiPathIndex = new Map<string, ContractParticipant[]>();
+
   for (const [contractId, contractParticipants] of byContractId) {
     const contractNode = contractParticipants[0]?.contract;
     if (!contractNode) continue;
+
+    if (contractNode.kind === "api") {
+      const pathPart = extractApiPath(contractNode.key);
+      const existing = apiPathIndex.get(pathPart) ?? [];
+      existing.push(...contractParticipants);
+      apiPathIndex.set(pathPart, existing);
+    }
+
     const producers = contractParticipants.filter((edge) => edge.role === "producer" || edge.role === "owner" || edge.role === "shared");
     const consumers = contractParticipants.filter((edge) => edge.role === "consumer" || edge.role === "shared");
     for (const consumer of consumers) {
@@ -165,6 +196,56 @@ export function buildRepoDependenciesFromParticipants(participants: ContractPart
           evidenceId: evidenceNode.id,
           raw: evidenceNode.raw,
           confidence: evidenceNode.confidence
+        });
+      }
+    }
+  }
+
+  for (const [contractId, contractParticipants] of byContractId) {
+    const contractNode = contractParticipants[0]?.contract;
+    if (!contractNode || contractNode.kind !== "api") continue;
+    if (hasHttpMethodPrefix(contractNode.key)) continue;
+    const pathOnlyKey = contractNode.key;
+    const allParticipantsForPath = apiPathIndex.get(pathOnlyKey) ?? [];
+
+    const pathOnlyConsumers = contractParticipants.filter((p) => p.role === "consumer" || p.role === "shared");
+    const methodProducers = allParticipantsForPath.filter(
+      (p) => (p.role === "producer" || p.role === "owner" || p.role === "shared") && hasHttpMethodPrefix(p.contract.key)
+    );
+    for (const consumer of pathOnlyConsumers) {
+      for (const producer of methodProducers) {
+        if (consumer.repoId === producer.repoId) continue;
+        const evidenceNode = consumer.evidence ?? producer.evidence;
+        push({
+          fromRepoId: consumer.repoId,
+          toRepoId: producer.repoId,
+          dependencyType: "api",
+          sourceContractId: contractId,
+          targetContractId: producer.contractId,
+          evidenceId: evidenceNode.id,
+          raw: evidenceNode.raw,
+          confidence: Math.min(evidenceNode.confidence, 0.6)
+        });
+      }
+    }
+
+    const pathOnlyProducers = contractParticipants.filter((p) => p.role === "producer" || p.role === "owner" || p.role === "shared");
+    const methodConsumers = allParticipantsForPath.filter(
+      (p) => (p.role === "consumer" || p.role === "shared") && hasHttpMethodPrefix(p.contract.key)
+    );
+    for (const consumer of methodConsumers) {
+      for (const producer of pathOnlyProducers) {
+        if (consumer.repoId === producer.repoId) continue;
+        const evidenceNode = consumer.evidence ?? producer.evidence;
+        push({
+          fromRepoId: consumer.repoId,
+          toRepoId: producer.repoId,
+          dependencyType: "api",
+          sourceContractId: consumer.contractId,
+          targetContractId: contractId,
+          evidenceId: evidenceNode.id,
+          raw: evidenceNode.raw,
+          confidence: Math.min(evidenceNode.confidence, 0.6)
         });
       }
     }
@@ -247,6 +328,9 @@ function mergeFactBundle(target: CrossRepoExtraction, bundle: ExtractorFactBundl
   target.entities.push(...bundle.entities);
   target.operations.push(...bundle.operations);
   target.workflows.push(...bundle.workflows);
+  if (bundle.contractSpecs) target.contractSpecs.push(...bundle.contractSpecs);
+  if (bundle.contractSpecEdges) target.contractSpecEdges.push(...bundle.contractSpecEdges);
+  if (bundle.semanticRelations) target.semanticRelations.push(...bundle.semanticRelations);
   for (const relation of bundle.relations) {
     if (relation.kind === "repo-contract") {
       const { kind: _kind, ...edge } = relation;
@@ -282,7 +366,10 @@ function uniqueCrossRepoFacts(result: CrossRepoExtraction): CrossRepoExtraction 
     workflows: uniqueById(result.workflows),
     operationRepos: [...new Map(result.operationRepos.map((edge) => [`${edge.repoId}:${edge.operationId}:${edge.role}:${edge.evidenceId}`, edge])).values()],
     workflowOperations: [...new Map(result.workflowOperations.map((edge) => [`${edge.workflowId}:${edge.operationId}:${edge.step}:${edge.evidenceId}`, edge])).values()],
-    packageUsages: [...new Map(result.packageUsages.map((edge) => [`${edge.repoId}:${edge.packageContractId}:${edge.evidenceId}`, edge])).values()]
+    packageUsages: [...new Map(result.packageUsages.map((edge) => [`${edge.repoId}:${edge.packageContractId}:${edge.evidenceId}`, edge])).values()],
+    contractSpecs: uniqueById(result.contractSpecs),
+    contractSpecEdges: [...new Map(result.contractSpecEdges.map((edge) => [`${edge.contractId}:${edge.specId}:${edge.evidenceId}`, edge])).values()],
+    semanticRelations: [...new Map(result.semanticRelations.map((edge) => [`${edge.fromSpecId}:${edge.toSpecId}:${edge.kind}:${edge.evidenceId}`, edge])).values()]
   };
 }
 
@@ -366,7 +453,10 @@ export async function extractContractFactsWithRegistry(
       ...mergedForPost.contractEntities.map((e) => ({ kind: "contract-entity" as const, ...e })),
       ...mergedForPost.operationRepos.map((e) => ({ kind: "operation-repo" as const, ...e })),
       ...mergedForPost.workflowOperations.map((e) => ({ kind: "workflow-operation" as const, ...e }))
-    ]
+    ],
+    contractSpecs: mergedForPost.contractSpecs,
+    contractSpecEdges: mergedForPost.contractSpecEdges,
+    semanticRelations: mergedForPost.semanticRelations
   };
   for (const extractor of contractExtractorRegistry.extractors()) {
     if (!extractor.postExtract) continue;

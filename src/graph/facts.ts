@@ -7,6 +7,8 @@ import type {
   CodeSymbol,
   ContractEntityEdge,
   ContractNode,
+  ContractSpecEdge,
+  ContractSpecNode,
   DocSection,
   EntityNode,
   EvidenceNode,
@@ -21,6 +23,7 @@ import type {
   RepoContractEdge,
   RepoDependencyEdge,
   RepoNode,
+  SemanticRelationEdge,
   WorkflowNode,
   WorkflowOperationEdge
 } from "../parsers/types.js";
@@ -77,6 +80,9 @@ export type GraphFactsBatch = {
   operationRepos: OperationRepoEdge[];
   workflowOperations: WorkflowOperationEdge[];
   repoDependencies: RepoDependencyEdge[];
+  contractSpecs: ContractSpecNode[];
+  contractSpecEdges: ContractSpecEdge[];
+  semanticRelations: SemanticRelationEdge[];
   crossRepo: CrossRepoExtraction;
 };
 
@@ -212,6 +218,9 @@ export async function buildGraphFactsBatch(input: {
     operationRepos: uniqueByKey(crossRepo.operationRepos.map((edge) => ({ ...edge, batchId: input.batchId, active: true })), (edge) => `${edge.repoId}:${edge.operationId}:${edge.role}:${edge.evidenceId}`),
     workflowOperations: uniqueByKey(crossRepo.workflowOperations.map((edge) => ({ ...edge, batchId: input.batchId, active: true })), (edge) => `${edge.workflowId}:${edge.operationId}:${edge.step}:${edge.evidenceId}`),
     repoDependencies: uniqueByKey(crossRepo.repoDependencies.map((edge) => ({ ...edge, batchId: input.batchId, active: true })), (edge) => `${edge.fromRepoId}:${edge.toRepoId}:${edge.dependencyType}:${edge.evidenceId}`),
+    contractSpecs: uniqueById(crossRepo.contractSpecs.map((spec) => ({ ...spec, batchId: input.batchId, indexedAt, active: true }))),
+    contractSpecEdges: uniqueByKey(crossRepo.contractSpecEdges.map((edge) => ({ ...edge, batchId: input.batchId, active: true })), (edge) => `${edge.contractId}:${edge.specId}:${edge.evidenceId}`),
+    semanticRelations: uniqueByKey(crossRepo.semanticRelations.map((edge) => ({ ...edge, batchId: input.batchId, active: true })), (edge) => `${edge.fromSpecId}:${edge.toSpecId}:${edge.kind}:${edge.evidenceId}`),
     crossRepo
   };
 }

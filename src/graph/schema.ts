@@ -32,5 +32,8 @@ export const schemaStatements = [
   "CREATE REL TABLE IF NOT EXISTS WORKFLOW_STEP(FROM Workflow TO Operation, step INT64, evidenceId STRING, confidence DOUBLE, batchId STRING, active BOOL);",
   "CREATE REL TABLE IF NOT EXISTS HAS_EVIDENCE(FROM Contract TO Evidence, FROM Repo TO Evidence);",
   "CREATE REL TABLE IF NOT EXISTS USES_PACKAGE(FROM Repo TO Contract, packageName STRING, evidenceId STRING, raw STRING, confidence DOUBLE, batchId STRING, active BOOL);",
-  "CREATE REL TABLE IF NOT EXISTS DEPENDS_ON(FROM Repo TO Repo, dependencyType STRING, sourceContractId STRING, targetContractId STRING, evidenceId STRING, raw STRING, confidence DOUBLE, batchId STRING, active BOOL);"
+  "CREATE REL TABLE IF NOT EXISTS DEPENDS_ON(FROM Repo TO Repo, dependencyType STRING, sourceContractId STRING, targetContractId STRING, evidenceId STRING, raw STRING, confidence DOUBLE, batchId STRING, active BOOL);",
+  "CREATE NODE TABLE IF NOT EXISTS ContractSpec(id STRING, contractId STRING, specKind STRING, repoId STRING, fileId STRING, evidenceId STRING, sourceSymbolId STRING, canonicalKey STRING, httpMethod STRING, pathTemplate STRING, eventTopic STRING, framework STRING, version STRING, specJson STRING, confidence DOUBLE, batchId STRING, indexedAt STRING, active BOOL, PRIMARY KEY(id));",
+  "CREATE REL TABLE IF NOT EXISTS HAS_SPEC(FROM Contract TO ContractSpec, evidenceId STRING, confidence DOUBLE, batchId STRING, active BOOL);",
+  "CREATE REL TABLE IF NOT EXISTS SEMANTIC_REL(FROM ContractSpec TO ContractSpec, kind STRING, evidenceId STRING, reason STRING, confidence DOUBLE, batchId STRING, active BOOL);"
 ];

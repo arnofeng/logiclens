@@ -276,3 +276,59 @@ export type CallEdge = {
   batchId?: string;
   active?: boolean;
 };
+
+export type ContractSpecKind = "http-endpoint" | "event" | "schema" | "package" | "config";
+
+export type ContractSpecNode = {
+  id: string;
+  contractId: string;
+  specKind: ContractSpecKind;
+  repoId: string;
+  fileId: string;
+  evidenceId: string;
+  sourceSymbolId?: string;
+  canonicalKey: string;
+  httpMethod?: string;
+  pathTemplate?: string;
+  eventTopic?: string;
+  framework?: string;
+  version?: string;
+  specJson: string;
+  confidence: number;
+  batchId?: string;
+  indexedAt?: string;
+  active?: boolean;
+};
+
+export type ContractSpecEdge = {
+  contractId: string;
+  specId: string;
+  evidenceId: string;
+  confidence: number;
+  batchId?: string;
+  active?: boolean;
+};
+
+export type SemanticRelationKind =
+  | "IMPLEMENTS"
+  | "CALLS_ENDPOINT"
+  | "PUBLISHES_EVENT"
+  | "SUBSCRIBES_EVENT"
+  | "USES_SCHEMA"
+  | "REQUEST_SCHEMA"
+  | "RESPONSE_SCHEMA"
+  | "EVENT_PAYLOAD"
+  | "COMPATIBLE_WITH"
+  | "BREAKS"
+  | "IMPACTS";
+
+export type SemanticRelationEdge = {
+  fromSpecId: string;
+  toSpecId: string;
+  kind: SemanticRelationKind;
+  evidenceId: string;
+  reason: string;
+  confidence: number;
+  batchId?: string;
+  active?: boolean;
+};

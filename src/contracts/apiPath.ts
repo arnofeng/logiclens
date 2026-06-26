@@ -14,3 +14,22 @@ export function joinApiPaths(basePath: string, routePath: string): string {
   if (!routePath) return normalizeApiPath(basePath);
   return normalizeApiPath(`${basePath}/${routePath}`);
 }
+
+export function canonicalHttpContractKey(input: { method?: string; path: string }): string {
+  const trimmed = input.path.trim();
+  let normalizedPath: string;
+  if (trimmed.startsWith("/") || /^https?:\/\//i.test(trimmed)) {
+    normalizedPath = normalizeApiPath(trimmed).toLowerCase();
+  } else {
+    normalizedPath = trimmed
+      .replace(/\?.*$/, "")
+      .replace(/\/+/g, "/")
+      .replace(/\/:([A-Za-z_][A-Za-z0-9_]*)/g, "/{$1}")
+      .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, "{$1}")
+      .replace(/\$\{[^}]+\}/g, "{param}")
+      .replace(/\/$/, "")
+      .toLowerCase();
+  }
+  if (input.method) return `${input.method.trim().toUpperCase()}:${normalizedPath}`;
+  return normalizedPath;
+}

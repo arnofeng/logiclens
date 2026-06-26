@@ -51,6 +51,9 @@ export async function writeGraphFactsWithMerge(db: GraphDB, facts: GraphFactsBat
   await db.addRepoDependenciesBatch(facts.repoDependencies);
   for (const edge of facts.sectionReferencesFile) await db.addSectionReferencesFile(edge.sectionId, edge.fileId, edge.raw);
   for (const edge of facts.sectionDocumentsCode) await db.addSectionDocumentsCode(edge.sectionId, edge.codeId, edge.confidence);
+  for (const spec of facts.contractSpecs) await db.upsertContractSpec(spec);
+  for (const edge of facts.contractSpecEdges) await db.addHasSpec(edge);
+  for (const edge of facts.semanticRelations) await db.addSemanticRelation(edge);
 }
 
 export async function upsertParsedFiles(db: GraphDB, parsedFiles: ParsedGraphFile[], optionsInput: boolean | UpsertParsedFilesOptions, repos?: RepoNode[]): Promise<void> {

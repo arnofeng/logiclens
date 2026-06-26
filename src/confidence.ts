@@ -2,20 +2,27 @@ export type ConfidenceRule =
   | "exact-manifest"
   | "exact-framework-marker"
   | "exact-parser-route"
+  | "exact-parser-route-spec"
   | "strong-static-import"
   | "probable-package-path"
   | "probable-http-client"
+  | "probable-http-client-spec"
   | "probable-http-route"
   | "probable-route-merge"
   | "probable-event"
+  | "probable-event-spec"
   | "heuristic-package-owner-alias"
   | "heuristic-shared-symbol"
   | "heuristic-config-file"
   | "heuristic-config-reference"
   | "heuristic-section-documents-code"
   | "heuristic-entity-mention"
+  | "heuristic-schema-fields"
+  | "heuristic-generic-type-param"
+  | "heuristic-request-body-type"
   | "fallback-framework-language"
-  | "fallback-framework-signature";
+  | "fallback-framework-signature"
+  | "method-unknown-fallback";
 
 export type ConfidenceBand = "exact" | "probable" | "heuristic";
 
@@ -25,20 +32,27 @@ const CONFIDENCE_BY_RULE: Record<ConfidenceRule, number> = {
   "exact-manifest": 1,
   "exact-framework-marker": 1,
   "exact-parser-route": 0.9,
+  "exact-parser-route-spec": 0.9,
   "strong-static-import": 0.9,
   "probable-package-path": 0.8,
   "probable-http-client": 0.85,
+  "probable-http-client-spec": 0.85,
   "probable-http-route": 0.8,
   "probable-route-merge": 0.85,
   "probable-event": 0.85,
+  "probable-event-spec": 0.85,
   "heuristic-package-owner-alias": 0.7,
   "heuristic-shared-symbol": 0.75,
   "heuristic-config-file": 0.75,
   "heuristic-config-reference": 0.7,
   "heuristic-section-documents-code": 0.7,
   "heuristic-entity-mention": 0.6,
+  "heuristic-schema-fields": 0.75,
+  "heuristic-generic-type-param": 0.7,
+  "heuristic-request-body-type": 0.7,
   "fallback-framework-language": 0.55,
-  "fallback-framework-signature": 0.7
+  "fallback-framework-signature": 0.7,
+  "method-unknown-fallback": 0.6
 };
 
 export function confidenceFor(rule: ConfidenceRule): number {

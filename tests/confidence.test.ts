@@ -15,6 +15,29 @@ describe("confidence rules", () => {
     expect(confidenceFor("fallback-framework-signature")).toBeLessThan(confidenceFor("probable-http-client"));
   });
 
+  it("places spec confidence rules in correct bands", () => {
+    expect(confidenceBand(confidenceFor("exact-parser-route-spec"))).toBe("exact");
+    expect(confidenceBand(confidenceFor("probable-http-client-spec"))).toBe("probable");
+    expect(confidenceBand(confidenceFor("probable-event-spec"))).toBe("probable");
+    expect(confidenceBand(confidenceFor("heuristic-schema-fields"))).toBe("heuristic");
+    expect(confidenceBand(confidenceFor("heuristic-generic-type-param"))).toBe("heuristic");
+    expect(confidenceBand(confidenceFor("heuristic-request-body-type"))).toBe("heuristic");
+    expect(confidenceBand(confidenceFor("method-unknown-fallback"))).toBe("heuristic");
+  });
+
+  it("ensures spec band hierarchy does not cross boundaries", () => {
+    expect(confidenceFor("exact-parser-route-spec")).toBeGreaterThanOrEqual(0.9);
+    expect(confidenceFor("probable-http-client-spec")).toBeGreaterThanOrEqual(0.8);
+    expect(confidenceFor("probable-http-client-spec")).toBeLessThan(0.9);
+    expect(confidenceFor("probable-event-spec")).toBeGreaterThanOrEqual(0.8);
+    expect(confidenceFor("probable-event-spec")).toBeLessThan(0.9);
+    expect(confidenceFor("heuristic-schema-fields")).toBeLessThan(0.8);
+    expect(confidenceFor("heuristic-generic-type-param")).toBeLessThan(0.8);
+    expect(confidenceFor("heuristic-request-body-type")).toBeLessThan(0.8);
+    expect(confidenceFor("method-unknown-fallback")).toBeLessThan(0.8);
+    expect(confidenceFor("method-unknown-fallback")).toBeLessThan(confidenceFor("heuristic-schema-fields"));
+  });
+
   it("scores call resolution from explainable static signals", () => {
     expect(scoreCallResolution({ sameFile: true, imported: false, sameRepo: true, nameExact: true })).toBe(0.9);
     expect(scoreCallResolution({ sameFile: false, imported: true, sameRepo: true, nameExact: true })).toBe(0.8);
