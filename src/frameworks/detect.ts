@@ -2,10 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { RepoNode, ParsedGraphFile, EvidenceNode } from "../parsers/types.js";
 import type { DetectedFramework } from "./types.js";
-import type { ContractExtractor, FrameworkDetector } from "../plugins/types.js";
+import type { ContractExtractor } from "../plugins/types.js";
+import type { FrameworkDetector } from "./types.js";
 import type { LogicLensConfig } from "../config/schema.js";
 import { fileId, evidenceId } from "../utils/path.js";
-import { frameworkDetectorRegistry } from "../plugins/registry.js";
 import { confidenceFor } from "../confidence.js";
 
 // Helper to check if file exists
@@ -477,30 +477,34 @@ const goFallbackDetector: FrameworkDetector = {
   }
 };
 
-let builtinDetectorsRegistered = false;
+const builtinFrameworkDetectors: FrameworkDetector[] = [
+  packageJsonDetector,
+  pomXmlDetector,
+  gradleDetector,
+  goModDetector,
+  requirementsDetector,
+  pyprojectDetector,
+  javaFallbackDetector,
+  jsFallbackDetector,
+  springMvcFallbackDetector,
+  pythonFallbackDetector,
+  goFallbackDetector
+];
+
+/**
+ * @deprecated No-op kept for backward compatibility. Built-in detectors are now
+ * used directly from the static array; no runtime registration is needed.
+ */
 export function registerBuiltinFrameworkDetectors(): void {
-  if (builtinDetectorsRegistered) return;
-  frameworkDetectorRegistry.register(packageJsonDetector);
-  frameworkDetectorRegistry.register(pomXmlDetector);
-  frameworkDetectorRegistry.register(gradleDetector);
-  frameworkDetectorRegistry.register(goModDetector);
-  frameworkDetectorRegistry.register(requirementsDetector);
-  frameworkDetectorRegistry.register(pyprojectDetector);
-  frameworkDetectorRegistry.register(javaFallbackDetector);
-  frameworkDetectorRegistry.register(jsFallbackDetector);
-  frameworkDetectorRegistry.register(springMvcFallbackDetector);
-  frameworkDetectorRegistry.register(pythonFallbackDetector);
-  frameworkDetectorRegistry.register(goFallbackDetector);
-  builtinDetectorsRegistered = true;
+  // no-op: built-in detectors are always available via builtinFrameworkDetectors
 }
 
 export async function detectFrameworks(
   repo: RepoNode,
   parsedFiles: ParsedGraphFile[] = []
 ): Promise<DetectedFramework[]> {
-  registerBuiltinFrameworkDetectors();
   const results: DetectedFramework[] = [];
-  for (const detector of frameworkDetectorRegistry.detectors()) {
+  for (const detector of builtinFrameworkDetectors) {
     try {
       const dfs = await detector.detect(repo, parsedFiles);
       results.push(...dfs);

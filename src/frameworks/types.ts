@@ -1,4 +1,4 @@
-import type { EvidenceNode } from "../parsers/types.js";
+import type { EvidenceNode, ParsedGraphFile, RepoNode } from "../parsers/types.js";
 
 export type DetectedFramework = {
   repoId: string;
@@ -7,3 +7,17 @@ export type DetectedFramework = {
   confidence: number;
   evidence: EvidenceNode[];
 };
+
+/**
+ * Interface for framework detectors.
+ * Used to discover repository-level frameworks and languages.
+ */
+export interface FrameworkDetector {
+  /** The unique name of the framework detector */
+  name: string;
+  /**
+   * Performs framework detection on a repository.
+   * Can return a promise or a direct value.
+   */
+  detect(repo: RepoNode, parsedFiles: ParsedGraphFile[]): Promise<DetectedFramework[]> | DetectedFramework[];
+}

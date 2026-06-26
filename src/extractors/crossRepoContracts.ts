@@ -17,7 +17,6 @@ import type {
   WorkflowNode,
   WorkflowOperationEdge
 } from "../parsers/types.js";
-import { contractExtractorRegistry } from "../plugins/registry.js";
 import type { ExtractContext, PostExtractContext } from "../plugins/types.js";
 import { normalizeName } from "../utils/path.js";
 import { builtinContractExtractors } from "./builtin/index.js";
@@ -395,7 +394,7 @@ export async function extractContractFactsWithRegistry(
 
   const result = createCrossRepoExtraction();
   const postExtractContexts = new Map<string, Omit<PostExtractContext, "mergedFacts">>();
-  for (const extractor of contractExtractorRegistry.extractors()) {
+  for (const extractor of builtinContractExtractors) {
     const started = Date.now();
 
     // Filter repos for which this extractor is enabled
@@ -458,7 +457,7 @@ export async function extractContractFactsWithRegistry(
     contractSpecEdges: mergedForPost.contractSpecEdges,
     semanticRelations: mergedForPost.semanticRelations
   };
-  for (const extractor of contractExtractorRegistry.extractors()) {
+  for (const extractor of builtinContractExtractors) {
     if (!extractor.postExtract) continue;
     const filteredContext = postExtractContexts.get(extractor.name);
     if (!filteredContext) continue;
@@ -474,14 +473,10 @@ export async function extractContractFactsWithRegistry(
   return uniqueCrossRepoFacts(result);
 }
 
-let builtinContractExtractorsRegistered = false;
-
+/**
+ * @deprecated No-op kept for backward compatibility. Built-in extractors are now
+ * used directly from the static array; no runtime registration is needed.
+ */
 export function registerBuiltinContractExtractors(): void {
-  if (builtinContractExtractorsRegistered) return;
-  for (const extractor of builtinContractExtractors) {
-    contractExtractorRegistry.register(extractor);
-  }
-  builtinContractExtractorsRegistered = true;
+  // no-op: built-in extractors are always available via builtinContractExtractors
 }
-
-registerBuiltinContractExtractors();

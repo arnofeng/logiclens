@@ -6,7 +6,6 @@ import type {
   LogicLensPlugin,
   PluginContext,
   LanguageParser,
-  ContractExtractor,
   ParseInput,
   ExtractContext
 } from "./plugins/types.js";
@@ -42,7 +41,6 @@ export type {
   LogicLensPlugin,
   PluginContext,
   LanguageParser,
-  ContractExtractor,
   ParseInput,
   ExtractContext,
   Stats,

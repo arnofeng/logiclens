@@ -46,7 +46,7 @@ logiclens <command> --help
 | [`quality`](#logiclens-quality-action) | Audit and govern relation/contract quality |
 | [`rebuild-relations`](#logiclens-rebuild-relations) | Rebuild cross-repository dependency edges |
 | [`plugin`](#logiclens-plugin) | Add, remove, and list plugins |
-| [`frameworks`](#logiclens-frameworks) | List detected frameworks and contract extractors |
+| [`frameworks`](#logiclens-frameworks) | List detected frameworks |
 | [`mcp`](#logiclens-mcp) | Start MCP server |
 | [`watch`](#logiclens-watch) | Start file watcher for auto-indexing |
 | [`install`](#logiclens-install) | Install MCP into AI agents |
@@ -381,19 +381,19 @@ List all configured and loaded plugins along with their registered extension hoo
 logiclens plugin list
 ```
 
-**Output**: Configured plugin count, loaded plugin details (name, version, path, load time), registered parsers, framework detectors, contract extractors, CLI hook count.
+**Output**: Configured plugin count, loaded plugin details (name, version, path, load time), registered parsers, framework detectors.
 
 ---
 
 ### `logiclens frameworks`
 
-List detected frameworks and enabled contract extractors for each repository.
+List detected frameworks for each repository.
 
 ```bash
 logiclens frameworks
 ```
 
-**Output**: Detected frameworks per repository (language, confidence, evidence) and list of enabled contract extractors.
+**Output**: Detected frameworks per repository (language, confidence, evidence).
 
 ---
 
@@ -500,31 +500,5 @@ logiclens uninstall -t claude-code
 | `-l, --location <where>` | Uninstall location: `global` or `local` (default: interactive selection) |
 | `-y, --yes` | Non-interactive mode, defaults to `--location=global --target=all` |
 
----
-
-## Plugin Extensions
-
-LogicLens supports extending CLI commands through plugins. Plugins configured in `.logiclens/config.yaml` can register custom subcommands via the `registerCliCommand` hook.
-
-**Example**:
-
-```ts
-// my-plugin.ts
-export function setup(context) {
-  context.registerCliCommand((program) => {
-    program
-      .command("hello")
-      .description("My custom command")
-      .action(() => console.log("hello from plugin"));
-  });
-}
-```
-
-After registration, use it as:
-
-```bash
-logiclens hello
-# Output: hello from plugin
-```
 
 For more plugin development details, see the `plugins` section in the [Configuration Guide](./configuration.md).

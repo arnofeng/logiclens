@@ -134,7 +134,7 @@ LogicLens automatically analyzes your multi-repository system and models the ent
 - **CLI / SDK / MCP**: Supports manual graph queries, Node.js integration, and AI coding assistant connectivity.
 - **Quality governance**: Audits low-confidence evidence, rejects false positives, registers alias overrides to ensure graph accuracy.
 - **Optional LLM / embedding layer**: When needed, integrates OpenAI-compatible chat and embedding providers to enhance graph semantics.
-- **Plugin API**: Registers custom parsers, framework detectors, contract extractors, and CLI commands to extend graph coverage.
+- **Plugin API**: Registers custom parsers and framework detectors to extend graph coverage.
 
 **Upgrade from "code search" to "graph traversal + reasoning".**
 
@@ -321,8 +321,23 @@ const plugin = definePlugin({
   version: "1.0.0",
   pluginApiVersion: "1",
   setup(context) {
-    context.registerCliCommand((program) => {
-      program.command("hello").action(() => console.log("hello from plugin"));
+    context.registerParser({
+      name: "my-parser",
+      language: "my-lang",
+      extensions: [".mylang"],
+      parse(input) {
+        return {
+          repoId: input.repoId,
+          fileId: input.fileId,
+          path: input.relativePath,
+          language: input.language,
+          hash: input.hash,
+          loc: input.source.split(/\r?\n/).length,
+          imports: [],
+          symbols: [],
+          calls: []
+        };
+      }
     });
   }
 });
@@ -339,9 +354,7 @@ await client.close();
 Plugins can register:
 
 - `registerParser(parser)` — Custom language parsing.
-- `registerFrameworkDetector(detector)` — Repository-level framework detection.
-- `registerContractExtractor(extractor)` — Extract API, event, package, DTO, schema, enum, config, or custom contract evidence.
-- `registerCliCommand(registerFn)` — Extend CLI commands.
+- `registerEmbeddingProvider(provider)` — Custom text embedding provider.
 
 ---
 
