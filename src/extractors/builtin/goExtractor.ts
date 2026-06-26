@@ -110,6 +110,7 @@ export const goExtractor: ContractExtractor = {
 
           if (ginRouters.has(call.object) && GIN_ROUTE_METHODS.has(call.method) && apiPath?.startsWith("/")) {
             seenStringOffsets.add(firstArg!.startIndex);
+            const ginMethod = call.method !== "Handle" ? call.method.toUpperCase() : undefined;
             pushApiContractFromPath({
               result,
               file,
@@ -119,7 +120,8 @@ export const goExtractor: ContractExtractor = {
               offset,
               raw: call.raw,
               rule: "go-gin-route-producer",
-              confidence: confidenceFor("exact-parser-route")
+              confidence: confidenceFor("exact-parser-route"),
+              method: ginMethod
             });
             return;
           }
@@ -146,6 +148,9 @@ export const goExtractor: ContractExtractor = {
               return;
             }
             seenStringOffsets.add(firstArg!.startIndex);
+            const netMethod = call.method === "Get" ? "GET"
+              : call.method === "Post" || call.method === "PostForm" ? "POST"
+              : call.method === "Head" ? "HEAD" : undefined;
             pushApiContractFromPath({
               result,
               file,
@@ -155,7 +160,8 @@ export const goExtractor: ContractExtractor = {
               offset,
               raw: call.raw,
               rule: "go-http-client-consumer",
-              confidence: confidenceFor("probable-http-client")
+              confidence: confidenceFor("probable-http-client"),
+              method: netMethod
             });
             return;
           }

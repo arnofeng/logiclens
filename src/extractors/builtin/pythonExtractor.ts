@@ -29,13 +29,14 @@ function isRouteDecorator(name: string): boolean {
   return ROUTE_METHODS.has(methodName);
 }
 
-function pythonHttpCall(node: Parser.SyntaxNode): { urlNode?: Parser.SyntaxNode; raw: string } | undefined {
+function pythonHttpCall(node: Parser.SyntaxNode): { urlNode?: Parser.SyntaxNode; raw: string; httpMethod?: string } | undefined {
   if (node.type !== "call") return undefined;
   const fn = node.childForFieldName("function") ?? node.namedChild(0);
   if (!fn || fn.type !== "attribute") return undefined;
   const { object, property } = attributeParts(fn);
   if (!object || !property || !HTTP_CLIENT_OBJECTS.has(object) || !HTTP_METHODS.has(property)) return undefined;
-  return { urlNode: callArguments(node)[0], raw: node.text };
+  const httpMethod = property !== "request" ? property.toUpperCase() : undefined;
+  return { urlNode: callArguments(node)[0], raw: node.text, httpMethod };
 }
 
 function isInsidePythonHttpCall(node: Parser.SyntaxNode): boolean {
@@ -105,6 +106,9 @@ export const pythonExtractor: ContractExtractor = {
         if (typeof pathArg !== "string" || !pathArg.startsWith("/")) continue;
         const ownerSymbol = file.symbols.find((s) => s.id === decorator.ownerSymbolId);
         if (!ownerSymbol) continue;
+        const decoratorMethod = decorator.name.split(".").at(-1);
+        const httpMethod = decoratorMethod && decoratorMethod !== "route" && ROUTE_METHODS.has(decoratorMethod)
+          ? decoratorMethod.toUpperCase() : undefined;
         pushApiContractFromPath({
           result,
           file,
@@ -114,7 +118,8 @@ export const pythonExtractor: ContractExtractor = {
           offset: Math.max(0, ownerSymbol.source.indexOf(decorator.raw)),
           raw: decorator.raw,
           rule: "python-decorator-producer",
-          confidence: confidenceFor("exact-parser-route")
+          confidence: confidenceFor("exact-parser-route"),
+          method: httpMethod
         });
       }
 
@@ -140,7 +145,8 @@ export const pythonExtractor: ContractExtractor = {
             offset,
             raw: httpCall.raw,
             rule: "python-http-client-consumer",
-            confidence: confidenceFor("probable-http-client")
+            confidence: httpCall.httpMethod ? confidenceFor("probable-http-client") : confidenceFor("method-unknown-fallback"),
+            method: httpCall.httpMethod
           });
           return;
         }

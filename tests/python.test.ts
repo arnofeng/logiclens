@@ -85,12 +85,12 @@ def main():
     // Check producer API contract
     const producers = extracted.relations.filter(isRepoContractRelation).filter((r) => r.role === "producer");
     expect(producers.length).toBe(1);
-    expect(producers[0]?.contractId).toContain("api:api-users");
+    expect(producers[0]?.contractId).toContain("api:get:-api-users");
 
     // Check consumer API contract (requests.get)
     const consumers = extracted.relations.filter(isRepoContractRelation).filter((r) => r.role === "consumer");
     expect(consumers.length).toBe(1);
-    expect(consumers[0]?.contractId).toContain("api:api-orders");
+    expect(consumers[0]?.contractId).toContain("api:get:-api-orders");
     expect(extracted.evidence).toEqual(expect.arrayContaining([
       expect.objectContaining({ rule: "dynamic-unresolved", raw: expect.stringContaining("requests.get(build_url())") })
     ]));

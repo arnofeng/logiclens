@@ -94,12 +94,12 @@ func main() {
     const producerContractIds = producers.map((p) => p.contractId);
     expect(producers.length).toBe(2);
     expect(producerContractIds).toContain("contract:api:api-info");
-    expect(producerContractIds).toContain("contract:api:api-users");
+    expect(producerContractIds).toContain("contract:api:get:-api-users");
 
     // Check consumer API contract (http.Get)
     const consumers = extracted.relations.filter(isRepoContractRelation).filter((r) => r.role === "consumer");
     expect(consumers.length).toBe(1);
-    expect(consumers[0]?.contractId).toContain("api:api-orders");
+    expect(consumers[0]?.contractId).toContain("api:get:-api-orders");
     expect(extracted.evidence).toEqual(expect.arrayContaining([
       expect.objectContaining({ rule: "dynamic-unresolved", raw: expect.stringContaining("http.Get(buildURL())") })
     ]));
