@@ -107,7 +107,7 @@ program
 async function main(): Promise<void> {
   try {
     await fs.access(configPath());
-    await loadConfiguredPlugins({ program });
+    await loadConfiguredPlugins();
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }

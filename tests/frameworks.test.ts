@@ -164,7 +164,6 @@ describe("framework detection", () => {
       cwd: process.cwd(),
       config: defaultConfig(),
       registerParser: () => {},
-      registerCliCommand: () => {},
       registerFrameworkDetector: (detector: any) => frameworkDetectorRegistry.register(detector),
       registerEmbeddingProvider: () => {}
     };

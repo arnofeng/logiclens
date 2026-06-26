@@ -1,6 +1,6 @@
 import { loadConfig } from "../config/loadConfig.js";
 import { loadConfiguredPlugins } from "../plugins/loader.js";
-import { cliCommandRegistry, parserRegistry, frameworkDetectorRegistry } from "../plugins/registry.js";
+import { parserRegistry, frameworkDetectorRegistry } from "../plugins/registry.js";
 
 export async function pluginsCommand(cwd = process.cwd()): Promise<void> {
   const config = await loadConfig(cwd);
@@ -11,5 +11,4 @@ export async function pluginsCommand(cwd = process.cwd()): Promise<void> {
   }
   console.log(`Parsers: ${parserRegistry.parsers().map((parser) => parser.name).sort().join(", ") || "(none)"}`);
   console.log(`Framework detectors: ${frameworkDetectorRegistry.detectors().map((detector) => detector.name).sort().join(", ") || "(none)"}`);
-  console.log(`CLI hooks: ${cliCommandRegistry.count()}`);
 }

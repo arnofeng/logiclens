@@ -1,4 +1,3 @@
-import type { Command } from "commander";
 import type { LogicLensConfig } from "../config/schema.js";
 import type { ExtractorFactBundle } from "../extractors/crossRepoContracts.js";
 import type { ParsedGraphFile, RepoNode } from "../parsers/types.js";
@@ -125,7 +124,7 @@ export interface FrameworkDetector {
 }
 
 /**
- * The API context provided to a plugin's setup function to register parsers, framework detectors, and custom CLI commands.
+ * The API context provided to a plugin's setup function to register parsers and framework detectors.
  */
 export interface PluginContext {
   /** The current working directory of the workspace */
@@ -136,10 +135,6 @@ export interface PluginContext {
    * Registers a custom language parser.
    */
   registerParser(parser: LanguageParser): void;
-  /**
-   * Registers a custom CLI command hook.
-   */
-  registerCliCommand(registerFn: (program: Command) => void): void;
   /**
    * Registers a custom framework detector.
    */

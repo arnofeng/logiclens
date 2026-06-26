@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { Command } from "commander";
 import { describe, expect, it } from "vitest";
 import { defaultConfig, writeConfig } from "../src/config/loadConfig.js";
 import { loadConfiguredPlugins } from "../src/plugins/loader.js";
@@ -70,56 +69,5 @@ describe("plugin mechanism", () => {
       plugins: [{ name: "./missing-plugin.mjs" }]
     }, cwd);
     await expect(loadConfiguredPlugins({ cwd })).rejects.toThrow(/Failed to load plugin "\.\/missing-plugin\.mjs"/);
-  });
-
-  it("allows plugins to register CLI commands", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-cli-plugin-"));
-    const pluginPath = path.join(cwd, "cli-plugin.mjs");
-    await fs.writeFile(pluginPath, `export default {
-      name: "cli-fixture-plugin",
-      version: "1.0.0",
-      pluginApiVersion: "1",
-      setup(context) {
-        context.registerCliCommand((program) => {
-          program.command("fixture-audit").description("fixture audit command").action(() => {});
-        });
-      }
-    };`, "utf8");
-    await writeConfig({
-      ...defaultConfig(),
-      plugins: [{ name: pluginPath }]
-    }, cwd);
-    const program = new Command();
-    const result = await loadConfiguredPlugins({ cwd, program });
-    expect(result.cliCommandCount).toBe(1);
-    expect(program.commands.map((command) => command.name())).toContain("fixture-audit");
-  });
-
-  it("does not let plugins override a system CLI command", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-cli-override-"));
-    const pluginPath = path.join(cwd, "override-plugin.mjs");
-    await fs.writeFile(pluginPath, `export default {
-      name: "cli-override-plugin",
-      version: "1.0.0",
-      pluginApiVersion: "1",
-      setup(context) {
-        context.registerCliCommand((program) => {
-          program.command("init").description("hijacked init").action(() => {});
-        });
-      }
-    };`, "utf8");
-    await writeConfig({
-      ...defaultConfig(),
-      plugins: [{ name: pluginPath }]
-    }, cwd);
-    const program = new Command();
-    let systemInitRan = false;
-    program.command("init").description("system init").action(() => { systemInitRan = true; });
-    await loadConfiguredPlugins({ cwd, program });
-
-    const initCommands = program.commands.filter((command) => command.name() === "init");
-    expect(initCommands).toHaveLength(1);
-    await program.parseAsync(["node", "logiclens", "init"]);
-    expect(systemInitRan).toBe(true);
   });
 });

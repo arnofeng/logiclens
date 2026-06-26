@@ -381,7 +381,7 @@ List all configured and loaded plugins along with their registered extension hoo
 logiclens plugin list
 ```
 
-**Output**: Configured plugin count, loaded plugin details (name, version, path, load time), registered parsers, framework detectors, CLI hook count.
+**Output**: Configured plugin count, loaded plugin details (name, version, path, load time), registered parsers, framework detectors.
 
 ---
 
@@ -500,31 +500,5 @@ logiclens uninstall -t claude-code
 | `-l, --location <where>` | Uninstall location: `global` or `local` (default: interactive selection) |
 | `-y, --yes` | Non-interactive mode, defaults to `--location=global --target=all` |
 
----
-
-## Plugin Extensions
-
-LogicLens supports extending CLI commands through plugins. Plugins configured in `.logiclens/config.yaml` can register custom subcommands via the `registerCliCommand` hook.
-
-**Example**:
-
-```ts
-// my-plugin.ts
-export function setup(context) {
-  context.registerCliCommand((program) => {
-    program
-      .command("hello")
-      .description("My custom command")
-      .action(() => console.log("hello from plugin"));
-  });
-}
-```
-
-After registration, use it as:
-
-```bash
-logiclens hello
-# Output: hello from plugin
-```
 
 For more plugin development details, see the `plugins` section in the [Configuration Guide](./configuration.md).
