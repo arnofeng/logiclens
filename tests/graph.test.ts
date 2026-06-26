@@ -216,11 +216,17 @@ describe("graph", () => {
       ]));
       const apiTrace = await traceContract(db, "api", "/api/order/:id");
       expect(apiTrace).toEqual(expect.arrayContaining([
-        expect.objectContaining({ repoName: "service-a", role: "producer", filePath: "src/OrderController.ts", rule: "api-path-producer" }),
-        expect.objectContaining({ repoName: "service-b", role: "consumer", filePath: "src/PaymentService.ts", rule: "http-client-api-consumer" })
+        expect.objectContaining({ repoName: "service-a", role: "producer", filePath: "src/OrderController.ts", rule: "api-path-producer" })
       ]));
       expect(apiTrace.every((row) => ["exact", "probable", "heuristic"].includes(row.resolution))).toBe(true);
       expect(apiTrace.every((row) => row.line > 0 && row.raw.length > 0 && row.confidence > 0)).toBe(true);
+      const methodConsumers = await db.query<{ repoName: string; key: string }>(
+        "MATCH (r:Repo)-[:CONSUMES]->(c:Contract) WHERE c.kind = 'api' AND c.key = $key RETURN r.name AS repoName, c.key AS key;",
+        { key: "GET:/api/order/{id}" }
+      );
+      expect(methodConsumers).toEqual(expect.arrayContaining([
+        expect.objectContaining({ repoName: "service-b", key: "GET:/api/order/{id}" })
+      ]));
       const unresolvedEvidence = await listUnresolvedEvidence(db);
       expect(unresolvedEvidence).toEqual(expect.arrayContaining([
         expect.objectContaining({

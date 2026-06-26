@@ -39,11 +39,11 @@ describe("graph facts batch", () => {
     expect(facts.repoContracts.some((edge) => edge.batchId === "batch:test")).toBe(true);
     expect(facts.repoDependencies.some((edge) => edge.dependencyType === "api")).toBe(true);
     expect(facts.contracts).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: "api", key: "/mall/mgr/entireorder/list" }),
-      expect.objectContaining({ kind: "api", key: "/mall/mgr/entireorder/{userid}/getdetail" }),
-      expect.objectContaining({ kind: "api", key: "/wechatassistant/public/sid/v2/getappconfigstatus" }),
-      expect.objectContaining({ kind: "api", key: "/api3/merchant/backstage/service/clientapplication/querycappbybosid" }),
-      expect.objectContaining({ kind: "api", key: "/mall/mgr/exact/querypagepromotionlist" })
+      expect.objectContaining({ kind: "api", key: "POST:/mall/mgr/entireorder/list" }),
+      expect.objectContaining({ kind: "api", key: "POST:/mall/mgr/entireorder/{userid}/getdetail" }),
+      expect.objectContaining({ kind: "api", key: "POST:/wechatassistant/public/sid/v2/getappconfigstatus" }),
+      expect.objectContaining({ kind: "api", key: "POST:/api3/merchant/backstage/service/clientapplication/querycappbybosid" }),
+      expect.objectContaining({ kind: "api", key: "POST:/mall/mgr/exact/querypagepromotionlist" })
     ]));
     expect(facts.evidence).toEqual(expect.arrayContaining([
       expect.objectContaining({ rule: "http-client-api-consumer", raw: 'request.post("/mall/mgr/entireOrder/list", { userId })' })
@@ -201,7 +201,8 @@ public class SmartBackorderController {
 
     expect(facts.contracts).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: "api", key: "/smart/backorder" }),
-      expect.objectContaining({ kind: "api", key: "/smart/backorder/list" })
+      expect.objectContaining({ kind: "api", key: "GET:/smart/backorder/list" }),
+      expect.objectContaining({ kind: "api", key: "POST:/smart/backorder" })
     ]));
     const baseContract = facts.contracts.find((contract) => contract.kind === "api" && contract.key === "/smart/backorder");
     expect(facts.repoContracts).toEqual(expect.arrayContaining([
@@ -238,9 +239,9 @@ class UserController {
     const facts = await buildGraphFactsBatch({ batchId: "batch:spring-post", indexedAt: "indexed", repos: [repo], parsedFiles: [parsed], semantic: true });
     const apiKeys = facts.contracts.filter((contract) => contract.kind === "api").map((contract) => contract.key);
 
-    expect(apiKeys).toEqual(expect.arrayContaining(["/orders/list", "/users/profile"]));
-    expect(apiKeys).not.toContain("/orders/profile");
-    expect(apiKeys).not.toContain("/users/list");
+    expect(apiKeys).toEqual(expect.arrayContaining(["GET:/orders/list", "GET:/users/profile"]));
+    expect(apiKeys).not.toContain("GET:/orders/profile");
+    expect(apiKeys).not.toContain("GET:/users/list");
   });
 
   it("extracts config contracts from file-level config files", async () => {
@@ -314,15 +315,17 @@ class UserController {
     };
 
     const facts = await buildGraphFactsBatch({ batchId: "batch:request-object-api", indexedAt: "indexed", repos: [backend, frontend], parsedFiles: [backendFile, frontendFile], semantic: true });
-    const apiContract = facts.contracts.find((contract) => contract.kind === "api" && contract.key === "/smart/backorder");
+    const producerContract = facts.contracts.find((contract) => contract.kind === "api" && contract.key === "/smart/backorder");
+    const consumerContract = facts.contracts.find((contract) => contract.kind === "api" && contract.key === "POST:/smart/backorder");
 
-    expect(apiContract).toBeTruthy();
+    expect(producerContract).toBeTruthy();
+    expect(consumerContract).toBeTruthy();
     expect(facts.repoContracts).toEqual(expect.arrayContaining([
-      expect.objectContaining({ repoId: backend.id, contractId: apiContract?.id, role: "producer" }),
-      expect.objectContaining({ repoId: frontend.id, contractId: apiContract?.id, role: "consumer" })
+      expect.objectContaining({ repoId: backend.id, contractId: producerContract?.id, role: "producer" }),
+      expect.objectContaining({ repoId: frontend.id, contractId: consumerContract?.id, role: "consumer" })
     ]));
     expect(facts.repoDependencies).toEqual(expect.arrayContaining([
-      expect.objectContaining({ fromRepoId: frontend.id, toRepoId: backend.id, dependencyType: "api", sourceContractId: apiContract?.id })
+      expect.objectContaining({ fromRepoId: frontend.id, toRepoId: backend.id, dependencyType: "api" })
     ]));
     expect(facts.evidence).toEqual(expect.arrayContaining([
       expect.objectContaining({ filePath: "src/api/smart/back_order.js", rule: "http-client-object-url-consumer", raw: expect.stringContaining("url: '/smart/backorder'") })

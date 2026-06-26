@@ -33,6 +33,7 @@ type HttpCall = {
   methodName?: string;
   urlNode?: Parser.SyntaxNode;
   rule: "http-client-api-consumer" | "http-client-object-url-consumer";
+  httpMethod?: string;
 };
 
 function importedHttpClientNames(file: Pick<ParsedFile, "imports">): Set<string> {
@@ -67,6 +68,20 @@ function symbolOffset(file: ParsedFile, symbol: CodeSymbol, node: Parser.SyntaxN
   return symbolStart >= 0 ? Math.max(0, node.startIndex - symbolStart) : 0;
 }
 
+function inferMethodFromFunctionName(name: string): string | undefined {
+  const match = name.match(/^api(Get|Post|Put|Patch|Delete|Request)$/i);
+  return match ? match[1]!.toUpperCase() : undefined;
+}
+
+function inferMethodFromFetchOptions(args: Parser.SyntaxNode[]): string | undefined {
+  const optionsArg = args[1];
+  if (!optionsArg || optionsArg.type !== "object") return undefined;
+  const methodNode = objectPropertyValue(optionsArg, "method");
+  if (!methodNode) return undefined;
+  const value = stringLiteralValue(methodNode);
+  return value ? value.toUpperCase() : undefined;
+}
+
 function collectHttpCalls(root: Parser.SyntaxNode, knownClients: Set<string>): HttpCall[] {
   const calls: HttpCall[] = [];
   walkAst(root, (node) => {
@@ -79,24 +94,38 @@ function collectHttpCalls(root: Parser.SyntaxNode, knownClients: Set<string>): H
     if (fn.type === "identifier") {
       const firstArg = args[0];
       const objectUrl = firstArg?.type === "object" ? objectPropertyValue(firstArg, "url") : undefined;
+      let httpMethod: string | undefined;
+      if (fn.text === "fetch") {
+        httpMethod = inferMethodFromFetchOptions(args) ?? "GET";
+      } else if (API_FUNCTION_RE.test(fn.text)) {
+        httpMethod = inferMethodFromFunctionName(fn.text);
+      } else if (objectUrl) {
+        const methodNode = firstArg?.type === "object" ? objectPropertyValue(firstArg, "method") : undefined;
+        httpMethod = methodNode ? (stringLiteralValue(methodNode)?.toUpperCase() ?? undefined) : undefined;
+      }
       call = {
         node,
         raw: node.text,
         functionName: fn.text,
         urlNode: objectUrl ?? firstArg,
-        rule: objectUrl ? "http-client-object-url-consumer" : "http-client-api-consumer"
+        rule: objectUrl ? "http-client-object-url-consumer" : "http-client-api-consumer",
+        httpMethod
       };
     } else if (fn.type === "member_expression") {
       const property = fn.childForFieldName("property")?.text;
       const object = fn.childForFieldName("object");
       const firstArg = args[0];
+      const httpMethod = property && HTTP_METHODS.has(property) && property !== "request"
+        ? property.toUpperCase()
+        : undefined;
       call = {
         node,
         raw: node.text,
         objectPath: object ? staticPropertyPath(object) : undefined,
         methodName: property,
         urlNode: firstArg,
-        rule: "http-client-api-consumer"
+        rule: "http-client-api-consumer",
+        httpMethod
       };
     }
     if (call && isKnownHttpInvocation(call, knownClients)) calls.push(call);
@@ -200,7 +229,8 @@ export const jsHttpClientExtractor: ContractExtractor = {
           offset,
           raw: call.raw,
           rule: call.rule,
-          confidence: confidenceFor("probable-http-client")
+          confidence: call.httpMethod ? confidenceFor("probable-http-client") : confidenceFor("method-unknown-fallback"),
+          method: call.httpMethod
         });
       }
 

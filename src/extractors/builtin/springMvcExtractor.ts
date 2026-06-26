@@ -10,6 +10,26 @@ import {
   toFactBundle
 } from "./shared.js";
 
+const ANNOTATION_METHOD_MAP: Record<string, string> = {
+  GetMapping: "GET",
+  PostMapping: "POST",
+  PutMapping: "PUT",
+  DeleteMapping: "DELETE",
+  PatchMapping: "PATCH"
+};
+
+function springHttpMethod(annotation: AnnotationFact): string | undefined {
+  const mapped = ANNOTATION_METHOD_MAP[annotation.name];
+  if (mapped) return mapped;
+  if (annotation.name === "RequestMapping") {
+    const methodArg = annotation.arguments.find((a) => a.name === "method");
+    if (!methodArg) return undefined;
+    const match = methodArg.value.match(/RequestMethod\.(\w+)/);
+    return match ? match[1]!.toUpperCase() : undefined;
+  }
+  return undefined;
+}
+
 function springPathsFromAnnotation(annotation: AnnotationFact): string[] {
   if (annotation.arguments.length === 0) return [""];
   const pathArgs = annotation.arguments.filter((argument) => !argument.name || argument.name === "value" || argument.name === "path");
@@ -62,9 +82,14 @@ export const springMvcExtractor: ContractExtractor = {
         const basePaths = baseMappings.length > 0 ? baseMappings.map((mapping) => mapping.path) : [""];
         const methodSymbols = file.symbols.filter((symbol) => symbol.kind === "method" && symbol.startLine >= classSymbol.startLine && symbol.endLine <= classSymbol.endLine);
         for (const methodSymbol of methodSymbols) {
-          const mappings = (mappingsByOwner.get(methodSymbol.id) ?? [])
+          const rawMappings = mappingsByOwner.get(methodSymbol.id) ?? [];
+          const mappings = rawMappings
             .map((mapping) => ({ ...mapping, offset: Math.max(0, methodSymbol.source.indexOf(mapping.raw)) }));
           for (const mapping of mappings) {
+            const annotationFact = (file.facts?.annotations ?? []).find(
+              (a) => a.ownerSymbolId === methodSymbol.id && a.raw === mapping.raw
+            );
+            const httpMethod = annotationFact ? springHttpMethod(annotationFact) : undefined;
             for (const basePath of basePaths) {
               pushApiContractFromPath({
                 result,
@@ -75,7 +100,8 @@ export const springMvcExtractor: ContractExtractor = {
                 offset: mapping.offset,
                 raw: mapping.raw,
                 rule: "spring-mapping-producer",
-                confidence: confidenceFor("exact-parser-route")
+                confidence: confidenceFor("exact-parser-route"),
+                method: httpMethod
               });
             }
           }
@@ -146,6 +172,10 @@ export const springMvcExtractor: ContractExtractor = {
               .map((m) => ({ ...m, offset: Math.max(0, methodSymbol.source.indexOf(m.raw)) }));
             const mappings = factMappings;
             for (const mapping of mappings) {
+              const annotationFact = (file.facts?.annotations ?? []).find(
+                (a) => a.ownerSymbolId === methodSymbol.id && a.raw === mapping.raw
+              );
+              const httpMethod = annotationFact ? springHttpMethod(annotationFact) : undefined;
               const combined = joinApiPaths(prefix, mapping.path);
               if (alreadyEmitted.has(combined)) continue; // already correct
               pushApiContractFromPath({
@@ -157,7 +187,8 @@ export const springMvcExtractor: ContractExtractor = {
                 offset: mapping.offset,
                 raw: mapping.raw,
                 rule: "spring-mapping-prefix-merged",
-                confidence: confidenceFor("probable-route-merge")
+                confidence: confidenceFor("probable-route-merge"),
+                method: httpMethod
               });
             }
           }
