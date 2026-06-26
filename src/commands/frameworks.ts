@@ -1,15 +1,13 @@
 import { loadConfig } from "../config/loadConfig.js";
 import { toRepoNode } from "../repos/repoRegistry.js";
 import { detectFrameworks, isExtractorEnabled } from "../frameworks/detect.js";
-import { contractExtractorRegistry } from "../plugins/registry.js";
-import { registerBuiltinContractExtractors } from "../extractors/crossRepoContracts.js";
+import { builtinContractExtractors } from "../extractors/builtin/index.js";
 import { loadConfiguredPlugins } from "../plugins/loader.js";
 
 export async function frameworksCommand(cwd = process.cwd()): Promise<void> {
   const config = await loadConfig(cwd);
-  // Ensure plugins/extractors are loaded
+  // Ensure plugins are loaded
   await loadConfiguredPlugins({ cwd, config });
-  registerBuiltinContractExtractors();
 
   const repos = config.repos.map((r) => toRepoNode(r, cwd));
   console.log(`Detected frameworks & enabled extractors for ${repos.length} repositories:\n`);
@@ -35,7 +33,7 @@ export async function frameworksCommand(cwd = process.cwd()): Promise<void> {
     }
 
     console.log(`- Enabled contract extractors:`);
-    const enabledExtractors = contractExtractorRegistry.extractors().filter((ext) => isExtractorEnabled(ext, detected, config));
+    const enabledExtractors = builtinContractExtractors.filter((ext) => isExtractorEnabled(ext, detected, config));
     if (enabledExtractors.length === 0) {
       console.log(`  * (none)`);
     } else {

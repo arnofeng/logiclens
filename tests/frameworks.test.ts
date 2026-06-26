@@ -164,7 +164,6 @@ describe("framework detection", () => {
       cwd: process.cwd(),
       config: defaultConfig(),
       registerParser: () => {},
-      registerContractExtractor: () => {},
       registerCliCommand: () => {},
       registerFrameworkDetector: (detector: any) => frameworkDetectorRegistry.register(detector),
       registerEmbeddingProvider: () => {}
@@ -208,71 +207,6 @@ describe("framework detection", () => {
 
     // Extractor without frameworks is enabled by default
     expect(isExtractorEnabled(genericExtractor, [], config)).toBe(true);
-  });
-
-  it("filters repos in extractContractFactsWithRegistry based on extractor frameworks", async () => {
-    const dirA = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-fa-"));
-    const dirB = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-fb-"));
-    const repoA = mockRepoNode("repo-a", dirA);
-    const repoB = mockRepoNode("repo-b", dirB);
-
-    // Create pom.xml in repoA to make it java:spring-mvc
-    await fs.writeFile(path.join(dirA, "pom.xml"), "<artifactId>spring-boot-starter-web</artifactId>", "utf8");
-    // Create package.json in repoB to make it js:package-json
-    await fs.writeFile(path.join(dirB, "package.json"), "{}", "utf8");
-
-    const config = defaultConfig();
-
-    let springExtractorCalled = false;
-    let jsExtractorCalled = false;
-    let springPostExtractCalled = false;
-
-    const springExtractor: ContractExtractor = {
-      name: "test:spring-mvc",
-      frameworks: ["java:spring-mvc"],
-      extract(ctx) {
-        springExtractorCalled = true;
-        expect(ctx.repos.map((r) => r.id)).toEqual([repoA.id]);
-        return { contracts: [], evidence: [], entities: [], operations: [], workflows: [], relations: [] };
-      },
-      postExtract(ctx) {
-        springPostExtractCalled = true;
-        expect(ctx.repos.map((r) => r.id)).toEqual([repoA.id]);
-        expect(ctx.parsedFiles.map((f) => f.repoId)).toEqual([repoA.id]);
-        return { contracts: [], evidence: [], entities: [], operations: [], workflows: [], relations: [] };
-      }
-    };
-
-    const jsExtractor: ContractExtractor = {
-      name: "test:js-package-json",
-      frameworks: ["js:package-json"],
-      extract(ctx) {
-        jsExtractorCalled = true;
-        expect(ctx.repos.map((r) => r.id)).toEqual([repoB.id]);
-        return { contracts: [], evidence: [], entities: [], operations: [], workflows: [], relations: [] };
-      }
-    };
-
-    const { contractExtractorRegistry } = await import("../src/plugins/registry.js");
-    contractExtractorRegistry.register(springExtractor);
-    contractExtractorRegistry.register(jsExtractor);
-
-    const { extractContractFactsWithRegistry } = await import("../src/extractors/crossRepoContracts.js");
-
-    const context = {
-      repos: [repoA, repoB],
-      parsedFiles: [
-        { repoId: repoA.id, fileId: "f1", path: "src/main/java/App.java", language: "java", hash: "h1", loc: 1, imports: [], symbols: [], calls: [] } as any,
-        { repoId: repoB.id, fileId: "f2", path: "src/index.js", language: "javascript", hash: "h2", loc: 1, imports: [], symbols: [], calls: [] } as any
-      ],
-      repoResolver: (id: string) => id === repoA.id ? repoA : repoB
-    };
-
-    await extractContractFactsWithRegistry(context, config);
-
-    expect(springExtractorCalled).toBe(true);
-    expect(jsExtractorCalled).toBe(true);
-    expect(springPostExtractCalled).toBe(true);
   });
 
   it("supports custom framework detectors registered via registry", async () => {

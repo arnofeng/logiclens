@@ -46,7 +46,7 @@ logiclens <command> --help
 | [`quality`](#logiclens-quality-action) | Audit and govern relation/contract quality |
 | [`rebuild-relations`](#logiclens-rebuild-relations) | Rebuild cross-repository dependency edges |
 | [`plugin`](#logiclens-plugin) | Add, remove, and list plugins |
-| [`frameworks`](#logiclens-frameworks) | List detected frameworks and contract extractors |
+| [`frameworks`](#logiclens-frameworks) | List detected frameworks |
 | [`mcp`](#logiclens-mcp) | Start MCP server |
 | [`watch`](#logiclens-watch) | Start file watcher for auto-indexing |
 | [`install`](#logiclens-install) | Install MCP into AI agents |
@@ -381,19 +381,19 @@ List all configured and loaded plugins along with their registered extension hoo
 logiclens plugin list
 ```
 
-**Output**: Configured plugin count, loaded plugin details (name, version, path, load time), registered parsers, framework detectors, contract extractors, CLI hook count.
+**Output**: Configured plugin count, loaded plugin details (name, version, path, load time), registered parsers, framework detectors, CLI hook count.
 
 ---
 
 ### `logiclens frameworks`
 
-List detected frameworks and enabled contract extractors for each repository.
+List detected frameworks for each repository.
 
 ```bash
 logiclens frameworks
 ```
 
-**Output**: Detected frameworks per repository (language, confidence, evidence) and list of enabled contract extractors.
+**Output**: Detected frameworks per repository (language, confidence, evidence).
 
 ---
 

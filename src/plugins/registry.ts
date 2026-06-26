@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import type { ContractExtractor, EmbeddingProvider, LanguageParser, FrameworkDetector } from "./types.js";
+import type { EmbeddingProvider, LanguageParser, FrameworkDetector } from "./types.js";
 
 export class ParserRegistry {
   private byLanguage = new Map<string, LanguageParser>();
@@ -31,18 +31,6 @@ export class ParserRegistry {
 
   parsers(): LanguageParser[] {
     return [...new Map(this.byLanguage.entries()).values()];
-  }
-}
-
-export class ContractExtractorRegistry {
-  private extractorsByName = new Map<string, ContractExtractor>();
-
-  register(extractor: ContractExtractor): void {
-    this.extractorsByName.set(extractor.name, extractor);
-  }
-
-  extractors(): ContractExtractor[] {
-    return [...this.extractorsByName.values()];
   }
 }
 
@@ -163,7 +151,6 @@ export class EmbeddingProviderRegistry {
 }
 
 export const parserRegistry = new ParserRegistry();
-export const contractExtractorRegistry = new ContractExtractorRegistry();
 export const frameworkDetectorRegistry = new FrameworkDetectorRegistry();
 export const cliCommandRegistry = new CliCommandRegistry();
 export const embeddingProviderRegistry = new EmbeddingProviderRegistry();

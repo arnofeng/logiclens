@@ -2,7 +2,6 @@ import type {
   LogicLensPlugin,
   PluginContext,
   LanguageParser,
-  ContractExtractor,
   EmbeddingProvider,
   EmbeddingVector,
   ParseInput,
@@ -13,7 +12,7 @@ import type { ProviderCallRuntime, ProviderCallStats, ProviderPolicy } from "../
 /**
  * Defines a LogicLens plugin. Provides runtime verification of the plugin API version.
  * This is a type helper to define plugins with auto-completion.
- * 
+ *
  * @param plugin - The LogicLens plugin definition object.
  * @returns The verified plugin definition.
  * @throws An error if the plugin API version is declared but unsupported.
@@ -29,7 +28,6 @@ export type {
   LogicLensPlugin,
   PluginContext,
   LanguageParser,
-  ContractExtractor,
   EmbeddingProvider,
   EmbeddingVector,
   ParseInput,

@@ -125,7 +125,7 @@ export interface FrameworkDetector {
 }
 
 /**
- * The API context provided to a plugin's setup function to register parsers, contract extractors, and custom CLI commands.
+ * The API context provided to a plugin's setup function to register parsers, framework detectors, and custom CLI commands.
  */
 export interface PluginContext {
   /** The current working directory of the workspace */
@@ -136,10 +136,6 @@ export interface PluginContext {
    * Registers a custom language parser.
    */
   registerParser(parser: LanguageParser): void;
-  /**
-   * Registers a custom contract extractor.
-   */
-  registerContractExtractor(extractor: ContractExtractor): void;
   /**
    * Registers a custom CLI command hook.
    */
