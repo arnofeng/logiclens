@@ -75,7 +75,8 @@ export const springMvcExtractor: ContractExtractor = {
             offset: baseMapping.offset,
             raw: baseMapping.raw,
             rule: "spring-request-mapping-producer",
-            confidence: confidenceFor("exact-parser-route")
+            confidence: confidenceFor("exact-parser-route"),
+            framework: "spring-mvc"
           });
         }
 
@@ -101,7 +102,8 @@ export const springMvcExtractor: ContractExtractor = {
                 raw: mapping.raw,
                 rule: "spring-mapping-producer",
                 confidence: confidenceFor("exact-parser-route"),
-                method: httpMethod
+                method: httpMethod,
+                framework: "spring-mvc"
               });
             }
           }
@@ -188,7 +190,8 @@ export const springMvcExtractor: ContractExtractor = {
                 raw: mapping.raw,
                 rule: "spring-mapping-prefix-merged",
                 confidence: confidenceFor("probable-route-merge"),
-                method: httpMethod
+                method: httpMethod,
+                framework: "spring-mvc"
               });
             }
           }

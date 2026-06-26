@@ -212,6 +212,16 @@ public class SmartBackorderController {
       expect.objectContaining({ filePath: parsed.path, rule: "spring-request-mapping-producer", raw: '@RequestMapping("/smart/backorder")' }),
       expect.objectContaining({ filePath: parsed.path, rule: "spring-mapping-producer", raw: "@PostMapping" })
     ]));
+
+    // ContractSpec layer is populated end-to-end through buildGraphFactsBatch.
+    const listSpec = facts.contractSpecs.find((s) => s.canonicalKey === "GET:/smart/backorder/list");
+    expect(listSpec).toBeDefined();
+    expect(listSpec!.specKind).toBe("http-endpoint");
+    expect(listSpec!.httpMethod).toBe("GET");
+    expect(listSpec!.pathTemplate).toBe("/smart/backorder/list");
+    expect(listSpec!.batchId).toBe("batch:spring-api");
+    expect(listSpec!.active).toBe(true);
+    expect(facts.contractSpecEdges.some((e) => e.specId === listSpec!.id && e.contractId === listSpec!.contractId)).toBe(true);
   });
 
   it("keeps Spring MVC postExtract prefixes scoped to their owning class", async () => {

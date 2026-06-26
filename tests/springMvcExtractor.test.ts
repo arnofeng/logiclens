@@ -124,3 +124,45 @@ public class UserController {
     expect(keys).toContain("DELETE:/api/v1/users/{id}");
   });
 });
+
+describe("Spring MVC Extractor HttpEndpointSpec production", () => {
+  it("produces a ContractSpec + HAS_SPEC edge for each endpoint", async () => {
+    const { bundle } = await extractFromSource(`
+@RestController
+@RequestMapping("/api/orders")
+public class OrderController {
+  @GetMapping("/{id}")
+  public Object get() { return null; }
+}`);
+    const spec = bundle.contractSpecs.find((s) => s.canonicalKey === "GET:/api/orders/{id}");
+    expect(spec).toBeDefined();
+    expect(spec!.specKind).toBe("http-endpoint");
+    expect(spec!.httpMethod).toBe("GET");
+    expect(spec!.pathTemplate).toBe("/api/orders/{id}");
+    expect(spec!.framework).toBe("spring-mvc");
+    expect(spec!.repoId).toBe(repoId("spring-test"));
+
+    const parsedSpec = JSON.parse(spec!.specJson);
+    expect(parsedSpec.kind).toBe("http-endpoint");
+    expect(parsedSpec.method).toBe("GET");
+    expect(parsedSpec.pathTemplate).toBe("/api/orders/{id}");
+    expect(parsedSpec.pathParams).toEqual(["id"]);
+
+    const edge = bundle.contractSpecEdges.find((e) => e.specId === spec!.id);
+    expect(edge).toBeDefined();
+    expect(edge!.contractId).toBe(spec!.contractId);
+  });
+
+  it("leaves httpMethod undefined for method-unknown @RequestMapping", async () => {
+    const { bundle } = await extractFromSource(`
+@RestController
+public class OrderController {
+  @RequestMapping("/api/orders")
+  public Object handle() { return null; }
+}`);
+    const spec = bundle.contractSpecs.find((s) => s.canonicalKey === "/api/orders");
+    expect(spec).toBeDefined();
+    expect(spec!.httpMethod).toBeUndefined();
+    expect(JSON.parse(spec!.specJson).method).toBeUndefined();
+  });
+});

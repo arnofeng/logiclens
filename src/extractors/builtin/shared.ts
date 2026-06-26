@@ -6,6 +6,7 @@ import type {
   ContractKind,
   ContractNode,
   ContractRole,
+  ContractSpecKind,
   EntityNode,
   EvidenceNode,
   ParsedFile,
@@ -15,6 +16,7 @@ import type {
 import { contractId, entityId, evidenceId, fileId, normalizeName } from "../../utils/path.js";
 import { normalizeApiPath, canonicalHttpContractKey } from "../../contracts/apiPath.js";
 import { confidenceFor } from "../../confidence.js";
+import { serializeSpec, type ContractSpec, type HttpEndpointSpec } from "../../contracts/spec.js";
 import type { AliasOverride, CrossRepoExtraction, ExtractorFactBundle } from "../crossRepoContracts.js";
 
 export type PackageJson = {
@@ -187,6 +189,80 @@ function pushApiOperation(input: {
   });
 }
 
+/**
+ * Emits a ContractSpec node + HAS_SPEC edge for a contract. The spec carries
+ * the structured, reasoning-ready representation (e.g. HttpEndpointSpec) while
+ * the high-frequency query columns (httpMethod/pathTemplate/eventTopic) are
+ * lifted out of specJson for backend indexing.
+ */
+export function pushContractSpec(input: {
+  result: CrossRepoExtraction;
+  contractNode: ContractNode;
+  spec: ContractSpec;
+  repoId: string;
+  fileId: string;
+  evidenceNode: EvidenceNode;
+  sourceSymbolId?: string;
+  framework?: string;
+  httpMethod?: string;
+  pathTemplate?: string;
+  eventTopic?: string;
+  version?: string;
+}): string {
+  const specId = `spec:${normalizeName(`${input.contractNode.id}:${input.evidenceNode.id}`)}`;
+  const specKind: ContractSpecKind = input.spec.kind === "http-endpoint"
+    ? "http-endpoint"
+    : input.spec.kind === "event"
+      ? "event"
+      : "schema";
+  input.result.contractSpecs.push({
+    id: specId,
+    contractId: input.contractNode.id,
+    specKind,
+    repoId: input.repoId,
+    fileId: input.fileId,
+    evidenceId: input.evidenceNode.id,
+    sourceSymbolId: input.sourceSymbolId,
+    canonicalKey: input.contractNode.key,
+    httpMethod: input.httpMethod,
+    pathTemplate: input.pathTemplate,
+    eventTopic: input.eventTopic,
+    framework: input.framework,
+    version: input.version,
+    specJson: serializeSpec(input.spec),
+    confidence: input.evidenceNode.confidence
+  });
+  input.result.contractSpecEdges.push({
+    contractId: input.contractNode.id,
+    specId,
+    evidenceId: input.evidenceNode.id,
+    confidence: input.evidenceNode.confidence
+  });
+  return specId;
+}
+
+/** Extracts the path template (method-prefix stripped) from a canonical api key. */
+export function apiPathTemplate(canonicalKey: string): string {
+  return canonicalKey.replace(/^[A-Z]+:/, "");
+}
+
+/** Extracts `{param}` path-parameter names from a path template. */
+export function apiPathParams(pathTemplate: string): string[] {
+  return [...pathTemplate.matchAll(/\{([^}]+)\}/g)].map((m) => m[1]!);
+}
+
+function buildHttpEndpointSpec(apiContract: ContractNode, apiPath: string, method?: string): HttpEndpointSpec {
+  const pathTemplate = apiPathTemplate(apiContract.key);
+  return {
+    kind: "http-endpoint",
+    method: method ? (method.trim().toUpperCase() as HttpEndpointSpec["method"]) : undefined,
+    path: apiPath,
+    pathTemplate,
+    pathParams: apiPathParams(pathTemplate),
+    auth: "unknown"
+  };
+}
+
 export function pushApiContractFromMatch(input: {
   result: CrossRepoExtraction;
   file: ParsedFile;
@@ -222,6 +298,7 @@ export function pushApiContractFromPath(input: {
   rule: string;
   confidence: number;
   method?: string;
+  framework?: string;
 }): void {
   const apiContract = contract("api", input.apiPath, `HTTP API ${input.apiPath}`, input.method);
   const evidenceNode = evidence({
@@ -235,6 +312,18 @@ export function pushApiContractFromPath(input: {
   });
   pushContractEvidence(input.result, input.file.repoId, apiContract, input.role, evidenceNode);
   pushApiOperation({ result: input.result, file: input.file, apiContract, role: input.role, evidenceNode });
+  pushContractSpec({
+    result: input.result,
+    contractNode: apiContract,
+    spec: buildHttpEndpointSpec(apiContract, input.apiPath, input.method),
+    repoId: input.file.repoId,
+    fileId: input.file.fileId,
+    evidenceNode,
+    sourceSymbolId: input.symbol.id,
+    framework: input.framework,
+    httpMethod: input.method ? input.method.trim().toUpperCase() : undefined,
+    pathTemplate: apiPathTemplate(apiContract.key)
+  });
 }
 
 async function readPackageManifest(repo: RepoNode, manifestPath: string): Promise<RepoPackageManifest | undefined> {

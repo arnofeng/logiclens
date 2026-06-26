@@ -237,6 +237,13 @@ describe("graph", () => {
           reason: "HTTP call argument is not a resolvable static path"
         })
       ]));
+      // HttpEndpointSpec nodes + HAS_SPEC edges are written to the graph end-to-end.
+      const httpSpecs = await db.query<{ httpMethod: string; pathTemplate: string; specKind: string }>(
+        "MATCH (c:Contract)-[:HAS_SPEC]->(s:ContractSpec) WHERE s.specKind = 'http-endpoint' AND s.httpMethod = 'GET' AND s.pathTemplate = '/api/order/{id}' RETURN s.httpMethod AS httpMethod, s.pathTemplate AS pathTemplate, s.specKind AS specKind;"
+      );
+      expect(httpSpecs).toEqual(expect.arrayContaining([
+        expect.objectContaining({ httpMethod: "GET", pathTemplate: "/api/order/{id}", specKind: "http-endpoint" })
+      ]));
       const eventTrace = await traceContract(db, "event", "ORDER.CREATED");
       expect(eventTrace).toEqual(expect.arrayContaining([
         expect.objectContaining({ repoName: "service-a", role: "producer", rule: "event-publisher" }),

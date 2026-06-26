@@ -119,3 +119,31 @@ export async function createOrder() {
     expect(keys).toContain("POST:/api/orders");
   });
 });
+
+describe("JS HTTP Client Extractor HttpEndpointSpec production", () => {
+  it("produces a consumer-side ContractSpec with method and path params", async () => {
+    const bundle = await extractFromSource(`
+export async function getOrder(id: string) {
+  return axios.get("/api/orders/{id}");
+}`);
+    const spec = bundle.contractSpecs.find((s) => s.canonicalKey === "GET:/api/orders/{id}");
+    expect(spec).toBeDefined();
+    expect(spec!.specKind).toBe("http-endpoint");
+    expect(spec!.httpMethod).toBe("GET");
+    expect(spec!.framework).toBe("js-http-client");
+    const parsed = JSON.parse(spec!.specJson);
+    expect(parsed.pathParams).toEqual(["id"]);
+    expect(bundle.contractSpecEdges.some((e) => e.specId === spec!.id)).toBe(true);
+  });
+
+  it("produces a method-unknown ContractSpec for un-inferable calls", async () => {
+    const bundle = await extractFromSource(`
+export async function fetchData() {
+  return axios("/api/data");
+}`);
+    const spec = bundle.contractSpecs.find((s) => s.canonicalKey === "/api/data");
+    expect(spec).toBeDefined();
+    expect(spec!.httpMethod).toBeUndefined();
+    expect(JSON.parse(spec!.specJson).method).toBeUndefined();
+  });
+});

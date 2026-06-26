@@ -121,7 +121,8 @@ export const goExtractor: ContractExtractor = {
               raw: call.raw,
               rule: "go-gin-route-producer",
               confidence: confidenceFor("exact-parser-route"),
-              method: ginMethod
+              method: ginMethod,
+              framework: "go-gin"
             });
             return;
           }
@@ -137,7 +138,8 @@ export const goExtractor: ContractExtractor = {
               offset,
               raw: call.raw,
               rule: "go-net-http-producer",
-              confidence: confidenceFor("exact-parser-route")
+              confidence: confidenceFor("exact-parser-route"),
+              framework: "go-net-http"
             });
             return;
           }
@@ -161,7 +163,8 @@ export const goExtractor: ContractExtractor = {
               raw: call.raw,
               rule: "go-http-client-consumer",
               confidence: confidenceFor("probable-http-client"),
-              method: netMethod
+              method: netMethod,
+              framework: "go-net-http"
             });
             return;
           }
@@ -187,7 +190,8 @@ export const goExtractor: ContractExtractor = {
           offset: symbolOffset(file, symbol, node),
           raw: node.text,
           rule: "go-api-path-consumer",
-          confidence: confidenceFor("probable-http-route")
+          confidence: confidenceFor("probable-http-route"),
+          framework: "go"
         });
       });
     }

@@ -230,7 +230,8 @@ export const jsHttpClientExtractor: ContractExtractor = {
           raw: call.raw,
           rule: call.rule,
           confidence: call.httpMethod ? confidenceFor("probable-http-client") : confidenceFor("method-unknown-fallback"),
-          method: call.httpMethod
+          method: call.httpMethod,
+          framework: "js-http-client"
         });
       }
 
@@ -250,7 +251,8 @@ export const jsHttpClientExtractor: ContractExtractor = {
           offset: symbolOffset(file, symbol, node),
           raw: node.text,
           rule: role === "producer" ? "api-path-producer" : "api-path-consumer",
-          confidence: role === "producer" ? confidenceFor("probable-http-client") : confidenceFor("probable-http-route")
+          confidence: role === "producer" ? confidenceFor("probable-http-client") : confidenceFor("probable-http-route"),
+          framework: "js-http-client"
         });
       });
     }

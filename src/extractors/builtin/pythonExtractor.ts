@@ -119,7 +119,8 @@ export const pythonExtractor: ContractExtractor = {
           raw: decorator.raw,
           rule: "python-decorator-producer",
           confidence: confidenceFor("exact-parser-route"),
-          method: httpMethod
+          method: httpMethod,
+          framework: "python"
         });
       }
 
@@ -146,7 +147,8 @@ export const pythonExtractor: ContractExtractor = {
             raw: httpCall.raw,
             rule: "python-http-client-consumer",
             confidence: httpCall.httpMethod ? confidenceFor("probable-http-client") : confidenceFor("method-unknown-fallback"),
-            method: httpCall.httpMethod
+            method: httpCall.httpMethod,
+            framework: "python"
           });
           return;
         }
@@ -165,7 +167,8 @@ export const pythonExtractor: ContractExtractor = {
           offset: symbolOffset(file, symbol, node),
           raw: node.text,
           rule: "python-api-path-consumer",
-          confidence: confidenceFor("probable-http-route")
+          confidence: confidenceFor("probable-http-route"),
+          framework: "python"
         });
       });
     }
