@@ -150,29 +150,6 @@ describe("framework detection", () => {
     expect(isExtractorEnabled(goExtractor, [{ repoId: "r1", name: "go:generic", language: "go", confidence: 0.8, evidence: [] }], config)).toBe(true);
   });
 
-  it("detects costom-request via src/utils/request.js (externalized plugin)", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-frameworks-"));
-    const repo = mockRepoNode("test-costom", dir);
-
-    await fs.mkdir(path.join(dir, "src", "utils"), { recursive: true });
-    await fs.writeFile(path.join(dir, "src", "utils", "request.js"), "// custom axios wrapper", "utf8");
-
-    // Load costom-request-plugin setup to register the detector
-    const costomPlugin = await import("../examples/plugins/custom-request-plugin/index.js");
-    const { frameworkDetectorRegistry } = await import("../src/plugins/registry.js");
-    const context = {
-      cwd: process.cwd(),
-      config: defaultConfig(),
-      registerParser: () => {},
-      registerFrameworkDetector: (detector: any) => frameworkDetectorRegistry.register(detector),
-      registerEmbeddingProvider: () => {}
-    };
-    costomPlugin.default.setup(context);
-
-    const detected = await detectFrameworks(repo);
-    expect(detected.map((f) => f.name)).toEqual(["js:costom-request"]);
-  });
-
   it("evaluates isExtractorEnabled with include/exclude overrides", () => {
     const config = defaultConfig();
     config.frameworks = {
@@ -208,29 +185,4 @@ describe("framework detection", () => {
     expect(isExtractorEnabled(genericExtractor, [], config)).toBe(true);
   });
 
-  it("supports custom framework detectors registered via registry", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-custom-framework-"));
-    const repo = mockRepoNode("repo-custom", dir);
-
-    const customDetector = {
-      name: "custom-detector",
-      detect(r: RepoNode) {
-        return [
-          {
-            repoId: r.id,
-            name: "custom:framework",
-            language: "javascript",
-            confidence: 1.0,
-            evidence: []
-          }
-        ];
-      }
-    };
-
-    const { frameworkDetectorRegistry } = await import("../src/plugins/registry.js");
-    frameworkDetectorRegistry.register(customDetector);
-
-    const detected = await detectFrameworks(repo);
-    expect(detected.map((f) => f.name)).toContain("custom:framework");
-  });
 });

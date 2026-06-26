@@ -354,7 +354,7 @@ await client.close();
 插件可以注册：
 
 - `registerParser(parser)` — 自定义语言解析。
-- `registerFrameworkDetector(detector)` — 仓库级框架探测。
+- `registerEmbeddingProvider(provider)` — 自定义嵌入向量服务。
 
 ---
 

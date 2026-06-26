@@ -107,22 +107,6 @@ export interface ContractExtractor {
   postExtract?(context: PostExtractContext): Promise<ExtractorFactBundle> | ExtractorFactBundle;
 }
 
-import type { DetectedFramework } from "../frameworks/types.js";
-
-/**
- * Interface that must be implemented by a custom framework detector plugin.
- * Used to discover repository-level frameworks and languages.
- */
-export interface FrameworkDetector {
-  /** The unique name of the framework detector */
-  name: string;
-  /**
-   * Performs framework detection on a repository.
-   * Can return a promise or a direct value.
-   */
-  detect(repo: RepoNode, parsedFiles: ParsedGraphFile[]): Promise<DetectedFramework[]> | DetectedFramework[];
-}
-
 /**
  * The API context provided to a plugin's setup function to register parsers and framework detectors.
  */
@@ -135,10 +119,6 @@ export interface PluginContext {
    * Registers a custom language parser.
    */
   registerParser(parser: LanguageParser): void;
-  /**
-   * Registers a custom framework detector.
-   */
-  registerFrameworkDetector(detector: FrameworkDetector): void;
   registerEmbeddingProvider(provider: EmbeddingProvider): void;
 }
 

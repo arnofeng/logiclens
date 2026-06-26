@@ -354,7 +354,7 @@ await client.close();
 Plugins can register:
 
 - `registerParser(parser)` — Custom language parsing.
-- `registerFrameworkDetector(detector)` — Repository-level framework detection.
+- `registerEmbeddingProvider(provider)` — Custom text embedding provider.
 
 ---
 

@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { loadConfig } from "../config/loadConfig.js";
 import type { LogicLensConfig } from "../config/schema.js";
-import { embeddingProviderRegistry, frameworkDetectorRegistry, parserRegistry } from "./registry.js";
+import { embeddingProviderRegistry, parserRegistry } from "./registry.js";
 import { pluginStoreDir } from "./packageManager.js";
 import { registerBuiltinEmbeddingProviders } from "../semantic/builtinProviders.js";
 import type { LoadedPlugin, LogicLensPlugin, PluginContext } from "./types.js";
@@ -136,7 +136,6 @@ export async function loadPlugins(input: LoadPluginsInput = {}): Promise<PluginL
           cwd,
           config,
           registerParser: (parser) => parserRegistry.register(parser),
-          registerFrameworkDetector: (detector) => frameworkDetectorRegistry.register(detector),
           registerEmbeddingProvider: (provider) => embeddingProviderRegistry.register(provider)
         };
         await plugin.setup(context, pluginConfig.options);
@@ -177,7 +176,6 @@ export async function loadPlugins(input: LoadPluginsInput = {}): Promise<PluginL
           cwd,
           config,
           registerParser: (parser) => parserRegistry.register(parser),
-          registerFrameworkDetector: (detector) => frameworkDetectorRegistry.register(detector),
           registerEmbeddingProvider: (provider) => embeddingProviderRegistry.register(provider)
         };
         await plugin.setup(context, undefined);

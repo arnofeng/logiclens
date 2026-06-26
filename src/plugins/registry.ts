@@ -1,4 +1,4 @@
-import type { EmbeddingProvider, LanguageParser, FrameworkDetector } from "./types.js";
+import type { EmbeddingProvider, LanguageParser } from "./types.js";
 
 export class ParserRegistry {
   private byLanguage = new Map<string, LanguageParser>();
@@ -33,18 +33,6 @@ export class ParserRegistry {
   }
 }
 
-export class FrameworkDetectorRegistry {
-  private detectorsByName = new Map<string, FrameworkDetector>();
-
-  register(detector: FrameworkDetector): void {
-    this.detectorsByName.set(detector.name, detector);
-  }
-
-  detectors(): FrameworkDetector[] {
-    return [...this.detectorsByName.values()];
-  }
-}
-
 export class EmbeddingProviderRegistry {
   private byName = new Map<string, EmbeddingProvider>();
 
@@ -69,7 +57,6 @@ export class EmbeddingProviderRegistry {
 }
 
 export const parserRegistry = new ParserRegistry();
-export const frameworkDetectorRegistry = new FrameworkDetectorRegistry();
 export const embeddingProviderRegistry = new EmbeddingProviderRegistry();
 
 export function normalizeExtension(extension: string): string {
