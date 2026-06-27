@@ -116,9 +116,8 @@ export const configSchema = z.object({
     chroma: { mode: "local", url: "http://localhost:8000", collection: "logiclens" }
   }),
   mcp: z.object({
-    allowUnsafeCypher: z.boolean().default(false),
     logCalls: z.boolean().default(false)
-  }).default({ allowUnsafeCypher: false, logCalls: false }),
+  }).default({ logCalls: false }),
   watch: z.object({
     enabled: z.boolean().default(true),
     mode: z.enum(["auto", "repo-roots", "common-root", "off"]).default("auto"),

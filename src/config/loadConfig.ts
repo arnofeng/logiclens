@@ -130,7 +130,6 @@ export function pruneConfig(config: LogicLensConfig): any {
   // MCP
   if (config.mcp) {
     const mcpPruned: any = {};
-    if (config.mcp.allowUnsafeCypher !== false) mcpPruned.allowUnsafeCypher = config.mcp.allowUnsafeCypher;
     if (config.mcp.logCalls !== false) mcpPruned.logCalls = config.mcp.logCalls;
     if (Object.keys(mcpPruned).length > 0) {
       pruned.mcp = mcpPruned;

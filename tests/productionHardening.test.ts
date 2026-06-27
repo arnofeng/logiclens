@@ -12,11 +12,11 @@ describe("production hardening", () => {
     expect(logicLensVersion).toMatch(/^\d+\.\d+\.\d+/);
   });
 
-  it("defaults MCP unsafe Cypher access to disabled", async () => {
+  it("does not expose an MCP escape hatch for unsafe Cypher", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-config-hardening-"));
     await writeConfig(defaultConfig(), cwd);
     const config = await loadConfig(cwd);
-    expect(config.mcp.allowUnsafeCypher).toBe(false);
+    expect((config.mcp as Record<string, unknown>).allowUnsafeCypher).toBeUndefined();
   });
 
   it("preserves systemName in config even if it has the default value", async () => {

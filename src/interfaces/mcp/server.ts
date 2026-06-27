@@ -11,6 +11,13 @@ import { z } from "zod";
 
 type CatchUpState = WatchStatus["catchUp"];
 
+// Guardrails for the raw-Cypher escape hatch. The structured tools are the
+// primary interface; query_cypher is a last resort, so bound both the wall-clock
+// time and the response size to keep one bad query from stalling the server or
+// flooding the model's context.
+const CYPHER_TIMEOUT_MS = 15_000;
+const CYPHER_MAX_ROWS = 1000;
+
 export type FreshnessMetadata = {
   stale: boolean;
   generatedAt: string;
@@ -453,17 +460,57 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   server.registerTool(
     "logiclens_query_cypher",
     {
-      description: "Run a raw Cypher query against the Kuzu graph database in the workspace",
+      description:
+        "LAST RESORT. Run a raw, read-only Cypher query against the Kuzu graph database. Prefer the " +
+        "structured tools first — logiclens_trace / logiclens_semantic_trace (producers/consumers/schemas), " +
+        "logiclens_impact_analysis (blast radius), logiclens_list_contracts / logiclens_list_dependencies " +
+        "(surveys), logiclens_ask_question (free-form retrieval). Those return evidence-carrying, schema-stable " +
+        "answers; raw Cypher couples you to the internal graph schema and bypasses that framing. Only reach for " +
+        "this when no structured tool can express the question. Writes are rejected; queries are capped at " +
+        `${CYPHER_TIMEOUT_MS / 1000}s and ${CYPHER_MAX_ROWS} rows, so add WHERE filters and LIMIT for large graphs.`,
       inputSchema: {
-        cypher: z.string().describe("The Cypher query to run (e.g. 'MATCH (r:Repo) RETURN r.name LIMIT 5')"),
+        cypher: z.string().describe("The read-only Cypher query to run (e.g. 'MATCH (r:Repo) RETURN r.name LIMIT 5')"),
       },
     },
     async ({ cypher }) => {
       return wrapWithFreshness("logiclens_query_cypher", { cypher }, async () => {
-        if (!client.getConfig().mcp.allowUnsafeCypher) assertReadOnlyCypher(cypher);
-        const queryResult = await client.query(cypher);
+        assertReadOnlyCypher(cypher);
+
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timeout = new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `Cypher query exceeded the ${CYPHER_TIMEOUT_MS / 1000}s limit. Add WHERE filters / LIMIT, ` +
+                    "or use a structured tool (logiclens_trace, logiclens_impact_analysis, …)."
+                )
+              ),
+            CYPHER_TIMEOUT_MS
+          );
+        });
+
+        let rows: Awaited<ReturnType<typeof client.query>>;
+        try {
+          rows = await Promise.race([client.query(cypher), timeout]);
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+
+        const truncated = rows.length > CYPHER_MAX_ROWS;
+        const payload = {
+          ...(truncated
+            ? {
+                truncated: true,
+                rowsReturned: CYPHER_MAX_ROWS,
+                totalRows: rows.length,
+                note: `Result truncated to the first ${CYPHER_MAX_ROWS} rows. Add a LIMIT or tighter WHERE clause for complete results.`,
+              }
+            : {}),
+          rows: truncated ? rows.slice(0, CYPHER_MAX_ROWS) : rows,
+        };
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(queryResult, null, 2) }],
+          content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
         };
       });
     }
