@@ -2,7 +2,7 @@ import type { LogicLensConfig } from "../config/schema.js";
 import type { GraphDB } from "../graph/db.js";
 import { runIndexPhase } from "./phases.js";
 import type { IndexWriteMode } from "./context.js";
-import type { IndexOptions } from "../commands/index.js";
+import type { IndexOptions } from "./types.js";
 
 export type IndexRunPath = "batched-full" | "full-copy-bulk" | "per-repo";
 

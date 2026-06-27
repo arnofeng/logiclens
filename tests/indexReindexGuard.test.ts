@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findBlockedReindexTargets } from "../src/commands/index.js";
+import { findBlockedReindexTargets } from "../src/indexing/run.js";
 
 describe("findBlockedReindexTargets", () => {
   it("allows a full index of a repo that has not been indexed yet", () => {

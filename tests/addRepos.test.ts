@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { addReposCommand } from "../src/commands/addRepos.js";
 import { defaultConfig, loadConfig, writeConfig } from "../src/config/loadConfig.js";
-import type { IndexOptions } from "../src/commands/index.js";
+import type { IndexOptions } from "../src/indexing/types.js";
 
 async function makeWorkspace(): Promise<string> {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-add-repos-"));

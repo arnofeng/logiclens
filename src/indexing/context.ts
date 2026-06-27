@@ -1,6 +1,6 @@
 import type { LogicLensConfig } from "../config/schema.js";
 import type { RepoNode } from "../parsers/types.js";
-import type { IndexLogger, IndexOptions } from "../commands/index.js";
+import type { IndexLogger, IndexOptions } from "./types.js";
 
 export type IndexWriteMode = NonNullable<IndexOptions["writeMode"]>;
 

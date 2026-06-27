@@ -29,8 +29,8 @@ import type { RepoNode } from "../parsers/types.js";
 
 
 // Options types for index:
-import type { IndexOptions } from "../commands/index.js";
-import { runIndexing, type IndexResult } from "../commands/index.js";
+import type { IndexOptions, IndexResult } from "../indexing/types.js";
+import { runIndexing } from "../indexing/run.js";
 import { FileWatcher, type PendingFile, type WatchOptions, type WatchStatus } from "../watch/watcher.js";
 import { shouldEnableWatcher } from "../watch/policy.js";
 import { SingleProcessIndexQueue, type IndexQueueSource, type IndexQueueStatusSnapshot } from "../indexing/scheduler.js";

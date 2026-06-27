@@ -1,7 +1,8 @@
 import path from "node:path";
 import { createLogicLens } from "../sdk/client.js";
 import { writeConfig } from "../config/loadConfig.js";
-import { indexCommand, type IndexOptions } from "./index.js";
+import { indexCommand } from "./index.js";
+import type { IndexOptions } from "../indexing/types.js";
 
 export type AddReposOptions = {
   index?: boolean;

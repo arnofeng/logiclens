@@ -3,7 +3,7 @@ import type { GraphDB } from "../graph/db.js";
 import type { LogicLensConfig } from "../config/schema.js";
 import type { ParsedGraphFile, RepoNode } from "../parsers/types.js";
 import { toRepoNode } from "../repos/repoRegistry.js";
-import type { IndexOptions } from "../commands/index.js";
+import type { IndexOptions } from "./types.js";
 import type { IndexRunContext } from "./context.js";
 import type { IndexPlanningResult } from "./planning.js";
 import { scanAndParseRepo, type ScanParseRepoResult } from "./scanParse.js";
