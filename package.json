@@ -34,7 +34,7 @@
     "clean": "tsx scripts/clean.ts",
     "dev": "tsx src/cli.ts",
     "bench:scale": "tsx scripts/benchmark-scale.ts",
-    "prepack": "npm run build",
+    "prepack": "npm run build:prod",
     "test": "tsx scripts/test.ts",
     "typecheck": "tsc --noEmit",
     "audit:prod": "npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org"
