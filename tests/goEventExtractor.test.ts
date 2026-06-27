@@ -2,10 +2,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseSourceFile } from "../src/parsers/parserRegistry.js";
-import { goExtractor } from "../src/extractors/builtin/goExtractor.js";
+import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
+import { goExtractor } from "../src/core/contracts/extraction/builtin/goExtractor.js";
 import { repoId } from "../src/shared/path.js";
-import type { ExtractorFactBundle } from "../src/extractors/crossRepoContracts.js";
+import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
 
 async function extract(source: string): Promise<ExtractorFactBundle> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-go-event-"));

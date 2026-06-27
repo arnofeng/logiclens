@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveHttpRelations } from "../../../src/contracts/matching/httpResolver.js";
-import type { ContractSpecNode } from "../../../src/parsers/types.js";
-import type { SpecRoleMap } from "../../../src/contracts/matching/types.js";
-import { serializeSpec } from "../../../src/contracts/spec.js";
+import { resolveHttpRelations } from "../../../src/core/contracts/matching/httpResolver.js";
+import type { ContractSpecNode } from "../../../src/core/parsing/types.js";
+import type { SpecRoleMap } from "../../../src/core/contracts/matching/types.js";
+import { serializeSpec } from "../../../src/core/contracts/spec.js";
 
 function makeHttpSpec(opts: {
   id: string;

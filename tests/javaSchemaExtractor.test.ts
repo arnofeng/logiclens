@@ -2,11 +2,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseSourceFile } from "../src/parsers/parserRegistry.js";
-import { javaSchemaExtractor } from "../src/extractors/builtin/javaSchemaExtractor.js";
+import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
+import { javaSchemaExtractor } from "../src/core/contracts/extraction/builtin/javaSchemaExtractor.js";
 import { repoId } from "../src/shared/path.js";
-import type { ExtractorFactBundle } from "../src/extractors/crossRepoContracts.js";
-import type { SchemaSpec } from "../src/contracts/spec.js";
+import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
+import type { SchemaSpec } from "../src/core/contracts/spec.js";
 
 async function extract(source: string): Promise<ExtractorFactBundle> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-java-schema-"));

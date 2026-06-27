@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createLogicLens, LogicLensClient } from "../sdk/client.js";
-import { schemaStatements } from "../graph/schema.js";
+import { schemaStatements } from "../core/graph-model/schema.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { PendingFile, WatchStatus } from "../watch/watcher.js";

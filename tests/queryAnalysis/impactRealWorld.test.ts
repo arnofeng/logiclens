@@ -18,9 +18,9 @@
 // ---------------------------------------------------------------------------
 
 import { describe, expect, it } from "vitest";
-import { analyzeImpact } from "../../src/contracts/impact/impactEngine.js";
-import { serializeSpec } from "../../src/contracts/spec.js";
-import type { ContractSpecNode, SemanticRelationEdge } from "../../src/parsers/types.js";
+import { analyzeImpact } from "../../src/core/contracts/impact/impactEngine.js";
+import { serializeSpec } from "../../src/core/contracts/spec.js";
+import type { ContractSpecNode, SemanticRelationEdge } from "../../src/core/parsing/types.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

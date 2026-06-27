@@ -2,8 +2,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseSourceFile } from "../src/parsers/parserRegistry.js";
-import { envConfigExtractor } from "../src/extractors/builtin/envConfigExtractor.js";
+import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
+import { envConfigExtractor } from "../src/core/contracts/extraction/builtin/envConfigExtractor.js";
 import { repoId } from "../src/shared/path.js";
 
 describe("Env Config Extractor", () => {

@@ -5,26 +5,26 @@ import {
   findTargetSpecs,
   parseTarget,
   type ImpactAnalysisOptions
-} from "../src/contracts/impact/impactEngine.js";
+} from "../src/core/contracts/impact/impactEngine.js";
 import {
   assessHttpEndpointChange
-} from "../src/contracts/impact/rules/httpImpactRules.js";
+} from "../src/core/contracts/impact/rules/httpImpactRules.js";
 import {
   assessEventChange
-} from "../src/contracts/impact/rules/eventImpactRules.js";
+} from "../src/core/contracts/impact/rules/eventImpactRules.js";
 import {
   assessSchemaFieldChange
-} from "../src/contracts/impact/rules/schemaImpactRules.js";
+} from "../src/core/contracts/impact/rules/schemaImpactRules.js";
 import type {
   ChangeIntent,
   ImpactItem,
   ImpactReport
-} from "../src/contracts/impact/types.js";
-import { serializeSpec } from "../src/contracts/spec.js";
+} from "../src/core/contracts/impact/types.js";
+import { serializeSpec } from "../src/core/contracts/spec.js";
 import type {
   ContractSpecNode,
   SemanticRelationEdge
-} from "../src/parsers/types.js";
+} from "../src/core/parsing/types.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

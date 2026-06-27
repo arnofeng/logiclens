@@ -1,6 +1,6 @@
-import type { GraphDB } from "../../../graph/db.js";
-import type { GraphFactsBatch } from "../../../graph/facts.js";
-import { systemId } from "../../../graph/schema.js";
+import type { GraphDB } from "../../../core/graph-model/db.js";
+import type { GraphFactsBatch } from "../../../core/graph-model/facts.js";
+import { systemId } from "../../../core/graph-model/schema.js";
 import type { ProgressReporter } from "../../../shared/progress.js";
 
 /** Maximum rows per UNWIND batch to avoid excessive memory / transaction size. */
@@ -106,7 +106,7 @@ async function writeNodeTable(
   await forEachChunk(rows, async (chunkRows) => {
     await db.query(
       `UNWIND $batch AS row MERGE (n:${label} {id: row.id}) ON CREATE SET ${setClause} ON MATCH SET ${setClause};`,
-      { batch: chunkRows as unknown as import("../../../graph/db.js").GraphValue },
+      { batch: chunkRows as unknown as import("../../../core/graph-model/db.js").GraphValue },
     );
   });
 }
@@ -273,7 +273,7 @@ async function writeRelationTable(
       `UNWIND $batch AS row ` +
       `MATCH (a:${spec.fromLabel} {id: row.fromId}), (b:${spec.toLabel} {id: row.toId}) ` +
       `MERGE (a)-[r:${spec.label}${mergeClause}]->(b)${setClause};`,
-      { batch: chunkRows as unknown as import("../../../graph/db.js").GraphValue },
+      { batch: chunkRows as unknown as import("../../../core/graph-model/db.js").GraphValue },
     );
   });
 }
@@ -356,7 +356,7 @@ async function writePairTable(
       `UNWIND $batch AS row ` +
       `MATCH (a:${spec.fromLabel} {id: row.fromId}), (b:${spec.toLabel} {id: row.toId}) ` +
       `MERGE (a)-[r:${spec.label}]->(b)${setClause};`,
-      { batch: chunkRows as unknown as import("../../../graph/db.js").GraphValue },
+      { batch: chunkRows as unknown as import("../../../core/graph-model/db.js").GraphValue },
     );
   });
 }

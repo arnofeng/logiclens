@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
-import { NullEmbeddingProvider, resolveEmbeddingProvider, cosineSimilarity } from "../src/semantic/embeddings.js";
+import { NullEmbeddingProvider, resolveEmbeddingProvider, cosineSimilarity } from "../src/core/semantic/embeddings.js";
 import { EmbeddingProviderRegistry, embeddingProviderRegistry } from "../src/plugins/registry.js";
 import { loadPlugins } from "../src/plugins/loader.js";
 import { OpenAIEmbeddingProvider } from "../src/adapters/embeddings/openaiEmbeddingProvider.js";

@@ -3,13 +3,13 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { configSchema } from "../src/config/schema.js";
-import type { KuzuGraphDB } from "../src/graph/db.js";
-import { runFactBuildPhase } from "../src/indexing/graphWrite.js";
-import { runFullCopyBulkIndex, sumCounts } from "../src/indexing/orchestrator.js";
-import { planIndexRun } from "../src/indexing/planning.js";
-import { runLlmSummaryPhase } from "../src/indexing/summaries.js";
-import type { IndexRunContext } from "../src/indexing/context.js";
-import type { RepoNode } from "../src/parsers/types.js";
+import type { KuzuGraphDB } from "../src/core/graph-model/db.js";
+import { runFactBuildPhase } from "../src/core/indexing/graphWrite.js";
+import { runFullCopyBulkIndex, sumCounts } from "../src/core/indexing/orchestrator.js";
+import { planIndexRun } from "../src/core/indexing/planning.js";
+import { runLlmSummaryPhase } from "../src/core/indexing/summaries.js";
+import type { IndexRunContext } from "../src/core/indexing/context.js";
+import type { RepoNode } from "../src/core/parsing/types.js";
 
 const repo: RepoNode = {
   id: "repo:phase-service",

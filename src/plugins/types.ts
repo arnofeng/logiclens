@@ -1,6 +1,6 @@
 import type { LogicLensConfig } from "../config/schema.js";
-import type { ExtractorFactBundle } from "../extractors/crossRepoContracts.js";
-import type { ParsedGraphFile, RepoNode } from "../parsers/types.js";
+import type { ExtractorFactBundle } from "../core/contracts/extraction/crossRepoContracts.js";
+import type { ParsedGraphFile, RepoNode } from "../core/parsing/types.js";
 import type { ProviderCallRuntime } from "../shared/providerPolicy.js";
 
 export type EmbeddingVector = number[];

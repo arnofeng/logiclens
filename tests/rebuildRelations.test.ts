@@ -2,18 +2,18 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { KuzuGraphDB } from "../src/graph/db.js";
+import { KuzuGraphDB } from "../src/core/graph-model/db.js";
 import {
   bucketKey,
   buildExclusionClauses,
   rebuildRepoDependencies
-} from "../src/graph/rebuildRelations.js";
+} from "../src/core/graph-model/rebuildRelations.js";
 import type {
   ContractKind,
   ContractRole,
   RepoNode,
   SemanticRelationEdge
-} from "../src/parsers/types.js";
+} from "../src/core/parsing/types.js";
 import { repoId } from "../src/shared/path.js";
 
 // ---------------------------------------------------------------------------

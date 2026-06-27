@@ -2,10 +2,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildGraphFactsBatch } from "../src/graph/facts.js";
-import { stageGraphFactsAsCsv } from "../src/graph/csvStaging.js";
-import { parseSourceFile } from "../src/parsers/parserRegistry.js";
-import type { ParsedFile, RepoNode } from "../src/parsers/types.js";
+import { buildGraphFactsBatch } from "../src/core/graph-model/facts.js";
+import { stageGraphFactsAsCsv } from "../src/core/graph-model/csvStaging.js";
+import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
+import type { ParsedFile, RepoNode } from "../src/core/parsing/types.js";
 import { fileId, repoId } from "../src/shared/path.js";
 
 describe("graph facts batch", () => {

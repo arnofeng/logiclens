@@ -1,5 +1,5 @@
 import { createLogicLens } from "../sdk/client.js";
-import type { ImpactReport } from "../contracts/impact/types.js";
+import type { ImpactReport } from "../core/contracts/impact/types.js";
 
 export type ImpactCommandOptions = {
   /** Optional change description, e.g. "field-removed:couponCode" */

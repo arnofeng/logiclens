@@ -2,10 +2,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseSourceFile } from "../src/parsers/parserRegistry.js";
-import { goExtractor } from "../src/extractors/builtin/goExtractor.js";
+import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
+import { goExtractor } from "../src/core/contracts/extraction/builtin/goExtractor.js";
 import { repoId } from "../src/shared/path.js";
-import type { ExtractedRelation } from "../src/extractors/crossRepoContracts.js";
+import type { ExtractedRelation } from "../src/core/contracts/extraction/crossRepoContracts.js";
 
 function isRepoContractRelation(relation: ExtractedRelation): relation is ExtractedRelation & { kind: "repo-contract" } {
   return relation.kind === "repo-contract";

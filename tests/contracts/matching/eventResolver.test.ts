@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { resolveEventRelations } from "../../../src/contracts/matching/eventResolver.js";
-import type { ContractSpecNode } from "../../../src/parsers/types.js";
-import type { SpecRoleMap } from "../../../src/contracts/matching/types.js";
-import { serializeSpec } from "../../../src/contracts/spec.js";
-import { canonicalEventContractKey } from "../../../src/contracts/event.js";
+import { resolveEventRelations } from "../../../src/core/contracts/matching/eventResolver.js";
+import type { ContractSpecNode } from "../../../src/core/parsing/types.js";
+import type { SpecRoleMap } from "../../../src/core/contracts/matching/types.js";
+import { serializeSpec } from "../../../src/core/contracts/spec.js";
+import { canonicalEventContractKey } from "../../../src/core/contracts/event.js";
 
 function makeEventSpec(opts: {
   id: string;

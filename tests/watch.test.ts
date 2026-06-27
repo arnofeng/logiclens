@@ -7,7 +7,7 @@ import { FileMatcher, FileWatcher, WatchRepoIndex, planRecursiveWatchRoots } fro
 import { createLogicLens } from "../src/index.js";
 import { defaultConfig, writeConfig } from "../src/config/loadConfig.js";
 import { buildFreshnessMetadata, buildFreshnessWarning } from "../src/mcp/server.js";
-import { SingleProcessIndexQueue } from "../src/indexing/scheduler.js";
+import { SingleProcessIndexQueue } from "../src/core/indexing/scheduler.js";
 
 async function makeTempWorkspace(): Promise<string> {
   return await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-watch-test-"));

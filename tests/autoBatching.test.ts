@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runIndexing } from "../src/indexing/run.js";
+import { runIndexing } from "../src/core/indexing/run.js";
 import { defaultConfig } from "../src/config/loadConfig.js";
 
 describe("index auto batching", () => {

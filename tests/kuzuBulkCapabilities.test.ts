@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { KuzuGraphDB } from "../src/graph/db.js";
+import { KuzuGraphDB } from "../src/core/graph-model/db.js";
 
 async function writeCsv(filePath: string, rows: string[][]): Promise<void> {
   const escape = (value: string): string => `"${value.replace(/"/g, '""')}"`;

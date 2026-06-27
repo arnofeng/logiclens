@@ -3,10 +3,10 @@ import {
   normalizeSemanticTarget,
   traceSemanticGraph,
   summarizeSpec
-} from "../src/contracts/semanticTrace.js";
-import { canonicalHttpContractKey } from "../src/contracts/apiPath.js";
-import { serializeSpec } from "../src/contracts/spec.js";
-import type { ContractSpecNode, SemanticRelationEdge } from "../src/parsers/types.js";
+} from "../src/core/contracts/semanticTrace.js";
+import { canonicalHttpContractKey } from "../src/core/contracts/apiPath.js";
+import { serializeSpec } from "../src/core/contracts/spec.js";
+import type { ContractSpecNode, SemanticRelationEdge } from "../src/core/parsing/types.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures — mirror real extractor output (canonicalHttpContractKey = "METHOD:/path")

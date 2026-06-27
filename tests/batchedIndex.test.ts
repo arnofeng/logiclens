@@ -2,11 +2,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { runIndexing } from "../src/indexing/run.js";
+import { runIndexing } from "../src/core/indexing/run.js";
 import { defaultConfig } from "../src/config/loadConfig.js";
 import type { LogicLensConfig } from "../src/config/schema.js";
-import { KuzuGraphDB } from "../src/graph/db.js";
-import { listContracts, listDependencies } from "../src/graph/queries.js";
+import { KuzuGraphDB } from "../src/core/graph-model/db.js";
+import { listContracts, listDependencies } from "../src/core/graph-model/queries.js";
 import { embeddingProviderRegistry } from "../src/plugins/registry.js";
 
 function fixturePath(name: string): string {

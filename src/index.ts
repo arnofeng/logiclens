@@ -10,11 +10,11 @@ import type {
   ExtractContext
 } from "./plugins/types.js";
 
-import { canonicalContractKey } from "./extractors/crossRepoContracts.js";
+import { canonicalContractKey } from "./core/contracts/extraction/crossRepoContracts.js";
 import { createContractId, createEvidenceId, normalizePluginRuleName } from "./plugins/helpers.js";
 
-import type { Stats } from "./graph/db.js";
-import type { DependencyRow, ContractSummaryRow } from "./graph/queries.js";
+import type { Stats } from "./core/graph-model/db.js";
+import type { DependencyRow, ContractSummaryRow } from "./core/graph-model/queries.js";
 import type { RetrievalResult } from "./rag/retrieve.js";
 import type {
   AnnotationArgument,
@@ -22,8 +22,8 @@ import type {
   DecoratorFact,
   LiteralFact,
   ParsedSourceFacts
-} from "./parsers/facts.js";
-import type { CallRef, CodeSymbol, ImportRef, ParsedFile } from "./parsers/types.js";
+} from "./core/parsing/facts.js";
+import type { CallRef, CodeSymbol, ImportRef, ParsedFile } from "./core/parsing/types.js";
 
 export {
   createLogicLens,

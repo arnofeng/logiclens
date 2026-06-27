@@ -2,9 +2,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { KuzuGraphDB } from "../src/graph/db.js";
-import { auditContractQuality } from "../src/contracts/qualityRules.js";
-import { traceContract } from "../src/graph/queries.js";
+import { KuzuGraphDB } from "../src/core/graph-model/db.js";
+import { auditContractQuality } from "../src/core/contracts/qualityRules.js";
+import { traceContract } from "../src/core/graph-model/queries.js";
 import { retrieveForQuestion } from "../src/rag/retrieve.js";
 
 describe("Quality Closed-Loop Test Suite", () => {

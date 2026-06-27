@@ -2,14 +2,14 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { KuzuGraphDB } from "../src/graph/db.js";
-import { writeGraphFactsWithKuzuBulkUpsert } from "../src/graph/bulkWriter.js";
-import { buildGraphFactsBatch } from "../src/graph/facts.js";
-import { listCode, listDependencies, searchCode, traceContract } from "../src/graph/queries.js";
+import { KuzuGraphDB } from "../src/core/graph-model/db.js";
+import { writeGraphFactsWithKuzuBulkUpsert } from "../src/core/graph-model/bulkWriter.js";
+import { buildGraphFactsBatch } from "../src/core/graph-model/facts.js";
+import { listCode, listDependencies, searchCode, traceContract } from "../src/core/graph-model/queries.js";
 import { rejectEvidence } from "../src/graph/quality.js";
-import { rebuildRepoDependencies } from "../src/graph/rebuildRelations.js";
-import { upsertParsedFiles } from "../src/graph/upsert.js";
-import { parseSourceFile } from "../src/parsers/parserRegistry.js";
+import { rebuildRepoDependencies } from "../src/core/graph-model/rebuildRelations.js";
+import { upsertParsedFiles } from "../src/core/graph-model/upsert.js";
+import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { repoId } from "../src/shared/path.js";
 
 describe("maintenance lifecycle", () => {

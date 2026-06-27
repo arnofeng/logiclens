@@ -2,8 +2,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { KuzuGraphDB } from "../src/graph/db.js";
-import type { FileNode, RepoNode } from "../src/parsers/types.js";
+import { KuzuGraphDB } from "../src/core/graph-model/db.js";
+import type { FileNode, RepoNode } from "../src/core/parsing/types.js";
 
 const tempDirs: string[] = [];
 

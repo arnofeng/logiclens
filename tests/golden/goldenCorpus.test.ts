@@ -1,9 +1,9 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { extractCrossRepoContracts } from "../../src/extractors/crossRepoContracts.js";
-import { evaluateGoldenCorpus, formatGoldenEvaluationReport } from "../../src/golden/evaluate.js";
-import { parseSourceFile } from "../../src/parsers/parserRegistry.js";
-import type { ParsedGraphFile } from "../../src/parsers/types.js";
+import { extractCrossRepoContracts } from "../../src/core/contracts/extraction/crossRepoContracts.js";
+import { evaluateGoldenCorpus, formatGoldenEvaluationReport } from "../../src/core/contracts/evaluation/evaluate.js";
+import { parseSourceFile } from "../../src/core/parsing/parserRegistry.js";
+import type { ParsedGraphFile } from "../../src/core/parsing/types.js";
 import { goldenExpectations, goldenFiles, goldenRepos } from "./corpus.js";
 
 describe("Golden Corpus", () => {

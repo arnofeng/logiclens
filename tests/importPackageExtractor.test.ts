@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { importPackageExtractor } from "../src/extractors/builtin/importPackageExtractor.js";
+import { importPackageExtractor } from "../src/core/contracts/extraction/builtin/importPackageExtractor.js";
 
 describe("importPackageExtractor", () => {
   it("has the correct extractor name", () => {

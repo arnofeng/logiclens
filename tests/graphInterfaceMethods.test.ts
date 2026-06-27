@@ -1,9 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import type { GraphDB, ActiveAliasOverride } from "../src/graph/db.js";
-import type { RepoNode, ParsedGraphFile } from "../src/parsers/types.js";
+import type { GraphDB, ActiveAliasOverride } from "../src/core/graph-model/db.js";
+import type { RepoNode, ParsedGraphFile } from "../src/core/parsing/types.js";
 
 // Mock external dependencies used by upsertParsedFiles
-vi.mock("../src/graph/facts.js", () => ({
+vi.mock("../src/core/graph-model/facts.js", () => ({
   buildGraphFactsBatch: vi.fn().mockResolvedValue({
     batchId: "test", indexedAt: "2026-06-22T00:00:00.000Z",
     repos: [], parsedFiles: [],
@@ -16,13 +16,13 @@ vi.mock("../src/graph/facts.js", () => ({
     crossRepo: { contracts: [], evidence: [], repoDependencies: [], packageUsages: [], contractEntities: [], workflowOperations: [] }
   })
 }));
-vi.mock("../src/semantic/summarizeGraph.js", () => ({
+vi.mock("../src/core/semantic/summarizeGraph.js", () => ({
   summarizeReposAndSystem: vi.fn().mockResolvedValue({ repoSummaries: [], systemSummary: "" })
 }));
 
-import { upsertParsedFiles } from "../src/graph/upsert.js";
+import { upsertParsedFiles } from "../src/core/graph-model/upsert.js";
 import { upsertAliasOverride } from "../src/graph/quality.js";
-import { buildGraphFactsBatch } from "../src/graph/facts.js";
+import { buildGraphFactsBatch } from "../src/core/graph-model/facts.js";
 
 const repoA: RepoNode = {
   id: "repo:a", name: "service-a", path: "/tmp/a",

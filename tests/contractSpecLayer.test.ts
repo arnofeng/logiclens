@@ -2,13 +2,13 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { canonicalContractKey, buildRepoDependenciesFromParticipants, type ContractParticipant } from "../src/extractors/crossRepoContracts.js";
-import { canonicalHttpContractKey } from "../src/contracts/apiPath.js";
-import { createCrossRepoExtraction, toFactBundle, contract, evidence } from "../src/extractors/builtin/shared.js";
-import { buildGraphFactsBatch } from "../src/graph/facts.js";
-import { KuzuGraphDB } from "../src/graph/db.js";
-import { writeGraphFactsWithMerge } from "../src/graph/upsert.js";
-import type { ContractNode, EvidenceNode, ParsedFile, RepoNode } from "../src/parsers/types.js";
+import { canonicalContractKey, buildRepoDependenciesFromParticipants, type ContractParticipant } from "../src/core/contracts/extraction/crossRepoContracts.js";
+import { canonicalHttpContractKey } from "../src/core/contracts/apiPath.js";
+import { createCrossRepoExtraction, toFactBundle, contract, evidence } from "../src/core/contracts/extraction/builtin/shared.js";
+import { buildGraphFactsBatch } from "../src/core/graph-model/facts.js";
+import { KuzuGraphDB } from "../src/core/graph-model/db.js";
+import { writeGraphFactsWithMerge } from "../src/core/graph-model/upsert.js";
+import type { ContractNode, EvidenceNode, ParsedFile, RepoNode } from "../src/core/parsing/types.js";
 import { contractId, evidenceId, fileId, repoId } from "../src/shared/path.js";
 
 // --- Helpers ---

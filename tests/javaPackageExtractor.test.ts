@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { javaPackageExtractor } from "../src/extractors/builtin/javaPackageExtractor.js";
+import { javaPackageExtractor } from "../src/core/contracts/extraction/builtin/javaPackageExtractor.js";
 
 describe("javaPackageExtractor", () => {
   it("declares java as its supported language", () => {

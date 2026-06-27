@@ -2,9 +2,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { eventExtractor } from "../src/extractors/builtin/eventExtractor.js";
-import { resolveImports } from "../src/extractors/resolveReferences.js";
-import { parseSourceFile } from "../src/parsers/parserRegistry.js";
+import { eventExtractor } from "../src/core/contracts/extraction/builtin/eventExtractor.js";
+import { resolveImports } from "../src/core/extraction/resolveReferences.js";
+import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { repoId } from "../src/shared/path.js";
 
 describe("vue parser", () => {

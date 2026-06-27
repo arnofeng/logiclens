@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizePrimitiveType } from "../src/contracts/spec.js";
+import { normalizePrimitiveType } from "../src/core/contracts/spec.js";
 
 // ---------------------------------------------------------------------------
 // 3-A: Primitive type normalization

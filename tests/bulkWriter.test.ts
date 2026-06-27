@@ -2,14 +2,14 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { writeGraphFactsWithKuzuAppendCopy, writeGraphFactsWithKuzuBulk, writeGraphFactsWithKuzuBulkUpsert } from "../src/graph/bulkWriter.js";
-import { KuzuGraphDB } from "../src/graph/db.js";
-import { buildGraphFactsBatch } from "../src/graph/facts.js";
-import { writeGraphFactsWithMerge } from "../src/graph/upsert.js";
-import { listCode, listContracts, listDependencies, traceContract, traceEntity } from "../src/graph/queries.js";
-import { rebuildRepoDependencies } from "../src/graph/rebuildRelations.js";
-import { parseSourceFile } from "../src/parsers/parserRegistry.js";
-import type { ParsedGraphFile, RepoNode } from "../src/parsers/types.js";
+import { writeGraphFactsWithKuzuAppendCopy, writeGraphFactsWithKuzuBulk, writeGraphFactsWithKuzuBulkUpsert } from "../src/core/graph-model/bulkWriter.js";
+import { KuzuGraphDB } from "../src/core/graph-model/db.js";
+import { buildGraphFactsBatch } from "../src/core/graph-model/facts.js";
+import { writeGraphFactsWithMerge } from "../src/core/graph-model/upsert.js";
+import { listCode, listContracts, listDependencies, traceContract, traceEntity } from "../src/core/graph-model/queries.js";
+import { rebuildRepoDependencies } from "../src/core/graph-model/rebuildRelations.js";
+import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
+import type { ParsedGraphFile, RepoNode } from "../src/core/parsing/types.js";
 import { repoId } from "../src/shared/path.js";
 
 describe("kuzu bulk graph writer", () => {

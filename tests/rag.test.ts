@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { planQuestion } from "../src/rag/planner.js";
 import { retrieveForQuestion } from "../src/rag/retrieve.js";
-import { scoreCallResolution } from "../src/extractors/resolveReferences.js";
+import { scoreCallResolution } from "../src/core/extraction/resolveReferences.js";
 import { chunk } from "../src/shared/chunk.js";
 
 describe("rag helpers", () => {

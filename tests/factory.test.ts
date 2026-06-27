@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { registerGraphProvider, createGraphDB, type GraphDBFactory } from "../src/graph/factory.js";
+import { registerGraphProvider, createGraphDB, type GraphDBFactory } from "../src/core/graph-model/factory.js";
 
 // Mock the kuzu register module to avoid loading native drivers
 vi.mock("../src/adapters/graph-db/kuzu/register.js", () => ({ registerGraphProvider: vi.fn() }));
@@ -11,7 +11,7 @@ vi.mock("../src/adapters/graph-db/neo4j/Neo4jGraphDB.js", () => ({
 
 // Capture providers registered by real register modules
 const registered: Record<string, { open: (config: any) => Promise<any> }> = {};
-vi.mock("../src/graph/factory.js", () => ({
+vi.mock("../src/core/graph-model/factory.js", () => ({
   registerGraphProvider: vi.fn((name: string, provider: any) => { registered[name] = provider; }),
   createGraphDB: vi.fn()
 }));

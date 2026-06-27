@@ -3,11 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { configSchema } from "../src/config/schema.js";
-import { extractHeuristicEntities } from "../src/semantic/extractEntities.js";
-import { buildSemanticRecords, FallbackSemanticIndex, indexSemanticText, JsonSemanticIndex, type SemanticIndex, type SemanticRecord } from "../src/semantic/semanticIndex.js";
-import { NullEmbeddingProvider } from "../src/semantic/embeddings.js";
+import { extractHeuristicEntities } from "../src/core/semantic/extractEntities.js";
+import { buildSemanticRecords, FallbackSemanticIndex, indexSemanticText, JsonSemanticIndex, type SemanticIndex, type SemanticRecord } from "../src/core/semantic/semanticIndex.js";
+import { NullEmbeddingProvider } from "../src/core/semantic/embeddings.js";
 import type { EmbeddingProvider } from "../src/plugins/types.js";
-import type { CodeSymbol, ParsedGraphFile, RepoNode } from "../src/parsers/types.js";
+import type { CodeSymbol, ParsedGraphFile, RepoNode } from "../src/core/parsing/types.js";
 
 describe("semantic heuristics", () => {
   it("extracts domain-looking entities from symbols", () => {

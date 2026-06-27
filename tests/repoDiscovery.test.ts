@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { discoverGitRepos } from "../src/repos/repoDiscovery.js";
+import { discoverGitRepos } from "../src/core/workspace/repoDiscovery.js";
 
 describe("repo discovery", () => {
   it("discovers only first-level Git repositories in stable name order", async () => {

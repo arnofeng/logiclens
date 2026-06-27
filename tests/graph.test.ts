@@ -2,12 +2,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { canonicalContractKey, extractCrossRepoFactBundle } from "../src/extractors/crossRepoContracts.js";
-import { KuzuGraphDB } from "../src/graph/db.js";
-import { findImpactSections, listContracts, listDependencies, listUnresolvedEvidence, sectionsDocumentingCode, traceContract, traceEntity } from "../src/graph/queries.js";
-import { upsertParsedFiles } from "../src/graph/upsert.js";
-import { parseSourceFile } from "../src/parsers/parserRegistry.js";
-import type { ParsedFile, RepoNode } from "../src/parsers/types.js";
+import { canonicalContractKey, extractCrossRepoFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
+import { KuzuGraphDB } from "../src/core/graph-model/db.js";
+import { findImpactSections, listContracts, listDependencies, listUnresolvedEvidence, sectionsDocumentingCode, traceContract, traceEntity } from "../src/core/graph-model/queries.js";
+import { upsertParsedFiles } from "../src/core/graph-model/upsert.js";
+import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
+import type { ParsedFile, RepoNode } from "../src/core/parsing/types.js";
 import { retrieveForQuestion } from "../src/rag/retrieve.js";
 import { fileId, repoId } from "../src/shared/path.js";
 

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { defaultConfig, writeConfig } from "../src/config/loadConfig.js";
 import { loadConfiguredPlugins } from "../src/plugins/loader.js";
 import { parserRegistry } from "../src/plugins/registry.js";
-import { parseSourceFile } from "../src/parsers/parserRegistry.js";
+import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { repoId } from "../src/shared/path.js";
 
 async function makePluginWorkspace(): Promise<string> {

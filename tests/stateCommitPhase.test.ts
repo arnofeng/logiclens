@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import type { GraphDB } from "../src/graph/db.js";
-import type { RepoNode } from "../src/parsers/types.js";
-import { runIndexStateCommitPhase } from "../src/indexing/stateCommit.js";
-import { runSemanticWritePhase, runStaleMarkPhase } from "../src/indexing/semanticWrite.js";
+import type { GraphDB } from "../src/core/graph-model/db.js";
+import type { RepoNode } from "../src/core/parsing/types.js";
+import { runIndexStateCommitPhase } from "../src/core/indexing/stateCommit.js";
+import { runSemanticWritePhase, runStaleMarkPhase } from "../src/core/indexing/semanticWrite.js";
 import type { LogicLensConfig } from "../src/config/schema.js";
 
 const repo: RepoNode = {

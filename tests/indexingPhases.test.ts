@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { IndexPhaseError, runIndexPhase } from "../src/indexing/phases.js";
+import { IndexPhaseError, runIndexPhase } from "../src/core/indexing/phases.js";
 
 describe("indexing phases", () => {
   it("returns a phase result with duration for successful work", async () => {

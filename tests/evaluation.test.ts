@@ -1,18 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { materializeDependenciesFromSemanticRelations } from "../src/extractors/crossRepoContracts.js";
+import { materializeDependenciesFromSemanticRelations } from "../src/core/contracts/extraction/crossRepoContracts.js";
 import {
   compareDependencySets,
   evaluatePrecisionRecallInMemory,
   formatPrecisionRecallReport,
   type PrecisionRecallReport
-} from "../src/contracts/evaluation/precisionRecall.js";
-import { mergeAndDedupeDeps, structuralKey } from "../src/contracts/depsMerge.js";
-import { serializeSpec } from "../src/contracts/spec.js";
+} from "../src/core/contracts/evaluation/precisionRecall.js";
+import { mergeAndDedupeDeps, structuralKey } from "../src/core/contracts/depsMerge.js";
+import { serializeSpec } from "../src/core/contracts/spec.js";
 import type {
   ContractSpecNode,
   RepoDependencyEdge,
   SemanticRelationEdge
-} from "../src/parsers/types.js";
+} from "../src/core/parsing/types.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

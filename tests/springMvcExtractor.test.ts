@@ -2,10 +2,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseSourceFile } from "../src/parsers/parserRegistry.js";
-import { springMvcExtractor } from "../src/extractors/builtin/springMvcExtractor.js";
+import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
+import { springMvcExtractor } from "../src/core/contracts/extraction/builtin/springMvcExtractor.js";
 import { repoId } from "../src/shared/path.js";
-import type { ExtractedRelation } from "../src/extractors/crossRepoContracts.js";
+import type { ExtractedRelation } from "../src/core/contracts/extraction/crossRepoContracts.js";
 
 function isRepoContractRelation(r: ExtractedRelation): r is ExtractedRelation & { kind: "repo-contract" } {
   return r.kind === "repo-contract";

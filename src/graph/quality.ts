@@ -1,4 +1,4 @@
-import type { GraphDB } from "./db.js";
+import type { GraphDB } from "../core/graph-model/db.js";
 import { PROBABLE_CONFIDENCE_THRESHOLD } from "../shared/confidence.js";
 
 export type LowConfidenceRelation = {

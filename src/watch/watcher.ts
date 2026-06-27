@@ -5,10 +5,10 @@ import ignore from "ignore";
 import type { LogicLensClient } from "../sdk/client.js";
 import { shouldWatchRepo } from "./policy.js";
 import { isGeneratedFile } from "../shared/generatedFile.js";
-import { builtinLanguageForPath } from "../parsers/parserRegistry.js";
+import { builtinLanguageForPath } from "../core/parsing/parserRegistry.js";
 import { parserRegistry } from "../plugins/registry.js";
-import { toRepoNode } from "../repos/repoRegistry.js";
-import type { IndexQueueStatusSnapshot } from "../indexing/scheduler.js";
+import { toRepoNode } from "../core/workspace/repoRegistry.js";
+import type { IndexQueueStatusSnapshot } from "../core/indexing/scheduler.js";
 
 export type PendingFile = {
   repoName: string;

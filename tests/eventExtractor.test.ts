@@ -2,15 +2,15 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseSourceFile } from "../src/parsers/parserRegistry.js";
-import { eventExtractor } from "../src/extractors/builtin/eventExtractor.js";
-import { canonicalEventContractKey, inferBrokerFromCallee } from "../src/contracts/event.js";
-import { buildGraphFactsBatch } from "../src/graph/facts.js";
-import { KuzuGraphDB } from "../src/graph/db.js";
-import { writeGraphFactsWithMerge } from "../src/graph/upsert.js";
+import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
+import { eventExtractor } from "../src/core/contracts/extraction/builtin/eventExtractor.js";
+import { canonicalEventContractKey, inferBrokerFromCallee } from "../src/core/contracts/event.js";
+import { buildGraphFactsBatch } from "../src/core/graph-model/facts.js";
+import { KuzuGraphDB } from "../src/core/graph-model/db.js";
+import { writeGraphFactsWithMerge } from "../src/core/graph-model/upsert.js";
 import { repoId } from "../src/shared/path.js";
-import type { ExtractedRelation } from "../src/extractors/crossRepoContracts.js";
-import type { ExtractorFactBundle } from "../src/extractors/crossRepoContracts.js";
+import type { ExtractedRelation } from "../src/core/contracts/extraction/crossRepoContracts.js";
+import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
 
 function isRepoContractRelation(relation: ExtractedRelation): relation is ExtractedRelation & { kind: "repo-contract" } {
   return relation.kind === "repo-contract";

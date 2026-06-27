@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { resolveSchemaRelations } from "../../../src/contracts/matching/schemaResolver.js";
-import type { ContractSpecNode, SemanticRelationEdge } from "../../../src/parsers/types.js";
-import { serializeSpec } from "../../../src/contracts/spec.js";
+import { resolveSchemaRelations } from "../../../src/core/contracts/matching/schemaResolver.js";
+import type { ContractSpecNode, SemanticRelationEdge } from "../../../src/core/parsing/types.js";
+import { serializeSpec } from "../../../src/core/contracts/spec.js";
 
 function makeHttpSpec(opts: {
   id: string; contractId: string; repoId: string;

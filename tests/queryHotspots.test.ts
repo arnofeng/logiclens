@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, type Mock } from "vitest";
-import type { GraphDB } from "../src/graph/db.js";
-import { traceContract } from "../src/graph/queries.js";
+import type { GraphDB } from "../src/core/graph-model/db.js";
+import { traceContract } from "../src/core/graph-model/queries.js";
 
 describe("query hotspots", () => {
   it("traces all matching contract ids with a bounded number of relationship queries", async () => {

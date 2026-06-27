@@ -1,4 +1,4 @@
-import { registerGraphProvider } from "../../../graph/factory.js";
+import { registerGraphProvider } from "../../../core/graph-model/factory.js";
 import { Neo4jGraphDB } from "./Neo4jGraphDB.js";
 
 registerGraphProvider("neo4j", {

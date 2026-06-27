@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { selectGraphWriter } from "../src/indexing/graphWrite.js";
+import { selectGraphWriter } from "../src/core/indexing/graphWrite.js";
 
 describe("graph write phase", () => {
   it("uses bulk-copy for the first empty batched full import and append-copy afterward", () => {

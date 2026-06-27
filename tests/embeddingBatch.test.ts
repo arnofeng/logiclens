@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { configSchema } from "../src/config/schema.js";
-import type { ParsedGraphFile, RepoNode } from "../src/parsers/types.js";
+import type { ParsedGraphFile, RepoNode } from "../src/core/parsing/types.js";
 
 const openAiMock = vi.hoisted(() => {
   const create = vi.fn(async ({ input }: { input: string | string[] }) => {
@@ -93,7 +93,7 @@ describe("embedding batching", () => {
   it("batches changed semantic records and skips cached records", async () => {
     const { embeddingProviderRegistry } = await import("../src/plugins/registry.js");
     const { OpenAIEmbeddingProvider } = await import("../src/adapters/embeddings/openaiEmbeddingProvider.js");
-    const { indexSemanticText } = await import("../src/semantic/semanticIndex.js");
+    const { indexSemanticText } = await import("../src/core/semantic/semanticIndex.js");
 
     const provider = new OpenAIEmbeddingProvider("test-embedding", "key");
     embeddingProviderRegistry.register(provider);
@@ -159,7 +159,7 @@ describe("embedding batching", () => {
   it("does not treat records without embeddings as cached", async () => {
     const { embeddingProviderRegistry } = await import("../src/plugins/registry.js");
     const { OpenAIEmbeddingProvider } = await import("../src/adapters/embeddings/openaiEmbeddingProvider.js");
-    const { indexSemanticText } = await import("../src/semantic/semanticIndex.js");
+    const { indexSemanticText } = await import("../src/core/semantic/semanticIndex.js");
 
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-embedding-missing-cache-"));
     const repo: RepoNode = {
@@ -209,7 +209,7 @@ describe("embedding batching", () => {
   it("only indexes docs and repo level metadata when level is docs", async () => {
     const { embeddingProviderRegistry } = await import("../src/plugins/registry.js");
     const { OpenAIEmbeddingProvider } = await import("../src/adapters/embeddings/openaiEmbeddingProvider.js");
-    const { indexSemanticText } = await import("../src/semantic/semanticIndex.js");
+    const { indexSemanticText } = await import("../src/core/semantic/semanticIndex.js");
 
     const provider = new OpenAIEmbeddingProvider("test-embedding", "key", undefined, "openai-docs");
     embeddingProviderRegistry.register(provider);

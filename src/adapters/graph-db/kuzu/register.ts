@@ -1,4 +1,4 @@
-import { registerGraphProvider } from "../../../graph/factory.js";
+import { registerGraphProvider } from "../../../core/graph-model/factory.js";
 import { KuzuGraphDB } from "./KuzuGraphDB.js";
 
 registerGraphProvider("kuzu", {

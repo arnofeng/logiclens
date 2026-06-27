@@ -2,8 +2,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseSourceFile } from "../src/parsers/parserRegistry.js";
-import { jsHttpClientExtractor } from "../src/extractors/builtin/jsHttpClientExtractor.js";
+import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
+import { jsHttpClientExtractor } from "../src/core/contracts/extraction/builtin/jsHttpClientExtractor.js";
 import { repoId } from "../src/shared/path.js";
 
 async function extractFromSource(source: string, language: "typescript" | "javascript" = "typescript") {

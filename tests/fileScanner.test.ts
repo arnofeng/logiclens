@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { configSchema } from "../src/config/schema.js";
 import { parserRegistry } from "../src/plugins/registry.js";
-import { scanRepoFiles } from "../src/repos/fileScanner.js";
+import { scanRepoFiles } from "../src/core/workspace/fileScanner.js";
 import { isGeneratedFile } from "../src/shared/generatedFile.js";
 
 describe("file scanner", () => {
