@@ -12,6 +12,10 @@ import { pythonExtractor } from "./pythonExtractor.js";
 import { pythonEventExtractor } from "./pythonEventExtractor.js";
 import { javaEventExtractor } from "./javaEventExtractor.js";
 import { goExtractor } from "./goExtractor.js";
+import { tsSchemaExtractor } from "./tsSchemaExtractor.js";
+import { javaSchemaExtractor } from "./javaSchemaExtractor.js";
+import { pythonSchemaExtractor } from "./pythonSchemaExtractor.js";
+import { goSchemaExtractor } from "./goSchemaExtractor.js";
 
 export const builtinContractExtractors: ContractExtractor[] = [
   packageJsonExtractor,
@@ -21,6 +25,10 @@ export const builtinContractExtractors: ContractExtractor[] = [
   jsHttpClientExtractor,
   sdkGeneratedClientExtractor,
   eventExtractor,
+  tsSchemaExtractor,
+  javaSchemaExtractor,
+  pythonSchemaExtractor,
+  goSchemaExtractor,
   sharedSymbolExtractor,
   envConfigExtractor,
   pythonExtractor,
