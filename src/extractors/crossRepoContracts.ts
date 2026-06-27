@@ -32,6 +32,7 @@ import {
   uniqueById
 } from "./builtin/shared.js";
 import { resolveSemanticRelations } from "../contracts/resolver.js";
+import { mergeAndDedupeDeps } from "../contracts/depsMerge.js";
 
 export type ExtractedRelation =
   | ({ kind: "repo-contract" } & RepoContractEdge)
@@ -254,6 +255,119 @@ export function buildRepoDependenciesFromParticipants(participants: ContractPart
   return [...new Map(result.map((edge) => [`${edge.fromRepoId}:${edge.toRepoId}:${edge.dependencyType}:${edge.evidenceId}`, edge])).values()];
 }
 
+// ---------------------------------------------------------------------------
+// Phase 4.2: Materialize DEPENDS_ON edges from SEMANTIC_REL edges
+// ---------------------------------------------------------------------------
+
+/**
+ * Converts SEMANTIC_REL edges into RepoDependencyEdge[] by mapping each
+ * semantic relation kind to the appropriate dependency type and direction.
+ *
+ * This replaces the coarse contractId-based matching in
+ * `buildRepoDependenciesFromParticipants` for API and event contracts.
+ *
+ * Mapping:
+ *   CALLS_ENDPOINT     (consumer→producer) → api dependency (consumer→producer)
+ *   PUBLISHES_EVENT    (producer→consumer)  → event dependency (consumer→producer, reversed)
+ *   SUBSCRIBES_EVENT   (consumer→producer)  → event dependency (consumer→producer)
+ *   USES_SCHEMA        (user→provider)      → shared-contract dependency (user→provider)
+ *
+ * REQUEST_SCHEMA, RESPONSE_SCHEMA, and EVENT_PAYLOAD are skipped — they
+ * represent intra-spec associations, not cross-repo dependencies.
+ *
+ * Same-repo edges are excluded.
+ */
+export function materializeDependenciesFromSemanticRelations(
+  semanticRelations: SemanticRelationEdge[],
+  contractSpecs: ContractSpecNode[]
+): RepoDependencyEdge[] {
+  const specsById = new Map<string, ContractSpecNode>();
+  for (const spec of contractSpecs) {
+    specsById.set(spec.id, spec);
+  }
+
+  const result: RepoDependencyEdge[] = [];
+  const seen = new Set<string>();
+
+  for (const rel of semanticRelations) {
+    const fromSpec = specsById.get(rel.fromSpecId);
+    const toSpec = specsById.get(rel.toSpecId);
+    if (!fromSpec || !toSpec) continue;
+
+    // Resolve direction and dependency type
+    let consumerRepoId: string;
+    let producerRepoId: string;
+    let sourceContractId: string;
+    let targetContractId: string;
+    let dependencyType: RepoDependencyEdge["dependencyType"];
+
+    switch (rel.kind) {
+      case "CALLS_ENDPOINT":
+        // fromSpec = consumer, toSpec = producer
+        consumerRepoId = fromSpec.repoId;
+        producerRepoId = toSpec.repoId;
+        sourceContractId = fromSpec.contractId;
+        targetContractId = toSpec.contractId;
+        dependencyType = "api";
+        break;
+
+      case "PUBLISHES_EVENT":
+        // fromSpec = producer, toSpec = consumer → reverse for dependency
+        consumerRepoId = toSpec.repoId;
+        producerRepoId = fromSpec.repoId;
+        sourceContractId = toSpec.contractId;
+        targetContractId = fromSpec.contractId;
+        dependencyType = "event";
+        break;
+
+      case "SUBSCRIBES_EVENT":
+        // fromSpec = consumer, toSpec = producer
+        consumerRepoId = fromSpec.repoId;
+        producerRepoId = toSpec.repoId;
+        sourceContractId = fromSpec.contractId;
+        targetContractId = toSpec.contractId;
+        dependencyType = "event";
+        break;
+
+      case "USES_SCHEMA":
+        // fromSpec = schema user, toSpec = schema provider
+        consumerRepoId = fromSpec.repoId;
+        producerRepoId = toSpec.repoId;
+        sourceContractId = fromSpec.contractId;
+        targetContractId = toSpec.contractId;
+        dependencyType = "shared-contract";
+        break;
+
+      default:
+        // REQUEST_SCHEMA, RESPONSE_SCHEMA, EVENT_PAYLOAD — intra-spec
+        // associations, not cross-repo dependencies.
+        // IMPLEMENTS, COMPATIBLE_WITH, BREAKS, IMPACTS — not yet mapped;
+        // these are reserved for Phase 5 (Impact Analysis).
+        continue;
+    }
+
+    // Skip same-repo edges
+    if (consumerRepoId === producerRepoId) continue;
+
+    const key = `${consumerRepoId}:${producerRepoId}:${dependencyType}:${sourceContractId}:${targetContractId}:${rel.evidenceId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    result.push({
+      fromRepoId: consumerRepoId,
+      toRepoId: producerRepoId,
+      dependencyType,
+      sourceContractId,
+      targetContractId,
+      evidenceId: rel.evidenceId,
+      raw: rel.reason,
+      confidence: rel.confidence
+    });
+  }
+
+  return result;
+}
+
 export async function extractCrossRepoContracts(
   repos: RepoNode[],
   parsedFiles: ParsedGraphFile[],
@@ -298,7 +412,23 @@ export async function extractCrossRepoContracts(
     const evidenceNode = evidenceById.get(edge.evidenceId);
     return contractNode && evidenceNode ? [{ ...edge, contract: contractNode, evidence: evidenceNode }] : [];
   });
-  const repoDependencies = buildRepoDependenciesFromParticipants(participants);
+
+  // Phase 4.2: Materialize API and event dependencies from SEMANTIC_REL edges.
+  // The SEMANTIC_REL materialized deps take precedence. Legacy deps from
+  // buildRepoDependenciesFromParticipants serve as fallback for scenarios
+  // where SEMANTIC_REL edges are not yet available (e.g., batched indexing
+  // with partial repo sets).
+  const semanticDeps = materializeDependenciesFromSemanticRelations(
+    facts.semanticRelations,
+    facts.contractSpecs
+  );
+
+  // Legacy matcher runs for ALL kinds as fallback.
+  const legacyDeps = buildRepoDependenciesFromParticipants(participants);
+
+  // Merge: semantic deps first → legacy deps fill gaps (structural dedup).
+  const repoDependencies = mergeAndDedupeDeps(semanticDeps, legacyDeps);
+
   const workflowMap = new Map<string, WorkflowNode>();
   const workflowOperations: WorkflowOperationEdge[] = [];
   for (const dependency of repoDependencies) {
