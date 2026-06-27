@@ -5,11 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.1-beta.13] - 2026-06-28
+
+### Added
+
+- **Contract semantic layer**: Multi-phase semanticization pipeline that materializes contract specs from raw code analysis:
+  - Phase 0: Contract Spec data layer with API-key method-level upgrade.
+  - Phase 1: HTTP API semanticization — extract endpoints, methods, and parameters.
+  - Phase 2: Extended HTTP method extraction to Python and Go parsers.
+  - Phase 3: Event semanticization for message/event-driven contracts.
+  - Phase 4: Dual-track semantic resolver (Phase 4.1) with rule-based SEMANTIC_REL → DEPENDS_ON materialization (Phase 4.2).
+  - Language-specific schema extractors with cross-language type normalization.
+  - `USES_SCHEMA` edges for Go embedded structs and Python inheritance.
+- **Phase 5 Impact Analysis**: Full impact analysis with multi-hop semantic tracing.
+- **`spec-trace` command**: Trace contract specs across multiple semantic hops.
+- **Neo4j UNWIND batch writer**: Faster bulk writes for Neo4j graph provider.
+- **Post-indexing semantic rebuild**: Cross-repo SEMANTIC_REL resolution is now deferred to a post-indexing rebuild phase for better consistency.
+
+### Changed
+
+- **Documentation repositioning**: Repositioned as a cross-repo contract graph that reasons about change impact.
+- **Project restructure**: Reorganized source tree into `src/core/`, `src/features/`, `src/adapters/`, `src/interfaces/`, `src/shared/`, and `src/plugins/` layers.
+- Extracted indexing engine out of commands into a dedicated `indexing/` module.
+- Moved graph DB and embedding providers into `src/adapters/`.
 
 ### Removed
 
 - **Breaking (plugin API)**: Removed the `registerContractExtractor`, `registerCliCommand`, and `registerFrameworkDetector` plugin hooks, along with the exported `ContractExtractor` type. The plugin API now exposes only `registerParser` and `registerEmbeddingProvider`. Built-in contract extractors and framework detectors are used directly and are no longer extensible via plugins.
+
+### Fixed
+
+- Materialize `ContractSpec` semantic layer across all bulk writer modes.
+- Produce `HttpEndpointSpec` ContractSpec nodes in HTTP extractors (was missing).
+- Reject HTTP contract matches when HTTP methods differ; fix dedup key collision.
+- Add missing `fileId`/`evidenceId` fields in test specs; fix `SchemaFieldSpec` optional type.
+- Cap Kuzu `maxDBSize` to 128 GiB to avoid mmap failure in CI.
 
 ## [0.1.1-beta.12] - 2026-06-26
 
@@ -75,7 +105,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial tagged beta release.
 
-[Unreleased]: https://github.com/logiclens/logiclens/compare/v0.1.1-beta.11...HEAD
+[Unreleased]: https://github.com/logiclens/logiclens/compare/v0.1.1-beta.13...HEAD
+[0.1.1-beta.13]: https://github.com/logiclens/logiclens/compare/v0.1.1-beta.12...v0.1.1-beta.13
+[0.1.1-beta.12]: https://github.com/logiclens/logiclens/compare/v0.1.1-beta.11...v0.1.1-beta.12
 [0.1.1-beta.11]: https://github.com/logiclens/logiclens/compare/v0.1.1-beta.10...v0.1.1-beta.11
 [0.1.1-beta.10]: https://github.com/logiclens/logiclens/compare/v0.1.1-beta.9...v0.1.1-beta.10
 [0.1.1-beta.9]: https://github.com/logiclens/logiclens/compare/v0.1.1-beta.8...v0.1.1-beta.9
