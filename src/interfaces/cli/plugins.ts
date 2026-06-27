@@ -1,4 +1,4 @@
-import { loadConfig } from "../config/loadConfig.js";
+import { loadConfig } from "../../config/loadConfig.js";
 import { loadConfiguredPlugins } from "../plugins/loader.js";
 import { parserRegistry } from "../plugins/registry.js";
 

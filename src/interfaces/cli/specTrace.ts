@@ -1,5 +1,5 @@
 import { createLogicLens } from "../sdk/client.js";
-import type { SemanticTraceGraph } from "../core/contracts/semanticTrace.js";
+import type { SemanticTraceGraph } from "../../core/contracts/semanticTrace.js";
 
 export type SpecTraceCommandOptions = {
   maxHops?: number;

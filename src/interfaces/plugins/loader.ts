@@ -2,11 +2,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
-import { loadConfig } from "../config/loadConfig.js";
-import type { LogicLensConfig } from "../config/schema.js";
+import { loadConfig } from "../../config/loadConfig.js";
+import type { LogicLensConfig } from "../../config/schema.js";
 import { embeddingProviderRegistry, parserRegistry } from "./registry.js";
 import { pluginStoreDir } from "./packageManager.js";
-import { registerBuiltinEmbeddingProviders } from "../adapters/embeddings/builtinProviders.js";
+import { registerBuiltinEmbeddingProviders } from "../../adapters/embeddings/builtinProviders.js";
 import type { LoadedPlugin, LogicLensPlugin, PluginContext } from "./types.js";
 
 const loadedPluginKeys = new Set<string>();

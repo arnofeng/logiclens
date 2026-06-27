@@ -1,10 +1,10 @@
 import path from "node:path";
 import fs from "node:fs";
-import { repoId } from "../shared/path.js";
-import { loadConfig, defaultConfig } from "../config/loadConfig.js";
-import type { LogicLensConfig } from "../config/schema.js";
-import type { GraphDB, GraphValue, Stats } from "../core/graph-model/db.js";
-import { createGraphDB } from "../core/graph-model/factory.js";
+import { repoId } from "../../shared/path.js";
+import { loadConfig, defaultConfig } from "../../config/loadConfig.js";
+import type { LogicLensConfig } from "../../config/schema.js";
+import type { GraphDB, GraphValue, Stats } from "../../core/graph-model/db.js";
+import { createGraphDB } from "../../core/graph-model/factory.js";
 import { loadPlugins } from "../plugins/loader.js";
 import type { LogicLensPlugin } from "../plugins/types.js";
 import {
@@ -18,22 +18,22 @@ import {
   type ContractTraceRow,
   type EntityTraceRow,
   type UnresolvedEvidenceRow
-} from "../core/graph-model/queries.js";
-import { retrieveForQuestion, type RetrievalResult } from "../features/ask/retrieve.js";
-import { answerQuestion } from "../features/ask/answer.js";
-import { rebuildRepoDependencies } from "../core/graph-model/rebuildRelations.js";
-import { discoverGitRepos } from "../core/workspace/repoDiscovery.js";
-import { toRepoNode } from "../core/workspace/repoRegistry.js";
-import type { DiscoveredRepo } from "../core/workspace/repoDiscovery.js";
-import type { RepoNode } from "../core/parsing/types.js";
+} from "../../core/graph-model/queries.js";
+import { retrieveForQuestion, type RetrievalResult } from "../../features/ask/retrieve.js";
+import { answerQuestion } from "../../features/ask/answer.js";
+import { rebuildRepoDependencies } from "../../core/graph-model/rebuildRelations.js";
+import { discoverGitRepos } from "../../core/workspace/repoDiscovery.js";
+import { toRepoNode } from "../../core/workspace/repoRegistry.js";
+import type { DiscoveredRepo } from "../../core/workspace/repoDiscovery.js";
+import type { RepoNode } from "../../core/parsing/types.js";
 
 
 // Options types for index:
-import type { IndexOptions, IndexResult } from "../core/indexing/types.js";
-import { runIndexing } from "../core/indexing/run.js";
-import { FileWatcher, type PendingFile, type WatchOptions, type WatchStatus } from "../features/watch/watcher.js";
-import { shouldEnableWatcher } from "../features/watch/policy.js";
-import { SingleProcessIndexQueue, type IndexQueueSource, type IndexQueueStatusSnapshot } from "../core/indexing/scheduler.js";
+import type { IndexOptions, IndexResult } from "../../core/indexing/types.js";
+import { runIndexing } from "../../core/indexing/run.js";
+import { FileWatcher, type PendingFile, type WatchOptions, type WatchStatus } from "../../features/watch/watcher.js";
+import { shouldEnableWatcher } from "../../features/watch/policy.js";
+import { SingleProcessIndexQueue, type IndexQueueSource, type IndexQueueStatusSnapshot } from "../../core/indexing/scheduler.js";
 
 /**
  * Represents the result of a trace command, which can be either a contract trace
@@ -403,8 +403,8 @@ export class LogicLensClient {
     const contractTrace = parsedContract ? await traceContract(db, parsedContract.kind, parsedContract.value) : [];
     const entityTrace = await traceEntity(db, target);
     
-    const { findImpact, findImpactSections, sectionsDocumentingCode } = await import("../core/graph-model/queries.js");
-    const { callEdgesAround } = await import("../core/graph-model/subgraph.js");
+    const { findImpact, findImpactSections, sectionsDocumentingCode } = await import("../../core/graph-model/queries.js");
+    const { callEdgesAround } = await import("../../core/graph-model/subgraph.js");
     
     const seeds = await findImpact(db, target);
     const directSections = await findImpactSections(db, target);
@@ -443,9 +443,9 @@ export class LogicLensClient {
     target: string;
     changeType: string;
     detail?: string;
-  }): Promise<import("../core/contracts/impact/types.js").ImpactReport> {
+  }): Promise<import("../../core/contracts/impact/types.js").ImpactReport> {
     const db = await this.getDb();
-    const { analyzeImpactFromDB } = await import("../core/contracts/impact/impactEngine.js");
+    const { analyzeImpactFromDB } = await import("../../core/contracts/impact/impactEngine.js");
 
     // Resolve file paths for field-level search.  fileId format is
     // "file:<repoName>:<relativePath>"; we map repoName → disk path via config
@@ -631,9 +631,9 @@ export class LogicLensClient {
   async semanticTrace(
     specId: string,
     options?: { direction?: "outgoing" | "incoming" | "both" }
-  ): Promise<import("../core/graph-model/queries.js").SemanticTraceRow[]> {
+  ): Promise<import("../../core/graph-model/queries.js").SemanticTraceRow[]> {
     const db = await this.getDb();
-    const { semanticTrace } = await import("../core/graph-model/queries.js");
+    const { semanticTrace } = await import("../../core/graph-model/queries.js");
     return semanticTrace(db, specId, options?.direction ?? "both");
   }
 
@@ -654,9 +654,9 @@ export class LogicLensClient {
   async semanticTraceGraph(
     target: string,
     options?: { maxHops?: number; direction?: "outgoing" | "incoming" | "both" }
-  ): Promise<import("../core/contracts/semanticTrace.js").SemanticTraceGraph> {
+  ): Promise<import("../../core/contracts/semanticTrace.js").SemanticTraceGraph> {
     const db = await this.getDb();
-    const { traceSemanticGraphFromDB } = await import("../core/contracts/semanticTrace.js");
+    const { traceSemanticGraphFromDB } = await import("../../core/contracts/semanticTrace.js");
     return traceSemanticGraphFromDB(target, db, {
       maxHops: options?.maxHops,
       direction: options?.direction
@@ -674,7 +674,7 @@ export class LogicLensClient {
   async explainDeps(fromRepo: string, toRepo: string): Promise<{
     fromRepo: string;
     toRepo: string;
-    relations: import("../core/graph-model/queries.js").SemanticTraceRow[];
+    relations: import("../../core/graph-model/queries.js").SemanticTraceRow[];
   }> {
     const db = await this.getDb();
     const fromRepoId = repoId(fromRepo);
@@ -689,8 +689,8 @@ export class LogicLensClient {
       { repoId: fromRepoId }
     );
 
-    const { semanticTrace } = await import("../core/graph-model/queries.js");
-    const allRelations: import("../core/graph-model/queries.js").SemanticTraceRow[] = [];
+    const { semanticTrace } = await import("../../core/graph-model/queries.js");
+    const allRelations: import("../../core/graph-model/queries.js").SemanticTraceRow[] = [];
 
     for (const fromSpec of fromSpecs) {
       const relations = await semanticTrace(db, fromSpec.id, "outgoing");

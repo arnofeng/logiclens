@@ -1,7 +1,7 @@
-import { loadConfig } from "../config/loadConfig.js";
-import { toRepoNode } from "../core/workspace/repoRegistry.js";
-import { detectFrameworks, isExtractorEnabled } from "../core/frameworks/detect.js";
-import { builtinContractExtractors } from "../core/contracts/extraction/builtin/index.js";
+import { loadConfig } from "../../config/loadConfig.js";
+import { toRepoNode } from "../../core/workspace/repoRegistry.js";
+import { detectFrameworks, isExtractorEnabled } from "../../core/frameworks/detect.js";
+import { builtinContractExtractors } from "../../core/contracts/extraction/builtin/index.js";
 import { loadConfiguredPlugins } from "../plugins/loader.js";
 
 export async function frameworksCommand(cwd = process.cwd()): Promise<void> {

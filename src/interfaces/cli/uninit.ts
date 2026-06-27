@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { loadConfig, defaultConfig, configPath } from "../config/loadConfig.js";
+import { loadConfig, defaultConfig, configPath } from "../../config/loadConfig.js";
 
 function isProcessAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;

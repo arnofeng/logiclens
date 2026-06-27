@@ -6,7 +6,7 @@ import { configSchema } from "../src/config/schema.js";
 import type { KuzuGraphDB } from "../src/core/graph-model/db.js";
 import { scanAndParseRepo } from "../src/core/indexing/scanParse.js";
 import type { RepoNode } from "../src/core/parsing/types.js";
-import { parserRegistry } from "../src/plugins/registry.js";
+import { parserRegistry } from "../src/interfaces/plugins/registry.js";
 import { hashText } from "../src/shared/hash.js";
 import { fileId, repoId } from "../src/shared/path.js";
 

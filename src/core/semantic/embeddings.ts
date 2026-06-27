@@ -1,5 +1,5 @@
-import type { EmbeddingProvider, EmbeddingVector } from "../../plugins/types.js";
-import { embeddingProviderRegistry, type EmbeddingProviderRegistry } from "../../plugins/registry.js";
+import type { EmbeddingProvider, EmbeddingVector } from "../../interfaces/plugins/types.js";
+import { embeddingProviderRegistry, type EmbeddingProviderRegistry } from "../../interfaces/plugins/registry.js";
 
 export type { EmbeddingVector };
 export type { EmbeddingProvider };

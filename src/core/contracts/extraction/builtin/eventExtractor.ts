@@ -1,6 +1,6 @@
 import { confidenceFor } from "../../../../shared/confidence.js";
 import type { ContractRole } from "../../../parsing/types.js";
-import type { ContractExtractor } from "../../../../plugins/types.js";
+import type { ContractExtractor } from "../../../../interfaces/plugins/types.js";
 import {
   createCrossRepoExtraction,
   evidence,

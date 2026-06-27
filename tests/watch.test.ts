@@ -6,7 +6,7 @@ import { shouldWatchRepo, shouldEnableWatcher, __resetWslCacheForTests } from ".
 import { FileMatcher, FileWatcher, WatchRepoIndex, planRecursiveWatchRoots } from "../src/features/watch/watcher.js";
 import { createLogicLens } from "../src/index.js";
 import { defaultConfig, writeConfig } from "../src/config/loadConfig.js";
-import { buildFreshnessMetadata, buildFreshnessWarning } from "../src/mcp/server.js";
+import { buildFreshnessMetadata, buildFreshnessWarning } from "../src/interfaces/mcp/server.js";
 import { SingleProcessIndexQueue } from "../src/core/indexing/scheduler.js";
 
 async function makeTempWorkspace(): Promise<string> {

@@ -4,9 +4,9 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { createLogicLens, definePlugin } from "../src/index.js";
 import { defaultConfig, writeConfig } from "../src/config/loadConfig.js";
-import { initCommand } from "../src/commands/init.js";
-import { uninitCommand } from "../src/commands/uninit.js";
-import { addRepoCommand } from "../src/commands/addRepo.js";
+import { initCommand } from "../src/interfaces/cli/init.js";
+import { uninitCommand } from "../src/interfaces/cli/uninit.js";
+import { addRepoCommand } from "../src/interfaces/cli/addRepo.js";
 import { loadConfig } from "../src/config/loadConfig.js";
 
 async function makeTempWorkspace(): Promise<string> {

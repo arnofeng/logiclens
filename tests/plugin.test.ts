@@ -3,8 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { defaultConfig, writeConfig } from "../src/config/loadConfig.js";
-import { loadConfiguredPlugins } from "../src/plugins/loader.js";
-import { parserRegistry } from "../src/plugins/registry.js";
+import { loadConfiguredPlugins } from "../src/interfaces/plugins/loader.js";
+import { parserRegistry } from "../src/interfaces/plugins/registry.js";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { repoId } from "../src/shared/path.js";
 

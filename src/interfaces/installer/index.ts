@@ -137,7 +137,7 @@ export async function runInstallerWithOptions(opts: RunInstallerOptions): Promis
         process.exit(0);
       }
       if (shouldInit) {
-        const { initCommand } = await import('../commands/init.js');
+        const { initCommand } = await import('../cli/init.js');
         await initCommand();
         clack.log.success('Initialized .logiclens/config.yaml');
       }

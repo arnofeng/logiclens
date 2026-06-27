@@ -2,11 +2,11 @@ import fs from "node:fs";
 import fsPromises from "node:fs/promises";
 import path from "node:path";
 import ignore from "ignore";
-import type { LogicLensClient } from "../../sdk/client.js";
+import type { LogicLensClient } from "../../interfaces/sdk/client.js";
 import { shouldWatchRepo } from "./policy.js";
 import { isGeneratedFile } from "../../shared/generatedFile.js";
 import { builtinLanguageForPath } from "../../core/parsing/parserRegistry.js";
-import { parserRegistry } from "../../plugins/registry.js";
+import { parserRegistry } from "../../interfaces/plugins/registry.js";
 import { toRepoNode } from "../../core/workspace/repoRegistry.js";
 import type { IndexQueueStatusSnapshot } from "../../core/indexing/scheduler.js";
 

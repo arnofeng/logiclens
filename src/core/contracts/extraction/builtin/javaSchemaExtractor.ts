@@ -1,5 +1,5 @@
 import type Parser from "tree-sitter";
-import type { ContractExtractor } from "../../../../plugins/types.js";
+import type { ContractExtractor } from "../../../../interfaces/plugins/types.js";
 import type { ParsedFile } from "../../../parsing/types.js";
 import type { SchemaFieldSpec, SchemaSpec } from "../../spec.js";
 import { normalizePrimitiveType } from "../../spec.js";

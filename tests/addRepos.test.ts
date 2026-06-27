@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { addReposCommand } from "../src/commands/addRepos.js";
+import { addReposCommand } from "../src/interfaces/cli/addRepos.js";
 import { defaultConfig, loadConfig, writeConfig } from "../src/config/loadConfig.js";
 import type { IndexOptions } from "../src/core/indexing/types.js";
 

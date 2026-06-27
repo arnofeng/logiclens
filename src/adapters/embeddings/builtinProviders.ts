@@ -1,5 +1,5 @@
 import type { LogicLensConfig } from "../../config/schema.js";
-import { embeddingProviderRegistry } from "../../plugins/registry.js";
+import { embeddingProviderRegistry } from "../../interfaces/plugins/registry.js";
 import { OpenAIEmbeddingProvider } from "./openaiEmbeddingProvider.js";
 
 /**

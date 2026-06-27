@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { detectFrameworks, isExtractorEnabled } from "../src/core/frameworks/detect.js";
 import type { RepoNode } from "../src/core/parsing/types.js";
-import type { ContractExtractor } from "../src/plugins/types.js";
+import type { ContractExtractor } from "../src/interfaces/plugins/types.js";
 import { defaultConfig } from "../src/config/loadConfig.js";
 import { confidenceFor } from "../src/shared/confidence.js";
 

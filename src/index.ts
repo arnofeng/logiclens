@@ -1,6 +1,6 @@
-import { createLogicLens, LogicLensClient, type LogicLensClientOptions, type TraceResult, type ImpactResult } from "./sdk/client.js";
-import { definePlugin } from "./plugins/index.js";
-import { loadConfiguredPlugins } from "./plugins/loader.js";
+import { createLogicLens, LogicLensClient, type LogicLensClientOptions, type TraceResult, type ImpactResult } from "./interfaces/sdk/client.js";
+import { definePlugin } from "./interfaces/plugins/index.js";
+import { loadConfiguredPlugins } from "./interfaces/plugins/loader.js";
 
 import type {
   LogicLensPlugin,
@@ -8,10 +8,10 @@ import type {
   LanguageParser,
   ParseInput,
   ExtractContext
-} from "./plugins/types.js";
+} from "./interfaces/plugins/types.js";
 
 import { canonicalContractKey } from "./core/contracts/extraction/crossRepoContracts.js";
-import { createContractId, createEvidenceId, normalizePluginRuleName } from "./plugins/helpers.js";
+import { createContractId, createEvidenceId, normalizePluginRuleName } from "./interfaces/plugins/helpers.js";
 
 import type { Stats } from "./core/graph-model/db.js";
 import type { DependencyRow, ContractSummaryRow } from "./core/graph-model/queries.js";
