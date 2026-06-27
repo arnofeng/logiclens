@@ -177,7 +177,6 @@ export async function extractCrossRepoContracts(
   parsedFiles: ParsedGraphFile[],
   options: { aliasOverrides?: AliasOverride[]; config?: LogicLensConfig } = {}
 ): Promise<CrossRepoExtraction> {
-  registerBuiltinContractExtractors();
   let config = options.config;
   if (!config) {
     try {
@@ -381,12 +380,4 @@ export async function extractContractFactsWithRegistry(
   }
 
   return uniqueCrossRepoFacts(result);
-}
-
-/**
- * @deprecated No-op kept for backward compatibility. Built-in extractors are now
- * used directly from the static array; no runtime registration is needed.
- */
-export function registerBuiltinContractExtractors(): void {
-  // no-op: built-in extractors are always available via builtinContractExtractors
 }

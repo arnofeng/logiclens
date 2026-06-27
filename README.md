@@ -134,7 +134,7 @@ LogicLens automatically analyzes your multi-repository system and models the ent
 - **CLI / SDK / MCP**: Supports manual graph queries, Node.js integration, and AI coding assistant connectivity.
 - **Quality governance**: Audits low-confidence evidence, rejects false positives, registers alias overrides to ensure graph accuracy.
 - **Optional LLM / embedding layer**: When needed, integrates OpenAI-compatible chat and embedding providers to enhance graph semantics.
-- **Plugin API**: Registers custom parsers and framework detectors to extend graph coverage.
+- **Plugin API**: Registers custom parsers and embedding providers to extend graph coverage.
 
 **Upgrade from "code search" to "graph traversal + reasoning".**
 

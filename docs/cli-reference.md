@@ -381,7 +381,7 @@ List all configured and loaded plugins along with their registered extension hoo
 logiclens plugin list
 ```
 
-**Output**: Configured plugin count, loaded plugin details (name, version, path, load time), registered parsers, framework detectors.
+**Output**: Configured plugin count, loaded plugin details (name, version, path, load time), registered parsers.
 
 ---
 

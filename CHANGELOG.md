@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+
+- **Breaking (plugin API)**: Removed the `registerContractExtractor`, `registerCliCommand`, and `registerFrameworkDetector` plugin hooks, along with the exported `ContractExtractor` type. The plugin API now exposes only `registerParser` and `registerEmbeddingProvider`. Built-in contract extractors and framework detectors are used directly and are no longer extensible via plugins.
+
 ## [0.1.1-beta.12] - 2026-06-26
 
 ### Added
