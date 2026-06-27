@@ -96,7 +96,7 @@ describe("HTTP Resolver", () => {
     });
     const consumer = makeHttpSpec({
       id: "spec:c1", contractId: "c:c1", repoId: "repo-web",
-      method: "PATCH", path: "/api/orders/{orderId}", pathTemplate: "/api/orders/{orderId}"
+      method: "GET", path: "/api/orders/{orderId}", pathTemplate: "/api/orders/{orderId}"
     });
     const roleMap = makeRoleMap([producer, consumer], { "spec:p1": "producer", "spec:c1": "consumer" });
 
@@ -227,5 +227,50 @@ describe("HTTP Resolver", () => {
     // first segments, so bucket keys differ. But the template-first-segment spec
     // goes to the "*" catch-all bucket and the static spec matches there.
     expect(edges).toHaveLength(1);
+  });
+
+  it("does NOT match static-to-template when methods differ", () => {
+    const producer = makeHttpSpec({
+      id: "spec:p1", contractId: "c:p1", repoId: "repo-orders",
+      method: "DELETE", path: "/api/orders/{id}", pathTemplate: "/api/orders/{id}"
+    });
+    const consumer = makeHttpSpec({
+      id: "spec:c1", contractId: "c:c1", repoId: "repo-web",
+      method: "GET", path: "/api/orders/42", pathTemplate: "/api/orders/42"
+    });
+    const roleMap = makeRoleMap([producer, consumer], { "spec:p1": "producer", "spec:c1": "consumer" });
+
+    const edges = resolveHttpRelations([producer, consumer], roleMap);
+    expect(edges).toHaveLength(0);
+  });
+
+  it("does NOT match template-compatible when methods differ", () => {
+    const producer = makeHttpSpec({
+      id: "spec:p1", contractId: "c:p1", repoId: "repo-orders",
+      method: "POST", path: "/api/orders/{id}", pathTemplate: "/api/orders/{id}"
+    });
+    const consumer = makeHttpSpec({
+      id: "spec:c1", contractId: "c:c1", repoId: "repo-web",
+      method: "GET", path: "/api/orders/{orderId}", pathTemplate: "/api/orders/{orderId}"
+    });
+    const roleMap = makeRoleMap([producer, consumer], { "spec:p1": "producer", "spec:c1": "consumer" });
+
+    const edges = resolveHttpRelations([producer, consumer], roleMap);
+    expect(edges).toHaveLength(0);
+  });
+
+  it("does NOT match wildcard when methods differ", () => {
+    const producer = makeHttpSpec({
+      id: "spec:p1", contractId: "c:p1", repoId: "repo-a",
+      method: "POST", path: "/{tenant}/orders", pathTemplate: "/{tenant}/orders"
+    });
+    const consumer = makeHttpSpec({
+      id: "spec:c1", contractId: "c:c1", repoId: "repo-b",
+      method: "GET", path: "/acme/orders", pathTemplate: "/acme/orders"
+    });
+    const roleMap = makeRoleMap([producer, consumer], { "spec:p1": "producer", "spec:c1": "consumer" });
+
+    const edges = resolveHttpRelations([producer, consumer], roleMap);
+    expect(edges).toHaveLength(0);
   });
 });

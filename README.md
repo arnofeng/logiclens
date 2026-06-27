@@ -27,9 +27,9 @@
 - [⚙️ Configuration](#️-configuration)
 - [🧩 SDK Plugins](#-sdk-plugins)
 - [👍 Current Language and Framework Support](#-current-language-and-framework-support)
-- [Contributing](#contributing)
-- [Security](#security)
-- [License](#license)
+- [🧑‍💻 Contributing](#contributing)
+- [🛡️ Security](#security)
+- [📄 License](#license)
 
 ---
 

@@ -1,4 +1,4 @@
-import { joinApiPaths } from "../../contracts/apiPath.js";
+import { canonicalHttpContractKey, joinApiPaths } from "../../contracts/apiPath.js";
 import { confidenceFor } from "../../confidence.js";
 import type { AnnotationFact } from "../../parsers/facts.js";
 import type { ParsedFile } from "../../parsers/types.js";
@@ -311,7 +311,11 @@ export const springMvcExtractor: ContractExtractor = {
               );
               const httpMethod = annotationFact ? springHttpMethod(annotationFact) : undefined;
               const combined = joinApiPaths(prefix, mapping.path);
-              if (alreadyEmitted.has(combined)) continue; // already correct
+              // alreadyEmitted stores canonical keys (e.g. "get:/smart/customeractivity/list"),
+              // so we must compare against the same canonical form — the raw path would
+              // never match a method-prefixed key.
+              const combinedKey = canonicalHttpContractKey({ method: httpMethod, path: combined });
+              if (alreadyEmitted.has(combinedKey)) continue; // already correct
               pushApiContractFromPath({
                 result,
                 file,

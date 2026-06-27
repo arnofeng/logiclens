@@ -460,6 +460,7 @@ export class KuzuGraphDB implements GraphDB {
       "MATCH (:Section)-[r:DOCUMENTS]->(c:Code) WHERE c.repoId = $repoId DELETE r;",
       "MATCH (s:Section)-[r:REFERENCES]->(:File) WHERE s.repoId = $repoId DELETE r;",
       "MATCH (:Section)-[r:REFERENCES]->(f:File) WHERE f.repoId = $repoId DELETE r;",
+      "MATCH (:System)-[r:CONTAINS]->(:Repo {id: $repoId}) DELETE r;",
       "MATCH (:Repo {id: $repoId})-[r:CONTAINS]->(:File) DELETE r;",
       "MATCH (:File)-[r:CONTAINS]->(c:Code) WHERE c.repoId = $repoId DELETE r;",
       "MATCH (:File)-[r:CONTAINS]->(s:Section) WHERE s.repoId = $repoId DELETE r;",

@@ -121,8 +121,12 @@ function classifyHttpMatch(
     const staticPath = fromHasTpl ? toPath : fromPath;
     const templatePath = fromHasTpl ? fromPath : toPath;
     if (staticFitsTemplate(staticPath, templatePath)) {
+      // Reject when both sides declare a method and they differ — a GET /list
+      // consumer does not call a DELETE /{id} producer just because their paths
+      // happen to be template-compatible.
+      if (fromMethod && toMethod && fromMethod !== toMethod) return null;
       const methodInfo = fromMethod && toMethod
-        ? (fromMethod === toMethod ? ` ${fromMethod}` : ` method differs (${fromMethod} vs ${toMethod})`)
+        ? ` ${fromMethod}`
         : "";
       return {
         kind: "static-to-template",
@@ -134,8 +138,10 @@ function classifyHttpMatch(
 
   // 4. template-compatible: both have templates, segment counts match
   if (fromHasTpl && toHasTpl && pathsCompatible(fromPath, toPath)) {
+    // Reject when both sides declare a method and they differ.
+    if (fromMethod && toMethod && fromMethod !== toMethod) return null;
     const methodInfo = fromMethod && toMethod
-      ? (fromMethod === toMethod ? ` ${fromMethod}` : ` method differs (${fromMethod} vs ${toMethod})`)
+      ? ` ${fromMethod}`
       : "";
     return {
       kind: "template-compatible",
@@ -152,6 +158,8 @@ function classifyHttpMatch(
     (toFirst && isTemplateSegment(toFirst))
   ) {
     if (pathsCompatible(fromPath, toPath)) {
+      // Reject when both sides declare a method and they differ.
+      if (fromMethod && toMethod && fromMethod !== toMethod) return null;
       return {
         kind: "wildcard",
         reason: `Wildcard/template first-segment match: ${fromPath} ↔ ${toPath}`,
