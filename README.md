@@ -7,7 +7,7 @@
 
 </center>
 
-**A local-first Code Graph system that provides AI Coding Agents with cross-repository, system-level understanding.**
+**A local-first, cross-repository contract graph that resolves APIs, events, and schemas across repos and reasons about change impact — for AI coding agents.**
 
 **English** · [中文](README-ZH.md)
 
@@ -153,9 +153,10 @@ Local Graph Database (Kuzu)
         ↓
 ┌────────────┬────────────┬────────────┐
 │   CLI      │    SDK     │    MCP     │
-└────────────┴────────────┴────────────┘
-                ↓
-        AI Coding Agents
+└─────┬──────┴─────┬──────┴─────┬──────┘
+      ↓            ↓            ↓
+ Developers    Apps /       AI Coding
+   / CI       Automation     Agents
 ```
 
 ---

@@ -1,7 +1,7 @@
 {
   "name": "logiclens",
   "version": "0.1.1-beta.12",
-  "description": "A local-first code graph that powers AI coding agents with cross-repo dependency intelligence, contract tracing, and change impact analysis.",
+  "description": "A local-first cross-repository contract graph that resolves APIs, events, and schemas across repos and reasons about change impact — for AI coding agents.",
   "type": "module",
   "bin": {
     "logiclens": "./bin/logiclens.js"

@@ -202,10 +202,28 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
     triggerCleanup();
   });
 
-  const server = new McpServer({
-    name: "logiclens-mcp-server",
-    version: logicLensVersion,
-  });
+  const server = new McpServer(
+    {
+      name: "logiclens-mcp-server",
+      version: logicLensVersion,
+    },
+    {
+      instructions:
+        "LogicLens is a local-first, cross-repository contract graph. It knows which repositories " +
+        "produce and consume each API, event, and schema, and can reason about the downstream impact " +
+        "of a change. The graph is derived statically from source code and every answer carries " +
+        "evidence (file:line), so treat it as ground truth instead of guessing cross-repo relationships.\n\n" +
+        "Reach for LogicLens whenever you are about to change code that other repositories may depend on — " +
+        "before editing an API endpoint, event, DTO/schema, or a widely-used symbol:\n" +
+        "  • logiclens_impact_analysis — before proposing an edit, check what it breaks. Pass the proposed " +
+        "`change` (e.g. \"field-removed:couponCode\") to get a severity-rated blast radius (breaking/risky/" +
+        "compatible) with file/line evidence.\n" +
+        "  • logiclens_trace / logiclens_semantic_trace — find the producers, consumers, and request/" +
+        "response/payload schemas connected to a contract.\n" +
+        "  • logiclens_list_contracts / logiclens_list_dependencies — survey cross-repo contracts and " +
+        "dependencies before making structural changes.",
+    }
+  );
 
   // Log MCP call to stderr and local file if enabled in config
   const logMcpCall = async (type: "tool" | "resource" | "prompt", name: string, args: any) => {
@@ -368,7 +386,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   server.registerTool(
     "logiclens_impact_analysis",
     {
-      description: "Evaluate the downstream impact of changing a code symbol or contract. Supports optional --change for structured impact analysis (e.g. 'field-removed:couponCode').",
+      description: "Before editing an API, event, schema, or cross-repo symbol, check what your change will break. Evaluates the downstream blast radius of changing a code symbol or contract and rates each impact (breaking/risky/compatible) with file/line evidence. Pass `change` in '<changeType>:<detail>' format (e.g. 'field-removed:couponCode') for structured, severity-rated analysis; omit it for a broad symbol/entity impact survey.",
       inputSchema: {
         target: z.string().describe("The target symbol, entity, or contract to analyze (e.g. 'OrderCreatedEvent', 'event:OrderCreatedEvent', or 'schema:CreateOrderRequest')"),
         change: z.string().optional().describe("Optional proposed change in '<changeType>:<detail>' format. Change types: field-added, field-removed, field-type-changed, endpoint-removed, endpoint-renamed, endpoint-schema-change, topic-removed, topic-renamed, event-payload-change. Example: 'field-removed:couponCode'"),
