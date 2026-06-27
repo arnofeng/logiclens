@@ -58,7 +58,7 @@ program.command("contracts").option("--kind <kind>", "Filter by contract kind: p
 program.command("trace").argument("<contractOrEntity>").description("Trace contract kind:value or entity name").action((target: string) => traceCommand(target));
 program.command("query").argument("<cypher>").description("Run a raw Kuzu Cypher query").action((cypher: string) => queryCommand(cypher));
 program.command("ask").argument("<question>").description("Answer a natural-language question from the graph").action((question: string) => askCommand(question));
-program.command("impact").argument("<symbolOrEntity>").description("Run impact analysis for a symbol or entity").action((symbolOrEntity: string) => impactCommand(symbolOrEntity));
+program.command("impact").argument("<symbolOrEntity>").option("--change <change>", "Proposed change, e.g. \"field-removed:couponCode\"").description("Run impact analysis for a symbol, entity, or contract change").action((symbolOrEntity: string, options: { change?: string }) => impactCommand(symbolOrEntity, { change: options.change }));
 program
   .command("quality")
   .argument("[action]", "Action to perform: 'contracts' to audit contract quality, or empty to audit relation quality")

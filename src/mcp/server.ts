@@ -368,13 +368,44 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   server.registerTool(
     "logiclens_impact_analysis",
     {
-      description: "Evaluate the downstream impact of changing a code symbol or contract",
+      description: "Evaluate the downstream impact of changing a code symbol or contract. Supports optional --change for structured impact analysis (e.g. 'field-removed:couponCode').",
       inputSchema: {
-        target: z.string().describe("The target symbol or entity name to analyze (e.g. 'OrderCreatedEvent' or 'event:OrderCreatedEvent')"),
+        target: z.string().describe("The target symbol, entity, or contract to analyze (e.g. 'OrderCreatedEvent', 'event:OrderCreatedEvent', or 'schema:CreateOrderRequest')"),
+        change: z.string().optional().describe("Optional proposed change in '<changeType>:<detail>' format. Change types: field-added, field-removed, field-type-changed, endpoint-removed, endpoint-renamed, endpoint-schema-change, topic-removed, topic-renamed, event-payload-change. Example: 'field-removed:couponCode'"),
       },
     },
-    async ({ target }) => {
-      return wrapWithFreshness("logiclens_impact_analysis", { target }, async () => {
+    async ({ target, change }) => {
+      return wrapWithFreshness("logiclens_impact_analysis", { target, change }, async () => {
+        // Phase 5: Use change-based impact analysis when --change is provided
+        if (change) {
+          const VALID_CHANGE_TYPES = new Set([
+            "field-added", "field-removed", "field-type-changed",
+            "endpoint-removed", "endpoint-renamed", "endpoint-schema-change",
+            "topic-removed", "topic-renamed", "event-payload-change",
+          ]);
+          const colonIdx = change.indexOf(":");
+          const changeType = colonIdx === -1 ? change : change.slice(0, colonIdx);
+          const detail = colonIdx === -1 ? undefined : change.slice(colonIdx + 1) || undefined;
+
+          if (!VALID_CHANGE_TYPES.has(changeType)) {
+            return {
+              content: [{ type: "text" as const, text: JSON.stringify({
+                error: `Invalid change type: "${changeType}". Valid types: ${[...VALID_CHANGE_TYPES].join(", ")}`
+              }, null, 2) }]
+            };
+          }
+
+          const report = await client.analyzeChangeImpact({
+            target,
+            changeType,
+            detail,
+          });
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(report, null, 2) }],
+          };
+        }
+
+        // Legacy: symbol/entity search-based impact
         const impactResult = await client.impact(target);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(impactResult, null, 2) }],

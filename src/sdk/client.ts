@@ -1,4 +1,5 @@
 import path from "node:path";
+import fs from "node:fs";
 import { repoId } from "../utils/path.js";
 import { loadConfig, defaultConfig } from "../config/loadConfig.js";
 import type { LogicLensConfig } from "../config/schema.js";
@@ -426,6 +427,59 @@ export class LogicLensClient {
       sections,
       recommendedFiles
     };
+  }
+
+  /**
+   * Analyzes the downstream impact of a proposed contract change using the
+   * SEMANTIC_REL graph. Walks transitive dependencies to find all affected
+   * consumers, assigns severity (breaking/risky/compatible), and returns a
+   * structured {@link ImpactReport}.
+   *
+   * @param changeIntent - The proposed change, e.g.
+   *   `{ target: "schema:CreateOrderRequest", changeType: "field-removed", detail: "couponCode" }`
+   * @returns The full impact analysis report.
+   */
+  async analyzeChangeImpact(changeIntent: {
+    target: string;
+    changeType: string;
+    detail?: string;
+  }): Promise<import("../contracts/impact/types.js").ImpactReport> {
+    const db = await this.getDb();
+    const { analyzeImpactFromDB } = await import("../contracts/impact/impactEngine.js");
+
+    // Resolve file paths for field-level search.  fileId format is
+    // "file:<repoName>:<relativePath>"; we map repoName → disk path via config
+    // or fall back to <cwd>/<repoName>.
+    const repoPaths = new Map<string, string>();
+    for (const repo of this.config.repos ?? []) {
+      if (repo.name) repoPaths.set(repo.name, repo.path ?? path.join(this.cwd, repo.name));
+    }
+
+    const readFile = (repoName: string, fileId: string): string | undefined => {
+      // fileId: "file:repoName:relative/path"
+      const parts = fileId.split(":");
+      const fRepoName = parts[1] ?? repoName;
+      const relativePath = parts.slice(2).join(":");
+      if (!relativePath) return undefined;
+
+      const repoPath = repoPaths.get(fRepoName) ?? path.join(this.cwd, fRepoName);
+      try {
+        return fs.readFileSync(path.join(repoPath, relativePath), "utf-8");
+      } catch {
+        return undefined;
+      }
+    };
+
+    const report = await analyzeImpactFromDB(
+      {
+        target: changeIntent.target,
+        changeType: changeIntent.changeType as any,
+        detail: changeIntent.detail,
+      },
+      db,
+      { readFile }
+    );
+    return report;
   }
 
   /**

@@ -1,8 +1,37 @@
 import { createLogicLens } from "../sdk/client.js";
+import type { ImpactReport } from "../contracts/impact/types.js";
 
-export async function impactCommand(symbolOrEntity: string, cwd = process.cwd()): Promise<void> {
+export type ImpactCommandOptions = {
+  /** Optional change description, e.g. "field-removed:couponCode" */
+  change?: string;
+};
+
+export async function impactCommand(
+  symbolOrEntity: string,
+  options: ImpactCommandOptions = {},
+  cwd = process.cwd()
+): Promise<void> {
   const client = await createLogicLens({ cwd });
   try {
+    // -- Phase 5: Change-based impact analysis --------------------------------
+    if (options.change) {
+      const parsed = parseChangeOption(options.change);
+      if (!parsed) {
+        console.error(`Invalid --change format. Expected: <changeType>:<detail>, e.g. "field-removed:couponCode"`);
+        process.exit(1);
+      }
+
+      const report = await client.analyzeChangeImpact({
+        target: symbolOrEntity,
+        changeType: parsed.changeType,
+        detail: parsed.detail,
+      });
+
+      printImpactReport(report);
+      return;
+    }
+
+    // -- Legacy: Symbol/entity search-based impact ----------------------------
     const result = await client.impact(symbolOrEntity);
     console.log(`Potential impact for ${symbolOrEntity}:`);
     if (result.contractTrace.length > 0) {
@@ -29,5 +58,70 @@ export async function impactCommand(symbolOrEntity: string, cwd = process.cwd())
     for (const file of result.recommendedFiles) console.log(`- ${file}`);
   } finally {
     await client.close();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Change option parser
+// ---------------------------------------------------------------------------
+
+/** Valid change types recognized by the CLI. */
+const VALID_CHANGE_TYPES = new Set([
+  "field-added", "field-removed", "field-type-changed",
+  "endpoint-removed", "endpoint-renamed", "endpoint-schema-change",
+  "topic-removed", "topic-renamed", "event-payload-change",
+]);
+
+function parseChangeOption(raw: string): { changeType: string; detail?: string } | null {
+  const colonIdx = raw.indexOf(":");
+  if (colonIdx === -1) {
+    // No detail — just the change type
+    if (VALID_CHANGE_TYPES.has(raw)) return { changeType: raw };
+    return null;
+  }
+  const changeType = raw.slice(0, colonIdx);
+  const detail = raw.slice(colonIdx + 1);
+  if (!VALID_CHANGE_TYPES.has(changeType)) return null;
+  return { changeType, detail: detail || undefined };
+}
+
+// ---------------------------------------------------------------------------
+// Report formatting
+// ---------------------------------------------------------------------------
+
+function printImpactReport(report: ImpactReport): void {
+  const severityIcon = report.overallSeverity === "breaking" ? "🔴"
+    : report.overallSeverity === "risky" ? "🟡"
+    : "🟢";
+
+  console.log(`${severityIcon} Severity: ${report.overallSeverity}`);
+  console.log("");
+  console.log(`Change: ${report.change.changeType} on ${report.change.target}${report.change.detail ? ` (${report.change.detail})` : ""}`);
+  console.log(`Traversed ${report.traversedEdgeCount} SEMANTIC_REL edges across ${report.inspectedSpecCount} specs`);
+  console.log("");
+  console.log(`Summary: ${report.summary.breaking} breaking, ${report.summary.risky} risky, ${report.summary.compatible} compatible`);
+  console.log("");
+
+  if (report.impacts.length === 0) {
+    console.log("No impacts found.");
+    return;
+  }
+
+  console.log("Direct impacts:");
+  for (const imp of report.impacts) {
+    const icon = imp.severity === "breaking" ? "🔴"
+      : imp.severity === "risky" ? "🟡"
+      : "🟢";
+    const lineInfo = imp.line ? `:${imp.line}` : "";
+    console.log(`  ${icon} [${imp.severity}] ${imp.repoId} ${imp.symbol}`);
+    console.log(`    evidence: ${imp.repoId}/${imp.filePath}${lineInfo} '${imp.evidence}'`);
+  }
+
+  if (report.recommendedFiles.length > 0) {
+    console.log("");
+    console.log("Recommended files to inspect:");
+    for (const file of report.recommendedFiles) {
+      console.log(`  ${file}`);
+    }
   }
 }
