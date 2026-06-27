@@ -491,14 +491,6 @@ const builtinFrameworkDetectors: FrameworkDetector[] = [
   goFallbackDetector
 ];
 
-/**
- * @deprecated No-op kept for backward compatibility. Built-in detectors are now
- * used directly from the static array; no runtime registration is needed.
- */
-export function registerBuiltinFrameworkDetectors(): void {
-  // no-op: built-in detectors are always available via builtinFrameworkDetectors
-}
-
 export async function detectFrameworks(
   repo: RepoNode,
   parsedFiles: ParsedGraphFile[] = []
