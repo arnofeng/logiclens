@@ -118,6 +118,23 @@ export const pythonSchemaExtractor: ContractExtractor = {
             confidence: evidenceNode.confidence
           });
         }
+
+        // For each user-defined base class, emit a USES_SCHEMA placeholder so
+        // impact analysis can traverse from the derived class to its parent.
+        // The schema-marker bases (TypedDict/NamedTuple) and `object` are
+        // excluded — they are mechanism markers, not data-bearing schemas.
+        // The placeholder is resolved by schemaResolver once the full batch is
+        // available (mirrors the Java `extends` / TS utility-type handling).
+        for (const base of extractBaseClasses(classNode)) {
+          result.semanticRelations.push({
+            fromSpecId: `spec:${schemaContract.id}:pending`,
+            toSpecId: `schema-ref:${base}`,
+            kind: "USES_SCHEMA",
+            evidenceId: evidenceNode.id,
+            reason: `Python class inherits ${base}`,
+            confidence: confidenceFor("heuristic-generic-type-param")
+          });
+        }
       }
     }
 
@@ -168,6 +185,38 @@ function classHasSchemaDecorator(node: Parser.SyntaxNode): boolean {
     if (name && SCHEMA_DECORATORS.has(name.text)) return true;
   }
   return false;
+}
+
+/**
+ * Extracts the names of user-defined base classes from a class definition,
+ * excluding schema-mechanism markers (TypedDict/NamedTuple) and `object`.
+ * Dotted bases (`pkg.Base`) are reduced to their last component so they match
+ * the simple schema names indexed by the resolver. Keyword arguments
+ * (`total=False`, `metaclass=...`) and parametrised bases (`Generic[T]`) are
+ * ignored.
+ */
+function extractBaseClasses(node: Parser.SyntaxNode): string[] {
+  const innerClass = node.type === "decorated_definition"
+    ? node.namedChildren.find((c) => c.type === "class_definition")
+    : node;
+  if (!innerClass) return [];
+  const argList = innerClass.namedChildren.find((c) => c.type === "argument_list");
+  if (!argList) return [];
+
+  const bases: string[] = [];
+  for (const child of argList.namedChildren) {
+    let name: string | undefined;
+    if (child.type === "identifier") {
+      name = child.text;
+    } else if (child.type === "attribute") {
+      const parts = child.text.split(".");
+      name = parts[parts.length - 1];
+    }
+    if (!name) continue;
+    if (SCHEMA_BASES.has(name) || name === "object") continue;
+    bases.push(name);
+  }
+  return bases;
 }
 
 /** Checks whether a class inherits from TypedDict or NamedTuple. */

@@ -111,6 +111,21 @@ export const goSchemaExtractor: ContractExtractor = {
             confidence: evidenceNode.confidence
           });
         }
+
+        // For each embedded struct, emit a USES_SCHEMA placeholder so impact
+        // analysis can traverse from the composing struct to the embedded one.
+        // Resolved by schemaResolver once the full batch is available (mirrors
+        // the Java `extends` / TS utility-type handling).
+        for (const base of extractEmbeddedTypeNames(structType)) {
+          result.semanticRelations.push({
+            fromSpecId: `spec:${schemaContract.id}:pending`,
+            toSpecId: `schema-ref:${base}`,
+            kind: "USES_SCHEMA",
+            evidenceId: evidenceNode.id,
+            reason: `Go struct embeds ${base}`,
+            confidence: confidenceFor("heuristic-generic-type-param")
+          });
+        }
       });
     }
 
@@ -193,6 +208,45 @@ function parseGoField(node: Parser.SyntaxNode): SchemaFieldSpec[] | undefined {
     nullable: normalized.endsWith("?") ? true : undefined,
     sourceLine: node.startPosition.row + 1
   }));
+}
+
+/**
+ * Returns the type names of a struct's embedded fields — `field_declaration`s
+ * that carry a type but no `field_identifier`. Pointer (`*Base`), qualified
+ * (`pkg.Base`) and generic (`Base[T]`) embeds are reduced to the bare type
+ * name so they match the simple schema names indexed by the resolver.
+ */
+function extractEmbeddedTypeNames(structType: Parser.SyntaxNode): string[] {
+  const fieldList = structType.namedChildren.find(
+    (c) => c.type === "field_declaration_list"
+  );
+  if (!fieldList) return [];
+
+  const names: string[] = [];
+  for (const child of fieldList.namedChildren) {
+    if (child.type !== "field_declaration") continue;
+    // A named field (`Name string`) has a field_identifier; embedded fields do not.
+    if (child.namedChildren.some((c) => c.type === "field_identifier")) continue;
+    const typeNode = child.namedChildren.find((c) => isGoTypeNode(c.type));
+    if (!typeNode) continue;
+    const name = embeddedBaseName(typeNode);
+    if (name) names.push(name);
+  }
+  return names;
+}
+
+/** Unwraps pointer/qualified/generic wrappers to the bare embedded type name. */
+function embeddedBaseName(node: Parser.SyntaxNode): string | undefined {
+  if (node.type === "type_identifier") return node.text;
+  if (node.type === "pointer_type") {
+    const inner = node.namedChild(0);
+    return inner ? embeddedBaseName(inner) : undefined;
+  }
+  if (node.type === "qualified_type" || node.type === "generic_type") {
+    const id = node.namedChildren.find((c) => c.type === "type_identifier");
+    return id?.text;
+  }
+  return undefined;
 }
 
 function isGoTypeNode(type: string): boolean {

@@ -208,4 +208,47 @@ describe("Go Schema Extractor", () => {
     const contracts = bundle.contracts.filter((c) => c.key === "uniquedto");
     expect(contracts).toHaveLength(1);
   });
+
+  // -- Embedded structs (USES_SCHEMA) ---------------------------------------
+
+  it("emits a USES_SCHEMA edge for an embedded struct", async () => {
+    const bundle = await extract("package models\n" +
+      "type OrderResponseDTO struct {\n" +
+      "    BaseResponseDTO\n" +
+      "    OrderID string\n" +
+      "}\n");
+    const spec = bundle.contractSpecs.find(
+      (s) => bundle.contracts.find((c) => c.id === s.contractId)?.key === "orderresponsedto"
+    );
+    expect(spec).toBeDefined();
+
+    const rel = bundle.semanticRelations.find(
+      (r) => r.kind === "USES_SCHEMA" && r.toSpecId === "schema-ref:BaseResponseDTO"
+    );
+    expect(rel).toBeDefined();
+    expect(rel!.fromSpecId).toBe(`spec:${spec!.contractId}:pending`);
+    expect(rel!.reason).toContain("embeds");
+  });
+
+  it("unwraps pointer and qualified embeds to the bare type name", async () => {
+    const bundle = await extract("package models\n" +
+      "import \"models/base\"\n" +
+      "type AuditedDTO struct {\n" +
+      "    *BaseModelDTO\n" +
+      "    base.TimestampsDTO\n" +
+      "    Name string\n" +
+      "}\n");
+    const refs = bundle.semanticRelations
+      .filter((r) => r.kind === "USES_SCHEMA")
+      .map((r) => r.toSpecId);
+    expect(refs).toContain("schema-ref:BaseModelDTO");
+    expect(refs).toContain("schema-ref:TimestampsDTO");
+  });
+
+  it("does not emit USES_SCHEMA for a struct without embeds", async () => {
+    const bundle = await extract("package models\n" +
+      "type PlainDTO struct { ID string }\n");
+    const rels = bundle.semanticRelations.filter((r) => r.kind === "USES_SCHEMA");
+    expect(rels).toHaveLength(0);
+  });
 });

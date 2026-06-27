@@ -242,4 +242,51 @@ class UniqueDTO:
     const contracts = bundle.contracts.filter((c) => c.key === "uniquedto");
     expect(contracts).toHaveLength(1);
   });
+
+  // -- Inheritance (USES_SCHEMA) --------------------------------------------
+
+  it("emits a USES_SCHEMA edge for a dataclass base class", async () => {
+    const bundle = await extract(`
+from dataclasses import dataclass
+@dataclass
+class OrderResponseDTO(BaseResponseDTO):
+    order_id: str
+`);
+    const spec = bundle.contractSpecs.find(
+      (s) => bundle.contracts.find((c) => c.id === s.contractId)?.key === "orderresponsedto"
+    );
+    expect(spec).toBeDefined();
+
+    const rel = bundle.semanticRelations.find(
+      (r) => r.kind === "USES_SCHEMA" && r.toSpecId === "schema-ref:BaseResponseDTO"
+    );
+    expect(rel).toBeDefined();
+    expect(rel!.fromSpecId).toBe(`spec:${spec!.contractId}:pending`);
+    expect(rel!.reason).toContain("inherits");
+  });
+
+  it("excludes TypedDict/NamedTuple markers and object from USES_SCHEMA", async () => {
+    const bundle = await extract(`
+from typing import TypedDict
+class ShipmentDTO(BaseShipmentDTO, TypedDict):
+    extra: str
+`);
+    const refs = bundle.semanticRelations
+      .filter((r) => r.kind === "USES_SCHEMA")
+      .map((r) => r.toSpecId);
+    expect(refs).toContain("schema-ref:BaseShipmentDTO");
+    expect(refs).not.toContain("schema-ref:TypedDict");
+    expect(refs).not.toContain("schema-ref:object");
+  });
+
+  it("does not emit USES_SCHEMA for a class without base classes", async () => {
+    const bundle = await extract(`
+from dataclasses import dataclass
+@dataclass
+class PlainDTO:
+    id: str
+`);
+    const rels = bundle.semanticRelations.filter((r) => r.kind === "USES_SCHEMA");
+    expect(rels).toHaveLength(0);
+  });
 });
