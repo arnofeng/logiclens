@@ -1,5 +1,5 @@
 ﻿import { describe, expect, it, vi } from "vitest";
-import type { RetrievalResult } from "../src/rag/retrieve.js";
+import type { RetrievalResult } from "../src/features/ask/retrieve.js";
 
 const openAiMock = vi.hoisted(() => ({
   chatCreate: vi.fn(),
@@ -27,7 +27,7 @@ describe("answerQuestion", () => {
       choices: [{ message: { content: "answer from chat completions" } }]
     });
 
-    const { answerQuestion } = await import("../src/rag/answer.js");
+    const { answerQuestion } = await import("../src/features/ask/answer.js");
     const retrieval: RetrievalResult = {
       questionKind: "general",
       code: [],
@@ -69,7 +69,7 @@ describe("answerQuestion", () => {
       choices: [{ message: { content: "answer with edge resolution" } }]
     });
 
-    const { answerQuestion } = await import("../src/rag/answer.js");
+    const { answerQuestion } = await import("../src/features/ask/answer.js");
     const retrieval: RetrievalResult = {
       questionKind: "general",
       code: [],
@@ -111,7 +111,7 @@ describe("answerQuestion", () => {
       choices: [{ message: { content: "budgeted answer" } }]
     });
 
-    const { answerQuestion } = await import("../src/rag/answer.js");
+    const { answerQuestion } = await import("../src/features/ask/answer.js");
     const retrieval: RetrievalResult = {
       questionKind: "general",
       code: [{

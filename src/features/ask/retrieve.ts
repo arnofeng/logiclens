@@ -1,5 +1,5 @@
-import type { GraphDB } from "../core/graph-model/db.js";
-import { callEdgesAround } from "../core/graph-model/subgraph.js";
+import type { GraphDB } from "../../core/graph-model/db.js";
+import { callEdgesAround } from "../../core/graph-model/subgraph.js";
 import {
   listCode,
   listDependencies,
@@ -12,10 +12,10 @@ import {
   type DependencyRow,
   type EntityTraceRow,
   type SectionSearchRow
-} from "../core/graph-model/queries.js";
-import type { LogicLensConfig } from "../config/schema.js";
-import { defaultSemanticIndex, type SemanticSearchResult } from "../core/semantic/semanticIndex.js";
-import { resolveEmbeddingProvider } from "../core/semantic/embeddings.js";
+} from "../../core/graph-model/queries.js";
+import type { LogicLensConfig } from "../../config/schema.js";
+import { defaultSemanticIndex, type SemanticSearchResult } from "../../core/semantic/semanticIndex.js";
+import { resolveEmbeddingProvider } from "../../core/semantic/embeddings.js";
 import { planQuestion } from "./planner.js";
 
 /**

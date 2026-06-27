@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildAnswerContext } from "../src/rag/context.js";
-import type { RetrievalResult } from "../src/rag/retrieve.js";
+import { buildAnswerContext } from "../src/features/ask/context.js";
+import type { RetrievalResult } from "../src/features/ask/retrieve.js";
 
 describe("RAG answer context", () => {
   it("keeps high-confidence evidence first when context budget is low", () => {

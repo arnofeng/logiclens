@@ -15,7 +15,7 @@ import { createContractId, createEvidenceId, normalizePluginRuleName } from "./p
 
 import type { Stats } from "./core/graph-model/db.js";
 import type { DependencyRow, ContractSummaryRow } from "./core/graph-model/queries.js";
-import type { RetrievalResult } from "./rag/retrieve.js";
+import type { RetrievalResult } from "./features/ask/retrieve.js";
 import type {
   AnnotationArgument,
   AnnotationFact,

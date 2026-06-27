@@ -4,7 +4,7 @@ import { createLogicLens, LogicLensClient } from "../sdk/client.js";
 import { schemaStatements } from "../core/graph-model/schema.js";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { PendingFile, WatchStatus } from "../watch/watcher.js";
+import type { PendingFile, WatchStatus } from "../features/watch/watcher.js";
 import { assertReadOnlyCypher } from "../shared/cypherSafety.js";
 import { logicLensVersion } from "../shared/version.js";
 import { z } from "zod";

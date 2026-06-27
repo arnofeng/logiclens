@@ -6,7 +6,7 @@ import { KuzuGraphDB } from "../src/core/graph-model/db.js";
 import { writeGraphFactsWithKuzuBulkUpsert } from "../src/core/graph-model/bulkWriter.js";
 import { buildGraphFactsBatch } from "../src/core/graph-model/facts.js";
 import { listCode, listDependencies, searchCode, traceContract } from "../src/core/graph-model/queries.js";
-import { rejectEvidence } from "../src/graph/quality.js";
+import { rejectEvidence } from "../src/features/quality/quality.js";
 import { rebuildRepoDependencies } from "../src/core/graph-model/rebuildRelations.js";
 import { upsertParsedFiles } from "../src/core/graph-model/upsert.js";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";

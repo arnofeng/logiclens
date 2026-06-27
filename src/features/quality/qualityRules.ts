@@ -1,4 +1,4 @@
-import type { GraphDB } from "../graph-model/db.js";
+import type { GraphDB } from "../../core/graph-model/db.js";
 
 export type QualityRuleViolation = {
   ruleId: string;

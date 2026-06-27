@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { confidenceBand, confidenceFor, PROBABLE_CONFIDENCE_THRESHOLD, scoreCallResolution } from "../src/shared/confidence.js";
-import { auditRelationQuality } from "../src/graph/quality.js";
+import { auditRelationQuality } from "../src/features/quality/quality.js";
 
 describe("confidence rules", () => {
   it("keeps confidence bands aligned with default query visibility", () => {

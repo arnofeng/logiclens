@@ -6,8 +6,8 @@ import { KuzuGraphDB } from "../src/core/graph-model/db.js";
 import { traceContract } from "../src/core/graph-model/queries.js";
 import { upsertParsedFiles } from "../src/core/graph-model/upsert.js";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
-import { retrieveForQuestion } from "../src/rag/retrieve.js";
-import { answerQuestion } from "../src/rag/answer.js";
+import { retrieveForQuestion } from "../src/features/ask/retrieve.js";
+import { answerQuestion } from "../src/features/ask/answer.js";
 import { repoId } from "../src/shared/path.js";
 
 describe("local availability", () => {

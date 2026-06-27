@@ -19,8 +19,8 @@ import {
   type EntityTraceRow,
   type UnresolvedEvidenceRow
 } from "../core/graph-model/queries.js";
-import { retrieveForQuestion, type RetrievalResult } from "../rag/retrieve.js";
-import { answerQuestion } from "../rag/answer.js";
+import { retrieveForQuestion, type RetrievalResult } from "../features/ask/retrieve.js";
+import { answerQuestion } from "../features/ask/answer.js";
 import { rebuildRepoDependencies } from "../core/graph-model/rebuildRelations.js";
 import { discoverGitRepos } from "../core/workspace/repoDiscovery.js";
 import { toRepoNode } from "../core/workspace/repoRegistry.js";
@@ -31,8 +31,8 @@ import type { RepoNode } from "../core/parsing/types.js";
 // Options types for index:
 import type { IndexOptions, IndexResult } from "../core/indexing/types.js";
 import { runIndexing } from "../core/indexing/run.js";
-import { FileWatcher, type PendingFile, type WatchOptions, type WatchStatus } from "../watch/watcher.js";
-import { shouldEnableWatcher } from "../watch/policy.js";
+import { FileWatcher, type PendingFile, type WatchOptions, type WatchStatus } from "../features/watch/watcher.js";
+import { shouldEnableWatcher } from "../features/watch/policy.js";
 import { SingleProcessIndexQueue, type IndexQueueSource, type IndexQueueStatusSnapshot } from "../core/indexing/scheduler.js";
 
 /**

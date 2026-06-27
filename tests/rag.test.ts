@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { planQuestion } from "../src/rag/planner.js";
-import { retrieveForQuestion } from "../src/rag/retrieve.js";
+import { planQuestion } from "../src/features/ask/planner.js";
+import { retrieveForQuestion } from "../src/features/ask/retrieve.js";
 import { scoreCallResolution } from "../src/core/extraction/resolveReferences.js";
 import { chunk } from "../src/shared/chunk.js";
 

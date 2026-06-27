@@ -1,5 +1,5 @@
-import type { EdgeRow } from "../core/graph-model/subgraph.js";
-import type { SemanticSearchResult } from "../core/semantic/semanticIndex.js";
+import type { EdgeRow } from "../../core/graph-model/subgraph.js";
+import type { SemanticSearchResult } from "../../core/semantic/semanticIndex.js";
 import type { RetrievalResult } from "./retrieve.js";
 
 export type RagContextOptions = {

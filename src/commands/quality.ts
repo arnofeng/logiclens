@@ -1,9 +1,9 @@
 import path from "node:path";
 import { loadConfig } from "../config/loadConfig.js";
 import { createGraphDB } from "../core/graph-model/factory.js";
-import { auditRelationQuality, rejectEvidence, upsertAliasOverride } from "../graph/quality.js";
+import { auditRelationQuality, rejectEvidence, upsertAliasOverride } from "../features/quality/quality.js";
 import { repoId } from "../shared/path.js";
-import { auditContractQuality } from "../core/contracts/qualityRules.js";
+import { auditContractQuality } from "../features/quality/qualityRules.js";
 
 export type QualityOptions = {
   minConfidence?: number;

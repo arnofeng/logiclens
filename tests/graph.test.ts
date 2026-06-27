@@ -8,7 +8,7 @@ import { findImpactSections, listContracts, listDependencies, listUnresolvedEvid
 import { upsertParsedFiles } from "../src/core/graph-model/upsert.js";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import type { ParsedFile, RepoNode } from "../src/core/parsing/types.js";
-import { retrieveForQuestion } from "../src/rag/retrieve.js";
+import { retrieveForQuestion } from "../src/features/ask/retrieve.js";
 import { fileId, repoId } from "../src/shared/path.js";
 
 describe("graph", () => {

@@ -21,7 +21,7 @@ vi.mock("../src/core/semantic/summarizeGraph.js", () => ({
 }));
 
 import { upsertParsedFiles } from "../src/core/graph-model/upsert.js";
-import { upsertAliasOverride } from "../src/graph/quality.js";
+import { upsertAliasOverride } from "../src/features/quality/quality.js";
 import { buildGraphFactsBatch } from "../src/core/graph-model/facts.js";
 
 const repoA: RepoNode = {

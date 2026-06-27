@@ -3,9 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { KuzuGraphDB } from "../src/core/graph-model/db.js";
-import { auditContractQuality } from "../src/core/contracts/qualityRules.js";
+import { auditContractQuality } from "../src/features/quality/qualityRules.js";
 import { traceContract } from "../src/core/graph-model/queries.js";
-import { retrieveForQuestion } from "../src/rag/retrieve.js";
+import { retrieveForQuestion } from "../src/features/ask/retrieve.js";
 
 describe("Quality Closed-Loop Test Suite", () => {
   it("runs end-to-end contract quality audits, tracing, and retrieval", async () => {
