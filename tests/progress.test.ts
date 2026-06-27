@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { ProgressBar } from "../src/utils/progress.js";
+import { ProgressBar } from "../src/shared/progress.js";
 
 describe("ProgressBar", () => {
   const originalWrite = process.stderr.write;

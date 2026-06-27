@@ -4,7 +4,7 @@ import path from "node:path";
 import ignore from "ignore";
 import type { LogicLensClient } from "../sdk/client.js";
 import { shouldWatchRepo } from "./policy.js";
-import { isGeneratedFile } from "../utils/generatedFile.js";
+import { isGeneratedFile } from "../shared/generatedFile.js";
 import { builtinLanguageForPath } from "../parsers/parserRegistry.js";
 import { parserRegistry } from "../plugins/registry.js";
 import { toRepoNode } from "../repos/repoRegistry.js";

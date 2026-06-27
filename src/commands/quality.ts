@@ -2,7 +2,7 @@ import path from "node:path";
 import { loadConfig } from "../config/loadConfig.js";
 import { createGraphDB } from "../graph/factory.js";
 import { auditRelationQuality, rejectEvidence, upsertAliasOverride } from "../graph/quality.js";
-import { repoId } from "../utils/path.js";
+import { repoId } from "../shared/path.js";
 import { auditContractQuality } from "../contracts/qualityRules.js";
 
 export type QualityOptions = {

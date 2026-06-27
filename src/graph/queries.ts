@@ -1,6 +1,6 @@
 import type { GraphDB, ContractSummaryRow } from "./db.js";
 export type { ContractSummaryRow } from "./db.js";
-import { confidenceBand, type ConfidenceBand } from "../confidence.js";
+import { confidenceBand, type ConfidenceBand } from "../shared/confidence.js";
 import { canonicalContractKey } from "../extractors/crossRepoContracts.js";
 import type { ContractKind, ContractRole } from "../parsers/types.js";
 

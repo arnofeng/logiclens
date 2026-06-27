@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { resolveCalls, resolveImports } from "../src/extractors/resolveReferences.js";
 import { parseSourceFile } from "../src/parsers/parserRegistry.js";
 import type { CodeSymbol, ParsedFile } from "../src/parsers/types.js";
-import { fileId, repoId } from "../src/utils/path.js";
+import { fileId, repoId } from "../src/shared/path.js";
 
 describe("resolveReferences", () => {
   function parsedFile(repoIdValue: string, relativePath: string, imports: ParsedFile["imports"] = []): ParsedFile {

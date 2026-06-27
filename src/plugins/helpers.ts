@@ -1,5 +1,5 @@
 import { canonicalContractKey } from "../extractors/crossRepoContracts.js";
-import { contractId, evidenceId, normalizeName } from "../utils/path.js";
+import { contractId, evidenceId, normalizeName } from "../shared/path.js";
 
 export { canonicalContractKey };
 

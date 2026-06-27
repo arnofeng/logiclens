@@ -1,7 +1,7 @@
 import type { GraphDB } from "../db.js";
 import type { GraphFactsBatch } from "../facts.js";
 import { systemId } from "../schema.js";
-import type { ProgressReporter } from "../../utils/progress.js";
+import type { ProgressReporter } from "../../shared/progress.js";
 
 /** Maximum rows per UNWIND batch to avoid excessive memory / transaction size. */
 const BATCH_SIZE = 5000;

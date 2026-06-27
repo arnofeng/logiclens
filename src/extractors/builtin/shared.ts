@@ -13,10 +13,10 @@ import type {
   ParsedGraphFile,
   RepoNode
 } from "../../parsers/types.js";
-import { contractId, entityId, evidenceId, fileId, normalizeName } from "../../utils/path.js";
+import { contractId, entityId, evidenceId, fileId, normalizeName } from "../../shared/path.js";
 import { normalizeApiPath, canonicalHttpContractKey } from "../../contracts/apiPath.js";
 import { canonicalEventContractKey, type EventBroker } from "../../contracts/event.js";
-import { confidenceFor } from "../../confidence.js";
+import { confidenceFor } from "../../shared/confidence.js";
 import { serializeSpec, type ContractSpec, type EventSpec, type HttpEndpointSpec } from "../../contracts/spec.js";
 import type { AliasOverride, CrossRepoExtraction, ExtractorFactBundle } from "../crossRepoContracts.js";
 

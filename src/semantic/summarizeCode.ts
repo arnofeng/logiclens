@@ -5,7 +5,7 @@ import {
   runProviderCall,
   type ProviderCallRuntime,
   type ProviderPolicy
-} from "../resilience/providerPolicy.js";
+} from "../shared/providerPolicy.js";
 
 export type CodeSemanticSummary = {
   summary: string;

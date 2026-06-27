@@ -5,8 +5,8 @@ import { schemaStatements } from "../graph/schema.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { PendingFile, WatchStatus } from "../watch/watcher.js";
-import { assertReadOnlyCypher } from "../utils/cypherSafety.js";
-import { logicLensVersion } from "../version.js";
+import { assertReadOnlyCypher } from "../shared/cypherSafety.js";
+import { logicLensVersion } from "../shared/version.js";
 import { z } from "zod";
 
 type CatchUpState = WatchStatus["catchUp"];

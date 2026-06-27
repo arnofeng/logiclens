@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { planQuestion } from "../src/rag/planner.js";
 import { retrieveForQuestion } from "../src/rag/retrieve.js";
 import { scoreCallResolution } from "../src/extractors/resolveReferences.js";
-import { chunk } from "../src/utils/chunk.js";
+import { chunk } from "../src/shared/chunk.js";
 
 describe("rag helpers", () => {
   it("detects workflow questions", () => {

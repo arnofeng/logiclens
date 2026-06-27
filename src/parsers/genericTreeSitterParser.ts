@@ -6,7 +6,7 @@ import { extractSymbolsFromTreeSitter } from "../extractors/extractSymbols.js";
 import { extractImportsFromTreeSitter } from "../extractors/extractImports.js";
 import { extractCallsFromTreeSitter } from "../extractors/extractCalls.js";
 import { extractLanguageFacts } from "./languageFacts.js";
-import { codeId } from "../utils/path.js";
+import { codeId } from "../shared/path.js";
 
 export class GenericTreeSitterParser implements LanguageParser {
   private queriesCache = new Map<string, Parser.Query>();

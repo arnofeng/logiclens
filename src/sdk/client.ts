@@ -1,6 +1,6 @@
 import path from "node:path";
 import fs from "node:fs";
-import { repoId } from "../utils/path.js";
+import { repoId } from "../shared/path.js";
 import { loadConfig, defaultConfig } from "../config/loadConfig.js";
 import type { LogicLensConfig } from "../config/schema.js";
 import type { GraphDB, GraphValue, Stats } from "../graph/db.js";

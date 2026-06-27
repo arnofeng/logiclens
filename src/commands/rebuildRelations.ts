@@ -1,5 +1,5 @@
 import { createLogicLens } from "../sdk/client.js";
-import { ProgressBar } from "../utils/progress.js";
+import { ProgressBar } from "../shared/progress.js";
 
 export type RebuildRelationsOptions = {
   repo?: string;

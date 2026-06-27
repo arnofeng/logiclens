@@ -65,7 +65,7 @@ describe("embedding batching", () => {
       return { data: inputs.map((text, index) => ({ embedding: [text.length, index] })) };
     });
 
-    const { createProviderCallRuntime } = await import("../src/resilience/providerPolicy.js");
+    const { createProviderCallRuntime } = await import("../src/shared/providerPolicy.js");
     const runtime = createProviderCallRuntime({ retry: { maxRetries: 0, timeoutMs: 0 } });
     const provider = new OpenAIEmbeddingProvider("test-embedding", "key");
     await expect(provider.embedTexts(["alpha", "beta"], runtime)).resolves.toEqual([[5, 0], [4, 0]]);
@@ -75,7 +75,7 @@ describe("embedding batching", () => {
 
   it("does not split global embedding failures such as auth or 5xx errors", async () => {
     const { OpenAIEmbeddingProvider } = await import("../src/semantic/openaiEmbeddingProvider.js");
-    const { createProviderCallRuntime } = await import("../src/resilience/providerPolicy.js");
+    const { createProviderCallRuntime } = await import("../src/shared/providerPolicy.js");
     openAiMock.create.mockRejectedValue(Object.assign(new Error("unauthorized"), { status: 401 }));
 
     const provider = new OpenAIEmbeddingProvider("test-embedding", "key");

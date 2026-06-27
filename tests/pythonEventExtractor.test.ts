@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseSourceFile } from "../src/parsers/parserRegistry.js";
 import { pythonEventExtractor } from "../src/extractors/builtin/pythonEventExtractor.js";
-import { repoId } from "../src/utils/path.js";
+import { repoId } from "../src/shared/path.js";
 import type { ExtractorFactBundle } from "../src/extractors/crossRepoContracts.js";
 
 async function extract(source: string): Promise<ExtractorFactBundle> {

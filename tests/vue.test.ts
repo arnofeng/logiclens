@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { eventExtractor } from "../src/extractors/builtin/eventExtractor.js";
 import { resolveImports } from "../src/extractors/resolveReferences.js";
 import { parseSourceFile } from "../src/parsers/parserRegistry.js";
-import { repoId } from "../src/utils/path.js";
+import { repoId } from "../src/shared/path.js";
 
 describe("vue parser", () => {
   it("extracts JS/TS symbols, imports, and calls from Vue SFC files", async () => {

@@ -1,5 +1,5 @@
 import type { ContractExtractor } from "../../plugins/types.js";
-import { confidenceFor } from "../../confidence.js";
+import { confidenceFor } from "../../shared/confidence.js";
 import {
   contract,
   createCrossRepoExtraction,

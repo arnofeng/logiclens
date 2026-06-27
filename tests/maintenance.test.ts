@@ -10,7 +10,7 @@ import { rejectEvidence } from "../src/graph/quality.js";
 import { rebuildRepoDependencies } from "../src/graph/rebuildRelations.js";
 import { upsertParsedFiles } from "../src/graph/upsert.js";
 import { parseSourceFile } from "../src/parsers/parserRegistry.js";
-import { repoId } from "../src/utils/path.js";
+import { repoId } from "../src/shared/path.js";
 
 describe("maintenance lifecycle", () => {
   it("marks missing files stale and excludes stale graph facts from default queries", async () => {

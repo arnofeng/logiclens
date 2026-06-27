@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseSourceFile } from "../src/parsers/parserRegistry.js";
 import { envConfigExtractor } from "../src/extractors/builtin/envConfigExtractor.js";
-import { repoId } from "../src/utils/path.js";
+import { repoId } from "../src/shared/path.js";
 
 describe("Env Config Extractor", () => {
   it("extracts config references via process.env and config.get using AST", async () => {

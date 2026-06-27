@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseSourceFile } from "../src/parsers/parserRegistry.js";
 import { goSchemaExtractor } from "../src/extractors/builtin/goSchemaExtractor.js";
-import { repoId } from "../src/utils/path.js";
+import { repoId } from "../src/shared/path.js";
 import type { ExtractorFactBundle } from "../src/extractors/crossRepoContracts.js";
 import type { SchemaSpec } from "../src/contracts/spec.js";
 

@@ -1,5 +1,5 @@
-import { hashText } from "../../utils/hash.js";
-import { sectionId } from "../../utils/path.js";
+import { hashText } from "../../shared/hash.js";
+import { sectionId } from "../../shared/path.js";
 import type { DocLink, DocSection, MarkdownCodeBlock, ParsedDocument } from "../../parsers/types.js";
 
 type Heading = {

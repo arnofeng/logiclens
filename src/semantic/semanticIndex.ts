@@ -4,12 +4,12 @@ import { ChromaClient, type Metadata } from "chromadb";
 import type { EmbeddingLevel, LogicLensConfig } from "../config/schema.js";
 import type { ParsedDocument, ParsedFile, ParsedGraphFile, RepoNode } from "../parsers/types.js";
 import { systemId } from "../graph/schema.js";
-import { hashText } from "../utils/hash.js";
-import type { ProgressReporter } from "../utils/progress.js";
-import { writeErrorLog } from "../utils/logger.js";
+import { hashText } from "../shared/hash.js";
+import type { ProgressReporter } from "../shared/progress.js";
+import { writeErrorLog } from "../shared/logger.js";
 import { cosineSimilarity, resolveEmbeddingProvider, type EmbeddingVector, type EmbeddingProvider } from "./embeddings.js";
 import { extractHeuristicEntities, extractHeuristicEntitiesFromSection } from "./extractEntities.js";
-import { createProviderCallRuntime, type ProviderCallStats, type ProviderPolicy } from "../resilience/providerPolicy.js";
+import { createProviderCallRuntime, type ProviderCallStats, type ProviderPolicy } from "../shared/providerPolicy.js";
 
 export type SemanticNodeKind = "Code" | "Section" | "Entity" | "File" | "Repo" | "System";
 

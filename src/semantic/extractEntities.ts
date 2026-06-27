@@ -1,5 +1,5 @@
 import type { CodeSymbol, DocSection, EntityNode } from "../parsers/types.js";
-import { entityId } from "../utils/path.js";
+import { entityId } from "../shared/path.js";
 
 const stopWords = new Set(["Promise", "String", "Number", "Boolean", "Array", "Map", "Set", "Error"]);
 

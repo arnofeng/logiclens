@@ -10,8 +10,8 @@ import { goQueries } from "./languages/go.js";
 import { GenericTreeSitterParser } from "./genericTreeSitterParser.js";
 import { createVueParser } from "./languages/vue.js";
 import { parserRegistry } from "../plugins/registry.js";
-import { fileId } from "../utils/path.js";
-import { hashText } from "../utils/hash.js";
+import { fileId } from "../shared/path.js";
+import { hashText } from "../shared/hash.js";
 import type { DocumentLanguage, FileLanguage, ParsedDocument, ParsedFile, ParsedGraphFile, SourceLanguage } from "./types.js";
 import type { LanguageParser } from "../plugins/types.js";
 

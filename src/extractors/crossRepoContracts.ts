@@ -18,7 +18,7 @@ import type {
   WorkflowOperationEdge
 } from "../parsers/types.js";
 import type { ExtractContext, PostExtractContext } from "../plugins/types.js";
-import { normalizeName } from "../utils/path.js";
+import { normalizeName } from "../shared/path.js";
 import { builtinContractExtractors } from "./builtin/index.js";
 import type { LogicLensConfig } from "../config/schema.js";
 import { loadConfig, defaultConfig } from "../config/loadConfig.js";

@@ -3,8 +3,8 @@ import type { GraphDB } from "../graph/db.js";
 import { parseSourceFile } from "../parsers/parserRegistry.js";
 import type { ParsedGraphFile, RepoNode } from "../parsers/types.js";
 import { scanRepoFiles, type ScannedFile } from "../repos/fileScanner.js";
-import { hashText } from "../utils/hash.js";
-import { fileId } from "../utils/path.js";
+import { hashText } from "../shared/hash.js";
+import { fileId } from "../shared/path.js";
 import type { LogicLensConfig } from "../config/schema.js";
 import { runIndexPhase } from "./phases.js";
 

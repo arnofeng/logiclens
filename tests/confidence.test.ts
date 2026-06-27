@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { confidenceBand, confidenceFor, PROBABLE_CONFIDENCE_THRESHOLD, scoreCallResolution } from "../src/confidence.js";
+import { confidenceBand, confidenceFor, PROBABLE_CONFIDENCE_THRESHOLD, scoreCallResolution } from "../src/shared/confidence.js";
 import { auditRelationQuality } from "../src/graph/quality.js";
 
 describe("confidence rules", () => {

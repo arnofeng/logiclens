@@ -4,8 +4,8 @@ import { summarizeCode } from "../semantic/summarizeCode.js";
 import { summarizeDocumentSection } from "../semantic/summarizeDocument.js";
 import { summarizeParsedGraphFile } from "../semantic/summarizeFile.js";
 import { summarizeReposAndSystem } from "../semantic/summarizeGraph.js";
-import { ProgressBar } from "../utils/progress.js";
-import { createProviderCallRuntime, formatProviderStats, ProviderCallError, type ProviderCallRuntime } from "../resilience/providerPolicy.js";
+import { ProgressBar } from "../shared/progress.js";
+import { createProviderCallRuntime, formatProviderStats, ProviderCallError, type ProviderCallRuntime } from "../shared/providerPolicy.js";
 import { runIndexPhase } from "./phases.js";
 
 type SummaryProgress = {

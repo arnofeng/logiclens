@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseSourceFile } from "../src/parsers/parserRegistry.js";
-import { repoId } from "../src/utils/path.js";
+import { repoId } from "../src/shared/path.js";
 
 describe("Docstring Extraction", () => {
   it("extracts and cleans comments/docstrings for TypeScript", async () => {

@@ -9,7 +9,7 @@ import { buildGraphFactsBatch } from "../src/graph/facts.js";
 import { KuzuGraphDB } from "../src/graph/db.js";
 import { writeGraphFactsWithMerge } from "../src/graph/upsert.js";
 import type { ContractNode, EvidenceNode, ParsedFile, RepoNode } from "../src/parsers/types.js";
-import { contractId, evidenceId, fileId, repoId } from "../src/utils/path.js";
+import { contractId, evidenceId, fileId, repoId } from "../src/shared/path.js";
 
 // --- Helpers ---
 

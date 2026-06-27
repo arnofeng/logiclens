@@ -6,7 +6,7 @@ import { buildGraphFactsBatch } from "../src/graph/facts.js";
 import { stageGraphFactsAsCsv } from "../src/graph/csvStaging.js";
 import { parseSourceFile } from "../src/parsers/parserRegistry.js";
 import type { ParsedFile, RepoNode } from "../src/parsers/types.js";
-import { fileId, repoId } from "../src/utils/path.js";
+import { fileId, repoId } from "../src/shared/path.js";
 
 describe("graph facts batch", () => {
   function parsedFile(repo: RepoNode, relativePath: string, imports: ParsedFile["imports"] = []): ParsedFile {

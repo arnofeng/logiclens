@@ -11,7 +11,7 @@ import {
 import { upsertParsedFiles } from "../src/graph/upsert.js";
 import { parseSourceFile } from "../src/parsers/parserRegistry.js";
 import type { ContractKind, ContractRole, RepoDependencyEdge, RepoNode } from "../src/parsers/types.js";
-import { repoId } from "../src/utils/path.js";
+import { repoId } from "../src/shared/path.js";
 
 function repo(name: string): RepoNode {
   return { id: repoId(name), name, path: path.resolve("tests/fixtures", name), remoteUrl: "", branch: "", commitSha: "", language: "typescript", indexedAt: new Date().toISOString() };

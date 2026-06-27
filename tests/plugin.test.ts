@@ -6,7 +6,7 @@ import { defaultConfig, writeConfig } from "../src/config/loadConfig.js";
 import { loadConfiguredPlugins } from "../src/plugins/loader.js";
 import { parserRegistry } from "../src/plugins/registry.js";
 import { parseSourceFile } from "../src/parsers/parserRegistry.js";
-import { repoId } from "../src/utils/path.js";
+import { repoId } from "../src/shared/path.js";
 
 async function makePluginWorkspace(): Promise<string> {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-plugin-"));

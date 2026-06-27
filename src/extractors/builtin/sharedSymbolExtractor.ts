@@ -1,5 +1,5 @@
-import { entityId } from "../../utils/path.js";
-import { confidenceFor } from "../../confidence.js";
+import { entityId } from "../../shared/path.js";
+import { confidenceFor } from "../../shared/confidence.js";
 import type { ContractExtractor } from "../../plugins/types.js";
 import {
   classifySharedContract,

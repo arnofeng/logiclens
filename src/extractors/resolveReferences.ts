@@ -1,13 +1,13 @@
 import path from "node:path";
 import { createRequire } from "node:module";
 import type { CallEdge, CodeSymbol, ImportEdge, ParsedFile } from "../parsers/types.js";
-import { fileId } from "../utils/path.js";
-import { confidenceBand, scoreCallResolution } from "../confidence.js";
+import { fileId } from "../shared/path.js";
+import { confidenceBand, scoreCallResolution } from "../shared/confidence.js";
 import Parser from "tree-sitter";
 import { getLanguageGrammar } from "../parsers/treeSitter.js";
 import { javaQueries } from "../parsers/languages/java.js";
 
-export { scoreCallResolution } from "../confidence.js";
+export { scoreCallResolution } from "../shared/confidence.js";
 
 type TypeScriptApi = typeof import("typescript");
 

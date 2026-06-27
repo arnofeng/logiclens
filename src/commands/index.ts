@@ -4,7 +4,7 @@ import { runIndexQueue } from "../indexing/scheduler.js";
 import { planIndexRun } from "../indexing/planning.js";
 import { createIndexRunContext } from "../indexing/context.js";
 import { runBatchedFullIndex, runDependencyRebuild, runFullCopyBulkIndex, runPerRepoIndex, type IndexCounters } from "../indexing/orchestrator.js";
-import { ProgressBar } from "../utils/progress.js";
+import { ProgressBar } from "../shared/progress.js";
 import { createLogicLens } from "../sdk/client.js";
 
 export type IndexOptions = {

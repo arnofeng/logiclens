@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { estimatedTokensFromText, runProviderCall, type ProviderPolicy } from "../resilience/providerPolicy.js";
+import { estimatedTokensFromText, runProviderCall, type ProviderPolicy } from "../shared/providerPolicy.js";
 import { buildAnswerContext, formatAnswerContext, type RagContextOptions } from "./context.js";
 import type { RetrievalResult } from "./retrieve.js";
 

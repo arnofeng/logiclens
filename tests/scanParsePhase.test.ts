@@ -7,8 +7,8 @@ import type { KuzuGraphDB } from "../src/graph/db.js";
 import { scanAndParseRepo } from "../src/indexing/scanParse.js";
 import type { RepoNode } from "../src/parsers/types.js";
 import { parserRegistry } from "../src/plugins/registry.js";
-import { hashText } from "../src/utils/hash.js";
-import { fileId, repoId } from "../src/utils/path.js";
+import { hashText } from "../src/shared/hash.js";
+import { fileId, repoId } from "../src/shared/path.js";
 
 function createProgressBar() {
   return {

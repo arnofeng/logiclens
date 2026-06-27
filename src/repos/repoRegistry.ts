@@ -1,6 +1,6 @@
 import path from "node:path";
 import type { LogicLensConfig } from "../config/schema.js";
-import { repoId } from "../utils/path.js";
+import { repoId } from "../shared/path.js";
 import type { RepoNode } from "../parsers/types.js";
 
 export function toRepoNode(repo: LogicLensConfig["repos"][number], cwd: string): RepoNode {

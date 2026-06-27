@@ -3,7 +3,7 @@ import type { ContractExtractor } from "../../plugins/types.js";
 import type { ParsedFile } from "../../parsers/types.js";
 import type { SchemaFieldSpec, SchemaSpec } from "../../contracts/spec.js";
 import { normalizePrimitiveType } from "../../contracts/spec.js";
-import { confidenceFor } from "../../confidence.js";
+import { confidenceFor } from "../../shared/confidence.js";
 import {
   classifySharedContract,
   contract,
@@ -21,7 +21,7 @@ import {
   parseSourceAst,
   walkSourceAst
 } from "./sourceAstUtils.js";
-import { entityId } from "../../utils/path.js";
+import { entityId } from "../../shared/path.js";
 
 /**
  * Python Schema Extractor — extracts field-level schema information from:

@@ -9,7 +9,7 @@ import type { ParsedGraphFile, RepoNode } from "../parsers/types.js";
 import type { IndexWriteMode } from "./context.js";
 import { runIndexPhase } from "./phases.js";
 import { shouldSummarizeGraphWithLlm, summarizeGraphWithProgress } from "./summaries.js";
-import type { ProgressReporter } from "../utils/progress.js";
+import type { ProgressReporter } from "../shared/progress.js";
 
 export type GraphWriterMode = "bulk-copy" | "append-copy" | "bulk-upsert" | "merge";
 

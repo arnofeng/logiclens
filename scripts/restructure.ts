@@ -9,10 +9,12 @@
  * Phases are defined in PHASES below. Delete this script after the restructure.
  */
 import path from "node:path";
-import { Project, Directory, SourceFile } from "ts-morph";
+import { Project, SourceFile, SyntaxKind } from "ts-morph";
 
 const root = process.cwd();
-const abs = (p: string): string => path.resolve(root, p);
+// ts-morph reports file paths with forward slashes; normalize so comparisons
+// work on Windows where path.resolve yields backslashes.
+const abs = (p: string): string => path.resolve(root, p).replace(/\\/g, "/");
 
 type Op =
   | { kind: "moveDir"; from: string; to: string }
@@ -85,13 +87,52 @@ function moveFile(project: Project, from: string, to: string): void {
 
 function moveFilesFlat(project: Project, fromDir: string, toDir: string, except: string[]): void {
   const fromAbs = abs(fromDir);
-  const files = project.getSourceFiles().filter((f: SourceFile) => path.dirname(f.getFilePath()) === fromAbs);
+  const dirOf = (p: string): string => p.replace(/\\/g, "/").replace(/\/[^/]+$/, "");
+  const files = project.getSourceFiles().filter((f: SourceFile) => dirOf(f.getFilePath()) === fromAbs);
   for (const file of files) {
     const name = path.basename(file.getFilePath());
     if (except.includes(name)) continue;
     file.move(abs(path.join(toDir, name)));
     console.log(`  moveFile  ${fromDir}/${name} -> ${toDir}/${name}`);
   }
+}
+
+const KNOWN_EXT = /\.(js|json|cjs|mjs|node)$/;
+
+function needsJs(spec: string): boolean {
+  return (spec.startsWith("./") || spec.startsWith("../")) && !KNOWN_EXT.test(spec);
+}
+
+/**
+ * ts-morph drops the explicit `.js` extension when it recomputes relative module
+ * specifiers, which breaks NodeNext resolution. Re-append it on every relative
+ * specifier that lacks a known extension (idempotent — already-correct ones are
+ * skipped). Covers static import/export declarations and dynamic import() calls.
+ */
+function fixExtensions(project: Project): number {
+  let fixed = 0;
+  for (const file of project.getSourceFiles()) {
+    for (const decl of [...file.getImportDeclarations(), ...file.getExportDeclarations()]) {
+      const spec = decl.getModuleSpecifierValue();
+      if (spec && needsJs(spec)) {
+        decl.setModuleSpecifier(`${spec}.js`);
+        fixed += 1;
+      }
+    }
+    for (const call of file.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+      if (call.getExpression().getKind() !== SyntaxKind.ImportKeyword) continue;
+      const arg = call.getArguments()[0];
+      if (arg && arg.getKind() === SyntaxKind.StringLiteral) {
+        const lit = arg.asKindOrThrow(SyntaxKind.StringLiteral);
+        const spec = lit.getLiteralValue();
+        if (needsJs(spec)) {
+          lit.setLiteralValue(`${spec}.js`);
+          fixed += 1;
+        }
+      }
+    }
+  }
+  return fixed;
 }
 
 async function main(): Promise<void> {
@@ -108,6 +149,8 @@ async function main(): Promise<void> {
     else if (op.kind === "moveFile") moveFile(project, op.from, op.to);
     else moveFilesFlat(project, op.fromDir, op.toDir, op.except ?? []);
   }
+  const fixed = fixExtensions(project);
+  console.log(`  fixed ${fixed} module specifier extension(s)`);
   await project.save();
   console.log("Saved.");
 }

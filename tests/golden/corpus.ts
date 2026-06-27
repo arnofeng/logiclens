@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { GoldenCorpusExpectations } from "../../src/golden/evaluate.js";
 import type { FileLanguage, RepoNode } from "../../src/parsers/types.js";
-import { repoId } from "../../src/utils/path.js";
+import { repoId } from "../../src/shared/path.js";
 
 export type GoldenFile = {
   repo: string;

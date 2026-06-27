@@ -1,4 +1,4 @@
-import { confidenceFor } from "../../confidence.js";
+import { confidenceFor } from "../../shared/confidence.js";
 import type { ContractRole } from "../../parsers/types.js";
 import type { ContractExtractor } from "../../plugins/types.js";
 import {

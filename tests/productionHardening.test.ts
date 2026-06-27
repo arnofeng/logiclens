@@ -4,8 +4,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { defaultConfig, writeConfig, loadConfig } from "../src/config/loadConfig.js";
 import { KuzuGraphDB } from "../src/graph/db.js";
-import { assertReadOnlyCypher, isReadOnlyCypher } from "../src/utils/cypherSafety.js";
-import { logicLensVersion } from "../src/version.js";
+import { assertReadOnlyCypher, isReadOnlyCypher } from "../src/shared/cypherSafety.js";
+import { logicLensVersion } from "../src/shared/version.js";
 
 describe("production hardening", () => {
   it("uses a package-backed LogicLens version", () => {

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { configSchema } from "../src/config/schema.js";
 import { parserRegistry } from "../src/plugins/registry.js";
 import { scanRepoFiles } from "../src/repos/fileScanner.js";
-import { isGeneratedFile } from "../src/utils/generatedFile.js";
+import { isGeneratedFile } from "../src/shared/generatedFile.js";
 
 describe("file scanner", () => {
   it("includes JavaScript, JSX, and Markdown document files", async () => {

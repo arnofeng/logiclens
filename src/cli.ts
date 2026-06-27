@@ -2,7 +2,7 @@
 import fs from "node:fs/promises";
 import { Command } from "commander";
 import { configPath } from "./config/loadConfig.js";
-import { writeErrorLog } from "./utils/logger.js";
+import { writeErrorLog } from "./shared/logger.js";
 import { addRepoCommand } from "./commands/addRepo.js";
 import { addReposCommand } from "./commands/addRepos.js";
 import { askCommand } from "./commands/ask.js";
@@ -27,7 +27,7 @@ import { watchCommand } from "./commands/watch.js";
 import { installCommand } from "./commands/install.js";
 import { uninstallCommand } from "./commands/uninstall.js";
 import { loadConfiguredPlugins } from "./plugins/loader.js";
-import { logicLensVersion } from "./version.js";
+import { logicLensVersion } from "./shared/version.js";
 
 const program = new Command();
 

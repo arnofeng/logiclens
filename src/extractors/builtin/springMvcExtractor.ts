@@ -1,5 +1,5 @@
 import { canonicalHttpContractKey, joinApiPaths } from "../../contracts/apiPath.js";
-import { confidenceFor } from "../../confidence.js";
+import { confidenceFor } from "../../shared/confidence.js";
 import type { AnnotationFact } from "../../parsers/facts.js";
 import type { ParsedFile } from "../../parsers/types.js";
 import type { ContractExtractor } from "../../plugins/types.js";

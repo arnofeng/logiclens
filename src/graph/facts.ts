@@ -28,7 +28,7 @@ import type {
   WorkflowOperationEdge
 } from "../parsers/types.js";
 import { extractHeuristicEntities, extractHeuristicEntitiesFromSection } from "../semantic/extractEntities.js";
-import { confidenceFor } from "../confidence.js";
+import { confidenceFor } from "../shared/confidence.js";
 
 export type ContainsEdge = {
   fromId: string;

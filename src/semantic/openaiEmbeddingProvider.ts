@@ -5,7 +5,7 @@ import {
   runProviderCall,
   ProviderCallError,
   type ProviderCallRuntime
-} from "../resilience/providerPolicy.js";
+} from "../shared/providerPolicy.js";
 import type { EmbeddingProvider, EmbeddingVector } from "../plugins/types.js";
 
 const MAX_INPUT_CHARS = 8000;

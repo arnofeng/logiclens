@@ -5,8 +5,8 @@ import type { DetectedFramework } from "./types.js";
 import type { ContractExtractor } from "../plugins/types.js";
 import type { FrameworkDetector } from "./types.js";
 import type { LogicLensConfig } from "../config/schema.js";
-import { fileId, evidenceId } from "../utils/path.js";
-import { confidenceFor } from "../confidence.js";
+import { fileId, evidenceId } from "../shared/path.js";
+import { confidenceFor } from "../shared/confidence.js";
 
 // Helper to check if file exists
 async function fileExists(filePath: string): Promise<boolean> {

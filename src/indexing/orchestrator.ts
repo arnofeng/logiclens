@@ -11,7 +11,7 @@ import { getGraphWriteFailureDetails, runFactBuildPhase, runGraphWritePhase, sel
 import { runLlmSummaryPhase, type SummaryFailureState } from "./summaries.js";
 import { runIndexStateCommitPhase } from "./stateCommit.js";
 import { runRelationRebuildPhase, runSemanticWritePhase, runStaleMarkPhase } from "./semanticWrite.js";
-import type { ProgressReporter } from "../utils/progress.js";
+import type { ProgressReporter } from "../shared/progress.js";
 
 type ProgressBarLike = {
   tick(label?: string): void;

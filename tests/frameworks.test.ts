@@ -6,7 +6,7 @@ import { detectFrameworks, isExtractorEnabled } from "../src/frameworks/detect.j
 import type { RepoNode } from "../src/parsers/types.js";
 import type { ContractExtractor } from "../src/plugins/types.js";
 import { defaultConfig } from "../src/config/loadConfig.js";
-import { confidenceFor } from "../src/confidence.js";
+import { confidenceFor } from "../src/shared/confidence.js";
 
 function mockRepoNode(name: string, repoPath: string): RepoNode {
   return {

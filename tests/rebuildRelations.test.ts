@@ -14,7 +14,7 @@ import type {
   RepoNode,
   SemanticRelationEdge
 } from "../src/parsers/types.js";
-import { repoId } from "../src/utils/path.js";
+import { repoId } from "../src/shared/path.js";
 
 // ---------------------------------------------------------------------------
 // Pure-function unit tests

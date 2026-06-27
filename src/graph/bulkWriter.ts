@@ -5,7 +5,7 @@ import type { CsvTableName } from "./csvStaging.js";
 import { stageGraphFactsAsCsv, type CsvStagingResult } from "./csvStaging.js";
 import type { GraphFactsBatch } from "./facts.js";
 import { systemId } from "./schema.js";
-import type { ProgressReporter } from "../utils/progress.js";
+import type { ProgressReporter } from "../shared/progress.js";
 
 export type KuzuBulkWriteResult = {
   staging: CsvStagingResult;

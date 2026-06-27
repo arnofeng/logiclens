@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseSourceFile } from "../src/parsers/parserRegistry.js";
 import { goExtractor } from "../src/extractors/builtin/goExtractor.js";
-import { repoId } from "../src/utils/path.js";
+import { repoId } from "../src/shared/path.js";
 import type { ExtractedRelation } from "../src/extractors/crossRepoContracts.js";
 
 function isRepoContractRelation(relation: ExtractedRelation): relation is ExtractedRelation & { kind: "repo-contract" } {

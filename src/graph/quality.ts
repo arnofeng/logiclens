@@ -1,5 +1,5 @@
 import type { GraphDB } from "./db.js";
-import { PROBABLE_CONFIDENCE_THRESHOLD } from "../confidence.js";
+import { PROBABLE_CONFIDENCE_THRESHOLD } from "../shared/confidence.js";
 
 export type LowConfidenceRelation = {
   evidenceId: string;

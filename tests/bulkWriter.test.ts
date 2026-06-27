@@ -10,7 +10,7 @@ import { listCode, listContracts, listDependencies, traceContract, traceEntity }
 import { rebuildRepoDependencies } from "../src/graph/rebuildRelations.js";
 import { parseSourceFile } from "../src/parsers/parserRegistry.js";
 import type { ParsedGraphFile, RepoNode } from "../src/parsers/types.js";
-import { repoId } from "../src/utils/path.js";
+import { repoId } from "../src/shared/path.js";
 
 describe("kuzu bulk graph writer", () => {
   function fixtureRepo(name: string): RepoNode {

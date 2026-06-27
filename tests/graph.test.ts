@@ -9,7 +9,7 @@ import { upsertParsedFiles } from "../src/graph/upsert.js";
 import { parseSourceFile } from "../src/parsers/parserRegistry.js";
 import type { ParsedFile, RepoNode } from "../src/parsers/types.js";
 import { retrieveForQuestion } from "../src/rag/retrieve.js";
-import { fileId, repoId } from "../src/utils/path.js";
+import { fileId, repoId } from "../src/shared/path.js";
 
 describe("graph", () => {
   function parsedFile(repo: RepoNode, relativePath: string): ParsedFile {

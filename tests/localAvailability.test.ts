@@ -8,7 +8,7 @@ import { upsertParsedFiles } from "../src/graph/upsert.js";
 import { parseSourceFile } from "../src/parsers/parserRegistry.js";
 import { retrieveForQuestion } from "../src/rag/retrieve.js";
 import { answerQuestion } from "../src/rag/answer.js";
-import { repoId } from "../src/utils/path.js";
+import { repoId } from "../src/shared/path.js";
 
 describe("local availability", () => {
   it("indexes, queries, and answers cross-repo graph data without OPENAI_API_KEY", async () => {

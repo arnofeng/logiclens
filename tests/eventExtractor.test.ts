@@ -8,7 +8,7 @@ import { canonicalEventContractKey, inferBrokerFromCallee } from "../src/contrac
 import { buildGraphFactsBatch } from "../src/graph/facts.js";
 import { KuzuGraphDB } from "../src/graph/db.js";
 import { writeGraphFactsWithMerge } from "../src/graph/upsert.js";
-import { repoId } from "../src/utils/path.js";
+import { repoId } from "../src/shared/path.js";
 import type { ExtractedRelation } from "../src/extractors/crossRepoContracts.js";
 import type { ExtractorFactBundle } from "../src/extractors/crossRepoContracts.js";
 

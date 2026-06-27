@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import YAML from "yaml";
 import type Parser from "tree-sitter";
-import { confidenceFor } from "../../confidence.js";
+import { confidenceFor } from "../../shared/confidence.js";
 import type { ParsedFile } from "../../parsers/types.js";
 import type { ContractExtractor } from "../../plugins/types.js";
 import {

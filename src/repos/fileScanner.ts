@@ -5,8 +5,8 @@ import ignore from "ignore";
 import type { LogicLensConfig } from "../config/schema.js";
 import { builtinLanguageForPath, registerBuiltinParsers } from "../parsers/parserRegistry.js";
 import { parserRegistry } from "../plugins/registry.js";
-import { toPosixPath } from "../utils/path.js";
-import { isGeneratedFile } from "../utils/generatedFile.js";
+import { toPosixPath } from "../shared/path.js";
+import { isGeneratedFile } from "../shared/generatedFile.js";
 
 export type ScannedFile = {
   absolutePath: string;
