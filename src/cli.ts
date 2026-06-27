@@ -8,6 +8,7 @@ import { addReposCommand } from "./commands/addRepos.js";
 import { askCommand } from "./commands/ask.js";
 import { contractsCommand } from "./commands/contracts.js";
 import { depsCommand } from "./commands/deps.js";
+import { explainDepsCommand } from "./commands/explainDeps.js";
 import { impactCommand } from "./commands/impact.js";
 import { indexCommand } from "./commands/index.js";
 import { initCommand } from "./commands/init.js";
@@ -44,6 +45,15 @@ program
   .option("--limit <number>", "Maximum dependencies to list", (value) => Number(value))
   .description("List structured cross-repo dependencies")
   .action((options: { strength?: "strong" | "weak"; type?: string; limit?: number }) => depsCommand(options));
+program
+  .command("explain-deps")
+  .argument("<sourceRepo>")
+  .argument("<targetRepo>")
+  .option("--kind <kind>", "Filter by SEMANTIC_REL kind")
+  .description("Explain semantic relations between two repos")
+  .action((sourceRepo: string, targetRepo: string, options: { kind?: string }) =>
+    explainDepsCommand(sourceRepo, targetRepo, options)
+  );
 program.command("contracts").option("--kind <kind>", "Filter by contract kind: package, api, event, dto, schema, enum, or config").option("--limit <number>", "Maximum contracts to list", (value) => Number(value)).description("List contracts and producer/consumer counts").action((options: { kind?: string; limit?: number }) => contractsCommand(options));
 program.command("trace").argument("<contractOrEntity>").description("Trace contract kind:value or entity name").action((target: string) => traceCommand(target));
 program.command("query").argument("<cypher>").description("Run a raw Kuzu Cypher query").action((cypher: string) => queryCommand(cypher));

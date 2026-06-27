@@ -420,6 +420,52 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
     }
   );
 
+  // Phase 4.1: Semantic trace over SEMANTIC_REL edges (single-hop)
+  server.registerTool(
+    "logiclens_semantic_trace",
+    {
+      description:
+        "Trace single-hop SEMANTIC_REL edges from a ContractSpec to discover directly " +
+        "related specs across repos. Useful for understanding why two services are connected " +
+        "(which endpoint calls which, which event is published/subscribed, which schema backs " +
+        "a request body, etc.). NOTE: single-hop only — multi-hop transitive tracing is not yet available.",
+      inputSchema: {
+        specId: z.string().describe("The ContractSpec ID to trace from"),
+        direction: z
+          .enum(["outgoing", "incoming", "both"])
+          .optional()
+          .describe("Direction: outgoing (from→to), incoming (to→from), or both (default)"),
+      },
+    },
+    async ({ specId, direction }) => {
+      return wrapWithFreshness(
+        "logiclens_semantic_trace",
+        { specId, direction },
+        async () => {
+          const result = await client.semanticTrace(specId, {
+            direction: (direction as "outgoing" | "incoming" | "both") ?? "both",
+          });
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify(
+                  {
+                    specId,
+                    direction: direction ?? "both",
+                    relations: result,
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+          };
+        }
+      );
+    }
+  );
+
   // Register Resources
   server.registerResource(
     "LogicLens Configuration",

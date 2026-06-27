@@ -252,7 +252,13 @@ export function apiPathParams(pathTemplate: string): string[] {
   return [...pathTemplate.matchAll(/\{([^}]+)\}/g)].map((m) => m[1]!);
 }
 
-function buildHttpEndpointSpec(apiContract: ContractNode, apiPath: string, method?: string): HttpEndpointSpec {
+function buildHttpEndpointSpec(
+  apiContract: ContractNode,
+  apiPath: string,
+  method?: string,
+  requestBodyType?: string,
+  responseBodyType?: string
+): HttpEndpointSpec {
   const pathTemplate = apiPathTemplate(apiContract.key);
   return {
     kind: "http-endpoint",
@@ -260,6 +266,8 @@ function buildHttpEndpointSpec(apiContract: ContractNode, apiPath: string, metho
     path: apiPath,
     pathTemplate,
     pathParams: apiPathParams(pathTemplate),
+    requestBodyType,
+    responseBodyType,
     auth: "unknown"
   };
 }
@@ -300,6 +308,8 @@ export function pushApiContractFromPath(input: {
   confidence: number;
   method?: string;
   framework?: string;
+  requestBodyType?: string;
+  responseBodyType?: string;
 }): void {
   const apiContract = contract("api", input.apiPath, `HTTP API ${input.apiPath}`, input.method);
   const evidenceNode = evidence({
@@ -316,7 +326,7 @@ export function pushApiContractFromPath(input: {
   pushContractSpec({
     result: input.result,
     contractNode: apiContract,
-    spec: buildHttpEndpointSpec(apiContract, input.apiPath, input.method),
+    spec: buildHttpEndpointSpec(apiContract, input.apiPath, input.method, input.requestBodyType, input.responseBodyType),
     repoId: input.file.repoId,
     fileId: input.file.fileId,
     evidenceNode,

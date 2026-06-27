@@ -1,0 +1,264 @@
+import { describe, expect, it } from "vitest";
+import { resolveSemanticRelations } from "../../src/contracts/resolver.js";
+import type { ContractSpecNode, RepoContractEdge, SemanticRelationEdge } from "../../src/parsers/types.js";
+import { serializeSpec } from "../../src/contracts/spec.js";
+
+function makeHttpSpec(opts: {
+  id: string; contractId: string; repoId: string;
+  method?: string; path: string; pathTemplate?: string;
+  requestBodyType?: string; responseBodyType?: string;
+}): ContractSpecNode {
+  return {
+    id: opts.id,
+    contractId: opts.contractId,
+    specKind: "http-endpoint",
+    repoId: opts.repoId,
+    fileId: `file:${opts.repoId}:test`,
+    evidenceId: `ev:${opts.id}`,
+    canonicalKey: opts.method ? `${opts.method}:${opts.pathTemplate ?? opts.path}` : (opts.pathTemplate ?? opts.path),
+    httpMethod: opts.method,
+    pathTemplate: opts.pathTemplate ?? opts.path,
+    specJson: serializeSpec({
+      kind: "http-endpoint",
+      method: opts.method as any,
+      path: opts.path,
+      pathTemplate: opts.pathTemplate ?? opts.path,
+      pathParams: [],
+      auth: "unknown",
+      requestBodyType: opts.requestBodyType,
+      responseBodyType: opts.responseBodyType
+    }),
+    confidence: 0.9
+  };
+}
+
+function makeEventSpec(opts: {
+  id: string; contractId: string; repoId: string;
+  topic: string; payloadType?: string;
+}): ContractSpecNode {
+  const topic = opts.topic.toLowerCase();
+  return {
+    id: opts.id,
+    contractId: opts.contractId,
+    specKind: "event",
+    repoId: opts.repoId,
+    fileId: `file:${opts.repoId}:test`,
+    evidenceId: `ev:${opts.id}`,
+    canonicalKey: topic,
+    eventTopic: topic,
+    specJson: serializeSpec({
+      kind: "event",
+      topic,
+      payloadType: opts.payloadType,
+      broker: "kafka"
+    }),
+    confidence: 0.85
+  };
+}
+
+function makeSchemaSpec(opts: {
+  id: string; contractId: string; repoId: string;
+  name: string;
+}): ContractSpecNode {
+  return {
+    id: opts.id,
+    contractId: opts.contractId,
+    specKind: "schema",
+    repoId: opts.repoId,
+    fileId: `file:${opts.repoId}:test`,
+    evidenceId: `ev:${opts.id}`,
+    canonicalKey: opts.name.toLowerCase(),
+    specJson: serializeSpec({
+      kind: "schema",
+      name: opts.name,
+      language: "java",
+      fields: []
+    }),
+    confidence: 0.85
+  };
+}
+
+function makeRepoContract(opts: {
+  contractId: string; repoId: string; role: string;
+}): RepoContractEdge {
+  return {
+    contractId: opts.contractId,
+    repoId: opts.repoId,
+    role: opts.role as any,
+    evidenceId: `ev:${opts.contractId}`,
+    confidence: 0.9
+  };
+}
+
+describe("Resolver Integration", () => {
+  it("produces CALLS_ENDPOINT between consumer and producer across repos", () => {
+    const producer = makeHttpSpec({
+      id: "spec:p1", contractId: "c:p1", repoId: "repo-orders",
+      method: "GET", path: "/api/orders"
+    });
+    const consumer = makeHttpSpec({
+      id: "spec:c1", contractId: "c:c1", repoId: "repo-web",
+      method: "GET", path: "/api/orders"
+    });
+    const repoContracts = [
+      makeRepoContract({ contractId: "c:p1", repoId: "repo-orders", role: "producer" }),
+      makeRepoContract({ contractId: "c:c1", repoId: "repo-web", role: "consumer" })
+    ];
+
+    const edges = resolveSemanticRelations({
+      contractSpecs: [producer, consumer],
+      repoContracts,
+      existingSemanticRelations: []
+    });
+
+    const callEdges = edges.filter((e) => e.kind === "CALLS_ENDPOINT");
+    expect(callEdges).toHaveLength(1);
+    expect(callEdges[0]!.fromSpecId).toBe(consumer.id);
+    expect(callEdges[0]!.toSpecId).toBe(producer.id);
+  });
+
+  it("produces PUBLISHES_EVENT and SUBSCRIBES_EVENT", () => {
+    const producer = makeEventSpec({
+      id: "spec:p1", contractId: "c:p1", repoId: "repo-orders",
+      topic: "order.created"
+    });
+    const consumer = makeEventSpec({
+      id: "spec:c1", contractId: "c:c1", repoId: "repo-notify",
+      topic: "order.created"
+    });
+    const repoContracts = [
+      makeRepoContract({ contractId: "c:p1", repoId: "repo-orders", role: "producer" }),
+      makeRepoContract({ contractId: "c:c1", repoId: "repo-notify", role: "consumer" })
+    ];
+
+    const edges = resolveSemanticRelations({
+      contractSpecs: [producer, consumer],
+      repoContracts,
+      existingSemanticRelations: []
+    });
+
+    expect(edges.filter((e) => e.kind === "PUBLISHES_EVENT")).toHaveLength(1);
+    expect(edges.filter((e) => e.kind === "SUBSCRIBES_EVENT")).toHaveLength(1);
+  });
+
+  it("produces REQUEST_SCHEMA from http spec body types", () => {
+    const httpSpec = makeHttpSpec({
+      id: "spec:h1", contractId: "c:h1", repoId: "repo-orders",
+      method: "POST", path: "/api/orders", requestBodyType: "CreateOrderDTO"
+    });
+    const schemaSpec = makeSchemaSpec({
+      id: "spec:s1", contractId: "c:s1", repoId: "repo-orders",
+      name: "CreateOrderDTO"
+    });
+    const repoContracts = [
+      makeRepoContract({ contractId: "c:h1", repoId: "repo-orders", role: "producer" }),
+      makeRepoContract({ contractId: "c:s1", repoId: "repo-orders", role: "producer" })
+    ];
+
+    const edges = resolveSemanticRelations({
+      contractSpecs: [httpSpec, schemaSpec],
+      repoContracts,
+      existingSemanticRelations: []
+    });
+
+    expect(edges.filter((e) => e.kind === "REQUEST_SCHEMA")).toHaveLength(1);
+  });
+
+  it("deduplicates edges", () => {
+    // Two specs that would produce the same edge twice
+    const producer = makeHttpSpec({
+      id: "spec:p1", contractId: "c:p1", repoId: "repo-a",
+      method: "GET", path: "/api/test"
+    });
+    const consumer = makeHttpSpec({
+      id: "spec:c1", contractId: "c:c1", repoId: "repo-b",
+      method: "GET", path: "/api/test"
+    });
+    // Duplicate specs (same contractId, different repos — simulating a
+    // scenario that should produce one edge, not multiple duplicates)
+    const repoContracts = [
+      makeRepoContract({ contractId: "c:p1", repoId: "repo-a", role: "producer" }),
+      makeRepoContract({ contractId: "c:c1", repoId: "repo-b", role: "consumer" })
+    ];
+
+    const edges = resolveSemanticRelations({
+      contractSpecs: [producer, consumer],
+      repoContracts,
+      existingSemanticRelations: []
+    });
+
+    // No duplicate CALLS_ENDPOINT edges
+    const callEdges = edges.filter((e) => e.kind === "CALLS_ENDPOINT");
+    expect(callEdges).toHaveLength(1);
+  });
+
+  it("handles empty specs gracefully", () => {
+    const edges = resolveSemanticRelations({
+      contractSpecs: [],
+      repoContracts: [],
+      existingSemanticRelations: []
+    });
+    expect(edges).toHaveLength(0);
+  });
+
+  it("resolves pending USES_SCHEMA from existing relations", () => {
+    const derivedSpec = makeSchemaSpec({
+      id: "spec:derived", contractId: "c:derived", repoId: "repo-a",
+      name: "DerivedDTO"
+    });
+    const baseSpec = makeSchemaSpec({
+      id: "spec:base", contractId: "c:base", repoId: "repo-a",
+      name: "BaseDTO"
+    });
+    const pendingRel: SemanticRelationEdge = {
+      fromSpecId: "spec:c:derived:pending",
+      toSpecId: "schema-ref:BaseDTO",
+      kind: "USES_SCHEMA",
+      evidenceId: "ev:pending",
+      reason: "TS utility type references base schema BaseDTO",
+      confidence: 0.7
+    };
+    const repoContracts = [
+      makeRepoContract({ contractId: "c:derived", repoId: "repo-a", role: "producer" }),
+      makeRepoContract({ contractId: "c:base", repoId: "repo-a", role: "producer" })
+    ];
+
+    const edges = resolveSemanticRelations({
+      contractSpecs: [derivedSpec, baseSpec],
+      repoContracts,
+      existingSemanticRelations: [pendingRel]
+    });
+
+    const usesEdges = edges.filter((e) => e.kind === "USES_SCHEMA");
+    expect(usesEdges).toHaveLength(1);
+    expect(usesEdges[0]!.fromSpecId).toBe(derivedSpec.id);
+    expect(usesEdges[0]!.toSpecId).toBe(baseSpec.id);
+  });
+
+  it("skips same-repo consumer-producer pairs (no intra-repo edges)", () => {
+    const producer = makeHttpSpec({
+      id: "spec:p1", contractId: "c:p1", repoId: "repo-same",
+      method: "GET", path: "/api/orders"
+    });
+    const consumer = makeHttpSpec({
+      id: "spec:c1", contractId: "c:c1", repoId: "repo-same",
+      method: "GET", path: "/api/orders"
+    });
+    const repoContracts = [
+      makeRepoContract({ contractId: "c:p1", repoId: "repo-same", role: "producer" }),
+      makeRepoContract({ contractId: "c:c1", repoId: "repo-same", role: "consumer" })
+    ];
+
+    const edges = resolveSemanticRelations({
+      contractSpecs: [producer, consumer],
+      repoContracts,
+      existingSemanticRelations: []
+    });
+
+    // No CALLS_ENDPOINT, PUBLISHES_EVENT, or SUBSCRIBES_EVENT within same repo
+    const crossEdges = edges.filter((e) =>
+      e.kind === "CALLS_ENDPOINT" || e.kind === "PUBLISHES_EVENT" || e.kind === "SUBSCRIBES_EVENT"
+    );
+    expect(crossEdges).toHaveLength(0);
+  });
+});

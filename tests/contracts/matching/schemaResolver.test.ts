@@ -1,0 +1,205 @@
+import { describe, expect, it } from "vitest";
+import { resolveSchemaRelations } from "../../../src/contracts/matching/schemaResolver.js";
+import type { ContractSpecNode, SemanticRelationEdge } from "../../../src/parsers/types.js";
+import { serializeSpec } from "../../../src/contracts/spec.js";
+
+function makeHttpSpec(opts: {
+  id: string; contractId: string; repoId: string;
+  requestBodyType?: string; responseBodyType?: string;
+}): ContractSpecNode {
+  return {
+    id: opts.id,
+    contractId: opts.contractId,
+    specKind: "http-endpoint",
+    repoId: opts.repoId,
+    fileId: `file:${opts.repoId}:test`,
+    evidenceId: `ev:${opts.id}`,
+    canonicalKey: "POST:/api/test",
+    httpMethod: "POST",
+    pathTemplate: "/api/test",
+    specJson: serializeSpec({
+      kind: "http-endpoint",
+      method: "POST",
+      path: "/api/test",
+      pathTemplate: "/api/test",
+      pathParams: [],
+      auth: "unknown",
+      requestBodyType: opts.requestBodyType,
+      responseBodyType: opts.responseBodyType
+    }),
+    confidence: 0.9
+  };
+}
+
+function makeEventSpec(opts: {
+  id: string; contractId: string; repoId: string;
+  payloadType?: string;
+}): ContractSpecNode {
+  return {
+    id: opts.id,
+    contractId: opts.contractId,
+    specKind: "event",
+    repoId: opts.repoId,
+    fileId: `file:${opts.repoId}:test`,
+    evidenceId: `ev:${opts.id}`,
+    canonicalKey: "order.created",
+    eventTopic: "order.created",
+    specJson: serializeSpec({
+      kind: "event",
+      topic: "order.created",
+      payloadType: opts.payloadType,
+      broker: "kafka"
+    }),
+    confidence: 0.85
+  };
+}
+
+function makeSchemaSpec(opts: {
+  id: string; contractId: string; name: string; repoId?: string;
+}): ContractSpecNode {
+  return {
+    id: opts.id,
+    contractId: opts.contractId,
+    specKind: "schema",
+    repoId: opts.repoId ?? "repo-schemas",
+    fileId: `file:${opts.repoId ?? "repo-schemas"}:test`,
+    evidenceId: `ev:${opts.id}`,
+    canonicalKey: opts.name.toLowerCase(),
+    specJson: serializeSpec({
+      kind: "schema",
+      name: opts.name,
+      language: "java",
+      fields: []
+    }),
+    confidence: 0.85
+  };
+}
+
+describe("Schema Resolver", () => {
+  it("creates REQUEST_SCHEMA from http-endpoint requestBodyType", () => {
+    const httpSpec = makeHttpSpec({
+      id: "spec:h1", contractId: "c:h1", repoId: "repo-a",
+      requestBodyType: "CreateOrderDTO"
+    });
+    const schemaSpec = makeSchemaSpec({
+      id: "spec:s1", contractId: "c:s1", name: "CreateOrderDTO"
+    });
+
+    const edges = resolveSchemaRelations([httpSpec, schemaSpec], new Map(), []);
+    const reqEdges = edges.filter((e) => e.kind === "REQUEST_SCHEMA");
+    expect(reqEdges).toHaveLength(1);
+    expect(reqEdges[0]!.fromSpecId).toBe(httpSpec.id);
+    expect(reqEdges[0]!.toSpecId).toBe(schemaSpec.id);
+  });
+
+  it("creates RESPONSE_SCHEMA from http-endpoint responseBodyType", () => {
+    const httpSpec = makeHttpSpec({
+      id: "spec:h1", contractId: "c:h1", repoId: "repo-a",
+      responseBodyType: "OrderResponse"
+    });
+    const schemaSpec = makeSchemaSpec({
+      id: "spec:s1", contractId: "c:s1", name: "OrderResponse"
+    });
+
+    const edges = resolveSchemaRelations([httpSpec, schemaSpec], new Map(), []);
+    const respEdges = edges.filter((e) => e.kind === "RESPONSE_SCHEMA");
+    expect(respEdges).toHaveLength(1);
+    expect(respEdges[0]!.fromSpecId).toBe(httpSpec.id);
+    expect(respEdges[0]!.toSpecId).toBe(schemaSpec.id);
+  });
+
+  it("creates EVENT_PAYLOAD from event payloadType", () => {
+    const eventSpec = makeEventSpec({
+      id: "spec:e1", contractId: "c:e1", repoId: "repo-a",
+      payloadType: "OrderCreatedEvent"
+    });
+    const schemaSpec = makeSchemaSpec({
+      id: "spec:s1", contractId: "c:s1", name: "OrderCreatedEvent"
+    });
+
+    const edges = resolveSchemaRelations([eventSpec, schemaSpec], new Map(), []);
+    const payloadEdges = edges.filter((e) => e.kind === "EVENT_PAYLOAD");
+    expect(payloadEdges).toHaveLength(1);
+    expect(payloadEdges[0]!.fromSpecId).toBe(eventSpec.id);
+    expect(payloadEdges[0]!.toSpecId).toBe(schemaSpec.id);
+  });
+
+  it("resolves pending USES_SCHEMA (schema-ref: placeholder)", () => {
+    const baseSchemaSpec = makeSchemaSpec({
+      id: "spec:base", contractId: "c:base", name: "BaseDTO"
+    });
+    // The pending edge references contract "c:derived" as the source.
+    // We need a ContractSpec for that contract so the resolver can map
+    // contractId → specId. In this test the derived contract's spec is
+    // the same as the base (simplified — in reality they'd be different).
+    const derivedSpec = makeSchemaSpec({
+      id: "spec:derived", contractId: "c:derived", name: "DerivedDTO"
+    });
+    const pendingRel: SemanticRelationEdge = {
+      fromSpecId: "spec:c:derived:pending",
+      toSpecId: "schema-ref:BaseDTO",
+      kind: "USES_SCHEMA",
+      evidenceId: "ev:pending",
+      reason: "TS utility type references base schema BaseDTO",
+      confidence: 0.7
+    };
+
+    const edges = resolveSchemaRelations(
+      [baseSchemaSpec, derivedSpec], new Map(), [pendingRel]
+    );
+    const usesEdges = edges.filter((e) => e.kind === "USES_SCHEMA");
+    expect(usesEdges).toHaveLength(1);
+    expect(usesEdges[0]!.fromSpecId).toBe(derivedSpec.id);
+    expect(usesEdges[0]!.toSpecId).toBe(baseSchemaSpec.id);
+    expect(usesEdges[0]!.confidence).toBe(0.7);
+  });
+
+  it("matches schema names case-insensitively", () => {
+    const httpSpec = makeHttpSpec({
+      id: "spec:h1", contractId: "c:h1", repoId: "repo-a",
+      requestBodyType: "createorderdto"
+    });
+    const schemaSpec = makeSchemaSpec({
+      id: "spec:s1", contractId: "c:s1", name: "CreateOrderDTO"
+    });
+
+    const edges = resolveSchemaRelations([httpSpec, schemaSpec], new Map(), []);
+    const reqEdges = edges.filter((e) => e.kind === "REQUEST_SCHEMA");
+    expect(reqEdges).toHaveLength(1);
+  });
+
+  it("does NOT create edges when schema not found", () => {
+    const httpSpec = makeHttpSpec({
+      id: "spec:h1", contractId: "c:h1", repoId: "repo-a",
+      requestBodyType: "NonExistentDTO"
+    });
+
+    const edges = resolveSchemaRelations([httpSpec], new Map(), []);
+    expect(edges).toHaveLength(0);
+  });
+
+  it("handles empty input gracefully", () => {
+    const edges = resolveSchemaRelations([], new Map(), []);
+    expect(edges).toHaveLength(0);
+  });
+
+  it("creates both REQUEST_SCHEMA and RESPONSE_SCHEMA when both types present", () => {
+    const httpSpec = makeHttpSpec({
+      id: "spec:h1", contractId: "c:h1", repoId: "repo-a",
+      requestBodyType: "CreateOrderDTO",
+      responseBodyType: "OrderResponse"
+    });
+    const reqSchema = makeSchemaSpec({
+      id: "spec:s1", contractId: "c:s1", name: "CreateOrderDTO"
+    });
+    const respSchema = makeSchemaSpec({
+      id: "spec:s2", contractId: "c:s2", name: "OrderResponse"
+    });
+
+    const edges = resolveSchemaRelations(
+      [httpSpec, reqSchema, respSchema], new Map(), []
+    );
+    expect(edges.filter((e) => e.kind === "REQUEST_SCHEMA")).toHaveLength(1);
+    expect(edges.filter((e) => e.kind === "RESPONSE_SCHEMA")).toHaveLength(1);
+  });
+});

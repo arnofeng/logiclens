@@ -9,6 +9,8 @@ import {
   pushApiContractFromPath,
   toFactBundle
 } from "./shared.js";
+import { findContainingSymbol, parseSourceAst, walkSourceAst } from "./sourceAstUtils.js";
+import type Parser from "tree-sitter";
 
 const ANNOTATION_METHOD_MAP: Record<string, string> = {
   GetMapping: "GET",
@@ -50,6 +52,132 @@ function springMappingsFromFacts(file: ParsedFile): Map<string, { annotation: st
   return result;
 }
 
+// ---------------------------------------------------------------------------
+// Phase 3-E: Body type extraction from Java AST
+// ---------------------------------------------------------------------------
+
+type BodyTypeInfo = {
+  requestBodyType?: string;
+  responseBodyType?: string;
+};
+
+/**
+ * Extracts @RequestBody parameter types and ResponseEntity<T> return types
+ * from Java method declarations. Returns a map keyed by method symbol ID.
+ */
+function extractBodyTypes(file: ParsedFile): Map<string, BodyTypeInfo> {
+  const map = new Map<string, BodyTypeInfo>();
+  const ast = parseSourceAst(file, "java");
+  if (!ast) return map;
+
+  walkSourceAst(ast.tree.rootNode, (node) => {
+    if (node.type !== "method_declaration") return;
+    const methodSymbol = findContainingSymbol(file.symbols, node);
+    if (!methodSymbol) return;
+
+    const info: BodyTypeInfo = {};
+
+    // Request body: find formal parameter annotated with @RequestBody
+    const params = node.childForFieldName("parameters");
+    if (params) {
+      for (let i = 0; i < params.namedChildCount; i++) {
+        const param = params.namedChild(i);
+        if (!param) continue;
+        const hasRequestBody = hasAnnotation(param, "RequestBody");
+        if (!hasRequestBody) continue;
+        const typeName = extractParameterTypeName(param);
+        if (typeName) info.requestBodyType = typeName;
+      }
+    }
+
+    // Response body: extract type argument from ResponseEntity<T> return type
+    const returnType = node.childForFieldName("type");
+    if (returnType) {
+      const responseType = extractResponseTypeName(returnType);
+      if (responseType) info.responseBodyType = responseType;
+    }
+
+    if (info.requestBodyType || info.responseBodyType) {
+      map.set(methodSymbol.id, info);
+    }
+  });
+
+  return map;
+}
+
+function hasAnnotation(node: Parser.SyntaxNode, annotationName: string): boolean {
+  const modifiers = node.childForFieldName("modifiers");
+  if (!modifiers) return false;
+  for (let i = 0; i < modifiers.namedChildCount; i++) {
+    const mod = modifiers.namedChild(i);
+    if (!mod) continue;
+    if (mod.type === "annotation" || mod.type === "marker_annotation") {
+      const name = mod.childForFieldName("name");
+      if (name && (name.text === annotationName || name.text === `@${annotationName}`)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function extractParameterTypeName(param: Parser.SyntaxNode): string | undefined {
+  // For a formal_parameter like "@RequestBody CreateOrderDTO dto"
+  // the type node is a child. Look for type_identifier or generic_type.
+  for (let i = 0; i < param.namedChildCount; i++) {
+    const child = param.namedChild(i);
+    if (!child) continue;
+    if (child.type === "type_identifier") return child.text;
+    if (child.type === "generic_type") {
+      // ResponseEntity<CreateOrderDTO> → resolve the first type argument
+      const typeArgs = child.childForFieldName("type_arguments");
+      if (typeArgs) {
+        const first = typeArgs.namedChild(0);
+        if (first?.type === "type_identifier") return first.text;
+        if (first?.type === "generic_type") return first.text;
+      }
+      // Fallback: return the raw generic text
+      return child.text;
+    }
+    if (child.type === "array_type") return child.text;
+    if (child.type === "integral_type" || child.type === "floating_point_type" ||
+        child.type === "boolean_type" || child.type === "void_type") {
+      return child.text;
+    }
+  }
+  return undefined;
+}
+
+function extractResponseTypeName(returnType: Parser.SyntaxNode): string | undefined {
+  // Direct type_identifier: `OrderResponse someMethod(...)`
+  if (returnType.type === "type_identifier") {
+    return returnType.text;
+  }
+  // Generic type: ResponseEntity<OrderResponse> → extract first type argument
+  if (returnType.type === "generic_type") {
+    const baseName = returnType.childForFieldName("name");
+    const baseTypeName = baseName?.text;
+    if (baseTypeName === "ResponseEntity" || baseTypeName === "Mono" || baseTypeName === "Flux") {
+      const typeArgs = returnType.childForFieldName("type_arguments");
+      if (typeArgs) {
+        const first = typeArgs.namedChild(0);
+        if (first?.type === "type_identifier") return first.text;
+        if (first?.type === "generic_type") {
+          // Nested generic: ResponseEntity<List<OrderResponse>>
+          const innerName = first.childForFieldName("name");
+          return innerName?.text ?? first.text;
+        }
+        return first?.text;
+      }
+    }
+  }
+  return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Extractor
+// ---------------------------------------------------------------------------
+
 export const springMvcExtractor: ContractExtractor = {
   name: "builtin:spring-mvc",
   languages: ["java"],
@@ -59,6 +187,7 @@ export const springMvcExtractor: ContractExtractor = {
     for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
       if (file.language !== "java") continue;
       const mappingsByOwner = springMappingsFromFacts(file);
+      const bodyTypesBySymbol = extractBodyTypes(file);
       const classSymbols = file.symbols.filter((symbol) => symbol.kind === "class");
       for (const classSymbol of classSymbols) {
         const baseMappings = (mappingsByOwner.get(classSymbol.id) ?? [])
@@ -83,6 +212,7 @@ export const springMvcExtractor: ContractExtractor = {
         const basePaths = baseMappings.length > 0 ? baseMappings.map((mapping) => mapping.path) : [""];
         const methodSymbols = file.symbols.filter((symbol) => symbol.kind === "method" && symbol.startLine >= classSymbol.startLine && symbol.endLine <= classSymbol.endLine);
         for (const methodSymbol of methodSymbols) {
+          const bodyTypes = bodyTypesBySymbol.get(methodSymbol.id);
           const rawMappings = mappingsByOwner.get(methodSymbol.id) ?? [];
           const mappings = rawMappings
             .map((mapping) => ({ ...mapping, offset: Math.max(0, methodSymbol.source.indexOf(mapping.raw)) }));
@@ -103,7 +233,9 @@ export const springMvcExtractor: ContractExtractor = {
                 rule: "spring-mapping-producer",
                 confidence: confidenceFor("exact-parser-route"),
                 method: httpMethod,
-                framework: "spring-mvc"
+                framework: "spring-mvc",
+                requestBodyType: bodyTypes?.requestBodyType,
+                responseBodyType: bodyTypes?.responseBodyType
               });
             }
           }

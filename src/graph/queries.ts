@@ -325,3 +325,72 @@ export async function traceEntity(db: GraphDB, value: string, limit = 100): Prom
   ));
   return [...new Map(rows.map((row) => [`${row.repoName}:${row.sourceKind}:${row.name}:${row.line}:${row.role}`, row])).values()].slice(0, limit);
 }
+
+// ---------------------------------------------------------------------------
+// Phase 4.1: Semantic trace over SEMANTIC_REL edges
+// ---------------------------------------------------------------------------
+
+export type SemanticTraceRow = {
+  fromSpecId: string;
+  toSpecId: string;
+  kind: string;
+  reason: string;
+  confidence: number;
+  fromContractKey: string;
+  fromSpecKind: string;
+  fromRepoId: string;
+  toContractKey: string;
+  toSpecKind: string;
+  toRepoId: string;
+};
+
+/**
+ * Traces single-hop SEMANTIC_REL edges from/to a given ContractSpec.
+ *
+ * NOTE: This is a single-hop query only. Multi-hop transitive tracing is
+ * not yet implemented. If you need transitive closure, call this function
+ * recursively at the application layer.
+ *
+ * @param db        The graph database connection.
+ * @param specId    The ContractSpec ID to start tracing from.
+ * @param direction "outgoing" (from → to), "incoming" (to → from), or "both".
+ *                  Defaults to "both".
+ */
+export async function semanticTrace(
+  db: GraphDB,
+  specId: string,
+  direction: "outgoing" | "incoming" | "both" = "both"
+): Promise<SemanticTraceRow[]> {
+  let cypher: string;
+  if (direction === "outgoing") {
+    cypher = `
+      MATCH (a:ContractSpec {id: $specId})-[r:SEMANTIC_REL]->(b:ContractSpec)
+      WHERE r.active IS NULL OR r.active = true
+      RETURN a.id AS fromSpecId, b.id AS toSpecId, r.kind AS kind,
+             r.reason AS reason, r.confidence AS confidence,
+             a.canonicalKey AS fromContractKey, a.specKind AS fromSpecKind, a.repoId AS fromRepoId,
+             b.canonicalKey AS toContractKey, b.specKind AS toSpecKind, b.repoId AS toRepoId
+    `;
+  } else if (direction === "incoming") {
+    cypher = `
+      MATCH (a:ContractSpec)-[r:SEMANTIC_REL]->(b:ContractSpec {id: $specId})
+      WHERE r.active IS NULL OR r.active = true
+      RETURN a.id AS fromSpecId, b.id AS toSpecId, r.kind AS kind,
+             r.reason AS reason, r.confidence AS confidence,
+             a.canonicalKey AS fromContractKey, a.specKind AS fromSpecKind, a.repoId AS fromRepoId,
+             b.canonicalKey AS toContractKey, b.specKind AS toSpecKind, b.repoId AS toRepoId
+    `;
+  } else {
+    cypher = `
+      MATCH (a:ContractSpec)-[r:SEMANTIC_REL]->(b:ContractSpec)
+      WHERE (a.id = $specId OR b.id = $specId)
+        AND (r.active IS NULL OR r.active = true)
+      RETURN a.id AS fromSpecId, b.id AS toSpecId, r.kind AS kind,
+             r.reason AS reason, r.confidence AS confidence,
+             a.canonicalKey AS fromContractKey, a.specKind AS fromSpecKind, a.repoId AS fromRepoId,
+             b.canonicalKey AS toContractKey, b.specKind AS toSpecKind, b.repoId AS toRepoId
+    `;
+  }
+
+  return db.query<SemanticTraceRow>(cypher, { specId });
+}

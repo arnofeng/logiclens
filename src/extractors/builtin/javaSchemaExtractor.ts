@@ -133,59 +133,6 @@ export const javaSchemaExtractor: ContractExtractor = {
     return toFactBundle(result);
   },
 
-  /**
-   * Post-extract: resolve USES_SCHEMA edges (both from inheritance and
-   * TS utility type references accumulated across extractors).
-   */
-  postExtract(context) {
-    const result = createCrossRepoExtraction();
-
-    const schemaNameToSpecId = new Map<string, string>();
-    for (const spec of context.mergedFacts.contractSpecs) {
-      if (spec.specKind !== "schema") continue;
-      const parsed = safeJsonParse(spec.specJson) as { name?: string } | null;
-      if (parsed?.name) {
-        schemaNameToSpecId.set(parsed.name.toLowerCase(), spec.id);
-      }
-    }
-    for (const contract of context.mergedFacts.contracts) {
-      if (contract.kind !== "schema" && contract.kind !== "dto") continue;
-      const spec = context.mergedFacts.contractSpecs.find(
-        (s) => s.contractId === contract.id
-      );
-      if (spec) {
-        schemaNameToSpecId.set(contract.name.toLowerCase(), spec.id);
-        schemaNameToSpecId.set(contract.key.toLowerCase(), spec.id);
-      }
-    }
-
-    // Resolve pending edges
-    for (const rel of context.mergedFacts.semanticRelations) {
-      if (rel.kind !== "USES_SCHEMA") continue;
-      if (!rel.toSpecId.startsWith("schema-ref:")) continue;
-
-      const baseTypeName = rel.toSpecId.slice("schema-ref:".length).toLowerCase();
-      const resolvedSpecId = schemaNameToSpecId.get(baseTypeName);
-      if (!resolvedSpecId) continue;
-
-      // Find the actual fromSpecId
-      const fromSpec = context.mergedFacts.contractSpecs.find(
-        (s) => rel.fromSpecId.startsWith(`spec:${s.contractId}:`)
-      );
-      if (!fromSpec) continue;
-
-      result.semanticRelations.push({
-        fromSpecId: fromSpec.id,
-        toSpecId: resolvedSpecId,
-        kind: "USES_SCHEMA",
-        evidenceId: rel.evidenceId,
-        reason: rel.reason,
-        confidence: rel.confidence
-      });
-    }
-
-    return toFactBundle(result);
-  }
 };
 
 // ---------------------------------------------------------------------------

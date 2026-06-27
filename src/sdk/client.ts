@@ -1,4 +1,5 @@
 import path from "node:path";
+import { repoId } from "../utils/path.js";
 import { loadConfig, defaultConfig } from "../config/loadConfig.js";
 import type { LogicLensConfig } from "../config/schema.js";
 import type { GraphDB, GraphValue, Stats } from "../graph/db.js";
@@ -558,6 +559,69 @@ export class LogicLensClient {
           completedRepos: []
         }
       };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Phase 4.1: Semantic trace and explain-deps
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Traces single-hop SEMANTIC_REL edges from a given ContractSpec ID.
+   *
+   * NOTE: Single-hop only. Multi-hop transitive closure is not yet implemented.
+   *
+   * @param specId    The ContractSpec ID to trace from.
+   * @param options.direction  "outgoing", "incoming", or "both" (default).
+   * @returns Semantic trace rows showing the direct relation edges.
+   */
+  async semanticTrace(
+    specId: string,
+    options?: { direction?: "outgoing" | "incoming" | "both" }
+  ): Promise<import("../graph/queries.js").SemanticTraceRow[]> {
+    const db = await this.getDb();
+    const { semanticTrace } = await import("../graph/queries.js");
+    return semanticTrace(db, specId, options?.direction ?? "both");
+  }
+
+  /**
+   * Explains why two repos depend on each other by traversing SEMANTIC_REL edges.
+   * Finds ContractSpecs in each repo and the semantic relations connecting them.
+   *
+   * @param fromRepo  The source repository name.
+   * @param toRepo    The target repository name.
+   * @returns An object containing the matched spec pairs and their relations.
+   */
+  async explainDeps(fromRepo: string, toRepo: string): Promise<{
+    fromRepo: string;
+    toRepo: string;
+    relations: import("../graph/queries.js").SemanticTraceRow[];
+  }> {
+    const db = await this.getDb();
+    const fromRepoId = repoId(fromRepo);
+    const toRepoId = repoId(toRepo);
+
+    // Find ContractSpec IDs in the source repo.
+    // LIMIT 100: for repos with >100 specs this may silently drop edges.
+    // In practice typical repos have tens of specs; if this becomes a
+    // problem we can paginate or remove the cap.
+    const fromSpecs = await db.query<{ id: string }>(
+      "MATCH (s:ContractSpec) WHERE s.repoId = $repoId AND (s.active IS NULL OR s.active = true) RETURN s.id AS id LIMIT 100",
+      { repoId: fromRepoId }
+    );
+
+    const { semanticTrace } = await import("../graph/queries.js");
+    const allRelations: import("../graph/queries.js").SemanticTraceRow[] = [];
+
+    for (const fromSpec of fromSpecs) {
+      const relations = await semanticTrace(db, fromSpec.id, "outgoing");
+      for (const rel of relations) {
+        if (rel.toRepoId === toRepoId) {
+          allRelations.push(rel);
+        }
+      }
+    }
+
+    return { fromRepo, toRepo, relations: allRelations };
   }
 
   /**

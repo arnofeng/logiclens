@@ -31,6 +31,7 @@ import {
   toFactBundle as crossRepoToFactBundle,
   uniqueById
 } from "./builtin/shared.js";
+import { resolveSemanticRelations } from "../contracts/resolver.js";
 
 export type ExtractedRelation =
   | ({ kind: "repo-contract" } & RepoContractEdge)
@@ -272,6 +273,24 @@ export async function extractCrossRepoContracts(
     repoResolver: (repoId) => repos.find((repo) => repo.id === repoId),
     aliasOverrides: options.aliasOverrides
   }, config);
+
+  // Phase 4.1: Run the language-independent dual-track resolver to produce
+  // SEMANTIC_REL edges (CALLS_ENDPOINT, PUBLISHES_EVENT, REQUEST_SCHEMA, etc.)
+  const resolverRelations = resolveSemanticRelations({
+    contractSpecs: facts.contractSpecs,
+    repoContracts: facts.repoContracts,
+    existingSemanticRelations: facts.semanticRelations
+  });
+  facts.semanticRelations.push(...resolverRelations);
+
+  // Remove pending placeholder edges that have been resolved by the resolver.
+  // These carry placeholder IDs (spec:<id>:pending, schema-ref:<Type>) and would
+  // be no-ops at write time (no matching ContractSpec nodes), but keeping them
+  // in the fact set is misleading.
+  facts.semanticRelations = facts.semanticRelations.filter(
+    (rel) => !rel.toSpecId.startsWith("schema-ref:") && !rel.fromSpecId.endsWith(":pending")
+  );
+
   const contractsById = new Map(facts.contracts.map((contractNode) => [contractNode.id, contractNode]));
   const evidenceById = new Map(facts.evidence.map((evidenceNode) => [evidenceNode.id, evidenceNode]));
   const participants: ContractParticipant[] = facts.repoContracts.flatMap((edge) => {

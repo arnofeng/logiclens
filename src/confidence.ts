@@ -21,9 +21,15 @@ export type ConfidenceRule =
   | "heuristic-schema-fields"
   | "heuristic-generic-type-param"
   | "heuristic-request-body-type"
+  | "heuristic-response-body-type"
   | "fallback-framework-language"
   | "fallback-framework-signature"
-  | "method-unknown-fallback";
+  | "method-unknown-fallback"
+  | "exact-method-path-match"
+  | "path-only-match"
+  | "template-compatible-match"
+  | "static-path-to-template-match"
+  | "wildcard-path-match";
 
 export type ConfidenceBand = "exact" | "probable" | "heuristic";
 
@@ -52,9 +58,15 @@ const CONFIDENCE_BY_RULE: Record<ConfidenceRule, number> = {
   "heuristic-schema-fields": 0.75,
   "heuristic-generic-type-param": 0.7,
   "heuristic-request-body-type": 0.7,
+  "heuristic-response-body-type": 0.7,
   "fallback-framework-language": 0.55,
   "fallback-framework-signature": 0.7,
-  "method-unknown-fallback": 0.6
+  "method-unknown-fallback": 0.6,
+  "exact-method-path-match": 0.95,
+  "path-only-match": 0.75,
+  "template-compatible-match": 0.9,
+  "static-path-to-template-match": 0.9,
+  "wildcard-path-match": 0.8
 };
 
 export function confidenceFor(rule: ConfidenceRule): number {
