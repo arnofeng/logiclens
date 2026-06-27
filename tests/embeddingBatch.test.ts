@@ -33,7 +33,7 @@ describe("embedding batching", () => {
   });
 
   it("embeds multiple texts with one OpenAI request in order", async () => {
-    const { OpenAIEmbeddingProvider } = await import("../src/semantic/openaiEmbeddingProvider.js");
+    const { OpenAIEmbeddingProvider } = await import("../src/adapters/embeddings/openaiEmbeddingProvider.js");
     const provider = new OpenAIEmbeddingProvider("test-embedding", "key", "https://embedding.example.com/v1");
     const longText = "x".repeat(8100);
 
@@ -50,7 +50,7 @@ describe("embedding batching", () => {
   });
 
   it("returns empty embeddings without an api key", async () => {
-    const { OpenAIEmbeddingProvider } = await import("../src/semantic/openaiEmbeddingProvider.js");
+    const { OpenAIEmbeddingProvider } = await import("../src/adapters/embeddings/openaiEmbeddingProvider.js");
     const provider = new OpenAIEmbeddingProvider("test-embedding");
 
     await expect(provider.embedTexts(["alpha", "beta"])).resolves.toEqual([undefined, undefined]);
@@ -58,7 +58,7 @@ describe("embedding batching", () => {
   });
 
   it("splits payload/input embedding batch failures and keeps successful single items", async () => {
-    const { OpenAIEmbeddingProvider } = await import("../src/semantic/openaiEmbeddingProvider.js");
+    const { OpenAIEmbeddingProvider } = await import("../src/adapters/embeddings/openaiEmbeddingProvider.js");
     openAiMock.create.mockImplementation(async ({ input }: { input: string | string[] }) => {
       const inputs = Array.isArray(input) ? input : [input];
       if (inputs.length > 1) throw Object.assign(new Error("payload too large"), { status: 413 });
@@ -74,7 +74,7 @@ describe("embedding batching", () => {
   });
 
   it("does not split global embedding failures such as auth or 5xx errors", async () => {
-    const { OpenAIEmbeddingProvider } = await import("../src/semantic/openaiEmbeddingProvider.js");
+    const { OpenAIEmbeddingProvider } = await import("../src/adapters/embeddings/openaiEmbeddingProvider.js");
     const { createProviderCallRuntime } = await import("../src/shared/providerPolicy.js");
     openAiMock.create.mockRejectedValue(Object.assign(new Error("unauthorized"), { status: 401 }));
 
@@ -92,7 +92,7 @@ describe("embedding batching", () => {
 
   it("batches changed semantic records and skips cached records", async () => {
     const { embeddingProviderRegistry } = await import("../src/plugins/registry.js");
-    const { OpenAIEmbeddingProvider } = await import("../src/semantic/openaiEmbeddingProvider.js");
+    const { OpenAIEmbeddingProvider } = await import("../src/adapters/embeddings/openaiEmbeddingProvider.js");
     const { indexSemanticText } = await import("../src/semantic/semanticIndex.js");
 
     const provider = new OpenAIEmbeddingProvider("test-embedding", "key");
@@ -158,7 +158,7 @@ describe("embedding batching", () => {
 
   it("does not treat records without embeddings as cached", async () => {
     const { embeddingProviderRegistry } = await import("../src/plugins/registry.js");
-    const { OpenAIEmbeddingProvider } = await import("../src/semantic/openaiEmbeddingProvider.js");
+    const { OpenAIEmbeddingProvider } = await import("../src/adapters/embeddings/openaiEmbeddingProvider.js");
     const { indexSemanticText } = await import("../src/semantic/semanticIndex.js");
 
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-embedding-missing-cache-"));
@@ -208,7 +208,7 @@ describe("embedding batching", () => {
 
   it("only indexes docs and repo level metadata when level is docs", async () => {
     const { embeddingProviderRegistry } = await import("../src/plugins/registry.js");
-    const { OpenAIEmbeddingProvider } = await import("../src/semantic/openaiEmbeddingProvider.js");
+    const { OpenAIEmbeddingProvider } = await import("../src/adapters/embeddings/openaiEmbeddingProvider.js");
     const { indexSemanticText } = await import("../src/semantic/semanticIndex.js");
 
     const provider = new OpenAIEmbeddingProvider("test-embedding", "key", undefined, "openai-docs");

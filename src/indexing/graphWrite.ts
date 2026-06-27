@@ -4,7 +4,7 @@ import { writeGraphFactsBatch } from "../graph/batchWriter.js";
 import { writeGraphFactsWithKuzuAppendCopy, writeGraphFactsWithKuzuBulk, writeGraphFactsWithKuzuBulkUpsert } from "../graph/bulkWriter.js";
 import type { GraphDB, GraphWriteAtomicityMode, GraphWriteBatchStatus } from "../graph/db.js";
 import { buildGraphFactsBatch, type GraphFactsBatch } from "../graph/facts.js";
-import { writeGraphFactsWithNeo4jBatch } from "../graph/neo4j/Neo4jBatchWriter.js";
+import { writeGraphFactsWithNeo4jBatch } from "../adapters/graph-db/neo4j/Neo4jBatchWriter.js";
 import type { ParsedGraphFile, RepoNode } from "../parsers/types.js";
 import type { IndexWriteMode } from "./context.js";
 import { runIndexPhase } from "./phases.js";

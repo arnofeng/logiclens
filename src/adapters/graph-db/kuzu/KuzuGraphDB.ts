@@ -23,8 +23,8 @@ import type {
   SemanticRelationEdge,
   WorkflowNode,
   WorkflowOperationEdge
-} from "../../parsers/types.js";
-import { schemaStatements, systemId } from "../schema.js";
+} from "../../../parsers/types.js";
+import { schemaStatements, systemId } from "../../../graph/schema.js";
 import type {
   GraphDB,
   GraphValue,
@@ -34,7 +34,7 @@ import type {
   ActiveAliasOverride,
   ContractSummaryRow,
   Stats
-} from "../db.js";
+} from "../../../graph/db.js";
 
 async function allRows(result: QueryResult | QueryResult[]): Promise<Record<string, KuzuValue>[]> {
   const results = Array.isArray(result) ? result : [result];

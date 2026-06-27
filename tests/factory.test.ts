@@ -2,10 +2,10 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { registerGraphProvider, createGraphDB, type GraphDBFactory } from "../src/graph/factory.js";
 
 // Mock the kuzu register module to avoid loading native drivers
-vi.mock("../src/graph/kuzu/register.js", () => ({ registerGraphProvider: vi.fn() }));
+vi.mock("../src/adapters/graph-db/kuzu/register.js", () => ({ registerGraphProvider: vi.fn() }));
 
 // Mock Neo4jGraphDB to avoid loading the neo4j driver
-vi.mock("../src/graph/neo4j/Neo4jGraphDB.js", () => ({
+vi.mock("../src/adapters/graph-db/neo4j/Neo4jGraphDB.js", () => ({
   Neo4jGraphDB: { open: vi.fn() }
 }));
 
@@ -18,7 +18,7 @@ vi.mock("../src/graph/factory.js", () => ({
 
 // Trigger the real neo4j register module's side-effect, which calls
 // registerGraphProvider (our mock above) and captures the open handler.
-await import("../src/graph/neo4j/register.js");
+await import("../src/adapters/graph-db/neo4j/register.js");
 
 describe("graph factory", () => {
   beforeEach(() => {
@@ -80,19 +80,19 @@ describe("neo4j register validation (real open handler)", () => {
   });
 
   it("accepts both username and password", async () => {
-    const { Neo4jGraphDB } = await import("../src/graph/neo4j/Neo4jGraphDB.js");
+    const { Neo4jGraphDB } = await import("../src/adapters/graph-db/neo4j/Neo4jGraphDB.js");
     vi.mocked(Neo4jGraphDB.open).mockResolvedValueOnce({ close: vi.fn() } as any);
     await expect(registered["neo4j"].open({ username: "neo4j", password: "secret" })).resolves.toBeDefined();
   });
 
   it("accepts neither username nor password (defaults)", async () => {
-    const { Neo4jGraphDB } = await import("../src/graph/neo4j/Neo4jGraphDB.js");
+    const { Neo4jGraphDB } = await import("../src/adapters/graph-db/neo4j/Neo4jGraphDB.js");
     vi.mocked(Neo4jGraphDB.open).mockResolvedValueOnce({ close: vi.fn() } as any);
     await expect(registered["neo4j"].open({})).resolves.toBeDefined();
   });
 
   it("uses default url when none provided", async () => {
-    const { Neo4jGraphDB } = await import("../src/graph/neo4j/Neo4jGraphDB.js");
+    const { Neo4jGraphDB } = await import("../src/adapters/graph-db/neo4j/Neo4jGraphDB.js");
     vi.mocked(Neo4jGraphDB.open).mockClear();
     vi.mocked(Neo4jGraphDB.open).mockResolvedValueOnce({ close: vi.fn() } as any);
     await registered["neo4j"].open({});
@@ -100,7 +100,7 @@ describe("neo4j register validation (real open handler)", () => {
   });
 
   it("passes credentials when both username and password are provided", async () => {
-    const { Neo4jGraphDB } = await import("../src/graph/neo4j/Neo4jGraphDB.js");
+    const { Neo4jGraphDB } = await import("../src/adapters/graph-db/neo4j/Neo4jGraphDB.js");
     vi.mocked(Neo4jGraphDB.open).mockClear();
     vi.mocked(Neo4jGraphDB.open).mockResolvedValueOnce({ close: vi.fn() } as any);
     await registered["neo4j"].open({ username: "neo4j", password: "secret" });

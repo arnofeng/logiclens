@@ -23,7 +23,7 @@ import type {
 } from "../parsers/types.js";
 
 // Re-export KuzuGraphDB for backward compatibility (factory registration, tests)
-export { KuzuGraphDB } from "./kuzu/KuzuGraphDB.js";
+export { KuzuGraphDB } from "../adapters/graph-db/kuzu/KuzuGraphDB.js";
 
 /**
  * Summary statistics representing the counts of different nodes and edges in the graph database.

@@ -19,8 +19,8 @@ export function registerGraphProvider(provider: string, factory: GraphDBFactory)
  */
 async function ensureProvider(provider: string): Promise<void> {
   if (factories.has(provider)) return;
-  if (provider === "kuzu") await import("./kuzu/register.js");
-  else if (provider === "neo4j") await import("./neo4j/register.js");
+  if (provider === "kuzu") await import("../adapters/graph-db/kuzu/register.js");
+  else if (provider === "neo4j") await import("../adapters/graph-db/neo4j/register.js");
 }
 
 export async function createGraphDB(

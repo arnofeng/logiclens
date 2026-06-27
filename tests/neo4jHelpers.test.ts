@@ -18,7 +18,7 @@ vi.mock("neo4j-driver", () => ({
   isInt: mockIsInt
 }));
 
-import { toNeo4jValue, toNeo4jParams, toNumber, decodeList, decodeJournalRow } from "../src/graph/neo4j/Neo4jGraphDB.js";
+import { toNeo4jValue, toNeo4jParams, toNumber, decodeList, decodeJournalRow } from "../src/adapters/graph-db/neo4j/Neo4jGraphDB.js";
 
 describe("Neo4j toNeo4jValue", () => {
   it("converts bigint to neo4j integer", () => {

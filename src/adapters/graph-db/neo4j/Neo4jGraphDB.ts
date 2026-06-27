@@ -21,8 +21,8 @@ import type {
   SemanticRelationEdge,
   WorkflowNode,
   WorkflowOperationEdge
-} from "../../parsers/types.js";
-import { systemId } from "../schema.js";
+} from "../../../parsers/types.js";
+import { systemId } from "../../../graph/schema.js";
 import type {
   GraphDB,
   GraphValue,
@@ -32,7 +32,7 @@ import type {
   ActiveAliasOverride,
   ContractSummaryRow,
   Stats
-} from "../db.js";
+} from "../../../graph/db.js";
 
 /**
  * Convert a GraphValue to a Neo4j-compatible value.

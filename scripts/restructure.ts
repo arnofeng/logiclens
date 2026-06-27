@@ -71,11 +71,22 @@ const PHASES: Record<string, Op[]> = {
   ]
 };
 
+// Move a directory by relocating each source file individually. SourceFile.move
+// creates destination directories on save (mkdir -p), avoiding the ENOENT that
+// ts-morph's Directory.move rename hits when the destination parent is missing.
 function moveDir(project: Project, from: string, to: string): void {
-  const dir = project.getDirectory(abs(from));
-  if (!dir) throw new Error(`Directory not found: ${from}`);
-  dir.move(abs(to));
-  console.log(`  moveDir   ${from} -> ${to}`);
+  const fromAbs = abs(from);
+  const toAbs = abs(to);
+  const files = project.getSourceFiles().filter((f: SourceFile) => {
+    const p = f.getFilePath().replace(/\\/g, "/");
+    return p === fromAbs || p.startsWith(`${fromAbs}/`);
+  });
+  if (files.length === 0) throw new Error(`No source files under directory: ${from}`);
+  for (const file of files) {
+    const rel = file.getFilePath().replace(/\\/g, "/").slice(fromAbs.length); // leading "/" + nested subpath
+    file.move(`${toAbs}${rel}`);
+  }
+  console.log(`  moveDir   ${from} -> ${to} (${files.length} files)`);
 }
 
 function moveFile(project: Project, from: string, to: string): void {
@@ -124,6 +135,17 @@ function fixExtensions(project: Project): number {
       const arg = call.getArguments()[0];
       if (arg && arg.getKind() === SyntaxKind.StringLiteral) {
         const lit = arg.asKindOrThrow(SyntaxKind.StringLiteral);
+        const spec = lit.getLiteralValue();
+        if (needsJs(spec)) {
+          lit.setLiteralValue(`${spec}.js`);
+          fixed += 1;
+        }
+      }
+    }
+    // type-position imports: `import("../x").Type`
+    for (const importType of file.getDescendantsOfKind(SyntaxKind.ImportType)) {
+      const lit = importType.getFirstDescendantByKind(SyntaxKind.StringLiteral);
+      if (lit) {
         const spec = lit.getLiteralValue();
         if (needsJs(spec)) {
           lit.setLiteralValue(`${spec}.js`);
