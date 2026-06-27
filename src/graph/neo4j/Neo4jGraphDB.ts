@@ -352,6 +352,31 @@ export class Neo4jGraphDB implements GraphDB {
     );
   }
 
+  async addSemanticRelationsBatch(edges: SemanticRelationEdge[]): Promise<void> {
+    if (edges.length === 0) return;
+    const batchSize = 5000;
+    for (let i = 0; i < edges.length; i += batchSize) {
+      const chunk = edges.slice(i, i + batchSize);
+      const params = chunk.map((edge) => ({
+        fromSpecId: edge.fromSpecId,
+        toSpecId: edge.toSpecId,
+        kind: edge.kind,
+        evidenceId: edge.evidenceId,
+        reason: edge.reason,
+        confidence: edge.confidence,
+        batchId: edge.batchId ?? "",
+        active: edge.active ?? true
+      }));
+      await this.query(
+        "UNWIND $batch AS edge " +
+        "MATCH (a:ContractSpec {id: edge.fromSpecId}), (b:ContractSpec {id: edge.toSpecId}) " +
+        "MERGE (a)-[r:SEMANTIC_REL {kind: edge.kind, evidenceId: edge.evidenceId}]->(b) " +
+        "SET r.reason = edge.reason, r.confidence = edge.confidence, r.batchId = edge.batchId, r.active = edge.active;",
+        { batch: params as unknown as GraphValue }
+      );
+    }
+  }
+
   async addContractEvidence(contractIdValue: string, evidenceIdValue: string): Promise<void> {
     await this.query("MATCH (c:Contract {id: $contractId}), (e:Evidence {id: $evidenceId}) MERGE (c)-[:HAS_EVIDENCE]->(e);", { contractId: contractIdValue, evidenceId: evidenceIdValue });
   }

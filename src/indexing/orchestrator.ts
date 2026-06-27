@@ -340,6 +340,8 @@ export async function runFullCopyBulkIndex(input: {
       selection: selectGraphWriter({ writeMode: ctx.writeMode, fullCopyBulk: true, provider: ctx.config.graph.provider })
     });
     const semanticWarning = await runSemanticPipeline({ ctx, batchId, repos, parsedFiles, label: "all repos" });
+    const rebuilt = await runRelationRebuildPhase({ db, batchId: createBatchId("deps"), log: log(ctx) });
+    logStage(ctx, `Dependency rebuild (${rebuilt} edges)`, Date.now());
     await commitSucceededRepos({ db, repos, counts: perRepoCounts, batchId, indexedAt, summaryFailures, semanticWarning, graphWrite });
     return { ...counts, repos };
   } catch (error) {

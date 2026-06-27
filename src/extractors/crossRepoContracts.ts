@@ -31,7 +31,6 @@ import {
   toFactBundle as crossRepoToFactBundle,
   uniqueById
 } from "./builtin/shared.js";
-import { resolveSemanticRelations } from "../contracts/resolver.js";
 import { mergeAndDedupeDeps } from "../contracts/depsMerge.js";
 
 export type ExtractedRelation =
@@ -388,19 +387,10 @@ export async function extractCrossRepoContracts(
     aliasOverrides: options.aliasOverrides
   }, config);
 
-  // Phase 4.1: Run the language-independent dual-track resolver to produce
-  // SEMANTIC_REL edges (CALLS_ENDPOINT, PUBLISHES_EVENT, REQUEST_SCHEMA, etc.)
-  const resolverRelations = resolveSemanticRelations({
-    contractSpecs: facts.contractSpecs,
-    repoContracts: facts.repoContracts,
-    existingSemanticRelations: facts.semanticRelations
-  });
-  facts.semanticRelations.push(...resolverRelations);
-
-  // Remove pending placeholder edges that have been resolved by the resolver.
-  // These carry placeholder IDs (spec:<id>:pending, schema-ref:<Type>) and would
-  // be no-ops at write time (no matching ContractSpec nodes), but keeping them
-  // in the fact set is misleading.
+  // Filter out pending placeholder edges that carry IDs (schema-ref:<Type>,
+  // spec:<id>:pending) which cannot be written to the graph (no matching
+  // ContractSpec nodes).  Cross-repo SEMANTIC_REL resolution now runs in the
+  // post-indexing rebuildRepoDependencies phase with full multi-repo visibility.
   facts.semanticRelations = facts.semanticRelations.filter(
     (rel) => !rel.toSpecId.startsWith("schema-ref:") && !rel.fromSpecId.endsWith(":pending")
   );

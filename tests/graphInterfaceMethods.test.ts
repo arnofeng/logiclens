@@ -48,7 +48,7 @@ function createMockDb(overrides: Partial<GraphDB> = {}): GraphDB {
     addRepoContract: vi.fn(), addRepoDependency: vi.fn(), addRepoDependenciesBatch: vi.fn(),
     addPackageUsage: vi.fn(), addContractEntity: vi.fn(), addOperationRepo: vi.fn(),
     addWorkflowOperation: vi.fn(), upsertContractSpec: vi.fn(), addHasSpec: vi.fn(),
-    addSemanticRelation: vi.fn(), addContractEvidence: vi.fn(), addRepoEvidence: vi.fn(),
+    addSemanticRelation: vi.fn(), addSemanticRelationsBatch: vi.fn(), addContractEvidence: vi.fn(), addRepoEvidence: vi.fn(),
     addContains: vi.fn(), addImport: vi.fn(), addCall: vi.fn(), addMention: vi.fn(),
     addSectionMention: vi.fn(), addSectionDescribesRepo: vi.fn(),
     addSectionDocumentsCode: vi.fn(), addSectionReferencesFile: vi.fn(),

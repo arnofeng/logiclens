@@ -104,6 +104,7 @@ export interface GraphDB {
   upsertContractSpec(spec: ContractSpecNode): Promise<void>;
   addHasSpec(edge: ContractSpecEdge): Promise<void>;
   addSemanticRelation(edge: SemanticRelationEdge): Promise<void>;
+  addSemanticRelationsBatch(edges: SemanticRelationEdge[]): Promise<void>;
   addContractEvidence(contractId: string, evidenceId: string): Promise<void>;
   addRepoEvidence(repoId: string, evidenceId: string): Promise<void>;
   addContains(fromId: string, toId: string): Promise<void>;
