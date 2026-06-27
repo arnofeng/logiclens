@@ -94,6 +94,23 @@ function decodeJournalRow(row: {
 
 const managedKuzuHandles: Array<{ db?: kuzu.Database; conn?: kuzu.Connection }> = [];
 
+// Kuzu reserves `maxDBSize` bytes of virtual address space via mmap up front.
+// Passing 0 selects Kuzu's default of 8 TiB (2^43), which some constrained
+// environments (notably GitHub Actions runners) refuse to mmap, surfacing as
+// "Buffer manager exception: Mmap for size 8796093022208 failed". We instead
+// reserve a generous-but-mappable 128 GiB by default — far beyond any realistic
+// code-graph size — and allow an override for unusual deployments. Kuzu requires
+// the value to be a power of two.
+const DEFAULT_MAX_DB_SIZE = 137438953472; // 128 GiB (2^37)
+
+function resolveMaxDBSize(): number {
+  const raw = process.env.LOGICLENS_KUZU_MAX_DB_SIZE;
+  if (!raw) return DEFAULT_MAX_DB_SIZE;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_MAX_DB_SIZE;
+  return Math.floor(parsed);
+}
+
 export class KuzuGraphDB implements GraphDB {
   private db?: kuzu.Database;
   private conn?: kuzu.Connection;
@@ -117,7 +134,7 @@ export class KuzuGraphDB implements GraphDB {
       0,               // bufferManagerSize (0 = default: 80 % of RAM)
       true,            // enableCompression
       false,           // readOnly
-      0,               // maxDBSize (0 = default)
+      resolveMaxDBSize(), // maxDBSize — see resolveMaxDBSize (0 default = 8 TiB mmap)
       true,            // autoCheckpoint
       1048576          // checkpointThreshold — 1 MB instead of 16 MB
     );
