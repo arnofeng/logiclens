@@ -24,16 +24,22 @@ describe("kuzu bulk graph writer", () => {
     ]);
   }
 
-  async function captureGraphView(db: KuzuGraphDB): Promise<Record<string, unknown>> {
+  async function captureGraphView(db: KuzuGraphDB) {
     const stats = await db.stats();
     const activeRelationCounts = {
       contains: Number((await db.query<{ count: number }>("MATCH ()-[r:CONTAINS]->() RETURN count(r) AS count;"))[0]?.count ?? 0),
       imports: Number((await db.query<{ count: number }>("MATCH ()-[r:IMPORTS]->() WHERE r.active IS NULL OR r.active = true RETURN count(r) AS count;"))[0]?.count ?? 0),
       calls: Number((await db.query<{ count: number }>("MATCH ()-[r:CALLS]->() WHERE r.active IS NULL OR r.active = true RETURN count(r) AS count;"))[0]?.count ?? 0)
     };
+    const semanticLayer = {
+      contractSpecs: Number((await db.query<{ count: number }>("MATCH (s:ContractSpec) RETURN count(s) AS count;"))[0]?.count ?? 0),
+      hasSpec: Number((await db.query<{ count: number }>("MATCH (:Contract)-[r:HAS_SPEC]->(:ContractSpec) RETURN count(r) AS count;"))[0]?.count ?? 0),
+      semanticRel: Number((await db.query<{ count: number }>("MATCH (:ContractSpec)-[r:SEMANTIC_REL]->(:ContractSpec) RETURN count(r) AS count;"))[0]?.count ?? 0)
+    };
     return {
       stats,
       activeRelationCounts,
+      semanticLayer,
       code: (await listCode(db, 1000)).map((row) => `${row.repoName}:${row.filePath}:${row.kind}:${row.qualifiedName}:${row.signature}`).sort(),
       contracts: (await listContracts(db, { limit: 1000 })).map((row) => `${row.kind}:${row.key}:${row.producers}:${row.consumers}:${row.shared}`).sort(),
       dependencies: (await listDependencies(db, { limit: 1000 })).map((row) => `${row.fromRepo}->${row.toRepo}:${row.dependencyType}:${row.contractKind}:${row.contractKey}:${row.filePath}:${row.line}:${row.rule}`).sort(),
@@ -81,6 +87,13 @@ describe("kuzu bulk graph writer", () => {
       await rebuildRepoDependencies(db, { batchId: "batch:deps" });
       return captureGraphView(db);
     });
+
+    // Guard: the cross-mode equality below only proves something about the
+    // semantic layer if the fixture actually produced one. Without this, every
+    // mode emitting zero ContractSpec/HAS_SPEC/SEMANTIC_REL would pass vacuously.
+    expect(merge.semanticLayer.contractSpecs).toBeGreaterThan(0);
+    expect(merge.semanticLayer.hasSpec).toBeGreaterThan(0);
+    expect(merge.semanticLayer.semanticRel).toBeGreaterThan(0);
 
     expect(bulkCopy).toEqual(merge);
     expect(appendCopy).toEqual(merge);

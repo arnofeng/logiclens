@@ -30,7 +30,10 @@ export type CsvTableName =
   | "WORKFLOW_STEP"
   | "HAS_EVIDENCE"
   | "USES_PACKAGE"
-  | "DEPENDS_ON";
+  | "DEPENDS_ON"
+  | "ContractSpec"
+  | "HAS_SPEC"
+  | "SEMANTIC_REL";
 
 export type CsvStagingResult = {
   dir: string;
@@ -121,6 +124,26 @@ export async function stageGraphFactsAsCsv(facts: GraphFactsBatch, outputRoot: s
   await writeTable(outputDir, "Operation", facts.operations.map((operation) => [operation.id, operation.verb, operation.entityName, operation.description]), result);
   await writeTable(outputDir, "Workflow", facts.workflows.map((workflow) => [workflow.id, workflow.name, workflow.description]), result);
   await writeTable(outputDir, "Contract", facts.contracts.map((contract) => [contract.id, contract.kind, contract.key, contract.name, contract.description]), result);
+  await writeTable(outputDir, "ContractSpec", facts.contractSpecs.map((spec) => [
+    spec.id,
+    spec.contractId,
+    spec.specKind,
+    spec.repoId,
+    spec.fileId,
+    spec.evidenceId,
+    spec.sourceSymbolId ?? "",
+    spec.canonicalKey,
+    spec.httpMethod ?? "",
+    spec.pathTemplate ?? "",
+    spec.eventTopic ?? "",
+    spec.framework ?? "",
+    spec.version ?? "",
+    spec.specJson,
+    formatDouble(spec.confidence),
+    spec.batchId ?? "",
+    spec.indexedAt ?? "",
+    spec.active ?? true
+  ]), result);
   await writeTable(outputDir, "Evidence", facts.evidence.map((evidence) => [
     evidence.id,
     evidence.repoId,
@@ -167,6 +190,24 @@ export async function stageGraphFactsAsCsv(facts: GraphFactsBatch, outputRoot: s
     edge.targetContractId,
     edge.evidenceId,
     edge.raw,
+    formatDouble(edge.confidence),
+    edge.batchId ?? "",
+    edge.active ?? true
+  ]), result);
+  await writeTable(outputDir, "HAS_SPEC", facts.contractSpecEdges.map((edge) => [
+    edge.contractId,
+    edge.specId,
+    edge.evidenceId,
+    formatDouble(edge.confidence),
+    edge.batchId ?? "",
+    edge.active ?? true
+  ]), result);
+  await writeTable(outputDir, "SEMANTIC_REL", facts.semanticRelations.map((edge) => [
+    edge.fromSpecId,
+    edge.toSpecId,
+    edge.kind,
+    edge.evidenceId,
+    edge.reason,
     formatDouble(edge.confidence),
     edge.batchId ?? "",
     edge.active ?? true

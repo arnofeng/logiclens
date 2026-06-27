@@ -426,10 +426,13 @@ export class KuzuGraphDB implements GraphDB {
       "MATCH (:Repo {id: $repoId})-[r:CONTAINS]->(:File) DELETE r;",
       "MATCH (:File)-[r:CONTAINS]->(c:Code) WHERE c.repoId = $repoId DELETE r;",
       "MATCH (:File)-[r:CONTAINS]->(s:Section) WHERE s.repoId = $repoId DELETE r;",
+      "MATCH (a:ContractSpec)-[r:SEMANTIC_REL]->(b:ContractSpec) WHERE a.repoId = $repoId OR b.repoId = $repoId DELETE r;",
+      "MATCH (:Contract)-[r:HAS_SPEC]->(s:ContractSpec) WHERE s.repoId = $repoId DELETE r;",
       "MATCH (e:Evidence) WHERE e.repoId = $repoId DELETE e;",
       "MATCH (c:Code) WHERE c.repoId = $repoId DELETE c;",
       "MATCH (s:Section) WHERE s.repoId = $repoId DELETE s;",
-      "MATCH (f:File) WHERE f.repoId = $repoId DELETE f;"
+      "MATCH (f:File) WHERE f.repoId = $repoId DELETE f;",
+      "MATCH (s:ContractSpec) WHERE s.repoId = $repoId DELETE s;"
     ];
     for (const statement of statements) await this.query(statement, params);
   }

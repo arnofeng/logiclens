@@ -43,6 +43,7 @@ const COPY_ORDER: CsvTableName[] = [
   "Operation",
   "Workflow",
   "Contract",
+  "ContractSpec",
   "Evidence",
   "IMPORTS",
   "CALLS",
@@ -57,7 +58,9 @@ const COPY_ORDER: CsvTableName[] = [
   "PARTICIPATES_IN",
   "WORKFLOW_STEP",
   "USES_PACKAGE",
-  "DEPENDS_ON"
+  "DEPENDS_ON",
+  "HAS_SPEC",
+  "SEMANTIC_REL"
 ];
 
 type PairCopyTable = "CONTAINS" | "MENTIONS" | "HAS_EVIDENCE";
@@ -141,7 +144,9 @@ const RELATION_UPSERT_SPECS: RelationUpsertSpec[] = [
   { table: "PARTICIPATES_IN", from: "Repo", to: "Operation", aliases: ["fromId", "toId", "role", "evidenceId", "confidence", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["role", "evidenceId"], setProperties: ["confidence", "batchId", "active"] },
   { table: "WORKFLOW_STEP", from: "Workflow", to: "Operation", aliases: ["fromId", "toId", "step", "evidenceId", "confidence", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["step", "evidenceId"], setProperties: ["confidence", "batchId", "active"] },
   { table: "USES_PACKAGE", from: "Repo", to: "Contract", aliases: ["fromId", "toId", "packageName", "evidenceId", "raw", "confidence", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["packageName", "evidenceId", "raw"], setProperties: ["confidence", "batchId", "active"] },
-  { table: "DEPENDS_ON", from: "Repo", to: "Repo", aliases: ["fromId", "toId", "dependencyType", "sourceContractId", "targetContractId", "evidenceId", "raw", "confidence", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["dependencyType", "sourceContractId", "targetContractId", "evidenceId", "raw"], setProperties: ["confidence", "batchId", "active"] }
+  { table: "DEPENDS_ON", from: "Repo", to: "Repo", aliases: ["fromId", "toId", "dependencyType", "sourceContractId", "targetContractId", "evidenceId", "raw", "confidence", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["dependencyType", "sourceContractId", "targetContractId", "evidenceId", "raw"], setProperties: ["confidence", "batchId", "active"] },
+  { table: "HAS_SPEC", from: "Contract", to: "ContractSpec", aliases: ["fromId", "toId", "evidenceId", "confidence", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["evidenceId"], setProperties: ["confidence", "batchId", "active"] },
+  { table: "SEMANTIC_REL", from: "ContractSpec", to: "ContractSpec", aliases: ["fromId", "toId", "kind", "evidenceId", "reason", "confidence", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["kind", "evidenceId"], setProperties: ["reason", "confidence", "batchId", "active"] }
 ];
 
 const COLUMN_TYPES: Record<string, "INT64" | "DOUBLE" | "BOOL"> = {
@@ -278,7 +283,8 @@ export async function writeGraphFactsWithKuzuAppendCopy(db: GraphDB, facts: Grap
   const nodeSpecs = NODE_UPSERT_SPECS.filter((spec) => staging.files[spec.table]);
   const relationSpecs = RELATION_UPSERT_SPECS.filter((spec) => staging.files[spec.table]);
   const pairSpecs = pairCopySpecs(facts).filter((spec) => spec.rows.length > 0);
-  const totalSteps = nodeSpecs.length + relationSpecs.length + pairSpecs.length;
+  const hasContractSpec = staging.files["ContractSpec"] !== undefined;
+  const totalSteps = nodeSpecs.length + relationSpecs.length + pairSpecs.length + (hasContractSpec ? 1 : 0);
   let completedSteps = 0;
   try {
     for (const spec of nodeSpecs) {
@@ -292,6 +298,21 @@ export async function writeGraphFactsWithKuzuAppendCopy(db: GraphDB, facts: Grap
         options.progress?.({ current: completedSteps, total: totalSteps, label: `upsert ${spec.table}` });
       } catch (error) {
         throw new Error(`Failed to append-copy upsert ${spec.table} from ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    // ContractSpec is handled via COPY FROM (not MERGE+SET) because
+    // clearRepoIndexedArtifacts already deletes old ContractSpec rows for
+    // the repos in this batch before we reach this writer.
+    if (hasContractSpec) {
+      const contractSpecPath = staging.files["ContractSpec"]!;
+      try {
+        options.progress?.({ current: completedSteps, total: totalSteps, label: "copy ContractSpec" });
+        await db.query(`COPY ContractSpec FROM "${toKuzuPath(contractSpecPath)}" (PARALLEL=false);`);
+        upsertedNodeTables.push("ContractSpec");
+        completedSteps += 1;
+        options.progress?.({ current: completedSteps, total: totalSteps, label: "copy ContractSpec" });
+      } catch (error) {
+        throw new Error(`Failed to append-copy ContractSpec from ${contractSpecPath}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
     for (const spec of relationSpecs) {
@@ -337,9 +358,20 @@ export async function writeGraphFactsWithKuzuBulkUpsert(db: GraphDB, facts: Grap
   const nodeSpecs = NODE_UPSERT_SPECS.filter((spec) => staging.files[spec.table]);
   const relationSpecs = RELATION_UPSERT_SPECS.filter((spec) => staging.files[spec.table]);
   const pairSpecs = pairCopySpecs(facts).filter((spec) => spec.rows.length > 0);
-  const totalSteps = nodeSpecs.length + relationSpecs.length + pairSpecs.length;
+  const hasContractSpec = staging.files["ContractSpec"] !== undefined;
+  const totalSteps = nodeSpecs.length + relationSpecs.length + pairSpecs.length + (hasContractSpec ? 1 : 0);
   let completedSteps = 0;
   try {
+    // Clean up existing ContractSpec data for repos in this batch so that
+    // the following COPY FROM can safely insert without primary-key conflicts.
+    if (hasContractSpec) {
+      const batchRepoIds = [...new Set(facts.repos.map((r) => r.id))];
+      for (const repoId of batchRepoIds) {
+        await db.query("MATCH (a:ContractSpec)-[r:SEMANTIC_REL]->(b:ContractSpec) WHERE a.repoId = $repoId OR b.repoId = $repoId DELETE r;", { repoId });
+        await db.query("MATCH (:Contract)-[r:HAS_SPEC]->(s:ContractSpec) WHERE s.repoId = $repoId DELETE r;", { repoId });
+        await db.query("MATCH (s:ContractSpec) WHERE s.repoId = $repoId DELETE s;", { repoId });
+      }
+    }
     for (const spec of nodeSpecs) {
       const filePath = staging.files[spec.table];
       if (!filePath) continue;
@@ -351,6 +383,20 @@ export async function writeGraphFactsWithKuzuBulkUpsert(db: GraphDB, facts: Grap
         options.progress?.({ current: completedSteps, total: totalSteps, label: `upsert ${spec.table}` });
       } catch (error) {
         throw new Error(`Failed to bulk upsert ${spec.table} from ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    // ContractSpec is handled via cleanup + COPY FROM (not MERGE+SET) to
+    // avoid a KùzuDB parser limitation with the MERGE+SET query shape.
+    if (hasContractSpec) {
+      const contractSpecPath = staging.files["ContractSpec"]!;
+      try {
+        options.progress?.({ current: completedSteps, total: totalSteps, label: "copy ContractSpec" });
+        await db.query(`COPY ContractSpec FROM "${toKuzuPath(contractSpecPath)}" (PARALLEL=false);`);
+        upsertedTables.push("ContractSpec");
+        completedSteps += 1;
+        options.progress?.({ current: completedSteps, total: totalSteps, label: "copy ContractSpec" });
+      } catch (error) {
+        throw new Error(`Failed to bulk upsert ContractSpec from ${contractSpecPath}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
     for (const spec of relationSpecs) {
