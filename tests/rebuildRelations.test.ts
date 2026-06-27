@@ -97,6 +97,7 @@ describe("buildExclusionClauses", () => {
 function makeSpec(contractId: string, repoId: string, key: string): {
   id: string; contractId: string; repoId: string; specKind: "http-endpoint";
   canonicalKey: string; specJson: string; confidence: number; active: boolean;
+  fileId: string; evidenceId: string;
 } {
   return {
     id: `spec:${contractId}:${key}`,
@@ -106,7 +107,9 @@ function makeSpec(contractId: string, repoId: string, key: string): {
     canonicalKey: key,
     specJson: JSON.stringify({ kind: "http-endpoint", method: "GET", path: key, pathTemplate: key, pathParams: [], auth: "unknown" }),
     confidence: 0.9,
-    active: true
+    active: true,
+    fileId: `file:${repoId}:dummy.ts`,
+    evidenceId: `ev:${contractId}:${key}`
   };
 }
 
@@ -389,7 +392,9 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
           auth: "unknown"
         }),
         confidence: 0.9,
-        active: true
+        active: true,
+        fileId: `file:${producerRepo.id}:orders.ts`,
+        evidenceId: "ev:producer-orders-spec"
       };
       // Upsert ContractSpec for consumer (http-endpoint with GET /api/orders)
       const consumerSpec = {
@@ -409,7 +414,9 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
           auth: "unknown"
         }),
         confidence: 0.85,
-        active: true
+        active: true,
+        fileId: `file:${consumerRepo.id}:orders.ts`,
+        evidenceId: "ev:consumer-orders-spec"
       };
 
       await db.upsertContractSpec(producerSpec);
@@ -478,7 +485,9 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
           broker: "kafka"
         }),
         confidence: 0.9,
-        active: true
+        active: true,
+        fileId: `file:${publisherRepo.id}:events.ts`,
+        evidenceId: "ev:pub-order-created-spec"
       };
       const subscriberSpec = {
         id: "spec:contract:event:order-created:sub",
@@ -494,7 +503,9 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
           broker: "kafka"
         }),
         confidence: 0.85,
-        active: true
+        active: true,
+        fileId: `file:${subscriberRepo.id}:events.ts`,
+        evidenceId: "ev:sub-order-created-spec"
       };
 
       await db.upsertContractSpec(publisherSpec);
@@ -562,7 +573,9 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
           pathTemplate: "/api/shared", pathParams: [], auth: "unknown"
         }),
         confidence: 0.9,
-        active: true
+        active: true,
+        fileId: `file:${targetRepo.id}:shared.ts`,
+        evidenceId: "ev:target-spec"
       };
       // Other A spec (same endpoint, different repo)
       const specA = {
@@ -648,7 +661,9 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
           pathTemplate: "/api/full-shared", pathParams: [], auth: "unknown"
         }),
         confidence: 0.9,
-        active: true
+        active: true,
+        fileId: `file:${repoA.id}:full-shared.ts`,
+        evidenceId: "ev:full-a-spec"
       };
       const specB = {
         ...specA,
@@ -702,7 +717,9 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
           pathTemplate: "/api/intra", pathParams: [], auth: "unknown"
         }),
         confidence: 0.9,
-        active: true
+        active: true,
+        fileId: `file:${singleRepo.id}:intra.ts`,
+        evidenceId: "ev:intra-producer-spec"
       };
       const consumerSpec = {
         ...producerSpec,

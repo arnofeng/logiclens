@@ -115,7 +115,7 @@ function schemaDef(opts: {
       kind: "schema",
       name: opts.name,
       language: "java",
-      fields: opts.fields ?? []
+      fields: (opts.fields ?? []).map(f => ({ optional: false, ...f }))
     }),
     confidence: 0.9
   };
