@@ -208,22 +208,49 @@ async function copyRelationTable(db: GraphDB, filePath: string, table: CsvTableN
   await db.query(`COPY ${table} FROM "${toKuzuPath(filePath)}" (PARALLEL=false);`);
 }
 
-async function upsertPairTable(db: GraphDB, filePath: string, spec: PairCopySpec): Promise<void> {
-  const numColumns = spec.rows[0]?.length ?? 2;
-  const columns = Array.from({ length: numColumns }, (_, i) => `COLUMN${i}`);
-  const withClause = columns.map((col, i) => {
-    if (i === 0) return `${col} AS fromId`;
-    if (i === 1) return `${col} AS toId`;
-    if (col === "COLUMN2" && spec.table === "MENTIONS") return `${col} AS confidence`;
-    return col;
-  }).join(", ");
-  // For tables with extra properties (e.g. MENTIONS has confidence), include them in the MERGE property map
-  const mergeProperties = spec.table === "MENTIONS" ? " {confidence: confidence}" : "";
-  await db.query(
-    `LOAD FROM "${toKuzuPath(filePath)}" (PARALLEL=false) WITH ${withClause} ` +
-    `MATCH (a:${spec.from} {id: fromId}), (b:${spec.to} {id: toId}) ` +
-    `MERGE (a)-[r:${spec.table}${mergeProperties}]->(b);`
-  );
+async function copyPairTable(db: GraphDB, filePath: string, table: CsvTableName, from: string, to: string): Promise<void> {
+  await db.query(`COPY ${table} FROM "${toKuzuPath(filePath)}" (FROM='${from}', TO='${to}', PARALLEL=false);`);
+}
+
+/** Maximum rows per LOAD-FROM chunk for relation-table pair specs to avoid
+ *  Kuzu buffer-pool exhaustion.  Only the bulk-upsert path still uses this;
+ *  append-copy now uses COPY FROM instead of LOAD-FROM + MERGE. */
+const PAIR_TABLE_CHUNK_SIZE = 500;
+
+/**
+ * Processes a relation table CSV in chunks to avoid Kuzu buffer-pool
+ * exhaustion. Applies the same LOAD-FROM + MATCH + DELETE → CREATE pattern as
+ * {@link upsertRelationTable}, but splits rows so that no single query
+ * overwhelms the buffer manager.
+ */
+async function upsertRelationTableChunked(
+  db: GraphDB,
+  filePath: string,
+  spec: RelationUpsertSpec,
+  chunkSize: number
+): Promise<void> {
+  const raw = await fs.readFile(filePath, "utf-8");
+  // Relation-table values are ids and numbers — they never contain embedded
+  // newlines, so line-based splitting is safe.
+  const allRows = raw.trim().split("\n").filter((line) => line.length > 0);
+  if (allRows.length === 0) return;
+
+  if (allRows.length <= chunkSize) {
+    await upsertRelationTable(db, filePath, spec);
+    return;
+  }
+
+  const stagingDir = path.dirname(filePath);
+  for (let i = 0; i < allRows.length; i += chunkSize) {
+    const chunk = allRows.slice(i, i + chunkSize);
+    const chunkPath = path.join(stagingDir, `${spec.table}_${spec.from}_${spec.to}_chunk_${i}.csv`);
+    await fs.writeFile(chunkPath, chunk.join("\n"), "utf-8");
+    try {
+      await upsertRelationTable(db, chunkPath, spec);
+    } finally {
+      await fs.rm(chunkPath, { force: true });
+    }
+  }
 }
 
 export async function writeGraphFactsWithKuzuBulk(db: GraphDB, facts: GraphFactsBatch, options: KuzuBulkWriteOptions): Promise<KuzuBulkWriteResult> {
@@ -315,6 +342,24 @@ export async function writeGraphFactsWithKuzuAppendCopy(db: GraphDB, facts: Grap
         throw new Error(`Failed to append-copy ContractSpec from ${contractSpecPath}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
+    // Pair tables use COPY FROM (not LOAD FROM + MERGE) because
+    // clearRepoIndexedArtifacts already deletes old CONTAINS, MENTIONS, and
+    // HAS_EVIDENCE edges for this repo.  COPY FROM streams directly to disk
+    // without pinning index pages for MATCH/MERGE, entirely sidestepping
+    // the Kuzu buffer-pool exhaustion that occurred with MERGE.
+    for (const spec of pairSpecs) {
+      const filePath = await writePairCsv(staging.dir, spec);
+      if (!filePath) continue;
+      try {
+        options.progress?.({ current: completedSteps, total: totalSteps, label: `copy ${spec.table} ${spec.from}->${spec.to}` });
+        await copyPairTable(db, filePath, spec.table, spec.from, spec.to);
+        copiedRelationTables.push(spec.table);
+        completedSteps += 1;
+        options.progress?.({ current: completedSteps, total: totalSteps, label: `copy ${spec.table} ${spec.from}->${spec.to}` });
+      } catch (error) {
+        throw new Error(`Failed to append-copy ${spec.table} (${spec.from}->${spec.to}) from ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
     for (const spec of relationSpecs) {
       const filePath = staging.files[spec.table];
       if (!filePath) continue;
@@ -326,19 +371,6 @@ export async function writeGraphFactsWithKuzuAppendCopy(db: GraphDB, facts: Grap
         options.progress?.({ current: completedSteps, total: totalSteps, label: `copy ${spec.table}` });
       } catch (error) {
         throw new Error(`Failed to append-copy ${spec.table} from ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-    for (const spec of pairSpecs) {
-      const filePath = await writePairCsv(staging.dir, spec);
-      if (!filePath) continue;
-      try {
-        options.progress?.({ current: completedSteps, total: totalSteps, label: `upsert ${spec.table} ${spec.from}->${spec.to}` });
-        await upsertPairTable(db, filePath, spec);
-        copiedRelationTables.push(spec.table);
-        completedSteps += 1;
-        options.progress?.({ current: completedSteps, total: totalSteps, label: `upsert ${spec.table} ${spec.from}->${spec.to}` });
-      } catch (error) {
-        throw new Error(`Failed to append-copy ${spec.table} (${spec.from}->${spec.to}) from ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
     try {
@@ -399,6 +431,31 @@ export async function writeGraphFactsWithKuzuBulkUpsert(db: GraphDB, facts: Grap
         throw new Error(`Failed to bulk upsert ContractSpec from ${contractSpecPath}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
+    // Pair tables (CONTAINS, MENTIONS, HAS_EVIDENCE) use LOAD FROM + MATCH
+    // + DELETE/CREATE which pins pages aggressively.  Run them BEFORE
+    // relation tables so the buffer pool is still relatively clean.
+    for (const spec of pairSpecs) {
+      const filePath = await writePairCsv(staging.dir, spec);
+      if (!filePath) continue;
+      try {
+        options.progress?.({ current: completedSteps, total: totalSteps, label: `upsert ${spec.table} ${spec.from}->${spec.to}` });
+        const relationSpec: RelationUpsertSpec = {
+          table: spec.table,
+          from: spec.from,
+          to: spec.to,
+          aliases: spec.table === "MENTIONS" ? ["fromId", "toId", "confidence"] : ["fromId", "toId"],
+          fromAlias: "fromId",
+          toAlias: "toId",
+          setProperties: spec.table === "MENTIONS" ? ["confidence"] : []
+        };
+        await upsertRelationTableChunked(db, filePath, relationSpec, PAIR_TABLE_CHUNK_SIZE);
+        upsertedTables.push(spec.table);
+        completedSteps += 1;
+        options.progress?.({ current: completedSteps, total: totalSteps, label: `upsert ${spec.table} ${spec.from}->${spec.to}` });
+      } catch (error) {
+        throw new Error(`Failed to bulk upsert ${spec.table} (${spec.from}->${spec.to}) from ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
     for (const spec of relationSpecs) {
       const filePath = staging.files[spec.table];
       if (!filePath) continue;
@@ -410,27 +467,6 @@ export async function writeGraphFactsWithKuzuBulkUpsert(db: GraphDB, facts: Grap
         options.progress?.({ current: completedSteps, total: totalSteps, label: `upsert ${spec.table}` });
       } catch (error) {
         throw new Error(`Failed to bulk upsert ${spec.table} from ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-    for (const spec of pairSpecs) {
-      const filePath = await writePairCsv(staging.dir, spec);
-      if (!filePath) continue;
-      try {
-        options.progress?.({ current: completedSteps, total: totalSteps, label: `upsert ${spec.table} ${spec.from}->${spec.to}` });
-        await upsertRelationTable(db, filePath, {
-          table: spec.table,
-          from: spec.from,
-          to: spec.to,
-          aliases: spec.table === "MENTIONS" ? ["fromId", "toId", "confidence"] : ["fromId", "toId"],
-          fromAlias: "fromId",
-          toAlias: "toId",
-          setProperties: spec.table === "MENTIONS" ? ["confidence"] : []
-        });
-        upsertedTables.push(spec.table);
-        completedSteps += 1;
-        options.progress?.({ current: completedSteps, total: totalSteps, label: `upsert ${spec.table} ${spec.from}->${spec.to}` });
-      } catch (error) {
-        throw new Error(`Failed to bulk upsert ${spec.table} (${spec.from}->${spec.to}) from ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
     try {

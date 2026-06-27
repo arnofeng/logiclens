@@ -248,10 +248,24 @@ async function traceContractRole(db: GraphDB, contractIds: string[], rel: string
 
 export async function traceContract(db: GraphDB, kind: ContractKind, value: string): Promise<ContractTraceRow[]> {
   const key = canonicalContractKey(kind, value);
-  const contracts = await db.query<{ id: string }>(
+  let contracts = await db.query<{ id: string }>(
     "MATCH (c:Contract) WHERE c.kind = $kind AND c.key = $key RETURN c.id AS id;",
     { kind, key }
   );
+  // Fallback for API contracts: if no exact match, try matching by path suffix
+  // because storage keys may include an HTTP method prefix (e.g.
+  // "POST:/mp/promotion/adapter/savepromotion") while the trace target
+  // may omit the method (e.g. "api:/mp/promotion/adapter/savepromotion").
+  // Both are lowercased by canonicalContractKey, so ENDS WITH matches
+  // across HTTP methods (e.g. GET, POST) — acceptable for an interactive
+  // trace fallback.  If a path is served by multiple methods this returns
+  // all of them.
+  if (contracts.length === 0 && kind === "api") {
+    contracts = await db.query<{ id: string }>(
+      "MATCH (c:Contract) WHERE c.kind = $kind AND c.key ENDS WITH $suffix RETURN c.id AS id;",
+      { kind, suffix: `:${key}` }
+    );
+  }
   const contractIds = contracts.map((contract) => contract.id);
   if (contractIds.length === 0) return [];
   const rows = (await Promise.all([

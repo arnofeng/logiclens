@@ -108,7 +108,19 @@ export class KuzuGraphDB implements GraphDB {
     const resolved = path.resolve(graphPath);
     const dbPath = path.extname(resolved) ? resolved : path.join(resolved, "kuzu.db");
     await fs.mkdir(path.dirname(dbPath), { recursive: true });
-    const db = new kuzu.Database(dbPath);
+    // Lower checkpoint threshold (default 16 MB) so dirty WAL pages are
+    // flushed more frequently during bulk writes.  Without this, LOAD FROM
+    // + MATCH + MERGE across many pair tables (CONTAINS, MENTIONS,
+    // HAS_EVIDENCE) can exhaust the buffer pool before a checkpoint fires.
+    const db = new kuzu.Database(
+      dbPath,
+      0,               // bufferManagerSize (0 = default: 80 % of RAM)
+      true,            // enableCompression
+      false,           // readOnly
+      0,               // maxDBSize (0 = default)
+      true,            // autoCheckpoint
+      1048576          // checkpointThreshold — 1 MB instead of 16 MB
+    );
     const conn = new kuzu.Connection(db);
     await db.init();
     await conn.init();
