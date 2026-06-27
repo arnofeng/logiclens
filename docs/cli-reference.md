@@ -40,7 +40,8 @@ logiclens <command> --help
 | [`stats`](#logiclens-stats) | Print graph statistics |
 | [`deps`](#logiclens-deps) | List cross-repository dependencies |
 | [`contracts`](#logiclens-contracts) | List contracts with producer/consumer counts |
-| [`trace`](#logiclens-trace-contractorentity) | Trace a contract or entity |
+| [`trace`](#logiclens-trace-contractorentity) | Trace a contract or entity (reference level) |
+| [`spec-trace`](#logiclens-spec-trace-target) | Multi-hop semantic trace of a contract spec |
 | [`ask`](#logiclens-ask-question) | Natural language Q&A |
 | [`impact`](#logiclens-impact-symbolorentity) | Change impact analysis |
 | [`quality`](#logiclens-quality-action) | Audit and govern relation/contract quality |
@@ -238,7 +239,8 @@ logiclens contracts --kind event --limit 10
 
 ### `logiclens trace <contractOrEntity>`
 
-Trace the full chain of a specified contract or entity.
+Trace the full chain of a specified contract or entity at the **reference level** —
+across producers, consumers, and references.
 
 ```bash
 logiclens trace api:/api/order/:id
@@ -251,6 +253,63 @@ logiclens trace UserService
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `<contractOrEntity>` | Yes | Contract identifier (format: `kind:value`) or entity name |
+
+> For multi-hop **semantic** tracing (request/response/payload schemas and consumers
+> connected via `SEMANTIC_REL` edges), use [`spec-trace`](#logiclens-spec-trace-target).
+
+---
+
+### `logiclens spec-trace <target>`
+
+Resolve a natural contract identifier to its `ContractSpec` and walk `SEMANTIC_REL`
+edges **multi-hop in both directions**, returning the connected sub-graph: downstream
+request/response/payload schemas and upstream consumers. No internal spec IDs required.
+
+```bash
+logiclens spec-trace "http POST /orders"
+logiclens spec-trace "api GET /users/:id"
+logiclens spec-trace "event OrderCreated"
+logiclens spec-trace "schema CreateOrderRequest"
+logiclens spec-trace http "POST /orders"            # extra tokens are joined too
+logiclens spec-trace "http POST /orders" --json     # structured output
+logiclens spec-trace "http POST /orders" --max-hops 5
+logiclens spec-trace "http POST /orders" --direction incoming   # consumers only
+```
+
+Example output:
+
+```text
+Semantic trace for http POST /orders:
+
+Target: POST /orders  request=CreateOrderRequest  response=CreateOrderResponse
+  order-service src/.../OrderController.java [spring-mvc]
+
+Downstream (schemas / payloads it uses):
+- [hop 1] CreateOrderRequest (3 fields)  (REQUEST_SCHEMA)
+    order-service src/.../CreateOrderRequest.java
+
+Upstream (consumers / callers):
+- [hop 1] POST /orders  (CALLS_ENDPOINT)
+    web-app src/api/order.ts
+```
+
+**Parameters**:
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `<target>` | Yes | Natural contract identifier: a contract kind (`http`, `api`, `event`, `schema`, `dto`, `package`, `config`) plus its key, e.g. `"http POST /orders"` |
+| `[rest...]` | No | Extra tokens, joined onto `target` — so `spec-trace http "POST /orders"` is equivalent to `spec-trace "http POST /orders"` |
+
+**Options**:
+
+| Option | Description |
+|--------|-------------|
+| `--max-hops <number>` | Maximum hops per direction (default `3`) |
+| `--direction <direction>` | `outgoing`, `incoming`, or `both` (default) |
+| `--json` | Emit the structured trace graph as JSON |
+
+> The same capability is exposed to agents via the MCP tool `logiclens_semantic_trace`
+> using its `target` parameter (e.g. `{ "target": "http POST /orders" }`).
 
 ---
 

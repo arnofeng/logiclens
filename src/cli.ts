@@ -18,6 +18,7 @@ import { qualityCommand } from "./commands/quality.js";
 import { rebuildRelationsCommand } from "./commands/rebuildRelations.js";
 import { statsCommand } from "./commands/stats.js";
 import { traceCommand } from "./commands/trace.js";
+import { specTraceCommand } from "./commands/specTrace.js";
 import { pluginsCommand } from "./commands/plugins.js";
 import { pluginAddCommand, pluginRemoveCommand, type PluginAddOptions } from "./commands/plugin.js";
 import { mcpCommand } from "./commands/mcp.js";
@@ -56,6 +57,17 @@ program
   );
 program.command("contracts").option("--kind <kind>", "Filter by contract kind: package, api, event, dto, schema, enum, or config").option("--limit <number>", "Maximum contracts to list", (value) => Number(value)).description("List contracts and producer/consumer counts").action((options: { kind?: string; limit?: number }) => contractsCommand(options));
 program.command("trace").argument("<contractOrEntity>").description("Trace contract kind:value or entity name").action((target: string) => traceCommand(target));
+program
+  .command("spec-trace")
+  .argument("<target>", "Contract identifier, e.g. \"http POST /orders\", \"event OrderCreated\", \"schema CreateOrderRequest\"")
+  .argument("[rest...]", "Extra tokens joined onto target, so `spec-trace http \"POST /orders\"` also works")
+  .option("--max-hops <number>", "Max hops per direction (default 3)", (value) => Number(value))
+  .option("--direction <direction>", "Trace direction: outgoing, incoming, or both (default)")
+  .option("--json", "Output the structured trace graph as JSON")
+  .description("Multi-hop semantic trace of a contract spec across repos")
+  .action((target: string, rest: string[], options: { maxHops?: number; direction?: string; json?: boolean }) =>
+    specTraceCommand(target, rest, { maxHops: options.maxHops, direction: options.direction as any, json: options.json })
+  );
 program.command("query").argument("<cypher>").description("Run a raw Kuzu Cypher query").action((cypher: string) => queryCommand(cypher));
 program.command("ask").argument("<question>").description("Answer a natural-language question from the graph").action((question: string) => askCommand(question));
 program.command("impact").argument("<symbolOrEntity>").option("--change <change>", "Proposed change, e.g. \"field-removed:couponCode\"").description("Run impact analysis for a symbol, entity, or contract change").action((symbolOrEntity: string, options: { change?: string }) => impactCommand(symbolOrEntity, { change: options.change }));

@@ -638,6 +638,32 @@ export class LogicLensClient {
   }
 
   /**
+   * Multi-hop semantic trace keyed by a natural contract identifier.
+   *
+   * Unlike {@link semanticTrace} (single-hop, requires an internal spec ID),
+   * this resolves a human-readable target such as "http POST /orders",
+   * "event OrderCreated", or "schema CreateOrderRequest" to its ContractSpec
+   * node(s) and walks SEMANTIC_REL edges transitively (default 3 hops) in both
+   * directions, returning the full connected sub-graph (consumers, request /
+   * response / payload schemas, etc.).
+   *
+   * @param target   Natural-key identifier or `kind:key` form.
+   * @param options.maxHops   Max hops per direction (default 3).
+   * @param options.direction "outgoing", "incoming", or "both" (default).
+   */
+  async semanticTraceGraph(
+    target: string,
+    options?: { maxHops?: number; direction?: "outgoing" | "incoming" | "both" }
+  ): Promise<import("../contracts/semanticTrace.js").SemanticTraceGraph> {
+    const db = await this.getDb();
+    const { traceSemanticGraphFromDB } = await import("../contracts/semanticTrace.js");
+    return traceSemanticGraphFromDB(target, db, {
+      maxHops: options?.maxHops,
+      direction: options?.direction
+    });
+  }
+
+  /**
    * Explains why two repos depend on each other by traversing SEMANTIC_REL edges.
    * Finds ContractSpecs in each repo and the semantic relations connecting them.
    *

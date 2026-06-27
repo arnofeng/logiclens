@@ -456,23 +456,60 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
     "logiclens_semantic_trace",
     {
       description:
-        "Trace single-hop SEMANTIC_REL edges from a ContractSpec to discover directly " +
-        "related specs across repos. Useful for understanding why two services are connected " +
-        "(which endpoint calls which, which event is published/subscribed, which schema backs " +
-        "a request body, etc.). NOTE: single-hop only — multi-hop transitive tracing is not yet available.",
+        "Trace SEMANTIC_REL edges between ContractSpecs to discover how services are connected " +
+        "(which endpoint calls which, which event is published/subscribed, which schema backs a " +
+        "request/response/payload). Two modes:\n" +
+        "  • target — natural identifier (e.g. \"http POST /orders\", \"event OrderCreated\", " +
+        "\"schema CreateOrderRequest\"): multi-hop trace returning the full connected sub-graph " +
+        "(downstream schemas + upstream consumers). PREFERRED — no internal IDs needed.\n" +
+        "  • specId — an internal ContractSpec ID: single-hop trace of direct edges.\n" +
+        "Provide exactly one of `target` or `specId`.",
       inputSchema: {
-        specId: z.string().describe("The ContractSpec ID to trace from"),
+        target: z
+          .string()
+          .optional()
+          .describe("Natural contract identifier, e.g. \"http POST /orders\", \"event OrderCreated\", \"schema CreateOrderRequest\""),
+        specId: z.string().optional().describe("Internal ContractSpec ID (single-hop mode)"),
+        maxHops: z
+          .number()
+          .optional()
+          .describe("Max hops per direction for target mode (default 3)"),
         direction: z
           .enum(["outgoing", "incoming", "both"])
           .optional()
           .describe("Direction: outgoing (from→to), incoming (to→from), or both (default)"),
       },
     },
-    async ({ specId, direction }) => {
+    async ({ target, specId, maxHops, direction }) => {
       return wrapWithFreshness(
         "logiclens_semantic_trace",
-        { specId, direction },
+        { target, specId, maxHops, direction },
         async () => {
+          if (target) {
+            const graph = await client.semanticTraceGraph(target, {
+              maxHops,
+              direction: (direction as "outgoing" | "incoming" | "both") ?? "both",
+            });
+            return {
+              content: [
+                { type: "text" as const, text: JSON.stringify(graph, null, 2) },
+              ],
+            };
+          }
+          if (!specId) {
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: JSON.stringify(
+                    { error: "Provide either `target` (natural identifier) or `specId`." },
+                    null,
+                    2
+                  ),
+                },
+              ],
+            };
+          }
           const result = await client.semanticTrace(specId, {
             direction: (direction as "outgoing" | "incoming" | "both") ?? "both",
           });
@@ -481,11 +518,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
               {
                 type: "text" as const,
                 text: JSON.stringify(
-                  {
-                    specId,
-                    direction: direction ?? "both",
-                    relations: result,
-                  },
+                  { specId, direction: direction ?? "both", relations: result },
                   null,
                   2
                 ),
