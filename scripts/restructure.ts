@@ -1,0 +1,118 @@
+/**
+ * Throwaway codemod for the src/ architectural restructure.
+ *
+ * Uses ts-morph to move files/directories while auto-rewriting every relative
+ * `.js` import specifier across src/ and tests/. Run one phase at a time:
+ *
+ *   npx tsx scripts/restructure.ts <phase>
+ *
+ * Phases are defined in PHASES below. Delete this script after the restructure.
+ */
+import path from "node:path";
+import { Project, Directory, SourceFile } from "ts-morph";
+
+const root = process.cwd();
+const abs = (p: string): string => path.resolve(root, p);
+
+type Op =
+  | { kind: "moveDir"; from: string; to: string }
+  | { kind: "moveFile"; from: string; to: string }
+  | { kind: "moveFilesFlat"; fromDir: string; toDir: string; except?: string[] };
+
+const PHASES: Record<string, Op[]> = {
+  shared: [
+    { kind: "moveFilesFlat", fromDir: "src/utils", toDir: "src/shared" },
+    { kind: "moveFile", from: "src/confidence.ts", to: "src/shared/confidence.ts" },
+    { kind: "moveFile", from: "src/version.ts", to: "src/shared/version.ts" },
+    { kind: "moveFile", from: "src/resilience/providerPolicy.ts", to: "src/shared/providerPolicy.ts" }
+  ],
+  adapters: [
+    { kind: "moveDir", from: "src/graph/kuzu", to: "src/adapters/graph-db/kuzu" },
+    { kind: "moveDir", from: "src/graph/neo4j", to: "src/adapters/graph-db/neo4j" },
+    { kind: "moveFile", from: "src/semantic/openaiEmbeddingProvider.ts", to: "src/adapters/embeddings/openaiEmbeddingProvider.ts" },
+    { kind: "moveFile", from: "src/semantic/builtinProviders.ts", to: "src/adapters/embeddings/builtinProviders.ts" }
+  ],
+  core: [
+    { kind: "moveDir", from: "src/repos", to: "src/core/workspace" },
+    { kind: "moveDir", from: "src/parsers", to: "src/core/parsing" },
+    { kind: "moveFile", from: "src/languages/markdown/adapter.ts", to: "src/core/parsing/markdown/adapter.ts" },
+    // code-fact extractors
+    { kind: "moveFilesFlat", fromDir: "src/extractors", toDir: "src/core/extraction", except: ["crossRepoContracts.ts"] },
+    // contract domain (move whole dir first so core/contracts exists)
+    { kind: "moveDir", from: "src/contracts", to: "src/core/contracts" },
+    // contract extraction (high-level)
+    { kind: "moveFile", from: "src/extractors/crossRepoContracts.ts", to: "src/core/contracts/extraction/crossRepoContracts.ts" },
+    { kind: "moveDir", from: "src/extractors/builtin", to: "src/core/contracts/extraction/builtin" },
+    // golden eval joins contracts/evaluation
+    { kind: "moveFile", from: "src/golden/evaluate.ts", to: "src/core/contracts/evaluation/evaluate.ts" },
+    // frameworks must stay core (crossRepoContracts imports it)
+    { kind: "moveDir", from: "src/frameworks", to: "src/core/frameworks" },
+    // graph domain model (kuzu/neo4j already moved to adapters; quality goes to features later)
+    { kind: "moveFilesFlat", fromDir: "src/graph", toDir: "src/core/graph-model", except: ["quality.ts"] },
+    // indexing (types.ts + run.ts created by the manual extraction step ride along)
+    { kind: "moveDir", from: "src/indexing", to: "src/core/indexing" },
+    // semantic domain (providers already moved to adapters)
+    { kind: "moveFilesFlat", fromDir: "src/semantic", toDir: "src/core/semantic" }
+  ],
+  features: [
+    { kind: "moveDir", from: "src/rag", to: "src/features/ask" },
+    { kind: "moveDir", from: "src/watch", to: "src/features/watch" },
+    { kind: "moveFile", from: "src/graph/quality.ts", to: "src/features/quality/quality.ts" },
+    { kind: "moveFile", from: "src/core/contracts/qualityRules.ts", to: "src/features/quality/qualityRules.ts" }
+  ],
+  interfaces: [
+    { kind: "moveDir", from: "src/commands", to: "src/interfaces/cli" },
+    { kind: "moveDir", from: "src/sdk", to: "src/interfaces/sdk" },
+    { kind: "moveDir", from: "src/mcp", to: "src/interfaces/mcp" },
+    { kind: "moveDir", from: "src/plugins", to: "src/interfaces/plugins" },
+    { kind: "moveDir", from: "src/installer", to: "src/interfaces/installer" }
+  ]
+};
+
+function moveDir(project: Project, from: string, to: string): void {
+  const dir = project.getDirectory(abs(from));
+  if (!dir) throw new Error(`Directory not found: ${from}`);
+  dir.move(abs(to));
+  console.log(`  moveDir   ${from} -> ${to}`);
+}
+
+function moveFile(project: Project, from: string, to: string): void {
+  const file = project.getSourceFile(abs(from));
+  if (!file) throw new Error(`File not found: ${from}`);
+  file.move(abs(to));
+  console.log(`  moveFile  ${from} -> ${to}`);
+}
+
+function moveFilesFlat(project: Project, fromDir: string, toDir: string, except: string[]): void {
+  const fromAbs = abs(fromDir);
+  const files = project.getSourceFiles().filter((f: SourceFile) => path.dirname(f.getFilePath()) === fromAbs);
+  for (const file of files) {
+    const name = path.basename(file.getFilePath());
+    if (except.includes(name)) continue;
+    file.move(abs(path.join(toDir, name)));
+    console.log(`  moveFile  ${fromDir}/${name} -> ${toDir}/${name}`);
+  }
+}
+
+async function main(): Promise<void> {
+  const phase = process.argv[2];
+  const ops = phase ? PHASES[phase] : undefined;
+  if (!ops) {
+    console.error(`Unknown phase "${phase}". Known: ${Object.keys(PHASES).join(", ")}`);
+    process.exit(1);
+  }
+  const project = new Project({ tsConfigFilePath: abs("tsconfig.json") });
+  console.log(`Phase: ${phase}`);
+  for (const op of ops) {
+    if (op.kind === "moveDir") moveDir(project, op.from, op.to);
+    else if (op.kind === "moveFile") moveFile(project, op.from, op.to);
+    else moveFilesFlat(project, op.fromDir, op.toDir, op.except ?? []);
+  }
+  await project.save();
+  console.log("Saved.");
+}
+
+main().catch((error: unknown) => {
+  console.error(error);
+  process.exit(1);
+});
