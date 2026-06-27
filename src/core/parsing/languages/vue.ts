@@ -1,6 +1,6 @@
-import type { LanguageParser, ParseInput } from "../../../interfaces/plugins/types.js";
+import type { LanguageParser, ParseInput } from "../../plugins/types.js";
 import type { ParsedFile } from "../types.js";
-import { parserRegistry } from "../../../interfaces/plugins/registry.js";
+import { parserRegistry } from "../../plugins/registry.js";
 import { parse as parseSFC } from "@vue/compiler-sfc";
 
 export function createVueParser(): LanguageParser {

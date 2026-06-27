@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { RepoNode, ParsedGraphFile, EvidenceNode } from "../parsing/types.js";
 import type { DetectedFramework } from "./types.js";
-import type { ContractExtractor } from "../../interfaces/plugins/types.js";
+import type { ContractExtractor } from "../plugins/types.js";
 import type { FrameworkDetector } from "./types.js";
 import type { LogicLensConfig } from "../../config/schema.js";
 import { fileId, evidenceId } from "../../shared/path.js";

@@ -1,7 +1,7 @@
 import { loadConfig, writeConfig, defaultConfig } from "../../config/loadConfig.js";
 import type { LogicLensConfig } from "../../config/schema.js";
-import { importPluginModule, isLocalPluginName } from "../plugins/loader.js";
-import { detectPackageManager, installPackage } from "../plugins/packageManager.js";
+import { importPluginModule, isLocalPluginName } from "../../core/plugins/loader.js";
+import { detectPackageManager, installPackage } from "../../core/plugins/packageManager.js";
 
 async function loadConfigOrDefault(cwd: string): Promise<LogicLensConfig> {
   try {

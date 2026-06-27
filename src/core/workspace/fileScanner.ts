@@ -4,7 +4,7 @@ import fg from "fast-glob";
 import ignore from "ignore";
 import type { LogicLensConfig } from "../../config/schema.js";
 import { builtinLanguageForPath, registerBuiltinParsers } from "../parsing/parserRegistry.js";
-import { parserRegistry } from "../../interfaces/plugins/registry.js";
+import { parserRegistry } from "../plugins/registry.js";
 import { toPosixPath } from "../../shared/path.js";
 import { isGeneratedFile } from "../../shared/generatedFile.js";
 

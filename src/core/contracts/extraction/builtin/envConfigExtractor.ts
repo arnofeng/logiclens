@@ -4,7 +4,7 @@ import YAML from "yaml";
 import type Parser from "tree-sitter";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import type { ParsedFile } from "../../../parsing/types.js";
-import type { ContractExtractor } from "../../../../interfaces/plugins/types.js";
+import type { ContractExtractor } from "../../../plugins/types.js";
 import {
   contract,
   createCrossRepoExtraction,

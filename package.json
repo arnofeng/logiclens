@@ -14,12 +14,12 @@
       "default": "./dist/index.js"
     },
     "./plugins": {
-      "types": "./dist/interfaces/plugins/index.d.ts",
-      "default": "./dist/interfaces/plugins/index.js"
+      "types": "./dist/core/plugins/index.d.ts",
+      "default": "./dist/core/plugins/index.js"
     },
     "./plugins/helpers": {
-      "types": "./dist/interfaces/plugins/helpers.d.ts",
-      "default": "./dist/interfaces/plugins/helpers.js"
+      "types": "./dist/core/plugins/helpers.d.ts",
+      "default": "./dist/core/plugins/helpers.js"
     }
   },
   "files": [

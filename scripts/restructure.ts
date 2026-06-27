@@ -68,6 +68,11 @@ const PHASES: Record<string, Op[]> = {
     { kind: "moveDir", from: "src/mcp", to: "src/interfaces/mcp" },
     { kind: "moveDir", from: "src/plugins", to: "src/interfaces/plugins" },
     { kind: "moveDir", from: "src/installer", to: "src/interfaces/installer" }
+  ],
+  // plugins is a core extension-contract kernel (core + adapters depend on its
+  // types/registries), not an entry point — relocate out of interfaces.
+  "plugins-to-core": [
+    { kind: "moveDir", from: "src/interfaces/plugins", to: "src/core/plugins" }
   ]
 };
 

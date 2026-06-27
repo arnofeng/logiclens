@@ -5,8 +5,8 @@ import { loadConfig, defaultConfig } from "../../config/loadConfig.js";
 import type { LogicLensConfig } from "../../config/schema.js";
 import type { GraphDB, GraphValue, Stats } from "../../core/graph-model/db.js";
 import { createGraphDB } from "../../core/graph-model/factory.js";
-import { loadPlugins } from "../plugins/loader.js";
-import type { LogicLensPlugin } from "../plugins/types.js";
+import { loadPlugins } from "../../core/plugins/loader.js";
+import type { LogicLensPlugin } from "../../core/plugins/types.js";
 import {
   listDependencies,
   listContracts,

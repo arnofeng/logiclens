@@ -26,7 +26,7 @@ import { frameworksCommand } from "./interfaces/cli/frameworks.js";
 import { watchCommand } from "./interfaces/cli/watch.js";
 import { installCommand } from "./interfaces/cli/install.js";
 import { uninstallCommand } from "./interfaces/cli/uninstall.js";
-import { loadConfiguredPlugins } from "./interfaces/plugins/loader.js";
+import { loadConfiguredPlugins } from "./core/plugins/loader.js";
 import { logicLensVersion } from "./shared/version.js";
 
 const program = new Command();

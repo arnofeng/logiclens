@@ -1,6 +1,6 @@
 import { loadConfig } from "../../config/loadConfig.js";
-import { loadConfiguredPlugins } from "../plugins/loader.js";
-import { parserRegistry } from "../plugins/registry.js";
+import { loadConfiguredPlugins } from "../../core/plugins/loader.js";
+import { parserRegistry } from "../../core/plugins/registry.js";
 
 export async function pluginsCommand(cwd = process.cwd()): Promise<void> {
   const config = await loadConfig(cwd);

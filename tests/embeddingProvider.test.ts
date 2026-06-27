@@ -1,10 +1,10 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { NullEmbeddingProvider, resolveEmbeddingProvider, cosineSimilarity } from "../src/core/semantic/embeddings.js";
-import { EmbeddingProviderRegistry, embeddingProviderRegistry } from "../src/interfaces/plugins/registry.js";
-import { loadPlugins } from "../src/interfaces/plugins/loader.js";
+import { EmbeddingProviderRegistry, embeddingProviderRegistry } from "../src/core/plugins/registry.js";
+import { loadPlugins } from "../src/core/plugins/loader.js";
 import { OpenAIEmbeddingProvider } from "../src/adapters/embeddings/openaiEmbeddingProvider.js";
 import { configSchema } from "../src/config/schema.js";
-import type { EmbeddingProvider } from "../src/interfaces/plugins/types.js";
+import type { EmbeddingProvider } from "../src/core/plugins/types.js";
 
 describe("EmbeddingProvider abstraction", () => {
   describe("NullEmbeddingProvider", () => {

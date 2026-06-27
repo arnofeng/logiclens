@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { configSchema } from "../src/config/schema.js";
-import { parserRegistry } from "../src/interfaces/plugins/registry.js";
+import { parserRegistry } from "../src/core/plugins/registry.js";
 import { scanRepoFiles } from "../src/core/workspace/fileScanner.js";
 import { isGeneratedFile } from "../src/shared/generatedFile.js";
 

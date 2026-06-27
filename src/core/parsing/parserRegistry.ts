@@ -9,11 +9,11 @@ import { pythonQueries } from "./languages/python.js";
 import { goQueries } from "./languages/go.js";
 import { GenericTreeSitterParser } from "./genericTreeSitterParser.js";
 import { createVueParser } from "./languages/vue.js";
-import { parserRegistry } from "../../interfaces/plugins/registry.js";
+import { parserRegistry } from "../plugins/registry.js";
 import { fileId } from "../../shared/path.js";
 import { hashText } from "../../shared/hash.js";
 import type { DocumentLanguage, FileLanguage, ParsedDocument, ParsedFile, ParsedGraphFile, SourceLanguage } from "./types.js";
-import type { LanguageParser } from "../../interfaces/plugins/types.js";
+import type { LanguageParser } from "../plugins/types.js";
 
 const markdownParser: LanguageParser = {
   name: "builtin:markdown",

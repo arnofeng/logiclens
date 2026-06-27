@@ -1,5 +1,5 @@
 import Parser from "tree-sitter";
-import type { LanguageParser, ParseInput } from "../../interfaces/plugins/types.js";
+import type { LanguageParser, ParseInput } from "../plugins/types.js";
 import type { ParsedFile, LanguageExtractorConfig } from "./types.js";
 import { parseTreeSitterSource } from "./treeSitter.js";
 import { extractSymbolsFromTreeSitter } from "../extraction/extractSymbols.js";

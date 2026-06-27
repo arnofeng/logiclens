@@ -7,7 +7,7 @@ import { defaultConfig } from "../src/config/loadConfig.js";
 import type { LogicLensConfig } from "../src/config/schema.js";
 import { KuzuGraphDB } from "../src/core/graph-model/db.js";
 import { listContracts, listDependencies } from "../src/core/graph-model/queries.js";
-import { embeddingProviderRegistry } from "../src/interfaces/plugins/registry.js";
+import { embeddingProviderRegistry } from "../src/core/plugins/registry.js";
 
 function fixturePath(name: string): string {
   return path.resolve("tests/fixtures", name).replace(/\\/g, "/");

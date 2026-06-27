@@ -2,7 +2,7 @@ import { canonicalHttpContractKey, joinApiPaths } from "../../apiPath.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import type { AnnotationFact } from "../../../parsing/facts.js";
 import type { ParsedFile } from "../../../parsing/types.js";
-import type { ContractExtractor } from "../../../../interfaces/plugins/types.js";
+import type { ContractExtractor } from "../../../plugins/types.js";
 import {
   createCrossRepoExtraction,
   isParsedCodeFile,

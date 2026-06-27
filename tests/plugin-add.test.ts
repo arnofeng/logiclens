@@ -4,8 +4,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { defaultConfig, loadConfig, writeConfig } from "../src/config/loadConfig.js";
 import { pluginAddCommand, pluginRemoveCommand, parseNpmSpec, type PluginAddDeps } from "../src/interfaces/cli/plugin.js";
-import { detectPackageManager, isSafePackageSpec, ensurePluginStore, pluginStoreDir, type PackageManager } from "../src/interfaces/plugins/packageManager.js";
-import { importPluginModule } from "../src/interfaces/plugins/loader.js";
+import { detectPackageManager, isSafePackageSpec, ensurePluginStore, pluginStoreDir, type PackageManager } from "../src/core/plugins/packageManager.js";
+import { importPluginModule } from "../src/core/plugins/loader.js";
 
 const FIXTURE_PLUGIN = path.resolve("tests/fixtures/plugins/grpc-plugin.mjs");
 const NOT_A_PLUGIN = path.resolve("tests/fixtures/plugins/not-a-plugin.mjs");
