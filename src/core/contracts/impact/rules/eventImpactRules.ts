@@ -8,6 +8,62 @@
 import type { ContractSpecNode, SemanticRelationKind } from "../../../parsing/types.js";
 import { deserializeSpec, type EventSpec } from "../../spec.js";
 import type { ChangeIntent, ImpactItem } from "../types.js";
+import type { ImpactAnalysisOptions } from "../types.js";
+
+/**
+ * Classifies the impact on the target event spec itself (the spec being
+ * changed). Extracted from `impactEngine.classifyTargetChange` for the
+ * registry pattern.
+ */
+export function classifyEventTargetChange(
+  change: ChangeIntent,
+  spec: ContractSpecNode
+): ImpactItem | null {
+  const eventSpec = deserializeSpec(spec.specJson) as EventSpec;
+  if (eventSpec.kind !== "event") return null;
+
+  const base = {
+    repoId: spec.repoId,
+    filePath: spec.fileId,
+    specId: spec.id,
+  };
+
+  if (change.changeType === "topic-removed") {
+    return {
+      ...base,
+      severity: "breaking",
+      symbol: eventSpec.topic,
+      relationKind: "IMPACTS",
+      description: `Event topic ${eventSpec.topic} will be removed`,
+      evidence: `event: ${eventSpec.topic}${eventSpec.broker ? ` (${eventSpec.broker})` : ""}`,
+      confidence: spec.confidence,
+    };
+  }
+  if (change.changeType === "topic-renamed" && change.detail) {
+    return {
+      ...base,
+      severity: "breaking",
+      symbol: eventSpec.topic,
+      relationKind: "IMPACTS",
+      description: `Event topic renamed to ${change.detail}`,
+      evidence: `event: ${eventSpec.topic} → ${change.detail}`,
+      confidence: spec.confidence,
+    };
+  }
+  if (change.changeType === "event-payload-change") {
+    return {
+      ...base,
+      severity: "risky",
+      symbol: eventSpec.topic,
+      relationKind: "IMPACTS",
+      description: `Event payload changed for ${eventSpec.topic}`,
+      evidence: `event: ${eventSpec.topic} payload: ${eventSpec.payloadType ?? "unknown"}`,
+      confidence: spec.confidence,
+    };
+  }
+
+  return null;
+}
 
 /**
  * Assesses the impact of a contract change on an event consumer or producer.
@@ -17,7 +73,8 @@ export function assessEventChange(
   dependentSpec: ContractSpecNode,
   relationKind: SemanticRelationKind,
   reason: string,
-  confidence: number
+  confidence: number,
+  _options?: ImpactAnalysisOptions
 ): ImpactItem[] {
   const eventSpec = deserializeSpec(dependentSpec.specJson) as EventSpec;
   if (eventSpec.kind !== "event") return [];

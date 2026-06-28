@@ -91,3 +91,20 @@ export type ImpactReport = {
   /** How many ContractSpec nodes were inspected */
   inspectedSpecCount: number;
 };
+
+// ---------------------------------------------------------------------------
+// Analysis options
+// ---------------------------------------------------------------------------
+
+/** Options for the impact analysis engine. */
+export type ImpactAnalysisOptions = {
+  /**
+   * Optional function to read file contents for field-level search.
+   * Takes a `repoId/filePath` string and returns the file contents.
+   * If omitted, field-level search is skipped and impacts are reported
+   * at the contract level only.
+   */
+  readFile?: (repoId: string, filePath: string) => string | undefined;
+  /** Maximum BFS depth for transitive impact traversal (default 3). */
+  maxHops?: number;
+};

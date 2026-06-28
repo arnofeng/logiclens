@@ -8,6 +8,62 @@
 import type { ContractSpecNode, SemanticRelationKind } from "../../../parsing/types.js";
 import { deserializeSpec, type HttpEndpointSpec } from "../../spec.js";
 import type { ChangeIntent, ImpactItem } from "../types.js";
+import type { ImpactAnalysisOptions } from "../types.js";
+
+/**
+ * Classifies the impact on the target HTTP endpoint spec itself (the spec
+ * being changed). Extracted from `impactEngine.classifyTargetChange` for
+ * the registry pattern.
+ */
+export function classifyHttpEndpointTargetChange(
+  change: ChangeIntent,
+  spec: ContractSpecNode
+): ImpactItem | null {
+  const httpSpec = deserializeSpec(spec.specJson) as HttpEndpointSpec;
+  if (httpSpec.kind !== "http-endpoint") return null;
+
+  const base = {
+    repoId: spec.repoId,
+    filePath: spec.fileId,
+    specId: spec.id,
+  };
+
+  if (change.changeType === "endpoint-removed") {
+    return {
+      ...base,
+      severity: "breaking",
+      symbol: `${httpSpec.method ?? "ANY"} ${httpSpec.path}`,
+      relationKind: "IMPACTS",
+      description: `HTTP endpoint ${httpSpec.method ?? "ANY"} ${httpSpec.path} will be removed`,
+      evidence: `endpoint: ${httpSpec.method ?? "ANY"} ${httpSpec.pathTemplate}`,
+      confidence: spec.confidence,
+    };
+  }
+  if (change.changeType === "endpoint-renamed" && change.detail) {
+    return {
+      ...base,
+      severity: "breaking",
+      symbol: `${httpSpec.method ?? "ANY"} ${httpSpec.path}`,
+      relationKind: "IMPACTS",
+      description: `HTTP endpoint renamed to ${change.detail}`,
+      evidence: `endpoint: ${httpSpec.method ?? "ANY"} ${httpSpec.pathTemplate}`,
+      confidence: spec.confidence,
+    };
+  }
+  if (change.changeType === "endpoint-schema-change") {
+    return {
+      ...base,
+      severity: "risky",
+      symbol: `${httpSpec.method ?? "ANY"} ${httpSpec.path}`,
+      relationKind: "IMPACTS",
+      description: `Request/response schema changed for ${httpSpec.method ?? "ANY"} ${httpSpec.path}`,
+      evidence: `endpoint: ${httpSpec.method ?? "ANY"} ${httpSpec.pathTemplate}`,
+      confidence: spec.confidence,
+    };
+  }
+
+  return null;
+}
 
 /**
  * Assesses the impact of a contract change on an HTTP endpoint consumer.
@@ -17,7 +73,8 @@ export function assessHttpEndpointChange(
   dependentSpec: ContractSpecNode,
   relationKind: SemanticRelationKind,
   reason: string,
-  confidence: number
+  confidence: number,
+  _options?: ImpactAnalysisOptions
 ): ImpactItem[] {
   const httpSpec = deserializeSpec(dependentSpec.specJson) as HttpEndpointSpec;
   if (httpSpec.kind !== "http-endpoint") return [];

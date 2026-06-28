@@ -8,11 +8,12 @@
 // ---------------------------------------------------------------------------
 
 import type {
+  ContractSpecKind,
   ContractSpecNode,
   SemanticRelationEdge,
   SemanticRelationKind
 } from "../../parsing/types.js";
-import { deserializeSpec, type HttpEndpointSpec, type EventSpec, type SchemaSpec } from "../spec.js";
+import { deserializeSpec } from "../spec.js";
 import {
   CONSUMER_TO_PRODUCER_KINDS,
   SCHEMA_TO_USE_KINDS
@@ -21,11 +22,17 @@ import {
   type ChangeIntent,
   type ImpactItem,
   type ImpactReport,
-  type ImpactSeverity
+  type ImpactSeverity,
+  type ImpactAnalysisOptions
 } from "./types.js";
-import { assessHttpEndpointChange } from "./rules/httpImpactRules.js";
-import { assessEventChange } from "./rules/eventImpactRules.js";
-import { assessSchemaFieldChange } from "./rules/schemaImpactRules.js";
+import { findFieldReferences } from "./fieldSearch.js";
+import { assessHttpEndpointChange, classifyHttpEndpointTargetChange } from "./rules/httpImpactRules.js";
+import { assessEventChange, classifyEventTargetChange } from "./rules/eventImpactRules.js";
+import { assessSchemaFieldChange, classifySchemaTargetChange } from "./rules/schemaImpactRules.js";
+
+// Re-export for backward compatibility (tests and external consumers)
+export { findFieldReferences } from "./fieldSearch.js";
+export type { ImpactAnalysisOptions } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Graph traversal helpers
@@ -161,49 +168,6 @@ function collectIncomingEdgesOnPaths(
 }
 
 // ---------------------------------------------------------------------------
-// File-based field search (memory-level, avoids SchemaField node explosion)
-// ---------------------------------------------------------------------------
-
-/**
- * Searches source text for references to a field name.
- * Uses regex to find field access patterns like `.fieldName`, `["fieldName"]`,
- * `getFieldName()`, `setFieldName(...)`.
- */
-export function findFieldReferences(
-  sourceText: string,
-  fieldName: string
-): { line: number; raw: string }[] {
-  const results: { line: number; raw: string }[] = [];
-  const escaped = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-  const patterns = [
-    // .fieldName (dot access) — case-sensitive to avoid false matches like .ID matching .id
-    new RegExp(`\\.${escaped}\\b`, "g"),
-    // ["fieldName"] or ['fieldName'] (bracket access)
-    new RegExp(`\\[["']${escaped}["']\\]`, "g"),
-    // getFieldName() / setFieldName() (Java-style accessors, case-insensitive prefix)
-    new RegExp(`\\b(get|set)${escaped.charAt(0).toUpperCase()}${escaped.slice(1)}\\b`, "g"),
-  ];
-
-  const seenLines = new Set<number>();
-  const lines = sourceText.split("\n");
-
-  for (const pattern of patterns) {
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i]!;
-      // Reset lastIndex for global regex
-      pattern.lastIndex = 0;
-      if (pattern.test(line) && !seenLines.has(i + 1)) {
-        seenLines.add(i + 1);
-        results.push({ line: i + 1, raw: line.trim() });
-      }
-    }
-  }
-
-  return results;
-}
-
-// ---------------------------------------------------------------------------
 // Spec resolution
 // ---------------------------------------------------------------------------
 
@@ -273,17 +237,6 @@ function worstSeverity(a: ImpactSeverity, b: ImpactSeverity): ImpactSeverity {
 // Main analysis entry point
 // ---------------------------------------------------------------------------
 
-export type ImpactAnalysisOptions = {
-  /**
-   * Optional function to read file contents for field-level search.
-   * Takes a `repoId/filePath` string and returns the file contents.
-   * If omitted, field-level search is skipped and impacts are reported
-   * at the contract level only.
-   */
-  readFile?: (repoId: string, filePath: string) => string | undefined;
-  /** Maximum BFS depth for transitive impact traversal (default 3). */
-  maxHops?: number;
-};
 
 /**
  * Analyzes the downstream impact of a contract change.
@@ -446,7 +399,8 @@ export function analyzeImpact(
             line: ref.line,
             symbol: `${change.target.split(":").pop() ?? change.target}.${change.detail}`,
             relationKind: "USES_SCHEMA",
-            severity: schemaFieldChangeSeverity(change.changeType),
+            severity: change.changeType === "field-removed" ? "breaking"
+              : change.changeType === "field-added" ? "compatible" : "risky",
             description: `Field '${change.detail}' referenced in ${spec.repoId}/${spec.fileId}`,
             evidence: ref.raw,
             confidence: spec.confidence,
@@ -484,115 +438,36 @@ export function analyzeImpact(
 }
 
 // ---------------------------------------------------------------------------
-// Impact classification
+// Impact classification — registry-based dispatch
 // ---------------------------------------------------------------------------
+
+/** Registry: target change classifiers keyed by specKind. */
+const TARGET_CLASSIFIERS: Partial<Record<
+  ContractSpecKind,
+  (change: ChangeIntent, spec: ContractSpecNode) => ImpactItem | null
+>> = {
+  "http-endpoint": classifyHttpEndpointTargetChange,
+  "event":         classifyEventTargetChange,
+  "schema":        classifySchemaTargetChange,
+};
+
+/** Registry: downstream impact classifiers keyed by specKind. */
+const IMPACT_CLASSIFIERS: Partial<Record<
+  ContractSpecKind,
+  (change: ChangeIntent, spec: ContractSpecNode, relationKind: SemanticRelationKind,
+   reason: string, confidence: number, options: ImpactAnalysisOptions) => ImpactItem[]
+>> = {
+  "http-endpoint": assessHttpEndpointChange,
+  "event":         assessEventChange,
+  "schema":        assessSchemaFieldChange,
+};
 
 function classifyTargetChange(
   change: ChangeIntent,
   spec: ContractSpecNode
 ): ImpactItem | null {
-  const base = {
-    repoId: spec.repoId,
-    filePath: spec.fileId,
-    specId: spec.id,
-  };
-
-  if (spec.specKind === "http-endpoint") {
-    const httpSpec = deserializeSpec(spec.specJson) as HttpEndpointSpec;
-    if (httpSpec.kind !== "http-endpoint") return null;
-    if (change.changeType === "endpoint-removed") {
-      return {
-        ...base,
-        severity: "breaking",
-        symbol: `${httpSpec.method ?? "ANY"} ${httpSpec.path}`,
-        relationKind: "IMPACTS",
-        description: `HTTP endpoint ${httpSpec.method ?? "ANY"} ${httpSpec.path} will be removed`,
-        evidence: `endpoint: ${httpSpec.method ?? "ANY"} ${httpSpec.pathTemplate}`,
-        confidence: spec.confidence,
-      };
-    }
-    if (change.changeType === "endpoint-renamed" && change.detail) {
-      return {
-        ...base,
-        severity: "breaking",
-        symbol: `${httpSpec.method ?? "ANY"} ${httpSpec.path}`,
-        relationKind: "IMPACTS",
-        description: `HTTP endpoint renamed to ${change.detail}`,
-        evidence: `endpoint: ${httpSpec.method ?? "ANY"} ${httpSpec.pathTemplate}`,
-        confidence: spec.confidence,
-      };
-    }
-    if (change.changeType === "endpoint-schema-change") {
-      return {
-        ...base,
-        severity: "risky",
-        symbol: `${httpSpec.method ?? "ANY"} ${httpSpec.path}`,
-        relationKind: "IMPACTS",
-        description: `Request/response schema changed for ${httpSpec.method ?? "ANY"} ${httpSpec.path}`,
-        evidence: `endpoint: ${httpSpec.method ?? "ANY"} ${httpSpec.pathTemplate}`,
-        confidence: spec.confidence,
-      };
-    }
-  }
-
-  if (spec.specKind === "event") {
-    const eventSpec = deserializeSpec(spec.specJson) as EventSpec;
-    if (eventSpec.kind !== "event") return null;
-    if (change.changeType === "topic-removed") {
-      return {
-        ...base,
-        severity: "breaking",
-        symbol: eventSpec.topic,
-        relationKind: "IMPACTS",
-        description: `Event topic ${eventSpec.topic} will be removed`,
-        evidence: `event: ${eventSpec.topic}${eventSpec.broker ? ` (${eventSpec.broker})` : ""}`,
-        confidence: spec.confidence,
-      };
-    }
-    if (change.changeType === "topic-renamed" && change.detail) {
-      return {
-        ...base,
-        severity: "breaking",
-        symbol: eventSpec.topic,
-        relationKind: "IMPACTS",
-        description: `Event topic renamed to ${change.detail}`,
-        evidence: `event: ${eventSpec.topic} → ${change.detail}`,
-        confidence: spec.confidence,
-      };
-    }
-    if (change.changeType === "event-payload-change") {
-      return {
-        ...base,
-        severity: "risky",
-        symbol: eventSpec.topic,
-        relationKind: "IMPACTS",
-        description: `Event payload changed for ${eventSpec.topic}`,
-        evidence: `event: ${eventSpec.topic} payload: ${eventSpec.payloadType ?? "unknown"}`,
-        confidence: spec.confidence,
-      };
-    }
-  }
-
-  if (spec.specKind === "schema") {
-    const schemaSpec = deserializeSpec(spec.specJson) as SchemaSpec;
-    if (schemaSpec.kind !== "schema") return null;
-    const fieldName = change.detail ?? "unknown field";
-    // Check if the field is optional to adjust severity
-    const field = schemaSpec.fields.find((f) => f.name === fieldName);
-    const severity = field?.optional && change.changeType === "field-removed"
-      ? "risky" : schemaFieldChangeSeverity(change.changeType);
-    return {
-      ...base,
-      severity,
-      symbol: `${schemaSpec.name}.${fieldName}`,
-      relationKind: "IMPACTS",
-      description: `${change.changeType}: ${fieldName} in ${schemaSpec.name}`,
-      evidence: `schema: ${schemaSpec.name}.${fieldName}${field ? ` (${field.type}${field.optional ? ", optional" : ""})` : ""}`,
-      confidence: spec.confidence,
-    };
-  }
-
-  return null;
+  const classifier = TARGET_CLASSIFIERS[spec.specKind];
+  return classifier ? classifier(change, spec) : null;
 }
 
 function classifyImpact(
@@ -603,27 +478,10 @@ function classifyImpact(
   confidence: number,
   options: ImpactAnalysisOptions
 ): ImpactItem[] {
-  if (dependentSpec.specKind === "http-endpoint") {
-    return assessHttpEndpointChange(change, dependentSpec, relationKind, reason, confidence);
-  }
-  if (dependentSpec.specKind === "event") {
-    return assessEventChange(change, dependentSpec, relationKind, reason, confidence);
-  }
-  if (dependentSpec.specKind === "schema") {
-    return assessSchemaFieldChange(change, dependentSpec, relationKind, reason, confidence, options);
-  }
-  return [];
-}
-
-function schemaFieldChangeSeverity(
-  changeType: ChangeIntent["changeType"]
-): ImpactSeverity {
-  switch (changeType) {
-    case "field-removed": return "breaking";
-    case "field-type-changed": return "risky";
-    case "field-added": return "compatible";
-    default: return "risky";
-  }
+  const classifier = IMPACT_CLASSIFIERS[dependentSpec.specKind];
+  return classifier
+    ? classifier(change, dependentSpec, relationKind, reason, confidence, options)
+    : [];
 }
 
 // ---------------------------------------------------------------------------

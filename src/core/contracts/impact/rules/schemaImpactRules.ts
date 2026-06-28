@@ -8,8 +8,51 @@
 
 import type { ContractSpecNode, SemanticRelationKind } from "../../../parsing/types.js";
 import { deserializeSpec, type SchemaSpec, type SchemaFieldSpec } from "../../spec.js";
-import { findFieldReferences, type ImpactAnalysisOptions } from "../impactEngine.js";
-import type { ChangeIntent, ImpactItem } from "../types.js";
+import { findFieldReferences } from "../fieldSearch.js";
+import type { ChangeIntent, ImpactItem, ImpactSeverity, ImpactAnalysisOptions } from "../types.js";
+
+/**
+ * Classifies the impact on the target schema spec itself (the spec being
+ * changed). Extracted from `impactEngine.classifyTargetChange` for the
+ * registry pattern.
+ */
+export function classifySchemaTargetChange(
+  change: ChangeIntent,
+  spec: ContractSpecNode
+): ImpactItem | null {
+  const schemaSpec = deserializeSpec(spec.specJson) as SchemaSpec;
+  if (schemaSpec.kind !== "schema") return null;
+
+  const fieldName = change.detail ?? "unknown field";
+  // Check if the field is optional to adjust severity
+  const field = schemaSpec.fields.find((f) => f.name === fieldName);
+  const severity: ImpactSeverity = field?.optional && change.changeType === "field-removed"
+    ? "risky" : schemaFieldChangeSeverity(change.changeType);
+
+  return {
+    repoId: spec.repoId,
+    filePath: spec.fileId,
+    specId: spec.id,
+    severity,
+    symbol: `${schemaSpec.name}.${fieldName}`,
+    relationKind: "IMPACTS",
+    description: `${change.changeType}: ${fieldName} in ${schemaSpec.name}`,
+    evidence: `schema: ${schemaSpec.name}.${fieldName}${field ? ` (${field.type}${field.optional ? ", optional" : ""})` : ""}`,
+    confidence: spec.confidence,
+  };
+}
+
+/** Maps a schema change type to its default severity. */
+function schemaFieldChangeSeverity(
+  changeType: ChangeIntent["changeType"]
+): ImpactSeverity {
+  switch (changeType) {
+    case "field-removed": return "breaking";
+    case "field-type-changed": return "risky";
+    case "field-added": return "compatible";
+    default: return "risky";
+  }
+}
 
 /**
  * Assesses the impact of a schema field change on dependent contracts.
