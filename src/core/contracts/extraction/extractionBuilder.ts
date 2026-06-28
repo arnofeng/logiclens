@@ -5,7 +5,8 @@
 // during Phase 1 and postExtract; build() deduplicates and returns a read-only
 // ExtractedFacts view.  The caller can spread the result into a mutable
 // CrossRepoExtraction for Phase 4.2 materialization if needed.
-// TODO(Phase F): extract dedup-key helpers from here into dedup.ts (P2-7).
+//
+// Dedup-key helpers live in dedup.ts (P2-7).
 // ---------------------------------------------------------------------------
 
 import type {
@@ -22,32 +23,16 @@ import type {
 } from "../../parsing/types.js";
 import type { FactCollector, PackageUsageEntry } from "./factCollector.js";
 import type { ExtractedFacts } from "./contracts.js";
-
-// TODO(Phase F): extract these dedup helpers into dedup.ts
-
-function repoContractKey(e: RepoContractEdge): string {
-  return `${e.repoId}:${e.contractId}:${e.role}:${e.evidenceId}`;
-}
-
-function contractEntityKey(e: ContractEntityEdge): string {
-  return `${e.contractId}:${e.entityId}:${e.evidenceId}`;
-}
-
-function operationRepoKey(e: OperationRepoEdge): string {
-  return `${e.repoId}:${e.operationId}:${e.role}:${e.evidenceId}`;
-}
-
-function packageUsageKey(e: PackageUsageEntry): string {
-  return `${e.repoId}:${e.packageContractId}:${e.evidenceId}`;
-}
-
-function contractSpecEdgeKey(e: ContractSpecEdge): string {
-  return `${e.contractId}:${e.specId}:${e.evidenceId}`;
-}
-
-function semanticRelationKey(e: SemanticRelationEdge): string {
-  return `${e.fromSpecId}:${e.toSpecId}:${e.kind}:${e.evidenceId}`;
-}
+import {
+  dedupById,
+  dedupBy,
+  repoContractDedupKey,
+  contractEntityDedupKey,
+  operationRepoDedupKey,
+  packageUsageDedupKey,
+  contractSpecEdgeDedupKey,
+  semanticRelationDedupKey
+} from "./dedup.js";
 
 export class ExtractionBuilder implements FactCollector {
   private contracts: ContractNode[] = [];
@@ -86,23 +71,13 @@ export class ExtractionBuilder implements FactCollector {
       evidence: dedupById(this.evidence),
       entities: dedupById(this.entities),
       operations: dedupById(this.operations),
-      repoContracts: dedupBy(this.repoContracts, repoContractKey),
-      contractEntities: dedupBy(this.contractEntities, contractEntityKey),
-      operationRepos: dedupBy(this.operationRepos, operationRepoKey),
-      packageUsages: dedupBy(this.packageUsages, packageUsageKey),
+      repoContracts: dedupBy(this.repoContracts, repoContractDedupKey),
+      contractEntities: dedupBy(this.contractEntities, contractEntityDedupKey),
+      operationRepos: dedupBy(this.operationRepos, operationRepoDedupKey),
+      packageUsages: dedupBy(this.packageUsages, packageUsageDedupKey),
       contractSpecs: dedupById(this.contractSpecs),
-      contractSpecEdges: dedupBy(this.contractSpecEdges, contractSpecEdgeKey),
-      semanticRelations: dedupBy(this.semanticRelations, semanticRelationKey),
+      contractSpecEdges: dedupBy(this.contractSpecEdges, contractSpecEdgeDedupKey),
+      semanticRelations: dedupBy(this.semanticRelations, semanticRelationDedupKey),
     };
   }
-}
-
-// -- Shared dedup helpers ----------------------------------------------------
-
-function dedupById<T extends { id: string }>(items: T[]): T[] {
-  return [...new Map(items.map((item) => [item.id, item])).values()];
-}
-
-function dedupBy<T>(items: T[], keyFn: (item: T) => string): T[] {
-  return [...new Map(items.map((item) => [keyFn(item), item])).values()];
 }

@@ -41,7 +41,7 @@ export type ExtractContext = {
   /** List of all parsed file nodes in the workspace */
   parsedFiles: ParsedGraphFile[];
   /** Helper function to resolve repository metadata by its ID */
-  repoResolver: (repoId: string) => RepoNode | undefined;
+  repoResolver?: (repoId: string) => RepoNode | undefined;
   /** Custom alias overrides for mapping dependencies to repositories */
   aliasOverrides?: Array<{ alias: string; targetRepoId: string }>;
 };
@@ -78,6 +78,15 @@ export type PostExtractContext = {
   readonly parsedFiles: ParsedGraphFile[];
 };
 
+export interface ContractExtractorDeps {
+  /** Whether the extractor needs parsedFiles (most do, defaults to true) */
+  parsedFiles?: boolean;
+  /** Whether the extractor needs repoResolver helper */
+  repoResolver?: boolean;
+  /** Whether the extractor needs aliasOverrides config */
+  aliasOverrides?: boolean;
+}
+
 /**
  * Interface that must be implemented by a custom contract extractor plugin.
  * Used to discover cross-repository contracts, events, dependencies, and rules.
@@ -89,6 +98,8 @@ export interface ContractExtractor {
   languages?: string[];
   /** Frameworks supported by this contract extractor */
   frameworks?: string[];
+  /** Declarative dependencies — pipeline uses this to construct a minimal context */
+  needs?: ContractExtractorDeps;
   /**
    * Performs extraction of contracts, dependencies, entities, and workflows.
    *

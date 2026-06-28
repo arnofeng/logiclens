@@ -17,9 +17,14 @@ import type {
   WorkflowNode,
   WorkflowOperationEdge
 } from "../../parsing/types.js";
-import type { ExtractContext, PostExtractContext } from "../../plugins/types.js";
+import type { ContractExtractor, ExtractContext, PostExtractContext } from "../../plugins/types.js";
 import { normalizeName } from "../../../shared/path.js";
 import { builtinContractExtractors } from "./builtin/index.js";
+import {
+  dedupBy,
+  materializedRepoDependencyDedupKey,
+  materializedWorkflowOperationDedupKey
+} from "./dedup.js";
 import type { LogicLensConfig } from "../../../config/schema.js";
 import { loadConfig, defaultConfig } from "../../../config/loadConfig.js";
 import { detectFrameworks, isExtractorEnabled } from "../../frameworks/detect.js";
@@ -231,7 +236,7 @@ export function buildRepoDependenciesFromParticipants(participants: ContractPart
     }
   }
 
-  return [...new Map(result.map((edge) => [`${edge.fromRepoId}:${edge.toRepoId}:${edge.dependencyType}:${edge.evidenceId}`, edge])).values()];
+  return dedupBy(result, materializedRepoDependencyDedupKey);
 }
 
 // ---------------------------------------------------------------------------
@@ -385,12 +390,62 @@ export async function extractCrossRepoContracts(
     operations: [...facts.operations],
     workflows: [...workflowMap.values()],
     operationRepos: [...facts.operationRepos],
-    workflowOperations: [...new Map(workflowOperations.map((edge) => [`${edge.workflowId}:${edge.operationId}:${edge.step}`, edge])).values()],
+    workflowOperations: dedupBy(workflowOperations, materializedWorkflowOperationDedupKey),
     packageUsages: [...facts.packageUsages],
     contractSpecs: [...facts.contractSpecs],
     contractSpecEdges: [...facts.contractSpecEdges],
     semanticRelations,
   };
+}
+
+function buildExtractContext(
+  extractor: ContractExtractor,
+  baseContext: ExtractContext,
+  enabledRepoIds: Set<string>,
+  enabledRepos: RepoNode[]
+): ExtractContext {
+  const needs = extractor.needs ?? {};
+  const context: ExtractContext = {
+    repos: enabledRepos,
+    parsedFiles: needs.parsedFiles !== false
+      ? baseContext.parsedFiles.filter((file) => enabledRepoIds.has(file.repoId))
+      : [],
+    repoResolver: needs.repoResolver && baseContext.repoResolver
+      ? (repoId: string) => {
+          if (!enabledRepoIds.has(repoId)) return undefined;
+          return baseContext.repoResolver!(repoId);
+        }
+      : undefined,
+    aliasOverrides: needs.aliasOverrides
+      ? baseContext.aliasOverrides
+      : undefined
+  };
+
+  // Development/Testing Proxy guard to catch undeclared context dependencies
+  if (process.env.NODE_ENV === "test" || process.env.VITEST || process.env.NODE_ENV === "development") {
+    return new Proxy(context, {
+      get(target, prop, receiver) {
+        if (prop === "repoResolver" && !needs.repoResolver) {
+          console.warn(
+            `[LogicLens Warning] Extractor "${extractor.name}" accessed "context.repoResolver" but did not declare it in "needs.repoResolver".`
+          );
+        }
+        if (prop === "aliasOverrides" && !needs.aliasOverrides) {
+          console.warn(
+            `[LogicLens Warning] Extractor "${extractor.name}" accessed "context.aliasOverrides" but did not declare it in "needs.aliasOverrides".`
+          );
+        }
+        if (prop === "parsedFiles" && needs.parsedFiles === false) {
+          console.warn(
+            `[LogicLens Warning] Extractor "${extractor.name}" accessed "context.parsedFiles" but declared "needs.parsedFiles: false".`
+          );
+        }
+        return Reflect.get(target, prop, receiver);
+      }
+    });
+  }
+
+  return context;
 }
 
 export async function extractContractFactsWithRegistry(
@@ -428,24 +483,14 @@ export async function extractContractFactsWithRegistry(
       continue; // Skip this extractor entirely if not enabled for any repo
     }
 
-    // Filter parsedFiles to only include files belonging to enabled repos
     const enabledRepoIds = new Set(enabledRepos.map((r) => r.id));
-    const enabledParsedFiles = context.parsedFiles.filter((file) => enabledRepoIds.has(file.repoId));
+    const filteredContext = buildExtractContext(extractor, context, enabledRepoIds, enabledRepos);
 
-    const repoResolver = (repoId: string) => {
-      if (!enabledRepoIds.has(repoId)) return undefined;
-      return context.repoResolver(repoId);
-    };
-
-    const filteredContext: ExtractContext = {
-      repos: enabledRepos,
-      parsedFiles: enabledParsedFiles,
-      repoResolver,
-      aliasOverrides: context.aliasOverrides
-    };
     postExtractContexts.set(extractor.name, {
       repos: enabledRepos,
-      parsedFiles: enabledParsedFiles
+      parsedFiles: extractor.needs?.parsedFiles !== false
+        ? context.parsedFiles.filter((file) => enabledRepoIds.has(file.repoId))
+        : []
     });
 
     await extractor.extract(filteredContext, builder);

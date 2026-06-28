@@ -16,6 +16,10 @@ export const packageJsonExtractor = compatExtractor({
   name: "builtin:package-json",
   languages: ["javascript", "typescript"],
   frameworks: ["js:package-json"],
+  needs: {
+    parsedFiles: false,
+    aliasOverrides: true
+  },
   async extract(context, collector: FactCollector) {
     const manifests = (await Promise.all(context.repos.map(readRepoPackageManifests))).flat();
     const identities = buildOwnership(context.repos, manifests, context.aliasOverrides);

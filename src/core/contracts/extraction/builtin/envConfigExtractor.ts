@@ -122,10 +122,13 @@ function isProcessEnvMember(node: Parser.SyntaxNode | null): boolean {
 
 export const envConfigExtractor = compatExtractor({
   name: "builtin:env-config",
+  needs: {
+    repoResolver: true
+  },
   async extract(context, collector: FactCollector) {
     for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
       if (FILE_CONFIG_LANGUAGES.has(file.language)) {
-        const repo = context.repoResolver(file.repoId);
+        const repo = context.repoResolver?.(file.repoId);
         if (!repo) continue;
         const source = await fs.readFile(path.join(repo.path, file.path), "utf8");
         for (const configKey of parseFileConfigKeys(file.language, source)) {

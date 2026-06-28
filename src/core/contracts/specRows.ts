@@ -54,17 +54,31 @@ export type DepEdgeRow = {
   active: boolean;
 };
 
+const SPEC_COLUMNS = [
+  "id",
+  "contractId",
+  "specKind",
+  "repoId",
+  "fileId",
+  "evidenceId",
+  "sourceSymbolId",
+  "canonicalKey",
+  "httpMethod",
+  "pathTemplate",
+  "eventTopic",
+  "framework",
+  "version",
+  "specJson",
+  "confidence",
+  "batchId",
+  "indexedAt",
+  "active"
+] as const;
+
 /**
  * RETURN projection for a `(s:ContractSpec)` node, aligned with {@link SpecRow}.
  */
-export const SPEC_RETURN = `s.id AS id, s.contractId AS contractId, s.specKind AS specKind,
-       s.repoId AS repoId, s.fileId AS fileId, s.evidenceId AS evidenceId,
-       s.sourceSymbolId AS sourceSymbolId, s.canonicalKey AS canonicalKey,
-       s.httpMethod AS httpMethod, s.pathTemplate AS pathTemplate,
-       s.eventTopic AS eventTopic, s.framework AS framework,
-       s.version AS version, s.specJson AS specJson,
-       s.confidence AS confidence, s.batchId AS batchId,
-       s.indexedAt AS indexedAt, s.active AS active`;
+export const SPEC_RETURN = SPEC_COLUMNS.map((c) => `s.${c} AS ${c}`).join(",\n       ");
 
 /**
  * RETURN projection for a `(a)-[r:SEMANTIC_REL]->(b)` edge, aligned with

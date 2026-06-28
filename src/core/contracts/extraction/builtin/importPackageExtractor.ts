@@ -26,6 +26,9 @@ import {
  */
 export const importPackageExtractor = compatExtractor({
   name: "builtin:import-package",
+  needs: {
+    aliasOverrides: true
+  },
   async extract(context, collector: FactCollector) {
     const manifests = (await Promise.all(context.repos.map(readRepoPackageManifests))).flat();
     const identities = buildOwnership(context.repos, manifests, context.aliasOverrides);
