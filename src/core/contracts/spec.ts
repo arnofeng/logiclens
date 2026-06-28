@@ -1,3 +1,5 @@
+import type { ContractSpecKind } from "../parsing/types.js";
+
 export type HttpEndpointSpec = {
   kind: "http-endpoint";
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
@@ -37,6 +39,23 @@ export type SchemaSpec = {
 };
 
 export type ContractSpec = HttpEndpointSpec | EventSpec | SchemaSpec;
+
+export type InteractionStyle = "sync-rpc" | "async-message" | "shared-data";
+
+export function interactionStyleOfSpecKind(kind: ContractSpecKind): InteractionStyle {
+  switch (kind) {
+    case "http-endpoint":
+      return "sync-rpc";
+    case "event":
+      return "async-message";
+    case "schema":
+      return "shared-data";
+    default: {
+      const exhaustive: never = kind;
+      throw new Error(`Unhandled ContractSpecKind: ${exhaustive as string}`);
+    }
+  }
+}
 
 export function serializeSpec(spec: ContractSpec): string {
   return JSON.stringify(spec);

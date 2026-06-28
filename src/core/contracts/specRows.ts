@@ -1,8 +1,11 @@
 import type {
   ContractSpecNode,
+  OpaqueContractSpecNode,
+  ReadableContractSpecNode,
   RepoDependencyEdge,
   SemanticRelationEdge
 } from "../parsing/types.js";
+import { isKnownSpecKind } from "../parsing/types.js";
 
 // ---------------------------------------------------------------------------
 // Shared graph-row shapes and mappers for ContractSpec / SEMANTIC_REL /
@@ -97,10 +100,13 @@ export const DEP_EDGE_RETURN = `from.id AS fromRepoId, to.id AS toRepoId, d.depe
        d.batchId AS batchId, d.active AS active`;
 
 export function rowToContractSpec(row: SpecRow): ContractSpecNode {
+  if (!isKnownSpecKind(row.specKind)) {
+    throw new Error(`Unknown ContractSpec specKind "${row.specKind}" for ${row.id}`);
+  }
   return {
     id: row.id,
     contractId: row.contractId,
-    specKind: row.specKind as ContractSpecNode["specKind"],
+    specKind: row.specKind,
     repoId: row.repoId,
     fileId: row.fileId,
     evidenceId: row.evidenceId,
@@ -117,6 +123,32 @@ export function rowToContractSpec(row: SpecRow): ContractSpecNode {
     indexedAt: row.indexedAt ?? undefined,
     active: row.active
   };
+}
+
+export function rowToReadableContractSpec(row: SpecRow): ReadableContractSpecNode {
+  if (isKnownSpecKind(row.specKind)) return rowToContractSpec(row);
+  return {
+    id: row.id,
+    contractId: row.contractId,
+    specKind: row.specKind,
+    repoId: row.repoId,
+    fileId: row.fileId,
+    evidenceId: row.evidenceId,
+    sourceSymbolId: row.sourceSymbolId ?? undefined,
+    canonicalKey: row.canonicalKey,
+    httpMethod: row.httpMethod ?? undefined,
+    pathTemplate: row.pathTemplate ?? undefined,
+    eventTopic: row.eventTopic ?? undefined,
+    framework: row.framework ?? undefined,
+    version: row.version ?? undefined,
+    specJson: row.specJson,
+    confidence: row.confidence,
+    batchId: row.batchId ?? undefined,
+    indexedAt: row.indexedAt ?? undefined,
+    active: row.active,
+    opaque: true,
+    warning: `Unknown ContractSpec specKind "${row.specKind}"`
+  } satisfies OpaqueContractSpecNode;
 }
 
 export function rowToSemanticRel(row: SemanticRelRow): SemanticRelationEdge {

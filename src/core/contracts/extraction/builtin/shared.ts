@@ -202,11 +202,7 @@ export function pushContractSpec(input: {
   version?: string;
 }): string {
   const specId = `spec:${normalizeName(`${input.contractNode.id}:${input.evidenceNode.id}`)}`;
-  const specKind: ContractSpecKind = input.spec.kind === "http-endpoint"
-    ? "http-endpoint"
-    : input.spec.kind === "event"
-      ? "event"
-      : "schema";
+  const specKind: ContractSpecKind = input.spec.kind;
   input.collector.addContractSpec({
     id: specId,
     contractId: input.contractNode.id,

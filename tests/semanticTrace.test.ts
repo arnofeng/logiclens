@@ -6,7 +6,7 @@ import {
 } from "../src/core/contracts/semanticTrace.js";
 import { canonicalHttpContractKey } from "../src/core/contracts/apiPath.js";
 import { serializeSpec } from "../src/core/contracts/spec.js";
-import type { ContractSpecNode, SemanticRelationEdge } from "../src/core/parsing/types.js";
+import type { ContractSpecNode, ReadableContractSpecNode, SemanticRelationEdge } from "../src/core/parsing/types.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures — mirror real extractor output (canonicalHttpContractKey = "METHOD:/path")
@@ -108,6 +108,36 @@ describe("traceSemanticGraph", () => {
     expect(kinds.has("REQUEST_SCHEMA")).toBe(true);
     const producerNode = incoming.nodes.find((n) => n.specId === "spec:prod");
     expect(producerNode?.role).toBe("upstream");
+  });
+
+  it("keeps opaque downstream specs in semantic trace output", () => {
+    const opaque = {
+      id: "spec:grpc",
+      contractId: "contract:api:grpc",
+      specKind: "grpc-method",
+      repoId: "repo:grpc-service",
+      fileId: "file:grpc-service:service.proto",
+      evidenceId: "ev:grpc",
+      canonicalKey: "UserService/GetUser",
+      specJson: "{}",
+      confidence: 0.4,
+      opaque: true,
+      warning: "Unknown ContractSpec specKind \"grpc-method\""
+    } satisfies ReadableContractSpecNode;
+
+    const graph = traceSemanticGraph(
+      "http POST /orders",
+      [producer, consumer, opaque],
+      [
+        { fromSpecId: consumer.id, toSpecId: producer.id, kind: "CALLS_ENDPOINT", evidenceId: "ev:1", reason: "method+path match", confidence: 0.95 },
+        { fromSpecId: producer.id, toSpecId: opaque.id, kind: "IMPACTS", evidenceId: "ev:opaque", reason: "future relation", confidence: 0.5 }
+      ]
+    );
+
+    const opaqueNode = graph.nodes.find((n) => n.specId === "spec:grpc");
+    expect(opaqueNode).toBeDefined();
+    expect(opaqueNode!.specKind).toBe("grpc-method");
+    expect(opaqueNode!.summary).toContain("Unknown ContractSpec specKind");
   });
 });
 

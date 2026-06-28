@@ -1,5 +1,6 @@
 import { buildRepoDependenciesFromParticipants, materializeDependenciesFromSemanticRelations, type ContractParticipant } from "../contracts/extraction/crossRepoContracts.js";
 import type { ContractKind, ContractRole, ContractSpecNode, RepoContractEdge, RepoDependencyEdge, SemanticRelationEdge } from "../parsing/types.js";
+import { isKnownSpecKind } from "../parsing/types.js";
 import type { GraphDB } from "./db.js";
 import { mergeAndDedupeDeps } from "../contracts/depsMerge.js";
 import { resolveSemanticRelations } from "../contracts/resolver.js";
@@ -186,7 +187,7 @@ async function resolveAndWriteSemanticRelations(
          WHERE (s.active IS NULL OR s.active = true)
          RETURN ${SPEC_RETURN}`
       );
-  const targetSpecs = targetSpecRows.map(rowToContractSpec);
+  const targetSpecs = targetSpecRows.filter((row) => isKnownSpecKind(row.specKind)).map(rowToContractSpec);
   if (targetSpecs.length === 0) return;
 
   // Always load all schema specs — negligible count even at scale.
@@ -446,7 +447,7 @@ async function loadSemanticRelations(db: GraphDB, repoIds?: Set<string>): Promis
 
   return {
     edges: semanticRows.map(rowToSemanticRel),
-    specs: specRows.map(rowToContractSpec)
+    specs: specRows.filter((row) => isKnownSpecKind(row.specKind)).map(rowToContractSpec)
   };
 }
 

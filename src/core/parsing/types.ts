@@ -277,7 +277,13 @@ export type CallEdge = {
   active?: boolean;
 };
 
-export type ContractSpecKind = "http-endpoint" | "event" | "schema" | "package" | "config";
+export const CONTRACT_SPEC_KINDS = ["http-endpoint", "event", "schema"] as const;
+
+export type ContractSpecKind = (typeof CONTRACT_SPEC_KINDS)[number];
+
+export function isKnownSpecKind(value: string): value is ContractSpecKind {
+  return (CONTRACT_SPEC_KINDS as readonly string[]).includes(value);
+}
 
 export type ContractSpecNode = {
   id: string;
@@ -299,6 +305,18 @@ export type ContractSpecNode = {
   indexedAt?: string;
   active?: boolean;
 };
+
+export type OpaqueContractSpecNode = Omit<ContractSpecNode, "specKind"> & {
+  specKind: string;
+  opaque: true;
+  warning: string;
+};
+
+export type ReadableContractSpecNode = ContractSpecNode | OpaqueContractSpecNode;
+
+export function isKnownContractSpecNode(node: ReadableContractSpecNode): node is ContractSpecNode {
+  return isKnownSpecKind(node.specKind);
+}
 
 export type ContractSpecEdge = {
   contractId: string;

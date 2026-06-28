@@ -10,9 +10,11 @@
 import type {
   ContractSpecKind,
   ContractSpecNode,
+  ReadableContractSpecNode,
   SemanticRelationEdge,
   SemanticRelationKind
 } from "../../parsing/types.js";
+import { isKnownContractSpecNode } from "../../parsing/types.js";
 import { deserializeSpec } from "../spec.js";
 import {
   CONSUMER_TO_PRODUCER_KINDS,
@@ -252,14 +254,15 @@ function worstSeverity(a: ImpactSeverity, b: ImpactSeverity): ImpactSeverity {
  */
 export function analyzeImpact(
   change: ChangeIntent,
-  specs: ContractSpecNode[],
+  specs: ReadableContractSpecNode[],
   relations: SemanticRelationEdge[],
   options: ImpactAnalysisOptions = {}
 ): ImpactReport {
   const maxHops = options.maxHops ?? 3;
 
   // -- Step 1: Resolve target specs ------------------------------------------
-  const targetSpecs = findTargetSpecs(change.target, specs);
+  const knownSpecs = specs.filter(isKnownContractSpecNode);
+  const targetSpecs = findTargetSpecs(change.target, knownSpecs);
   if (targetSpecs.length === 0) {
     return {
       change,
@@ -472,12 +475,25 @@ function classifyTargetChange(
 
 function classifyImpact(
   change: ChangeIntent,
-  dependentSpec: ContractSpecNode,
+  dependentSpec: ReadableContractSpecNode,
   relationKind: SemanticRelationKind,
   reason: string,
   confidence: number,
   options: ImpactAnalysisOptions
 ): ImpactItem[] {
+  if (!isKnownContractSpecNode(dependentSpec)) {
+    return [{
+      severity: "risky",
+      repoId: dependentSpec.repoId,
+      filePath: dependentSpec.fileId,
+      symbol: dependentSpec.canonicalKey,
+      relationKind,
+      description: `Opaque contract spec ${dependentSpec.specKind} is connected by ${relationKind}; structured impact rules were not applied.`,
+      evidence: reason || dependentSpec.warning,
+      specId: dependentSpec.id,
+      confidence: Math.min(confidence, 0.4)
+    }];
+  }
   const classifier = IMPACT_CLASSIFIERS[dependentSpec.specKind];
   return classifier
     ? classifier(change, dependentSpec, relationKind, reason, confidence, options)
@@ -521,7 +537,7 @@ import type { GraphDB } from "../../graph-model/db.js";
 import {
   SEMANTIC_REL_RETURN,
   SPEC_RETURN,
-  rowToContractSpec,
+  rowToReadableContractSpec,
   rowToSemanticRel,
   type SemanticRelRow,
   type SpecRow
@@ -548,7 +564,7 @@ export async function analyzeImpactFromDB(
      RETURN ${SEMANTIC_REL_RETURN}`
   );
 
-  const specs = specRows.map(rowToContractSpec);
+  const specs = specRows.map(rowToReadableContractSpec);
   const relations = relRows.map(rowToSemanticRel);
 
   return analyzeImpact(change, specs, relations, options);

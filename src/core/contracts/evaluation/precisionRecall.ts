@@ -4,6 +4,7 @@ import type {
   RepoDependencyEdge,
   SemanticRelationEdge
 } from "../../parsing/types.js";
+import { isKnownSpecKind } from "../../parsing/types.js";
 import { materializeDependenciesFromSemanticRelations } from "../extraction/crossRepoContracts.js";
 import {
   DEP_EDGE_RETURN,
@@ -232,7 +233,7 @@ export async function evaluatePrecisionRecall(db: GraphDB): Promise<PrecisionRec
   );
 
   const semanticRels = semanticRows.map(rowToSemanticRel);
-  const specs = specRows.map(rowToContractSpec);
+  const specs = specRows.filter((row) => isKnownSpecKind(row.specKind)).map(rowToContractSpec);
   const legacyDeps = depRows.map(rowToDepEdge);
 
   return evaluatePrecisionRecallInMemory(semanticRels, specs, legacyDeps);

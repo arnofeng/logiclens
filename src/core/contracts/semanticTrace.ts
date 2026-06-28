@@ -16,9 +16,11 @@
 
 import type {
   ContractSpecNode,
+  ReadableContractSpecNode,
   SemanticRelationEdge,
   SemanticRelationKind
 } from "../parsing/types.js";
+import { isKnownContractSpecNode } from "../parsing/types.js";
 import { deserializeSpec } from "./spec.js";
 import { findTargetSpecs } from "./impact/impactEngine.js";
 import { canonicalHttpContractKey } from "./apiPath.js";
@@ -27,7 +29,7 @@ import type { GraphDB } from "../graph-model/db.js";
 import {
   SEMANTIC_REL_RETURN,
   SPEC_RETURN,
-  rowToContractSpec,
+  rowToReadableContractSpec,
   rowToSemanticRel,
   type SemanticRelRow,
   type SpecRow
@@ -190,7 +192,7 @@ function splitMethodPath(rest: string): { method?: string; path: string } {
  */
 export function traceSemanticGraph(
   target: string,
-  specs: ContractSpecNode[],
+  specs: ReadableContractSpecNode[],
   relations: SemanticRelationEdge[],
   options: SemanticTraceOptions = {}
 ): SemanticTraceGraph {
@@ -198,7 +200,8 @@ export function traceSemanticGraph(
   const direction = options.direction ?? "both";
 
   const normalizedTarget = normalizeSemanticTarget(target);
-  const targetSpecs = findTargetSpecs(normalizedTarget, specs);
+  const knownSpecs = specs.filter(isKnownContractSpecNode);
+  const targetSpecs = findTargetSpecs(normalizedTarget, knownSpecs);
   if (targetSpecs.length === 0) {
     return { target, targets: [], nodes: [], edges: [], truncated: false };
   }
@@ -307,7 +310,8 @@ export function traceSemanticGraph(
 // ---------------------------------------------------------------------------
 
 /** Produces a compact human-readable description from a ContractSpec node. */
-export function summarizeSpec(node: ContractSpecNode): string {
+export function summarizeSpec(node: ReadableContractSpecNode): string {
+  if ("opaque" in node) return `${node.canonicalKey} (${node.warning})`;
   try {
     const spec = deserializeSpec(node.specJson);
     if (spec.kind === "http-endpoint") {
@@ -357,7 +361,7 @@ export async function traceSemanticGraphFromDB(
      RETURN ${SEMANTIC_REL_RETURN}`
   );
 
-  const specs = specRows.map(rowToContractSpec);
+  const specs = specRows.map(rowToReadableContractSpec);
   const relations = relRows.map(rowToSemanticRel);
 
   return traceSemanticGraph(target, specs, relations, options);

@@ -23,6 +23,7 @@ import type {
 import { serializeSpec } from "../src/core/contracts/spec.js";
 import type {
   ContractSpecNode,
+  ReadableContractSpecNode,
   SemanticRelationEdge
 } from "../src/core/parsing/types.js";
 
@@ -321,6 +322,7 @@ describe("analyzeImpact — HTTP endpoint changes", () => {
     expect(producerItem).toBeDefined();
     expect(producerItem!.severity).toBe("breaking");
   });
+
 });
 
 // ---------------------------------------------------------------------------
@@ -460,6 +462,33 @@ describe("analyzeImpact — Schema field changes", () => {
     // Should find references in the consumer file via field search
     const consumerImpacts = report.impacts.filter((i) => i.repoId === "web-app");
     expect(consumerImpacts.length).toBeGreaterThan(0);
+  });
+
+  it("reports opaque dependent specs as risky instead of dropping them", () => {
+    const opaque = {
+      id: "spec-opaque",
+      contractId: "contract:api:opaque",
+      specKind: "grpc-method",
+      repoId: "future-service",
+      fileId: "proto/future.proto",
+      evidenceId: "ev:opaque",
+      canonicalKey: "FutureService/Call",
+      specJson: "{}",
+      confidence: 0.4,
+      opaque: true,
+      warning: "Unknown ContractSpec specKind \"grpc-method\""
+    } satisfies ReadableContractSpecNode;
+
+    const report = analyzeImpact(
+      { target: "schema:CreateOrderRequest", changeType: "field-type-changed", detail: "quantity" },
+      [schemaSpec, opaque],
+      [makeSemanticRel({ fromSpecId: "spec-schema", toSpecId: "spec-opaque", kind: "USES_SCHEMA", reason: "future relation", confidence: 0.7 })]
+    );
+
+    const opaqueImpact = report.impacts.find((i) => i.specId === "spec-opaque");
+    expect(opaqueImpact).toBeDefined();
+    expect(opaqueImpact!.severity).toBe("risky");
+    expect(opaqueImpact!.description).toContain("Opaque contract spec grpc-method");
   });
 });
 
