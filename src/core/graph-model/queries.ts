@@ -49,7 +49,7 @@ export type ContractTraceRow = {
   line: number;
   /** The raw code or text snippet matching the contract reference */
   raw: string;
-  /** The plugin/extractor rule name that identified the contract */
+  /** The extractor rule name that identified the contract */
   rule: string;
   /** Confidence score of the extraction (between 0 and 1) */
   confidence: number;
@@ -77,7 +77,7 @@ export type DependencyRow = {
   line: number;
   /** The raw source code snippet of the usage */
   raw: string;
-  /** The plugin/extractor rule that discovered the usage */
+  /** The extractor rule that discovered the usage */
   rule: string;
   /** Confidence score of the dependency match (between 0 and 1) */
   confidence: number;

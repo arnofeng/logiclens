@@ -3,7 +3,6 @@ import { canonicalHttpContractKey, joinApiPaths } from "../../apiPath.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import type { AnnotationFact } from "../../../parsing/facts.js";
 import type { ParsedFile } from "../../../parsing/types.js";
-import type { ContractExtractor } from "../../../plugins/types.js";
 import type { FactCollector } from "../factCollector.js";
 import {
   isParsedCodeFile,
@@ -248,7 +247,7 @@ export const springMvcExtractor = compatExtractor({
    * The per-file extract() phase handles same-file prefix+method merging.
    * This hook handles the edge case where a base @RequestMapping is on a
    * class that was processed in a different extract() invocation (split repos,
-   * plugin-registered extractor running after builtin, etc.).
+   * another extractor running after builtin, etc.).
    *
    * It scans the merged `repoContracts` for api contracts produced by the
    * "spring-request-mapping-producer" rule (class-level paths), then re-checks

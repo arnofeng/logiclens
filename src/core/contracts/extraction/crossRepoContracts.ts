@@ -17,7 +17,7 @@ import type {
   WorkflowNode,
   WorkflowOperationEdge
 } from "../../parsing/types.js";
-import type { ContractExtractor, ExtractContext, PostExtractContext } from "../../plugins/types.js";
+import type { ContractExtractor, ExtractContext, PostExtractContext } from "../../registries/types.js";
 import { normalizeName } from "../../../shared/path.js";
 import { builtinContractExtractors } from "./builtin/index.js";
 import {

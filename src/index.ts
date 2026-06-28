@@ -1,17 +1,13 @@
 import { createLogicLens, LogicLensClient, type LogicLensClientOptions, type TraceResult, type ImpactResult } from "./interfaces/sdk/client.js";
-import { definePlugin } from "./core/plugins/index.js";
-import { loadConfiguredPlugins } from "./core/plugins/loader.js";
 
 import type {
-  LogicLensPlugin,
-  PluginContext,
   LanguageParser,
   ParseInput,
   ExtractContext
-} from "./core/plugins/types.js";
+} from "./core/registries/types.js";
 
 import { canonicalContractKey } from "./core/contracts/extraction/crossRepoContracts.js";
-import { createContractId, createEvidenceId, normalizePluginRuleName } from "./core/plugins/helpers.js";
+import { createContractId, createEvidenceId, normalizeRuleName } from "./core/registries/helpers.js";
 
 import type { Stats } from "./core/graph-model/db.js";
 import type { DependencyRow, ContractSummaryRow } from "./core/graph-model/queries.js";
@@ -28,18 +24,14 @@ import type { CallRef, CodeSymbol, ImportRef, ParsedFile } from "./core/parsing/
 export {
   createLogicLens,
   LogicLensClient,
-  definePlugin,
-  loadConfiguredPlugins,
   canonicalContractKey,
   createContractId,
   createEvidenceId,
-  normalizePluginRuleName
+  normalizeRuleName
 };
 
 export type {
   LogicLensClientOptions,
-  LogicLensPlugin,
-  PluginContext,
   LanguageParser,
   ParseInput,
   ExtractContext,

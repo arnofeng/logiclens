@@ -1,10 +1,10 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { NullEmbeddingProvider, resolveEmbeddingProvider, cosineSimilarity } from "../src/core/semantic/embeddings.js";
-import { EmbeddingProviderRegistry, embeddingProviderRegistry } from "../src/core/plugins/registry.js";
-import { loadPlugins } from "../src/core/plugins/loader.js";
+import { EmbeddingProviderRegistry, embeddingProviderRegistry } from "../src/core/registries/registry.js";
+import { registerBuiltinEmbeddingProviders } from "../src/adapters/embeddings/builtinProviders.js";
 import { OpenAIEmbeddingProvider } from "../src/adapters/embeddings/openaiEmbeddingProvider.js";
 import { configSchema } from "../src/config/schema.js";
-import type { EmbeddingProvider } from "../src/core/plugins/types.js";
+import type { EmbeddingProvider } from "../src/core/registries/types.js";
 
 describe("EmbeddingProvider abstraction", () => {
   describe("NullEmbeddingProvider", () => {
@@ -70,14 +70,14 @@ describe("EmbeddingProvider abstraction", () => {
     });
   });
 
-  describe("built-in OpenAI provider registration via loadPlugins", () => {
-    it("registers an OpenAI provider when configured", async () => {
+  describe("built-in OpenAI provider registration", () => {
+    it("registers an OpenAI provider when configured", () => {
       const config = configSchema.parse({ embedding: { provider: "openai", apiKey: "key" } });
-      await loadPlugins({ config, loadConfiguredPlugins: false });
+      registerBuiltinEmbeddingProviders(config);
       expect(embeddingProviderRegistry.resolve("openai")).toBeInstanceOf(OpenAIEmbeddingProvider);
     });
 
-    it("does not overwrite an already-registered openai provider", async () => {
+    it("does not overwrite an already-registered openai provider", () => {
       const custom: EmbeddingProvider = {
         name: "openai",
         async embedTexts() { return []; },
@@ -85,13 +85,13 @@ describe("EmbeddingProvider abstraction", () => {
       };
       embeddingProviderRegistry.register(custom);
       const config = configSchema.parse({ embedding: { provider: "openai", apiKey: "key" } });
-      await loadPlugins({ config, loadConfiguredPlugins: false });
+      registerBuiltinEmbeddingProviders(config);
       expect(embeddingProviderRegistry.resolve("openai")).toBe(custom);
     });
 
-    it("does not register a provider when embedding is off", async () => {
+    it("does not register a provider when embedding is off", () => {
       const config = configSchema.parse({ embedding: { provider: "off" } });
-      await loadPlugins({ config, loadConfiguredPlugins: false });
+      registerBuiltinEmbeddingProviders(config);
       expect(embeddingProviderRegistry.resolve("off")).toBeUndefined();
     });
   });

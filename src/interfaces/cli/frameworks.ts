@@ -2,12 +2,9 @@ import { loadConfig } from "../../config/loadConfig.js";
 import { toRepoNode } from "../../core/workspace/repoRegistry.js";
 import { detectFrameworks, isExtractorEnabled } from "../../core/frameworks/detect.js";
 import { builtinContractExtractors } from "../../core/contracts/extraction/builtin/index.js";
-import { loadConfiguredPlugins } from "../../core/plugins/loader.js";
 
 export async function frameworksCommand(cwd = process.cwd()): Promise<void> {
   const config = await loadConfig(cwd);
-  // Ensure plugins are loaded
-  await loadConfiguredPlugins({ cwd, config });
 
   const repos = config.repos.map((r) => toRepoNode(r, cwd));
   console.log(`Detected frameworks & enabled extractors for ${repos.length} repositories:\n`);

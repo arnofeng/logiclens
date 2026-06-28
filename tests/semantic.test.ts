@@ -6,7 +6,7 @@ import { configSchema } from "../src/config/schema.js";
 import { extractHeuristicEntities } from "../src/core/semantic/extractEntities.js";
 import { buildSemanticRecords, FallbackSemanticIndex, indexSemanticText, JsonSemanticIndex, type SemanticIndex, type SemanticRecord } from "../src/core/semantic/semanticIndex.js";
 import { NullEmbeddingProvider } from "../src/core/semantic/embeddings.js";
-import type { EmbeddingProvider } from "../src/core/plugins/types.js";
+import type { EmbeddingProvider } from "../src/core/registries/types.js";
 import type { CodeSymbol, ParsedGraphFile, RepoNode } from "../src/core/parsing/types.js";
 
 describe("semantic heuristics", () => {

@@ -12,14 +12,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    },
-    "./plugins": {
-      "types": "./dist/core/plugins/index.d.ts",
-      "default": "./dist/core/plugins/index.js"
-    },
-    "./plugins/helpers": {
-      "types": "./dist/core/plugins/helpers.d.ts",
-      "default": "./dist/core/plugins/helpers.js"
     }
   },
   "files": [

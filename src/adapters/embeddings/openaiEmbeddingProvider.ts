@@ -6,7 +6,7 @@ import {
   ProviderCallError,
   type ProviderCallRuntime
 } from "../../shared/providerPolicy.js";
-import type { EmbeddingProvider, EmbeddingVector } from "../../core/plugins/types.js";
+import type { EmbeddingProvider, EmbeddingVector } from "../../core/registries/types.js";
 
 const MAX_INPUT_CHARS = 8000;
 

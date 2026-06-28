@@ -1,7 +1,6 @@
 import { compatExtractor } from "./compat.js";
 import { entityId } from "../../../../shared/path.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
-import type { ContractExtractor } from "../../../plugins/types.js";
 import type { FactCollector } from "../factCollector.js";
 import {
   classifySharedContract,

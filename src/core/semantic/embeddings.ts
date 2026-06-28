@@ -1,5 +1,5 @@
-import type { EmbeddingProvider, EmbeddingVector } from "../plugins/types.js";
-import { embeddingProviderRegistry, type EmbeddingProviderRegistry } from "../plugins/registry.js";
+import type { EmbeddingProvider, EmbeddingVector } from "../registries/types.js";
+import { embeddingProviderRegistry, type EmbeddingProviderRegistry } from "../registries/registry.js";
 
 export type { EmbeddingVector };
 export type { EmbeddingProvider };
@@ -26,7 +26,7 @@ export function resolveEmbeddingProvider(
     const available = registry.names();
     const hint = available.length > 0
       ? ` Available providers: ${available.join(", ")}.`
-      : " No embedding providers are registered. Install and configure an embedding plugin.";
+      : " No embedding providers are registered. Configure a built-in embedding provider.";
     throw new Error(`Embedding provider "${providerName}" is not registered.${hint}`);
   }
   return provider;

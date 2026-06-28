@@ -91,7 +91,7 @@ describe("embedding batching", () => {
   });
 
   it("batches changed semantic records and skips cached records", async () => {
-    const { embeddingProviderRegistry } = await import("../src/core/plugins/registry.js");
+    const { embeddingProviderRegistry } = await import("../src/core/registries/registry.js");
     const { OpenAIEmbeddingProvider } = await import("../src/adapters/embeddings/openaiEmbeddingProvider.js");
     const { indexSemanticText } = await import("../src/core/semantic/semanticIndex.js");
 
@@ -157,7 +157,7 @@ describe("embedding batching", () => {
   });
 
   it("does not treat records without embeddings as cached", async () => {
-    const { embeddingProviderRegistry } = await import("../src/core/plugins/registry.js");
+    const { embeddingProviderRegistry } = await import("../src/core/registries/registry.js");
     const { OpenAIEmbeddingProvider } = await import("../src/adapters/embeddings/openaiEmbeddingProvider.js");
     const { indexSemanticText } = await import("../src/core/semantic/semanticIndex.js");
 
@@ -207,7 +207,7 @@ describe("embedding batching", () => {
   });
 
   it("only indexes docs and repo level metadata when level is docs", async () => {
-    const { embeddingProviderRegistry } = await import("../src/core/plugins/registry.js");
+    const { embeddingProviderRegistry } = await import("../src/core/registries/registry.js");
     const { OpenAIEmbeddingProvider } = await import("../src/adapters/embeddings/openaiEmbeddingProvider.js");
     const { indexSemanticText } = await import("../src/core/semantic/semanticIndex.js");
 

@@ -5,11 +5,11 @@ import { parseMarkdownDocument } from "./markdown/adapter.js";
 import { LANGUAGE_DEFINITIONS, getLanguageDefinition, languageDefForExtension, type LanguageDefinition } from "./languages/registry.js";
 import { GenericTreeSitterParser } from "./genericTreeSitterParser.js";
 import { createVueParser } from "./languages/vue.js";
-import { parserRegistry } from "../plugins/registry.js";
+import { parserRegistry } from "../registries/registry.js";
 import { fileId } from "../../shared/path.js";
 import { hashText } from "../../shared/hash.js";
 import type { DocumentLanguage, FileLanguage, ParsedDocument, ParsedFile, ParsedGraphFile, SourceLanguage } from "./types.js";
-import type { LanguageParser } from "../plugins/types.js";
+import type { LanguageParser } from "../registries/types.js";
 
 const markdownParser: LanguageParser = {
   name: "builtin:markdown",

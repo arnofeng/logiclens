@@ -1,4 +1,4 @@
-import type { ContractExtractor } from "../../../plugins/types.js";
+import type { ContractExtractor } from "../../../registries/types.js";
 import { envConfigExtractor } from "./envConfigExtractor.js";
 import { eventExtractor } from "./eventExtractor.js";
 import { importPackageExtractor } from "./importPackageExtractor.js";

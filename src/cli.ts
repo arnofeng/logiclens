@@ -1,7 +1,5 @@
 #!/usr/bin/env node
-import fs from "node:fs/promises";
 import { Command } from "commander";
-import { configPath } from "./config/loadConfig.js";
 import { writeErrorLog } from "./shared/logger.js";
 import { addRepoCommand } from "./interfaces/cli/addRepo.js";
 import { addReposCommand } from "./interfaces/cli/addRepos.js";
@@ -19,14 +17,11 @@ import { rebuildRelationsCommand } from "./interfaces/cli/rebuildRelations.js";
 import { statsCommand } from "./interfaces/cli/stats.js";
 import { traceCommand } from "./interfaces/cli/trace.js";
 import { specTraceCommand } from "./interfaces/cli/specTrace.js";
-import { pluginsCommand } from "./interfaces/cli/plugins.js";
-import { pluginAddCommand, pluginRemoveCommand, type PluginAddOptions } from "./interfaces/cli/plugin.js";
 import { mcpCommand } from "./interfaces/cli/mcp.js";
 import { frameworksCommand } from "./interfaces/cli/frameworks.js";
 import { watchCommand } from "./interfaces/cli/watch.js";
 import { installCommand } from "./interfaces/cli/install.js";
 import { uninstallCommand } from "./interfaces/cli/uninstall.js";
-import { loadConfiguredPlugins } from "./core/plugins/loader.js";
 import { logicLensVersion } from "./shared/version.js";
 
 const program = new Command();
@@ -83,25 +78,6 @@ program
   .description("Audit and govern relation quality / contract quality")
   .action((action: string | undefined, options: { minConfidence?: number; limit?: number; rejectEvidence?: string; reason?: string; alias?: string; targetRepo?: string }) => qualityCommand(action, options));
 program.command("rebuild-relations").option("--repo <name>").option("--full").description("Rebuild repo-to-repo dependency edges from indexed contract evidence").action((options: { repo?: string; full?: boolean }) => rebuildRelationsCommand(options));
-const plugin = program.command("plugin").description("Manage LogicLens plugins");
-plugin
-  .command("add")
-  .argument("<name>", "Plugin to add: an npm package (optionally @version) or a local path")
-  .option("--options <json>", "JSON options object stored with the plugin entry")
-  .option("--no-install", "Only write config; skip installing the package")
-  .option("--skip-verify", "Skip importing and validating the plugin after install")
-  .description("Install a plugin package and register it in .logiclens/config.yaml")
-  .action((name: string, options: PluginAddOptions) => pluginAddCommand(name, options));
-plugin
-  .command("remove")
-  .alias("rm")
-  .argument("<name>", "Plugin name to remove (as stored in config)")
-  .description("Remove a plugin entry from .logiclens/config.yaml")
-  .action((name: string) => pluginRemoveCommand(name));
-plugin
-  .command("list")
-  .description("List configured LogicLens plugins and registered extension hooks")
-  .action(() => pluginsCommand());
 program.command("frameworks").description("List detected frameworks and enabled contract extractors for each repository").action(() => frameworksCommand());
 program
   .command("mcp")
@@ -127,12 +103,6 @@ program
   .action((options: any) => uninstallCommand(options));
 
 async function main(): Promise<void> {
-  try {
-    await fs.access(configPath());
-    await loadConfiguredPlugins();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
   await program.parseAsync();
 }
 

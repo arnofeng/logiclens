@@ -31,10 +31,6 @@ export function pruneConfig(config: LogicLensConfig): any {
   // Always write repos (even if empty, to allow clearing repos)
   pruned.repos = config.repos;
 
-  if (config.plugins && config.plugins.length > 0) {
-    pruned.plugins = config.plugins;
-  }
-
   // Only include frameworks if they have custom overrides
   if (config.frameworks && (config.frameworks.include.length > 0 || config.frameworks.exclude.length > 0)) {
     pruned.frameworks = config.frameworks;

@@ -1,6 +1,5 @@
 import { compatExtractor } from "./compat.js";
 import type Parser from "tree-sitter";
-import type { ContractExtractor } from "../../../plugins/types.js";
 import type { FactCollector } from "../factCollector.js";
 import type { ParsedFile } from "../../../parsing/types.js";
 import type { SchemaFieldSpec, SchemaSpec } from "../../spec.js";

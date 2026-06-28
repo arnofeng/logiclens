@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { builtinContractExtractors } from "../../src/core/contracts/extraction/builtin/index.js";
 import { ExtractionBuilder } from "../../src/core/contracts/extraction/extractionBuilder.js";
-import type { ExtractContext } from "../../src/core/plugins/types.js";
+import type { ExtractContext } from "../../src/core/registries/types.js";
 
 // ---------------------------------------------------------------------------
 // Phase E guard — declarative extractor dependencies.

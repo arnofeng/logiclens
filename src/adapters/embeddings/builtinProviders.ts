@@ -1,13 +1,12 @@
 import type { LogicLensConfig } from "../../config/schema.js";
-import { embeddingProviderRegistry } from "../../core/plugins/registry.js";
+import { embeddingProviderRegistry } from "../../core/registries/registry.js";
 import { OpenAIEmbeddingProvider } from "./openaiEmbeddingProvider.js";
 
 /**
  * Registers the embedding providers that ship with LogicLens.
  *
  * Currently only the OpenAI-compatible provider is built in, and only when the
- * configuration selects it. A provider already registered under the same name
- * (e.g. by a plugin) takes precedence and is left untouched.
+ * configuration selects it.
  */
 export function registerBuiltinEmbeddingProviders(config: LogicLensConfig): void {
   if (config.embedding.provider !== "openai") return;

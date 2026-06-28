@@ -5,11 +5,6 @@ export const repoConfigSchema = z.object({
   path: z.string().min(1)
 });
 
-export const pluginConfigSchema = z.object({
-  name: z.string().min(1),
-  options: z.unknown().optional()
-});
-
 const optionalUrlString = z.preprocess((value) => value === "" ? undefined : value, z.string().url().optional());
 const optionalSecretString = z.preprocess((value) => value === "" ? undefined : value, z.string().optional());
 
@@ -63,7 +58,6 @@ export const defaultExclude = [
 export const configSchema = z.object({
   systemName: z.string().default("default-system"),
   repos: z.array(repoConfigSchema).default([]),
-  plugins: z.array(pluginConfigSchema).default([]),
   frameworks: z.object({
     include: z.array(z.string()).default([]),
     exclude: z.array(z.string()).default([])

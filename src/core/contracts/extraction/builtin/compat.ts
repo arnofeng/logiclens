@@ -4,7 +4,7 @@
 // builder internally, and returns ExtractedFacts so existing tests keep working.
 // ---------------------------------------------------------------------------
 
-import type { ContractExtractor, ExtractContext, PostExtractContext } from "../../../plugins/types.js";
+import type { ContractExtractor, ExtractContext, PostExtractContext } from "../../../registries/types.js";
 import type { FactCollector } from "../factCollector.js";
 import type { ExtractedFacts } from "../contracts.js";
 import { ExtractionBuilder } from "../extractionBuilder.js";

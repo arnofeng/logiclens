@@ -4,7 +4,6 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { detectFrameworks, isExtractorEnabled } from "../src/core/frameworks/detect.js";
 import type { RepoNode } from "../src/core/parsing/types.js";
-import type { ContractExtractor } from "../src/core/plugins/types.js";
 import { defaultConfig } from "../src/config/loadConfig.js";
 import { confidenceFor } from "../src/shared/confidence.js";
 
@@ -133,13 +132,13 @@ describe("framework detection", () => {
 
   it("enables Python and Go extractors for generic parsed source repos", () => {
     const config = defaultConfig();
-    const pythonExtractor: ContractExtractor = {
+    const pythonExtractor = {
       name: "test:python",
       languages: ["python"],
       frameworks: ["python:generic", "python:fastapi"],
       extract: () => {}
     };
-    const goExtractor: ContractExtractor = {
+    const goExtractor = {
       name: "test:go",
       languages: ["go"],
       frameworks: ["go:generic", "go:gin", "go:mod"],
@@ -157,19 +156,19 @@ describe("framework detection", () => {
       exclude: ["js:generic-fetch"]
     };
 
-    const springExtractor: ContractExtractor = {
+    const springExtractor = {
       name: "spring-extractor",
       frameworks: ["java:spring-mvc"],
       extract: () => {}
     };
 
-    const fetchExtractor: ContractExtractor = {
+    const fetchExtractor = {
       name: "fetch-extractor",
       frameworks: ["js:generic-fetch"],
       extract: () => {}
     };
 
-    const genericExtractor: ContractExtractor = {
+    const genericExtractor = {
       name: "generic-extractor",
       extract: () => {}
     };

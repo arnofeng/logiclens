@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { createLogicLens, definePlugin } from "../src/index.js";
+import { createLogicLens } from "../src/index.js";
 import { defaultConfig, writeConfig } from "../src/config/loadConfig.js";
 import { initCommand } from "../src/interfaces/cli/init.js";
 import { uninitCommand } from "../src/interfaces/cli/uninit.js";
@@ -13,7 +13,7 @@ async function makeTempWorkspace(): Promise<string> {
   return await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-sdk-test-"));
 }
 
-describe("LogicLens SDK Client & Plugins", () => {
+describe("LogicLens SDK Client", () => {
   it("scaffolds a workspace via the init command", async () => {
     const cwd = await makeTempWorkspace();
     await initCommand(cwd);
@@ -80,80 +80,6 @@ describe("LogicLens SDK Client & Plugins", () => {
     expect(config.repos).toContainEqual({ name: "custom-name", path: "my-project" });
   });
 
-  it("loads inline plugins and runs setup", async () => {
-    const cwd = await makeTempWorkspace();
-    let setupCalled = false;
-    
-    const dummyPlugin = definePlugin({
-      name: "dummy-plugin",
-      version: "1.2.3",
-      pluginApiVersion: "1",
-      setup(context) {
-        setupCalled = true;
-      }
-    });
-
-    const client = await createLogicLens({
-      cwd,
-      plugins: [dummyPlugin]
-    });
-    
-    await client.ensurePlugins();
-    expect(setupCalled).toBe(true);
-    await client.close();
-  });
-
-  it("throws error for unsupported pluginApiVersion", async () => {
-    const cwd = await makeTempWorkspace();
-    const badPlugin = {
-      name: "bad-plugin",
-      version: "1.0.0",
-      pluginApiVersion: "2",
-      setup() {}
-    } as any;
-
-    const client = await createLogicLens({
-      cwd,
-      plugins: [badPlugin]
-    });
-
-    await expect(client.ensurePlugins()).rejects.toThrow(/declares unsupported pluginApiVersion/);
-    await client.close();
-  });
-
-  it("respects plugin loading order and deduplicates", async () => {
-    const cwd = await makeTempWorkspace();
-    const calls: string[] = [];
-
-    // Write a config plugin
-    const configPluginPath = path.resolve("tests/fixtures/plugins/grpc-plugin.mjs");
-    await writeConfig({
-      ...defaultConfig(),
-      plugins: [{ name: configPluginPath }]
-    }, cwd);
-
-    const inlinePlugin = definePlugin({
-      name: "grpc-fixture-plugin", // Same name as config plugin to test deduplication
-      version: "1.0.0",
-      pluginApiVersion: "1",
-      setup() {
-        calls.push("inline");
-      }
-    });
-
-    const client = await createLogicLens({
-      cwd,
-      plugins: [inlinePlugin],
-      loadConfiguredPlugins: true
-    });
-
-    await client.ensurePlugins();
-    // Config plugin was loaded first (registers grpc-fixture-plugin v1.0.0 with options: undefined).
-    // The inline plugin has same name@version and options: undefined, so it should be deduplicated and NOT called!
-    expect(calls).toEqual([]);
-    await client.close();
-  });
-
   it("performs stats, query, ask, trace, and impact on indexed graph data", async () => {
     const cwd = await makeTempWorkspace();
     const pathA = path.resolve("tests/fixtures/service-a").replace(/\\/g, "/");
@@ -168,7 +94,7 @@ describe("LogicLens SDK Client & Plugins", () => {
     }, cwd);
 
     const client = await createLogicLens({ cwd });
-    await client.ensurePlugins();
+    await client.ensureProviders();
     
     // Perform indexing
     const indexResult = await client.index({ changedOnly: false, writeMode: "auto" });

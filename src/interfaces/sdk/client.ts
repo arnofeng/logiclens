@@ -5,8 +5,7 @@ import { loadConfig, defaultConfig } from "../../config/loadConfig.js";
 import type { LogicLensConfig } from "../../config/schema.js";
 import type { GraphDB, GraphValue, Stats } from "../../core/graph-model/db.js";
 import { createGraphDB } from "../../core/graph-model/factory.js";
-import { loadPlugins } from "../../core/plugins/loader.js";
-import type { LogicLensPlugin } from "../../core/plugins/types.js";
+import { registerBuiltinEmbeddingProviders } from "../../adapters/embeddings/builtinProviders.js";
 import {
   listDependencies,
   listContracts,
@@ -97,10 +96,6 @@ export type LogicLensClientOptions = {
   cwd?: string;
   /** Explicit logiclens configuration object; if omitted, loaded from .logiclens/config.yaml */
   config?: LogicLensConfig;
-  /** Inline plugin instances to register programmatically */
-  plugins?: LogicLensPlugin[];
-  /** Whether to load plugins configured in the YAML configuration (defaults to true) */
-  loadConfiguredPlugins?: boolean;
   /** Custom logger implementation */
   logger?: LogicLensLogger;
 };
@@ -119,7 +114,7 @@ export class LogicLensClient {
   private cwd: string;
   private dbInstance?: GraphDB;
   private closed = false;
-  private pluginsLoaded = false;
+  private providersRegistered = false;
   private options: LogicLensClientOptions;
   private logger: Required<LogicLensLogger>;
   private watcher?: FileWatcher;
@@ -133,6 +128,7 @@ export class LogicLensClient {
       ...defaultLogger,
       ...options.logger
     };
+    this.ensureProviders();
   }
 
   /**
@@ -159,19 +155,12 @@ export class LogicLensClient {
   }
 
   /**
-   * Ensures that all configured and inline plugins are loaded and initialized.
-   * This is called automatically before indexing or running extractor-dependent actions.
-   * Runs only once; subsequent calls are ignored.
+   * Ensures built-in providers are registered for this process.
    */
-  async ensurePlugins(): Promise<void> {
-    if (this.pluginsLoaded) return;
-    await loadPlugins({
-      cwd: this.cwd,
-      config: this.config,
-      inlinePlugins: this.options.plugins,
-      loadConfiguredPlugins: this.options.loadConfiguredPlugins !== false
-    });
-    this.pluginsLoaded = true;
+  ensureProviders(): void {
+    if (this.providersRegistered) return;
+    registerBuiltinEmbeddingProviders(this.config);
+    this.providersRegistered = true;
   }
 
   /**
@@ -262,7 +251,7 @@ export class LogicLensClient {
       source: queueSource,
       label: queueLabel ?? describeIndexOptions(indexOptions),
       run: async () => {
-        await this.ensurePlugins();
+        this.ensureProviders();
         const db = await this.getDb();
         return runIndexing(db, this.config, { ...indexOptions, cwd: this.cwd, logger: this.logger });
       }
