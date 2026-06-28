@@ -1,9 +1,5 @@
 import Parser from "tree-sitter";
-import { parseWithTreeSitter, getLanguageGrammar } from "../parsing/treeSitter.js";
-import { tsQueries, jsQueries } from "../parsing/languages/typescript.js";
-import { javaQueries } from "../parsing/languages/java.js";
-import { pythonQueries } from "../parsing/languages/python.js";
-import { goQueries } from "../parsing/languages/go.js";
+import { parseWithTreeSitter, getCachedQuery } from "../parsing/treeSitter.js";
 import type { CodeKind, CodeSymbol, ParsedFile, SourceLanguage } from "../parsing/types.js";
 import { codeId } from "../../shared/path.js";
 import { hashText } from "../../shared/hash.js";
@@ -11,30 +7,6 @@ import { extractImportsFromTreeSitter } from "./extractImports.js";
 import { extractCallsFromTreeSitter } from "./extractCalls.js";
 import { extractLanguageFacts } from "../parsing/languageFacts.js";
 
-const symbolQueriesCache = new Map<SourceLanguage, Parser.Query>();
-
-function getSymbolQuery(language: SourceLanguage): Parser.Query {
-  let query = symbolQueriesCache.get(language);
-  if (!query) {
-    const grammar = getLanguageGrammar(language);
-    const queryStr = getBuiltinSymbolQuery(language);
-    query = new Parser.Query(grammar, queryStr);
-    symbolQueriesCache.set(language, query);
-  }
-  return query;
-}
-
-function getBuiltinSymbolQuery(language: SourceLanguage): string {
-  return (language === "typescript" || language === "tsx")
-    ? tsQueries.symbols
-    : language === "java"
-      ? javaQueries.symbols
-      : language === "python"
-        ? pythonQueries.symbols
-        : language === "go"
-          ? goQueries.symbols
-          : jsQueries.symbols;
-}
 
 function getQualifiedPrefix(node: Parser.SyntaxNode): string {
   const classes: string[] = [];
@@ -289,7 +261,7 @@ export function parseTypeScriptFile(input: {
   hash: string;
 }): ParsedFile {
   const tree = parseWithTreeSitter(input.source, input.language);
-  const query = getSymbolQuery(input.language);
+  const query = getCachedQuery(input.language, "symbols");
   const symbols = extractSymbolsFromTreeSitter({
     repoId: input.repoId,
     relativePath: input.relativePath,

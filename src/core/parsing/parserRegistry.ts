@@ -2,11 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import Parser from "tree-sitter";
 import { parseMarkdownDocument } from "./markdown/adapter.js";
-import { getLanguageGrammar } from "./treeSitter.js";
-import { tsQueries, jsQueries } from "./languages/typescript.js";
-import { javaQueries } from "./languages/java.js";
-import { pythonQueries } from "./languages/python.js";
-import { goQueries } from "./languages/go.js";
+import { LANGUAGE_DEFINITIONS, getLanguageDefinition, languageDefForExtension, type LanguageDefinition } from "./languages/registry.js";
 import { GenericTreeSitterParser } from "./genericTreeSitterParser.js";
 import { createVueParser } from "./languages/vue.js";
 import { parserRegistry } from "../plugins/registry.js";
@@ -63,25 +59,16 @@ function getQualifiedPrefix(node: Parser.SyntaxNode): string {
   return classes.length > 0 ? classes.join(".") + "." : "";
 }
 
-function createSourceParser(language: SourceLanguage, extensions: string[]): LanguageParser {
-  const grammar = getLanguageGrammar(language);
-  const queries = (language === "typescript" || language === "tsx")
-    ? { symbols: tsQueries.symbols, imports: tsQueries.imports, calls: tsQueries.calls }
-    : language === "java"
-      ? { symbols: javaQueries.symbols, imports: javaQueries.imports, calls: javaQueries.calls }
-      : language === "python"
-        ? { symbols: pythonQueries.symbols, imports: pythonQueries.imports, calls: pythonQueries.calls }
-        : language === "go"
-          ? { symbols: goQueries.symbols, imports: goQueries.imports, calls: goQueries.calls }
-          : { symbols: jsQueries.symbols, imports: jsQueries.imports, calls: jsQueries.calls };
-
+function createSourceParser(def: LanguageDefinition): LanguageParser {
+  const grammar = def.loadGrammar();
   return new GenericTreeSitterParser({
-    language,
-    extensions,
+    language: def.id,
+    extensions: def.extensions,
     grammar,
-    queries,
+    queries: def.queries,
     helpers: {
-      getQualifiedPrefix
+      getQualifiedPrefix: def.helpers?.getQualifiedPrefix ?? getQualifiedPrefix,
+      getSignature: def.helpers?.getSignature
     }
   });
 }
@@ -122,27 +109,26 @@ function createFileLevelParser(language: string, extensions: string[]): Language
 
 let builtinsRegistered = false;
 
-const builtinLanguagesByExtension = new Map<string, string>([
-  [".ts", "typescript"],
-  [".tsx", "tsx"],
-  [".js", "javascript"],
-  [".jsx", "jsx"],
-  [".java", "java"],
-  [".py", "python"],
-  [".go", "go"],
-  [".md", "markdown"],
-  [".mdx", "markdown"],
-  [".yml", "yaml"],
-  [".yaml", "yaml"],
-  [".toml", "toml"],
-  [".properties", "properties"],
-  [".vue", "vue"]
-]);
-
 export function builtinLanguageForPath(relativePath: string): string | undefined {
   const normalized = relativePath.split(path.sep).join("/");
-  const candidates = [...builtinLanguagesByExtension.entries()].sort((a, b) => b[0].length - a[0].length);
-  return candidates.find(([extension]) => normalized.endsWith(extension))?.[1];
+  
+  const staticExtensions = [
+    [".mdx", "markdown"],
+    [".md", "markdown"],
+    [".yaml", "yaml"],
+    [".yml", "yaml"],
+    [".toml", "toml"],
+    [".properties", "properties"],
+    [".vue", "vue"]
+  ];
+  const matchedStatic = staticExtensions.find(([ext]) => normalized.endsWith(ext));
+  if (matchedStatic) return matchedStatic[1];
+
+  const ext = path.extname(normalized);
+  const registryDef = languageDefForExtension(ext);
+  if (registryDef) return registryDef.id;
+
+  return undefined;
 }
 
 /**
@@ -166,36 +152,24 @@ export function registerBuiltinParsers(languages?: Set<string>): void {
 
   const should = (lang: string) => !languages || languages.has(lang);
 
-  if (should("typescript") && !parserRegistry.resolve({ language: "typescript" })) {
-    parserRegistry.register(createSourceParser("typescript", [".ts"]));
+  for (const def of LANGUAGE_DEFINITIONS) {
+    if (should(def.id) && !parserRegistry.resolve({ language: def.id })) {
+      parserRegistry.register(createSourceParser(def));
+    }
   }
-  if (should("tsx") && !parserRegistry.resolve({ language: "tsx" })) {
-    parserRegistry.register(createSourceParser("tsx", [".tsx"]));
-  }
-  if (should("javascript") && !parserRegistry.resolve({ language: "javascript" })) {
-    parserRegistry.register(createSourceParser("javascript", [".js"]));
-  }
-  if (should("jsx") && !parserRegistry.resolve({ language: "jsx" })) {
-    parserRegistry.register(createSourceParser("jsx", [".jsx"]));
-  }
-  if (should("java") && !parserRegistry.resolve({ language: "java" })) {
-    parserRegistry.register(createSourceParser("java", [".java"]));
-  }
-  if (should("python") && !parserRegistry.resolve({ language: "python" })) {
-    parserRegistry.register(createSourceParser("python", [".py"]));
-  }
-  if (should("go") && !parserRegistry.resolve({ language: "go" })) {
-    parserRegistry.register(createSourceParser("go", [".go"]));
-  }
+
   if (should("vue") && !parserRegistry.resolve({ language: "vue" })) {
+    const tsxDef = getLanguageDefinition("tsx")!;
+    const jsxDef = getLanguageDefinition("jsx")!;
+    const jsDef = getLanguageDefinition("javascript")!;
     if (!parserRegistry.resolve({ language: "tsx" })) {
-      parserRegistry.register(createSourceParser("tsx", [".tsx"]));
+      parserRegistry.register(createSourceParser(tsxDef));
     }
     if (!parserRegistry.resolve({ language: "jsx" })) {
-      parserRegistry.register(createSourceParser("jsx", [".jsx"]));
+      parserRegistry.register(createSourceParser(jsxDef));
     }
     if (!parserRegistry.resolve({ language: "javascript" })) {
-      parserRegistry.register(createSourceParser("javascript", [".js"]));
+      parserRegistry.register(createSourceParser(jsDef));
     }
     parserRegistry.register(createVueParser());
   }

@@ -1,4 +1,5 @@
 import type Parser from "tree-sitter";
+import { getLanguageDefinition } from "./languages/registry.js";
 import type { CodeSymbol, ParsedFile } from "./types.js";
 import type { AnnotationArgument, AnnotationFact, DecoratorFact, LiteralFact, ParsedSourceFacts } from "./facts.js";
 
@@ -257,8 +258,9 @@ function extractLiterals(symbols: CodeSymbol[]): LiteralFact[] {
 
 export function extractLanguageFacts(input: { parsedFile: ParsedFile; source: string; tree?: Parser.Tree }): ParsedSourceFacts {
   const parsedFile = input.parsedFile;
-  const isJava = parsedFile.language === "java";
-  const isJsLikeOrPython = parsedFile.language === "typescript" || parsedFile.language === "tsx" || parsedFile.language === "javascript" || parsedFile.language === "jsx" || parsedFile.language === "python";
+  const dialect = getLanguageDefinition(parsedFile.language)?.factsDialect ?? "none";
+  const wantsAnnotations = dialect === "java-annotations";
+  const wantsDecorators = dialect === "js-decorators";
 
   if (input.tree) {
     return extractLanguageFactsAST(parsedFile, input.source, input.tree);
@@ -269,11 +271,11 @@ export function extractLanguageFacts(input: { parsedFile: ParsedFile; source: st
     fileId: parsedFile.fileId,
     path: parsedFile.path,
     language: parsedFile.language,
-    packageName: isJava ? javaPackageName(input.source) : undefined,
+    packageName: wantsAnnotations ? javaPackageName(input.source) : undefined,
     imports: parsedFile.imports,
     symbols: parsedFile.symbols,
-    annotations: isJava ? extractJavaAnnotations(input.source, parsedFile.symbols) : [],
-    decorators: isJsLikeOrPython ? extractDecorators(input.source, parsedFile.symbols) : [],
+    annotations: wantsAnnotations ? extractJavaAnnotations(input.source, parsedFile.symbols) : [],
+    decorators: wantsDecorators ? extractDecorators(input.source, parsedFile.symbols) : [],
     calls: parsedFile.calls,
     literals: extractLiterals(parsedFile.symbols)
   };
@@ -406,12 +408,13 @@ function findLiteralOwner(symbols: CodeSymbol[], node: Parser.SyntaxNode): CodeS
 }
 
 function extractLanguageFactsAST(parsedFile: ParsedFile, source: string, tree: Parser.Tree): ParsedSourceFacts {
-  const isJava = parsedFile.language === "java";
-  const isJsLikeOrPython = parsedFile.language === "typescript" || parsedFile.language === "tsx" || parsedFile.language === "javascript" || parsedFile.language === "jsx" || parsedFile.language === "python";
+  const dialect = getLanguageDefinition(parsedFile.language)?.factsDialect ?? "none";
+  const wantsAnnotations = dialect === "java-annotations";
+  const wantsDecorators = dialect === "js-decorators";
   const isPython = parsedFile.language === "python";
 
   let packageName: string | undefined;
-  if (isJava) {
+  if (wantsAnnotations) {
     packageName = getJavaPackageName(tree.rootNode);
   }
 
@@ -426,7 +429,7 @@ function extractLanguageFactsAST(parsedFile: ParsedFile, source: string, tree: P
   ]);
 
   walkTree(tree.rootNode, (node) => {
-    if (isJava && (node.type === "annotation" || node.type === "marker_annotation")) {
+    if (wantsAnnotations && (node.type === "annotation" || node.type === "marker_annotation")) {
       const name = getAnnotationName(node);
       const argsNode = getAnnotationArgsNode(node);
       const owner = findOwnerSymbol(parsedFile.symbols, node);
@@ -440,7 +443,7 @@ function extractLanguageFactsAST(parsedFile: ParsedFile, source: string, tree: P
       });
     }
 
-    if (isJsLikeOrPython && node.type === "decorator") {
+    if (wantsDecorators && node.type === "decorator") {
       const { name, argsNode } = getDecoratorNameAndArgsNode(node);
       const owner = findDecoratorOwner(parsedFile.symbols, node, isPython);
       decorators.push({

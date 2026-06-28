@@ -1,35 +1,6 @@
 import Parser from "tree-sitter";
-import { getLanguageGrammar } from "../parsing/treeSitter.js";
-import { tsQueries, jsQueries } from "../parsing/languages/typescript.js";
-import { javaQueries } from "../parsing/languages/java.js";
-import { pythonQueries } from "../parsing/languages/python.js";
-import { goQueries } from "../parsing/languages/go.js";
+import { isBuiltinSourceLanguage, getCachedQuery } from "../parsing/treeSitter.js";
 import type { ImportBinding, ImportRef, SourceLanguage } from "../parsing/types.js";
-
-const importQueriesCache = new Map<SourceLanguage, Parser.Query>();
-
-function getImportQuery(language: SourceLanguage): Parser.Query {
-  let query = importQueriesCache.get(language);
-  if (!query) {
-    const grammar = getLanguageGrammar(language);
-    const queryStr = getBuiltinImportQuery(language);
-    query = new Parser.Query(grammar, queryStr);
-    importQueriesCache.set(language, query);
-  }
-  return query;
-}
-
-function getBuiltinImportQuery(language: SourceLanguage): string {
-  return (language === "typescript" || language === "tsx")
-    ? tsQueries.imports
-    : language === "java"
-      ? javaQueries.imports
-      : language === "python"
-        ? pythonQueries.imports
-        : language === "go"
-          ? goQueries.imports
-          : jsQueries.imports;
-}
 
 export function extractImportsFromTreeSitter(
   tree: Parser.Tree,
@@ -43,7 +14,7 @@ export function extractImportsFromTreeSitter(
     if (!isBuiltinSourceLanguage(language)) {
       throw new Error(`No import query provided for language "${language}".`);
     }
-    activeQuery = getImportQuery(language);
+    activeQuery = getCachedQuery(language, "imports");
   }
 
   if (language === "python") {
@@ -327,8 +298,4 @@ function extractReExportBindings(node: Parser.SyntaxNode): ImportBinding[] {
   }
 
   return bindings.filter((binding) => binding.localName.length > 0);
-}
-
-function isBuiltinSourceLanguage(language: string): language is SourceLanguage {
-  return language === "typescript" || language === "tsx" || language === "javascript" || language === "jsx" || language === "java" || language === "python" || language === "go";
 }

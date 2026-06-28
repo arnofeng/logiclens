@@ -1,35 +1,6 @@
 import Parser from "tree-sitter";
-import { getLanguageGrammar } from "../parsing/treeSitter.js";
-import { tsQueries, jsQueries } from "../parsing/languages/typescript.js";
-import { javaQueries } from "../parsing/languages/java.js";
-import { pythonQueries } from "../parsing/languages/python.js";
-import { goQueries } from "../parsing/languages/go.js";
+import { isBuiltinSourceLanguage, getCachedQuery } from "../parsing/treeSitter.js";
 import type { CallRef, CodeSymbol, SourceLanguage } from "../parsing/types.js";
-
-const callQueriesCache = new Map<SourceLanguage, Parser.Query>();
-
-function getCallQuery(language: SourceLanguage): Parser.Query {
-  let query = callQueriesCache.get(language);
-  if (!query) {
-    const grammar = getLanguageGrammar(language);
-    const queryStr = getBuiltinCallQuery(language);
-    query = new Parser.Query(grammar, queryStr);
-    callQueriesCache.set(language, query);
-  }
-  return query;
-}
-
-function getBuiltinCallQuery(language: SourceLanguage): string {
-  return (language === "typescript" || language === "tsx")
-    ? tsQueries.calls
-    : language === "java"
-      ? javaQueries.calls
-      : language === "python"
-        ? pythonQueries.calls
-        : language === "go"
-          ? goQueries.calls
-          : jsQueries.calls;
-}
 
 function extractReceiver(callNode: Parser.SyntaxNode): string | undefined {
   if (callNode.type === "call_expression" || callNode.type === "new_expression") {
@@ -77,7 +48,7 @@ export function extractCallsFromTreeSitter(
     if (!isBuiltinSourceLanguage(language)) {
       throw new Error(`No call query provided for language "${language}".`);
     }
-    activeQuery = getCallQuery(language);
+    activeQuery = getCachedQuery(language, "calls");
   }
   const matches = activeQuery.matches(tree.rootNode);
   const calls: CallRef[] = [];
@@ -122,8 +93,4 @@ export function extractCallsFromTreeSitter(
   }
 
   return calls;
-}
-
-function isBuiltinSourceLanguage(language: string): language is SourceLanguage {
-  return language === "typescript" || language === "tsx" || language === "javascript" || language === "jsx" || language === "java" || language === "python" || language === "go";
 }

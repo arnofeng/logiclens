@@ -2,11 +2,12 @@ import Parser from "tree-sitter";
 import type { LanguageParser, ParseInput } from "../plugins/types.js";
 import type { ParsedFile, LanguageExtractorConfig } from "./types.js";
 import { parseTreeSitterSource } from "./treeSitter.js";
+import { getLanguageDefinition } from "./languages/registry.js";
 import { extractSymbolsFromTreeSitter } from "../extraction/extractSymbols.js";
 import { extractImportsFromTreeSitter } from "../extraction/extractImports.js";
 import { extractCallsFromTreeSitter } from "../extraction/extractCalls.js";
 import { extractLanguageFacts } from "./languageFacts.js";
-import { codeId } from "../../shared/path.js";
+
 
 export class GenericTreeSitterParser implements LanguageParser {
   private queriesCache = new Map<string, Parser.Query>();
@@ -86,63 +87,12 @@ export class GenericTreeSitterParser implements LanguageParser {
     };
     parsedFile.facts = extractLanguageFacts({ parsedFile, source: input.source, tree });
 
-    // P0-3: For Java files that declare a package, prefix every symbol's
-    // qualifiedName with the package name so cross-repo disambiguation works.
-    // e.g.  "UserService.createUser"  →  "com.example.service.UserService.createUser"
-    // The id is also recomputed so DB lookups remain consistent.
-    if (this.config.language === "java") {
-      const packageName = parsedFile.facts?.packageName;
-      if (packageName) {
-        applyJavaPackagePrefix(parsedFile, packageName);
-      }
+    const def = getLanguageDefinition(this.config.language);
+    if (def?.postParse) {
+      def.postParse(parsedFile);
     }
 
     return parsedFile;
   }
 }
 
-/**
- * Prepend `packageName` to every symbol's qualifiedName (and recompute its id)
- * for a Java ParsedFile. Only called when the file has a `package` declaration.
- *
- * Keeps all symbol id references in facts and calls aligned with the new id.
- */
-function applyJavaPackagePrefix(parsedFile: ParsedFile, packageName: string): void {
-  const idMap = new Map<string, string>();
-  for (const symbol of parsedFile.symbols) {
-    // Avoid double-prefixing if re-indexed (qualifiedName already starts with package)
-    if (symbol.qualifiedName.startsWith(packageName + ".")) continue;
-
-    const oldId = symbol.id;
-    const oldQN = symbol.qualifiedName;
-    symbol.qualifiedName = `${packageName}.${oldQN}`;
-    symbol.id = codeId(symbol.repoId, parsedFile.path, symbol.kind, symbol.qualifiedName, symbol.startLine);
-    idMap.set(oldId, symbol.id);
-  }
-
-  if (idMap.size === 0) return;
-
-  for (const call of parsedFile.calls) {
-    if (call.callerSymbolId) {
-      call.callerSymbolId = idMap.get(call.callerSymbolId) ?? call.callerSymbolId;
-    }
-  }
-
-  if (!parsedFile.facts) return;
-  parsedFile.facts.symbols = parsedFile.symbols;
-  for (const annotation of parsedFile.facts.annotations) {
-    if (annotation.ownerSymbolId) {
-      annotation.ownerSymbolId = idMap.get(annotation.ownerSymbolId) ?? annotation.ownerSymbolId;
-    }
-  }
-  for (const decorator of parsedFile.facts.decorators) {
-    if (decorator.ownerSymbolId) {
-      decorator.ownerSymbolId = idMap.get(decorator.ownerSymbolId) ?? decorator.ownerSymbolId;
-    }
-  }
-  for (const literal of parsedFile.facts.literals) {
-    if (literal.ownerSymbolId) {
-      literal.ownerSymbolId = idMap.get(literal.ownerSymbolId) ?? literal.ownerSymbolId;
-    }
-  }
-}
