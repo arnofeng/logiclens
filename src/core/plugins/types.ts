@@ -1,5 +1,6 @@
 import type { LogicLensConfig } from "../../config/schema.js";
-import type { ExtractorFactBundle } from "../contracts/extraction/crossRepoContracts.js";
+import type { ExtractedFacts } from "../contracts/extraction/contracts.js";
+import type { FactCollector } from "../contracts/extraction/factCollector.js";
 import type { ParsedGraphFile, RepoNode } from "../parsing/types.js";
 import type { ProviderCallRuntime } from "../../shared/providerPolicy.js";
 
@@ -69,8 +70,8 @@ export interface LanguageParser {
  * so extractors can do cross-file finalization.
  */
 export type PostExtractContext = {
-  /** The merged (and uniqued) fact bundle produced by all extract() calls */
-  readonly mergedFacts: ExtractorFactBundle;
+  /** The merged (and uniqued) facts produced by all extract() calls */
+  readonly mergedFacts: ExtractedFacts;
   /** List of all repositories in the workspace */
   readonly repos: RepoNode[];
   /** List of all parsed file nodes in the workspace */
@@ -90,21 +91,23 @@ export interface ContractExtractor {
   frameworks?: string[];
   /**
    * Performs extraction of contracts, dependencies, entities, and workflows.
-   * Can return a promise or a direct value.
+   *
+   * Writes extracted facts into `collector` instead of returning a bundle.
+   * This decouples extractors from the CrossRepoExtraction aggregate.
    */
-  extract(context: ExtractContext): Promise<ExtractorFactBundle> | ExtractorFactBundle;
+  extract(context: ExtractContext, collector: FactCollector): Promise<void> | void;
   /**
    * P1-1 – Cross-file finalization hook (optional).
    *
    * Called once after ALL per-file extract() invocations are done and their
-   * results have been merged. Use this to handle information that spans multiple
-   * files, such as merging a Spring Controller's class-level \`@RequestMapping\`
-   * prefix into each of its method-level \`@GetMapping\` routes.
+   * results have been merged into a read-only ExtractedFacts view. Use this to
+   * handle information that spans multiple files, such as merging a Spring
+   * Controller's class-level \`@RequestMapping\` prefix into each of its
+   * method-level \`@GetMapping\` routes.
    *
-   * Return additional facts to merge into the final result, or return an empty
-   * bundle if nothing needs to be added.
+   * Write additional facts into `collector`.
    */
-  postExtract?(context: PostExtractContext): Promise<ExtractorFactBundle> | ExtractorFactBundle;
+  postExtract?(context: PostExtractContext, collector: FactCollector): Promise<void> | void;
 }
 
 /**

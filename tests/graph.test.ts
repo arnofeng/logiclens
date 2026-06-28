@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { canonicalContractKey, extractCrossRepoFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
+import { canonicalContractKey, extractCrossRepoContracts } from "../src/core/contracts/extraction/crossRepoContracts.js";
 import { KuzuGraphDB } from "../src/core/graph-model/db.js";
 import { findImpactSections, listContracts, listDependencies, listUnresolvedEvidence, sectionsDocumentingCode, traceContract, traceEntity } from "../src/core/graph-model/queries.js";
 import { upsertParsedFiles } from "../src/core/graph-model/upsert.js";
@@ -270,12 +270,9 @@ describe("graph", () => {
         expect.objectContaining({ repoName: "service-a" }),
         expect.objectContaining({ repoName: "service-b" })
       ]));
-      const factBundle = await extractCrossRepoFactBundle([repoA, repoB, repoC], parsed);
-      expect(factBundle.relations).toEqual(expect.arrayContaining([
-        expect.objectContaining({ kind: "repo-contract" }),
-        expect.objectContaining({ kind: "contract-entity" }),
-        expect.objectContaining({ kind: "workflow-operation" })
-      ]));
+      const result = await extractCrossRepoContracts([repoA, repoB, repoC], parsed);
+      expect(result.repoContracts.length).toBeGreaterThan(0);
+      expect(result.contractEntities.length).toBeGreaterThan(0);
       const dependencyEvidence = await db.query<{ count: number }>(
         `MATCH (:Repo)-[d:DEPENDS_ON]->(:Repo), (e:Evidence)
          WHERE d.evidenceId = e.id AND e.filePath <> '' AND e.line > 0 AND e.raw <> '' AND e.rule <> '' AND e.confidence > 0

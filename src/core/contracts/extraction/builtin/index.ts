@@ -17,6 +17,7 @@ import { javaSchemaExtractor } from "./javaSchemaExtractor.js";
 import { pythonSchemaExtractor } from "./pythonSchemaExtractor.js";
 import { goSchemaExtractor } from "./goSchemaExtractor.js";
 
+/** Each extractor already self-wraps via compatExtractor at its export site. */
 export const builtinContractExtractors: ContractExtractor[] = [
   packageJsonExtractor,
   importPackageExtractor,

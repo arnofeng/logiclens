@@ -1,3 +1,4 @@
+import { compatExtractor } from "./compat.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import YAML from "yaml";
@@ -5,15 +6,13 @@ import type Parser from "tree-sitter";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import type { ParsedFile } from "../../../parsing/types.js";
 import type { ContractExtractor } from "../../../plugins/types.js";
+import type { FactCollector } from "../factCollector.js";
 import {
   contract,
-  createCrossRepoExtraction,
   evidence,
   isParsedCodeFile,
   pushContractEvidence,
-  sourceLine,
-  toFactBundle
-} from "./shared.js";
+  sourceLine, } from "./shared.js";
 
 import {
   parseJsAst,
@@ -100,7 +99,7 @@ function parseFileConfigKeys(language: string, source: string): FileConfigKey[] 
   return [];
 }
 
-function pushConfigKey(result: ReturnType<typeof createCrossRepoExtraction>, file: ParsedFile, key: string, line: number, raw: string, rule: string, confidence: number): void {
+function pushConfigKey(collector: FactCollector, file: ParsedFile, key: string, line: number, raw: string, rule: string, confidence: number): void {
   const configContract = contract("config", key, `Config key ${key}`);
   const evidenceNode = evidence({
     repoId: file.repoId,
@@ -111,7 +110,7 @@ function pushConfigKey(result: ReturnType<typeof createCrossRepoExtraction>, fil
     rule,
     confidence
   });
-  pushContractEvidence(result, file.repoId, configContract, "shared", evidenceNode);
+  pushContractEvidence(collector, file.repoId, configContract, "shared", evidenceNode);
 }
 
 function isProcessEnvMember(node: Parser.SyntaxNode | null): boolean {
@@ -121,17 +120,16 @@ function isProcessEnvMember(node: Parser.SyntaxNode | null): boolean {
   return Boolean(obj && obj.text === "process" && prop && prop.text === "env");
 }
 
-export const envConfigExtractor: ContractExtractor = {
+export const envConfigExtractor = compatExtractor({
   name: "builtin:env-config",
-  async extract(context) {
-    const result = createCrossRepoExtraction();
+  async extract(context, collector: FactCollector) {
     for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
       if (FILE_CONFIG_LANGUAGES.has(file.language)) {
         const repo = context.repoResolver(file.repoId);
         if (!repo) continue;
         const source = await fs.readFile(path.join(repo.path, file.path), "utf8");
         for (const configKey of parseFileConfigKeys(file.language, source)) {
-          pushConfigKey(result, file, configKey.key, configKey.line, configKey.raw, "config-file-key", confidenceFor("heuristic-config-file"));
+          pushConfigKey(collector, file, configKey.key, configKey.line, configKey.raw, "config-file-key", confidenceFor("heuristic-config-file"));
         }
         continue;
       }
@@ -156,7 +154,7 @@ export const envConfigExtractor: ContractExtractor = {
             const key = stringLiteralValue(prop) ?? prop.text;
             if (KEY_PATTERN.test(key)) {
               pushConfigKey(
-                result,
+                collector,
                 file,
                 key,
                 node.startPosition.row + 1,
@@ -173,7 +171,7 @@ export const envConfigExtractor: ContractExtractor = {
           const key = indexNode ? stringLiteralValue(indexNode) : undefined;
           if (key && KEY_PATTERN.test(key)) {
             pushConfigKey(
-              result,
+              collector,
               file,
               key,
               node.startPosition.row + 1,
@@ -198,7 +196,7 @@ export const envConfigExtractor: ContractExtractor = {
                   const key = resolved.value;
                   if (KEY_PATTERN.test(key)) {
                     pushConfigKey(
-                      result,
+                      collector,
                       file,
                       key,
                       node.startPosition.row + 1,
@@ -214,6 +212,5 @@ export const envConfigExtractor: ContractExtractor = {
         }
       });
     }
-    return toFactBundle(result);
   }
-};
+});

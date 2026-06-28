@@ -29,7 +29,7 @@ func run(nc *nats.Conn) {
     const spec = bundle.contractSpecs.find((s) => s.eventTopic === "order.created");
     expect(spec).toBeDefined();
     expect(JSON.parse(spec!.specJson).broker).toBe("nats");
-    const producers = bundle.relations.filter((r) => r.kind === "repo-contract" && r.role === "producer");
+    const producers = bundle.repoContracts.filter((e) => e.role === "producer");
     expect(producers.length).toBe(1);
   });
 
@@ -41,7 +41,7 @@ func run(nc *nats.Conn) {
 }`);
     const spec = bundle.contractSpecs.find((s) => s.eventTopic === "order.created");
     expect(spec).toBeDefined();
-    const consumers = bundle.relations.filter((r) => r.kind === "repo-contract" && r.role === "consumer");
+    const consumers = bundle.repoContracts.filter((e) => e.role === "consumer");
     expect(consumers.length).toBe(1);
   });
 

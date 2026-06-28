@@ -1,15 +1,14 @@
+import { compatExtractor } from "./compat.js";
 import type Parser from "tree-sitter";
 import type { CodeSymbol, ContractRole, ParsedFile } from "../../../parsing/types.js";
 import type { ContractExtractor } from "../../../plugins/types.js";
+import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import {
-  createCrossRepoExtraction,
   evidence,
   isParsedCodeFile,
   pushApiContractFromPath,
-  sourceLine,
-  toFactBundle
-} from "./shared.js";
+  sourceLine, } from "./shared.js";
 import {
   buildAstConstantIndex,
   callArguments,
@@ -134,14 +133,14 @@ function collectHttpCalls(root: Parser.SyntaxNode, knownClients: Set<string>): H
 }
 
 function pushDynamicUnresolvedEvidence(input: {
-  result: ReturnType<typeof createCrossRepoExtraction>;
+  collector: FactCollector;
   file: ParsedFile;
   symbol: CodeSymbol;
   offset: number;
   raw: string;
   reason: string;
 }): void {
-  input.result.evidence.push(evidence({
+  input.collector.addEvidence(evidence({
     repoId: input.file.repoId,
     fileId: input.file.fileId,
     filePath: input.file.path,
@@ -186,12 +185,11 @@ function isInsideUnknownHttpLikeMemberCall(node: Parser.SyntaxNode, knownClients
   return false;
 }
 
-export const jsHttpClientExtractor: ContractExtractor = {
+export const jsHttpClientExtractor = compatExtractor({
   name: "builtin:js-http-client",
   languages: ["javascript", "typescript"],
   frameworks: ["js:axios", "js:generic-fetch"],
-  extract(context) {
-    const result = createCrossRepoExtraction();
+  extract(context, collector: FactCollector) {
     for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
       if (!(file.language === "typescript" || file.language === "tsx" || file.language === "javascript" || file.language === "jsx")) continue;
       const ast = parseJsAst(file);
@@ -208,7 +206,7 @@ export const jsHttpClientExtractor: ContractExtractor = {
         const resolved = resolveAstExpression(call.urlNode, constants);
         if (!resolved.value?.startsWith("/")) {
           pushDynamicUnresolvedEvidence({
-            result,
+            collector,
             file,
             symbol,
             offset,
@@ -221,7 +219,7 @@ export const jsHttpClientExtractor: ContractExtractor = {
         }
         seenPathOffsets.add(call.urlNode.startIndex);
         pushApiContractFromPath({
-          result,
+          collector,
           file,
           symbol,
           apiPath: resolved.value,
@@ -243,7 +241,7 @@ export const jsHttpClientExtractor: ContractExtractor = {
         const isLikelyProducerFile = /controller|route|server|api/i.test(file.path + " " + symbol.qualifiedName);
         const role: ContractRole = isLikelyProducerFile ? "producer" : "consumer";
         pushApiContractFromPath({
-          result,
+          collector,
           file,
           symbol,
           apiPath,
@@ -256,6 +254,5 @@ export const jsHttpClientExtractor: ContractExtractor = {
         });
       });
     }
-    return toFactBundle(result);
   }
-};
+});

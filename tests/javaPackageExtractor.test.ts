@@ -43,7 +43,7 @@ describe("javaPackageExtractor", () => {
 
     expect(result.contracts).toEqual([]);
     expect(result.evidence).toEqual([]);
-    expect(result.relations).toEqual([]);
+    expect(result.repoContracts).toEqual([]);
   });
 
   it("extracts package contract from java file with facts.packageName", async () => {
@@ -155,7 +155,7 @@ describe("javaPackageExtractor", () => {
     expect(result.contracts.length).toBe(1);
     expect(result.contracts[0].key).toBe("com.example");
     // No consumer relations — imports are handled by importPackageExtractor
-    const consumerRelations = result.relations.filter((r) => r.kind === "repo-contract" && r.role === "consumer");
+    const consumerRelations = result.repoContracts.filter((e) => e.role === "consumer");
     expect(consumerRelations).toEqual([]);
   });
 
@@ -187,7 +187,7 @@ describe("javaPackageExtractor", () => {
       raw: "package com.example"
     });
 
-    const ownerRelations = result.relations.filter((r) => r.kind === "repo-contract" && r.role === "owner");
+    const ownerRelations = result.repoContracts.filter((e) => e.role === "owner");
     expect(ownerRelations.length).toBe(1);
   });
 

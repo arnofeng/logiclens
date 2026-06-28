@@ -1,24 +1,22 @@
+import { compatExtractor } from "./compat.js";
 import type { ContractExtractor } from "../../../plugins/types.js";
+import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import {
   buildOwnership,
   contract,
-  createCrossRepoExtraction,
   dependencyEntries,
   dependencyLine,
   evidence,
   pushContractEvidence,
   pushResolvedPackageOwner,
-  readRepoPackageManifests,
-  toFactBundle
-} from "./shared.js";
+  readRepoPackageManifests, } from "./shared.js";
 
-export const packageJsonExtractor: ContractExtractor = {
+export const packageJsonExtractor = compatExtractor({
   name: "builtin:package-json",
   languages: ["javascript", "typescript"],
   frameworks: ["js:package-json"],
-  async extract(context) {
-    const result = createCrossRepoExtraction();
+  async extract(context, collector: FactCollector) {
     const manifests = (await Promise.all(context.repos.map(readRepoPackageManifests))).flat();
     const identities = buildOwnership(context.repos, manifests, context.aliasOverrides);
 
@@ -34,7 +32,7 @@ export const packageJsonExtractor: ContractExtractor = {
           rule: "package-json-name",
           confidence: confidenceFor("exact-manifest")
         });
-        pushContractEvidence(result, identity.repo.id, packageContract, "owner", evidenceNode);
+        pushContractEvidence(collector, identity.repo.id, packageContract, "owner", evidenceNode);
       }
     }
 
@@ -51,12 +49,11 @@ export const packageJsonExtractor: ContractExtractor = {
           rule: "package-json-dependency",
           confidence: confidenceFor("exact-manifest")
         });
-        pushContractEvidence(result, manifest.repo.id, packageContract, "consumer", evidenceNode);
-        pushResolvedPackageOwner(result, packageName, identities);
-        result.packageUsages.push({ repoId: manifest.repo.id, packageContractId: packageContract.id, packageName, evidenceId: evidenceNode.id, raw: evidenceNode.raw, confidence: confidenceFor("exact-manifest") });
+        pushContractEvidence(collector, manifest.repo.id, packageContract, "consumer", evidenceNode);
+        pushResolvedPackageOwner(collector, packageName, identities);
+        collector.addPackageUsage({ repoId: manifest.repo.id, packageContractId: packageContract.id, packageName, evidenceId: evidenceNode.id, raw: evidenceNode.raw, confidence: confidenceFor("exact-manifest") });
       }
     }
 
-    return toFactBundle(result);
   }
-};
+});

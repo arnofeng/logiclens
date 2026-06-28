@@ -1,14 +1,13 @@
+import { compatExtractor } from "./compat.js";
 import type Parser from "tree-sitter";
 import type { AnnotationFact } from "../../../parsing/facts.js";
 import type { ParsedFile } from "../../../parsing/types.js";
 import type { ContractExtractor } from "../../../plugins/types.js";
+import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import {
-  createCrossRepoExtraction,
   isParsedCodeFile,
-  pushEventContract,
-  toFactBundle
-} from "./shared.js";
+  pushEventContract, } from "./shared.js";
 import { findContainingSymbol, namedChildren, parseSourceAst, walkSourceAst } from "./sourceAstUtils.js";
 import { inferBrokerFromImports, type EventBroker } from "../../event.js";
 
@@ -68,12 +67,11 @@ function javaMethodCall(node: Parser.SyntaxNode): { object?: string; method?: st
   return { object: object?.text, method: name?.text, args: argsNode ? namedChildren(argsNode) : [] };
 }
 
-export const javaEventExtractor: ContractExtractor = {
+export const javaEventExtractor = compatExtractor({
   name: "builtin:java-event",
   languages: ["java"],
   frameworks: ["java:spring-kafka", "java:spring-amqp"],
-  extract(context) {
-    const result = createCrossRepoExtraction();
+  extract(context, collector: FactCollector) {
     for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
       if (file.language !== "java") continue;
 
@@ -83,7 +81,7 @@ export const javaEventExtractor: ContractExtractor = {
         if (!config) continue;
         for (const topic of topicsFromAnnotation(annotation, config.topicArgs)) {
           pushEventContract({
-            result,
+            collector,
             file,
             topic,
             role: "consumer",
@@ -118,7 +116,7 @@ export const javaEventExtractor: ContractExtractor = {
         const broker = call.object?.toLowerCase().includes("kafka") ? "kafka" : (methodBroker ?? importBroker);
         const symbol = findContainingSymbol(file.symbols, node);
         pushEventContract({
-          result,
+          collector,
           file,
           topic,
           role: "producer",
@@ -132,6 +130,5 @@ export const javaEventExtractor: ContractExtractor = {
         });
       });
     }
-    return toFactBundle(result);
   }
-};
+});

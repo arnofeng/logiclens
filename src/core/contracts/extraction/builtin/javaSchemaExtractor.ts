@@ -1,5 +1,7 @@
+import { compatExtractor } from "./compat.js";
 import type Parser from "tree-sitter";
 import type { ContractExtractor } from "../../../plugins/types.js";
+import type { FactCollector } from "../factCollector.js";
 import type { ParsedFile } from "../../../parsing/types.js";
 import type { SchemaFieldSpec, SchemaSpec } from "../../spec.js";
 import { normalizePrimitiveType } from "../../spec.js";
@@ -7,14 +9,11 @@ import { confidenceFor } from "../../../../shared/confidence.js";
 import {
   classifySharedContract,
   contract,
-  createCrossRepoExtraction,
   evidence,
   isParsedCodeFile,
   pushContractEvidence,
   pushContractSpec,
-  toBusinessEntityName,
-  toFactBundle
-} from "./shared.js";
+  toBusinessEntityName, } from "./shared.js";
 import {
   findContainingSymbol,
   parseSourceAst,
@@ -39,11 +38,10 @@ import { entityId } from "../../../../shared/path.js";
  * Produces a `SchemaSpec` + `ContractSpecNode` + `HAS_SPEC` edge for each
  * matching class, plus a `USES_SCHEMA` semantic relation for superclass refs.
  */
-export const javaSchemaExtractor: ContractExtractor = {
+export const javaSchemaExtractor = compatExtractor({
   name: "builtin:java-schema",
   languages: ["java"],
-  extract(context) {
-    const result = createCrossRepoExtraction();
+  extract(context, collector: FactCollector) {
 
     for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
       if (file.language !== "java") continue;
@@ -85,10 +83,10 @@ export const javaSchemaExtractor: ContractExtractor = {
           confidence: confidenceFor("heuristic-schema-fields")
         });
 
-        pushContractEvidence(result, file.repoId, schemaContract, "shared", evidenceNode);
+        pushContractEvidence(collector, file.repoId, schemaContract, "shared", evidenceNode);
 
         pushContractSpec({
-          result,
+          collector,
           contractNode: schemaContract,
           spec: schemaSpec,
           repoId: file.repoId,
@@ -102,13 +100,13 @@ export const javaSchemaExtractor: ContractExtractor = {
         // Wire up business entity if applicable
         const entityName = toBusinessEntityName(schemaContract);
         if (entityName) {
-          result.entities.push({
+          collector.addEntity({
             id: entityId(entityName),
             name: entityName,
             kind: "domain",
             description: "Domain entity inferred from cross-repo contracts"
           });
-          result.contractEntities.push({
+          collector.addContractEntity({
             contractId: schemaContract.id,
             entityId: entityId(entityName),
             evidenceId: evidenceNode.id,
@@ -118,7 +116,7 @@ export const javaSchemaExtractor: ContractExtractor = {
 
         // If the class extends a parent, emit a USES_SCHEMA edge placeholder
         if (parentClass) {
-          result.semanticRelations.push({
+          collector.addSemanticRelation({
             fromSpecId: `spec:${schemaContract.id}:pending`,
             toSpecId: `schema-ref:${parentClass}`,
             kind: "USES_SCHEMA",
@@ -130,10 +128,7 @@ export const javaSchemaExtractor: ContractExtractor = {
       }
     }
 
-    return toFactBundle(result);
-  },
-
-};
+  }, });
 
 // ---------------------------------------------------------------------------
 // AST helpers

@@ -32,7 +32,7 @@ describe("importPackageExtractor", () => {
     });
 
     expect(result.contracts).toEqual([]);
-    expect(result.relations).toEqual([]);
+    expect(result.repoContracts).toEqual([]);
   });
 
   it("skips relative imports starting with dot", async () => {
@@ -89,7 +89,7 @@ describe("importPackageExtractor", () => {
       key: "@fixture/service-b"
     });
     // Should have a consumer repo-contract relation
-    const consumerRelations = result.relations.filter((r) => r.kind === "repo-contract" && r.role === "consumer");
+    const consumerRelations = result.repoContracts.filter((e) => e.role === "consumer");
     expect(consumerRelations.length).toBe(1);
     expect((consumerRelations[0] as any).repoId).toBe("repo:a");
   });
@@ -224,7 +224,7 @@ describe("importPackageExtractor", () => {
 
     // Java imports should NOT trigger pushResolvedPackageOwner
     // (no owner evidence because there's no package.json-based identity for Java packages)
-    const ownerRelations = result.relations.filter((r) => r.kind === "repo-contract" && r.role === "owner");
+    const ownerRelations = result.repoContracts.filter((e) => e.role === "owner");
     expect(ownerRelations).toEqual([]);
   });
 
@@ -252,7 +252,7 @@ describe("importPackageExtractor", () => {
     });
 
     // Check that the relations include package-usage entries
-    const packageUsages = result.relations.filter((r) => r.kind === "package-usage");
+    const packageUsages = result.packageUsages;
     expect(packageUsages.length).toBe(2);
   });
 
@@ -277,7 +277,7 @@ describe("importPackageExtractor", () => {
     });
 
     expect(result.contracts).toEqual([]);
-    expect(result.relations).toEqual([]);
+    expect(result.repoContracts).toEqual([]);
   });
 
   it("handles empty parsedFiles array", async () => {
@@ -289,7 +289,7 @@ describe("importPackageExtractor", () => {
     });
 
     expect(result.contracts).toEqual([]);
-    expect(result.relations).toEqual([]);
+    expect(result.repoContracts).toEqual([]);
   });
 
   it("processes imports from multiple files across different repos and languages", async () => {

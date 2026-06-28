@@ -274,7 +274,7 @@ export interface OrderSchema { id: string; name: string; }`);
     const bundle = await extract(`
 export interface ProductDTO { id: string; name: string; }`);
 
-    const relations = bundle.relations.filter((r) => r.kind === "repo-contract");
+    const relations = bundle.repoContracts;
     const productRelation = relations.find((r) => {
       const contract = bundle.contracts.find((c) => c.id === r.contractId);
       return contract?.key === "productdto";

@@ -1,15 +1,14 @@
+import { compatExtractor } from "./compat.js";
 import type Parser from "tree-sitter";
 import type { CodeSymbol, ParsedFile } from "../../../parsing/types.js";
 import type { ContractExtractor } from "../../../plugins/types.js";
+import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import {
-  createCrossRepoExtraction,
   evidence,
   isParsedCodeFile,
   pushApiContractFromPath,
-  sourceLine,
-  toFactBundle
-} from "./shared.js";
+  sourceLine, } from "./shared.js";
 import {
   attributeParts,
   callArguments,
@@ -72,13 +71,13 @@ function isInsideDecorator(node: Parser.SyntaxNode): boolean {
 }
 
 function pushDynamicUnresolvedEvidence(input: {
-  result: ReturnType<typeof createCrossRepoExtraction>;
+  collector: FactCollector;
   file: ParsedFile;
   symbol: CodeSymbol;
   offset: number;
   raw: string;
 }): void {
-  input.result.evidence.push(evidence({
+  input.collector.addEvidence(evidence({
     repoId: input.file.repoId,
     fileId: input.file.fileId,
     filePath: input.file.path,
@@ -89,12 +88,11 @@ function pushDynamicUnresolvedEvidence(input: {
   }));
 }
 
-export const pythonExtractor: ContractExtractor = {
+export const pythonExtractor = compatExtractor({
   name: "builtin:python-extractor",
   languages: ["python"],
   frameworks: ["python:generic", "python:fastapi"],
-  extract(context) {
-    const result = createCrossRepoExtraction();
+  extract(context, collector: FactCollector) {
     for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
       if (file.language !== "python") continue;
       const ast = parseSourceAst(file, "python");
@@ -110,7 +108,7 @@ export const pythonExtractor: ContractExtractor = {
         const httpMethod = decoratorMethod && decoratorMethod !== "route" && ROUTE_METHODS.has(decoratorMethod)
           ? decoratorMethod.toUpperCase() : undefined;
         pushApiContractFromPath({
-          result,
+          collector,
           file,
           symbol: ownerSymbol,
           apiPath: pathArg,
@@ -133,12 +131,12 @@ export const pythonExtractor: ContractExtractor = {
           const offset = symbolOffset(file, symbol, node);
           const apiPath = stringLiteralValue(httpCall.urlNode);
           if (!apiPath?.startsWith("/")) {
-            pushDynamicUnresolvedEvidence({ result, file, symbol, offset, raw: httpCall.raw });
+            pushDynamicUnresolvedEvidence({ collector, file, symbol, offset, raw: httpCall.raw });
             return;
           }
           seenStringOffsets.add(httpCall.urlNode.startIndex);
           pushApiContractFromPath({
-            result,
+            collector,
             file,
             symbol,
             apiPath,
@@ -159,7 +157,7 @@ export const pythonExtractor: ContractExtractor = {
         const symbol = findContainingSymbol(file.symbols, node);
         if (!symbol) return;
         pushApiContractFromPath({
-          result,
+          collector,
           file,
           symbol,
           apiPath,
@@ -172,6 +170,5 @@ export const pythonExtractor: ContractExtractor = {
         });
       });
     }
-    return toFactBundle(result);
   }
-};
+});

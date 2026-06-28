@@ -32,7 +32,7 @@ public class OrderConsumer {
     expect(spec).toBeDefined();
     expect(JSON.parse(spec!.specJson).broker).toBe("kafka");
     expect(spec!.confidence).toBe(0.9);
-    const consumers = bundle.relations.filter((r) => r.kind === "repo-contract" && r.role === "consumer");
+    const consumers = bundle.repoContracts.filter((e) => e.role === "consumer");
     expect(consumers.length).toBe(1);
   });
 
@@ -72,7 +72,7 @@ public class P {
     const spec = bundle.contractSpecs.find((s) => s.eventTopic === "order.created");
     expect(spec).toBeDefined();
     expect(JSON.parse(spec!.specJson).broker).toBe("kafka");
-    const producers = bundle.relations.filter((r) => r.kind === "repo-contract" && r.role === "producer");
+    const producers = bundle.repoContracts.filter((e) => e.role === "producer");
     expect(producers.length).toBe(1);
   });
 

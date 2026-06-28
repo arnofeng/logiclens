@@ -26,14 +26,20 @@ import { detectFrameworks, isExtractorEnabled } from "../../frameworks/detect.js
 import type { DetectedFramework } from "../../frameworks/types.js";
 import {
   canonicalContractKey as canonicalBuiltinContractKey,
-  createCrossRepoExtraction,
-  toBusinessEntityName,
-  toFactBundle as crossRepoToFactBundle,
-  uniqueById
+  toBusinessEntityName
 } from "./builtin/shared.js";
 import { mergeAndDedupeDeps } from "../depsMerge.js";
 import { SEMANTIC_REL_META } from "../semanticRelations.js";
+import { ExtractionBuilder } from "./extractionBuilder.js";
+import type { FactCollector } from "./factCollector.js";
+import type { ExtractedFacts } from "./contracts.js";
 
+// -- Deprecated type aliases for backward test compatibility -------------------
+
+/** @deprecated Use ExtractedFacts instead. */
+export type ExtractorFactBundle = ExtractedFacts;
+
+/** @deprecated Use specific edge arrays (repoContracts, etc.) instead. */
 export type ExtractedRelation =
   | ({ kind: "repo-contract" } & RepoContractEdge)
   | ({ kind: "repo-dependency" } & RepoDependencyEdge)
@@ -41,18 +47,6 @@ export type ExtractedRelation =
   | ({ kind: "contract-entity" } & ContractEntityEdge)
   | ({ kind: "operation-repo" } & OperationRepoEdge)
   | ({ kind: "workflow-operation" } & WorkflowOperationEdge);
-
-export type ExtractorFactBundle = {
-  contracts: ContractNode[];
-  evidence: EvidenceNode[];
-  entities: EntityNode[];
-  operations: OperationNode[];
-  workflows: WorkflowNode[];
-  relations: ExtractedRelation[];
-  contractSpecs: ContractSpecNode[];
-  contractSpecEdges: ContractSpecEdge[];
-  semanticRelations: SemanticRelationEdge[];
-};
 
 export type CrossRepoExtraction = {
   contracts: ContractNode[];
@@ -109,8 +103,8 @@ export async function extractRepoContractFacts(
   repos: RepoNode[],
   parsedFiles: ParsedGraphFile[],
   options: { aliasOverrides?: AliasOverride[] } = {}
-): Promise<Omit<CrossRepoExtraction, "repoDependencies">> {
-  const result = createCrossRepoExtraction();
+): Promise<ExtractedFacts> {
+  const builder = new ExtractionBuilder();
   const context: ExtractContext = {
     repos,
     parsedFiles,
@@ -118,24 +112,9 @@ export async function extractRepoContractFacts(
     aliasOverrides: options.aliasOverrides
   };
   for (const extractor of builtinContractExtractors) {
-    mergeFactBundle(result, await extractor.extract(context));
+    await extractor.extract(context, builder);
   }
-  const facts = uniqueCrossRepoFacts(result);
-  return {
-    contracts: facts.contracts,
-    evidence: facts.evidence,
-    entities: facts.entities,
-    contractEntities: facts.contractEntities,
-    operations: facts.operations,
-    workflows: [],
-    operationRepos: facts.operationRepos,
-    workflowOperations: [],
-    repoContracts: facts.repoContracts,
-    packageUsages: facts.packageUsages,
-    contractSpecs: facts.contractSpecs,
-    contractSpecEdges: facts.contractSpecEdges,
-    semanticRelations: facts.semanticRelations
-  };
+  return builder.build();
 }
 
 function hasHttpMethodPrefix(key: string): boolean {
@@ -348,12 +327,12 @@ export async function extractCrossRepoContracts(
   // spec:<id>:pending) which cannot be written to the graph (no matching
   // ContractSpec nodes).  Cross-repo SEMANTIC_REL resolution now runs in the
   // post-indexing rebuildRepoDependencies phase with full multi-repo visibility.
-  facts.semanticRelations = facts.semanticRelations.filter(
+  const semanticRelations = facts.semanticRelations.filter(
     (rel) => !rel.toSpecId.startsWith("schema-ref:") && !rel.fromSpecId.endsWith(":pending")
   );
 
-  const contractsById = new Map(facts.contracts.map((contractNode) => [contractNode.id, contractNode]));
-  const evidenceById = new Map(facts.evidence.map((evidenceNode) => [evidenceNode.id, evidenceNode]));
+  const contractsById = new Map(facts.contracts.map((c) => [c.id, c]));
+  const evidenceById = new Map(facts.evidence.map((e) => [e.id, e]));
   const participants: ContractParticipant[] = facts.repoContracts.flatMap((edge) => {
     const contractNode = contractsById.get(edge.contractId);
     const evidenceNode = evidenceById.get(edge.evidenceId);
@@ -361,13 +340,9 @@ export async function extractCrossRepoContracts(
   });
 
   // Phase 4.2: Materialize API and event dependencies from SEMANTIC_REL edges.
-  // The SEMANTIC_REL materialized deps take precedence. Legacy deps from
-  // buildRepoDependenciesFromParticipants serve as fallback for scenarios
-  // where SEMANTIC_REL edges are not yet available (e.g., batched indexing
-  // with partial repo sets).
   const semanticDeps = materializeDependenciesFromSemanticRelations(
-    facts.semanticRelations,
-    facts.contractSpecs
+    semanticRelations,
+    [...facts.contractSpecs]
   );
 
   // Legacy matcher runs for ALL kinds as fallback.
@@ -401,76 +376,27 @@ export async function extractCrossRepoContracts(
   }
 
   return {
-    ...facts,
+    contracts: [...facts.contracts],
+    evidence: [...facts.evidence],
+    entities: [...facts.entities],
+    repoContracts: [...facts.repoContracts],
     repoDependencies,
+    contractEntities: [...facts.contractEntities],
+    operations: [...facts.operations],
     workflows: [...workflowMap.values()],
-    workflowOperations: [...new Map(workflowOperations.map((edge) => [`${edge.workflowId}:${edge.operationId}:${edge.step}`, edge])).values()]
-  };
-}
-
-export async function extractCrossRepoFactBundle(
-  repos: RepoNode[],
-  parsedFiles: ParsedGraphFile[],
-  options: { aliasOverrides?: AliasOverride[] } = {}
-): Promise<ExtractorFactBundle> {
-  return crossRepoToFactBundle(await extractCrossRepoContracts(repos, parsedFiles, options));
-}
-
-function mergeFactBundle(target: CrossRepoExtraction, bundle: ExtractorFactBundle): void {
-  target.contracts.push(...bundle.contracts);
-  target.evidence.push(...bundle.evidence);
-  target.entities.push(...bundle.entities);
-  target.operations.push(...bundle.operations);
-  target.workflows.push(...bundle.workflows);
-  if (bundle.contractSpecs) target.contractSpecs.push(...bundle.contractSpecs);
-  if (bundle.contractSpecEdges) target.contractSpecEdges.push(...bundle.contractSpecEdges);
-  if (bundle.semanticRelations) target.semanticRelations.push(...bundle.semanticRelations);
-  for (const relation of bundle.relations) {
-    if (relation.kind === "repo-contract") {
-      const { kind: _kind, ...edge } = relation;
-      target.repoContracts.push(edge);
-    } else if (relation.kind === "repo-dependency") {
-      const { kind: _kind, ...edge } = relation;
-      target.repoDependencies.push(edge);
-    } else if (relation.kind === "package-usage") {
-      const { kind: _kind, ...edge } = relation;
-      target.packageUsages.push(edge);
-    } else if (relation.kind === "contract-entity") {
-      const { kind: _kind, ...edge } = relation;
-      target.contractEntities.push(edge);
-    } else if (relation.kind === "operation-repo") {
-      const { kind: _kind, ...edge } = relation;
-      target.operationRepos.push(edge);
-    } else if (relation.kind === "workflow-operation") {
-      const { kind: _kind, ...edge } = relation;
-      target.workflowOperations.push(edge);
-    }
-  }
-}
-
-function uniqueCrossRepoFacts(result: CrossRepoExtraction): CrossRepoExtraction {
-  return {
-    contracts: uniqueById(result.contracts),
-    evidence: uniqueById(result.evidence),
-    entities: uniqueById(result.entities),
-    repoContracts: [...new Map(result.repoContracts.map((edge) => [`${edge.repoId}:${edge.contractId}:${edge.role}:${edge.evidenceId}`, edge])).values()],
-    repoDependencies: [...new Map(result.repoDependencies.map((edge) => [`${edge.fromRepoId}:${edge.toRepoId}:${edge.dependencyType}:${edge.evidenceId}`, edge])).values()],
-    contractEntities: [...new Map(result.contractEntities.map((edge) => [`${edge.contractId}:${edge.entityId}:${edge.evidenceId}`, edge])).values()],
-    operations: uniqueById(result.operations),
-    workflows: uniqueById(result.workflows),
-    operationRepos: [...new Map(result.operationRepos.map((edge) => [`${edge.repoId}:${edge.operationId}:${edge.role}:${edge.evidenceId}`, edge])).values()],
-    workflowOperations: [...new Map(result.workflowOperations.map((edge) => [`${edge.workflowId}:${edge.operationId}:${edge.step}:${edge.evidenceId}`, edge])).values()],
-    packageUsages: [...new Map(result.packageUsages.map((edge) => [`${edge.repoId}:${edge.packageContractId}:${edge.evidenceId}`, edge])).values()],
-    contractSpecs: uniqueById(result.contractSpecs),
-    contractSpecEdges: [...new Map(result.contractSpecEdges.map((edge) => [`${edge.contractId}:${edge.specId}:${edge.evidenceId}`, edge])).values()],
-    semanticRelations: [...new Map(result.semanticRelations.map((edge) => [`${edge.fromSpecId}:${edge.toSpecId}:${edge.kind}:${edge.evidenceId}`, edge])).values()]
+    operationRepos: [...facts.operationRepos],
+    workflowOperations: [...new Map(workflowOperations.map((edge) => [`${edge.workflowId}:${edge.operationId}:${edge.step}`, edge])).values()],
+    packageUsages: [...facts.packageUsages],
+    contractSpecs: [...facts.contractSpecs],
+    contractSpecEdges: [...facts.contractSpecEdges],
+    semanticRelations,
   };
 }
 
 export async function extractContractFactsWithRegistry(
   context: ExtractContext,
   config?: LogicLensConfig
-): Promise<CrossRepoExtraction> {
+): Promise<ExtractedFacts> {
   let resolvedConfig = config;
   if (!resolvedConfig) {
     try {
@@ -487,8 +413,8 @@ export async function extractContractFactsWithRegistry(
     detectedFrameworksMap.set(repo.id, dfs);
   }));
 
-  const result = createCrossRepoExtraction();
-  const postExtractContexts = new Map<string, Omit<PostExtractContext, "mergedFacts">>();
+  const builder = new ExtractionBuilder();
+  const postExtractContexts = new Map<string, { repos: RepoNode[]; parsedFiles: ParsedGraphFile[] }>();
   for (const extractor of builtinContractExtractors) {
     const started = Date.now();
 
@@ -522,48 +448,27 @@ export async function extractContractFactsWithRegistry(
       parsedFiles: enabledParsedFiles
     });
 
-    const bundle = await extractor.extract(filteredContext);
-    mergeFactBundle(result, bundle);
-    const relationCount = bundle.relations.length;
+    await extractor.extract(filteredContext, builder);
     if (process.env.NODE_ENV !== "test" && !process.env.VITEST) {
-      process.stderr.write(`Extractor ${extractor.name}: ${Date.now() - started}ms contracts=${bundle.contracts.length} evidence=${bundle.evidence.length} relations=${relationCount}\n`);
+      process.stderr.write(`Extractor ${extractor.name}: ${Date.now() - started}ms\n`);
     }
   }
 
   // P1-1: postExtract phase — cross-file finalization.
-  // Build a read-only view of the merged facts and let every extractor that
-  // implements postExtract() amend the result (e.g. Spring Controller prefix merging).
-  const mergedForPost = uniqueCrossRepoFacts(result);
-  const mergedFactBundle: ExtractorFactBundle = {
-    contracts: mergedForPost.contracts,
-    evidence: mergedForPost.evidence,
-    entities: mergedForPost.entities,
-    operations: mergedForPost.operations,
-    workflows: mergedForPost.workflows,
-    relations: [
-      ...mergedForPost.repoContracts.map((e) => ({ kind: "repo-contract" as const, ...e })),
-      ...mergedForPost.repoDependencies.map((e) => ({ kind: "repo-dependency" as const, ...e })),
-      ...mergedForPost.packageUsages.map((e) => ({ kind: "package-usage" as const, ...e })),
-      ...mergedForPost.contractEntities.map((e) => ({ kind: "contract-entity" as const, ...e })),
-      ...mergedForPost.operationRepos.map((e) => ({ kind: "operation-repo" as const, ...e })),
-      ...mergedForPost.workflowOperations.map((e) => ({ kind: "workflow-operation" as const, ...e }))
-    ],
-    contractSpecs: mergedForPost.contractSpecs,
-    contractSpecEdges: mergedForPost.contractSpecEdges,
-    semanticRelations: mergedForPost.semanticRelations
-  };
+  // Freeze a read-only view for postExtract readers, then let extractors
+  // amend by writing into the same builder.
+  const mergedForPost = builder.build();
   for (const extractor of builtinContractExtractors) {
     if (!extractor.postExtract) continue;
     const filteredContext = postExtractContexts.get(extractor.name);
     if (!filteredContext) continue;
     const postCtx: PostExtractContext = {
-      mergedFacts: mergedFactBundle,
+      mergedFacts: mergedForPost,
       repos: filteredContext.repos,
       parsedFiles: filteredContext.parsedFiles
     };
-    const postBundle = await extractor.postExtract(postCtx);
-    mergeFactBundle(result, postBundle);
+    await extractor.postExtract(postCtx, builder);
   }
 
-  return uniqueCrossRepoFacts(result);
+  return builder.build();
 }

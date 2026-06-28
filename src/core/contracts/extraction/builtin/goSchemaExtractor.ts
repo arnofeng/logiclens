@@ -1,5 +1,7 @@
+import { compatExtractor } from "./compat.js";
 import type Parser from "tree-sitter";
 import type { ContractExtractor } from "../../../plugins/types.js";
+import type { FactCollector } from "../factCollector.js";
 import type { ParsedFile } from "../../../parsing/types.js";
 import type { SchemaFieldSpec, SchemaSpec } from "../../spec.js";
 import { normalizePrimitiveType } from "../../spec.js";
@@ -7,14 +9,11 @@ import { confidenceFor } from "../../../../shared/confidence.js";
 import {
   classifySharedContract,
   contract,
-  createCrossRepoExtraction,
   evidence,
   isParsedCodeFile,
   pushContractEvidence,
   pushContractSpec,
-  toBusinessEntityName,
-  toFactBundle
-} from "./shared.js";
+  toBusinessEntityName, } from "./shared.js";
 import {
   parseSourceAst,
   walkSourceAst
@@ -34,11 +33,10 @@ import { entityId } from "../../../../shared/path.js";
  *  - Struct tags (`` `json:"name"` ``) are ignored for now
  */
 
-export const goSchemaExtractor: ContractExtractor = {
+export const goSchemaExtractor = compatExtractor({
   name: "builtin:go-schema",
   languages: ["go"],
-  extract(context) {
-    const result = createCrossRepoExtraction();
+  extract(context, collector: FactCollector) {
 
     for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
       if (file.language !== "go") continue;
@@ -82,10 +80,10 @@ export const goSchemaExtractor: ContractExtractor = {
           confidence: confidenceFor("heuristic-schema-fields")
         });
 
-        pushContractEvidence(result, file.repoId, schemaContract, "shared", evidenceNode);
+        pushContractEvidence(collector, file.repoId, schemaContract, "shared", evidenceNode);
 
         pushContractSpec({
-          result,
+          collector,
           contractNode: schemaContract,
           spec: schemaSpec,
           repoId: file.repoId,
@@ -98,13 +96,13 @@ export const goSchemaExtractor: ContractExtractor = {
 
         const entityName = toBusinessEntityName(schemaContract);
         if (entityName) {
-          result.entities.push({
+          collector.addEntity({
             id: entityId(entityName),
             name: entityName,
             kind: "domain",
             description: "Domain entity inferred from cross-repo contracts"
           });
-          result.contractEntities.push({
+          collector.addContractEntity({
             contractId: schemaContract.id,
             entityId: entityId(entityName),
             evidenceId: evidenceNode.id,
@@ -117,7 +115,7 @@ export const goSchemaExtractor: ContractExtractor = {
         // Resolved by schemaResolver once the full batch is available (mirrors
         // the Java `extends` / TS utility-type handling).
         for (const base of extractEmbeddedTypeNames(structType)) {
-          result.semanticRelations.push({
+          collector.addSemanticRelation({
             fromSpecId: `spec:${schemaContract.id}:pending`,
             toSpecId: `schema-ref:${base}`,
             kind: "USES_SCHEMA",
@@ -129,9 +127,8 @@ export const goSchemaExtractor: ContractExtractor = {
       });
     }
 
-    return toFactBundle(result);
   }
-};
+});
 
 // ---------------------------------------------------------------------------
 // AST helpers

@@ -1,14 +1,13 @@
+import { compatExtractor } from "./compat.js";
 import { canonicalHttpContractKey, joinApiPaths } from "../../apiPath.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import type { AnnotationFact } from "../../../parsing/facts.js";
 import type { ParsedFile } from "../../../parsing/types.js";
 import type { ContractExtractor } from "../../../plugins/types.js";
+import type { FactCollector } from "../factCollector.js";
 import {
-  createCrossRepoExtraction,
   isParsedCodeFile,
-  pushApiContractFromPath,
-  toFactBundle
-} from "./shared.js";
+  pushApiContractFromPath, } from "./shared.js";
 import { findContainingSymbol, parseSourceAst, walkSourceAst } from "./sourceAstUtils.js";
 import type Parser from "tree-sitter";
 
@@ -178,12 +177,11 @@ function extractResponseTypeName(returnType: Parser.SyntaxNode): string | undefi
 // Extractor
 // ---------------------------------------------------------------------------
 
-export const springMvcExtractor: ContractExtractor = {
+export const springMvcExtractor = compatExtractor({
   name: "builtin:spring-mvc",
   languages: ["java"],
   frameworks: ["java:spring-mvc"],
-  extract(context) {
-    const result = createCrossRepoExtraction();
+  extract(context, collector: FactCollector) {
     for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
       if (file.language !== "java") continue;
       const mappingsByOwner = springMappingsFromFacts(file);
@@ -196,7 +194,7 @@ export const springMvcExtractor: ContractExtractor = {
         for (const baseMapping of baseMappings) {
           if (!baseMapping.path) continue;
           pushApiContractFromPath({
-            result,
+            collector,
             file,
             symbol: classSymbol,
             apiPath: baseMapping.path,
@@ -223,7 +221,7 @@ export const springMvcExtractor: ContractExtractor = {
             const httpMethod = annotationFact ? springHttpMethod(annotationFact) : undefined;
             for (const basePath of basePaths) {
               pushApiContractFromPath({
-                result,
+                collector,
                 file,
                 symbol: methodSymbol,
                 apiPath: joinApiPaths(basePath, mapping.path),
@@ -242,7 +240,6 @@ export const springMvcExtractor: ContractExtractor = {
         }
       }
     }
-    return toFactBundle(result);
   },
 
   /**
@@ -262,12 +259,10 @@ export const springMvcExtractor: ContractExtractor = {
    * (the common case), but it provides a safety net for multi-batch or
    * multi-extractor scenarios.
    */
-  postExtract(context) {
-    const result = createCrossRepoExtraction();
+  postExtract(context, collector: FactCollector) {
 
     const prefixesByFile = new Map<string, { line: number; path: string }[]>();
-    for (const relation of context.mergedFacts.relations) {
-      if (relation.kind !== "repo-contract") continue;
+    for (const relation of context.mergedFacts.repoContracts) {
       if (relation.role !== "producer") continue;
       const ev = context.mergedFacts.evidence.find((e) => e.id === relation.evidenceId);
       if (!ev || ev.rule !== "spring-request-mapping-producer") continue;
@@ -278,7 +273,6 @@ export const springMvcExtractor: ContractExtractor = {
       prefixesByFile.set(ev.fileId, rows);
     }
 
-    if (prefixesByFile.size === 0) return toFactBundle(result);
 
     // For each file that has a class-level prefix, find method-level routes
     // that were already emitted without the prefix and emit prefixed versions.
@@ -317,7 +311,7 @@ export const springMvcExtractor: ContractExtractor = {
               const combinedKey = canonicalHttpContractKey({ method: httpMethod, path: combined });
               if (alreadyEmitted.has(combinedKey)) continue; // already correct
               pushApiContractFromPath({
-                result,
+                collector,
                 file,
                 symbol: methodSymbol,
                 apiPath: combined,
@@ -334,6 +328,5 @@ export const springMvcExtractor: ContractExtractor = {
         }
       }
     }
-    return toFactBundle(result);
   }
-};
+});

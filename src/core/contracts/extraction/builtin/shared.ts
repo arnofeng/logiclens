@@ -18,7 +18,8 @@ import { normalizeApiPath, canonicalHttpContractKey } from "../../apiPath.js";
 import { canonicalEventContractKey, type EventBroker } from "../../event.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import { serializeSpec, type ContractSpec, type EventSpec, type HttpEndpointSpec } from "../../spec.js";
-import type { AliasOverride, CrossRepoExtraction, ExtractorFactBundle } from "../crossRepoContracts.js";
+import type { AliasOverride } from "../crossRepoContracts.js";
+import type { FactCollector, PackageUsageEntry } from "../factCollector.js";
 
 export type PackageJson = {
   name?: string;
@@ -55,22 +56,33 @@ export type ResolvedPackageOwner = {
   ownership?: RepoPackageOwnership;
 };
 
-export function createCrossRepoExtraction(): CrossRepoExtraction {
+// -- Deprecated stubs for test backward compatibility -------------------------
+
+/** @deprecated Use `new ExtractionBuilder()` instead. */
+export function createCrossRepoExtraction(): any {
   return {
-    contracts: [],
-    evidence: [],
-    entities: [],
-    repoContracts: [],
-    repoDependencies: [],
-    contractEntities: [],
-    operations: [],
-    workflows: [],
-    operationRepos: [],
-    workflowOperations: [],
-    packageUsages: [],
-    contractSpecs: [],
-    contractSpecEdges: [],
-    semanticRelations: []
+    contracts: [], evidence: [], entities: [], repoContracts: [],
+    repoDependencies: [], contractEntities: [], operations: [], workflows: [],
+    operationRepos: [], workflowOperations: [], packageUsages: [],
+    contractSpecs: [], contractSpecEdges: [], semanticRelations: []
+  };
+}
+
+/** @deprecated Use `builder.build()` instead. */
+export function toFactBundle(result: any): any {
+  return {
+    contracts: result.contracts, evidence: result.evidence, entities: result.entities,
+    operations: result.operations, workflows: result.workflows,
+    relations: [
+      ...(result.repoContracts ?? []).map((e: any) => ({ kind: "repo-contract", ...e })),
+      ...(result.repoDependencies ?? []).map((e: any) => ({ kind: "repo-dependency", ...e })),
+      ...(result.packageUsages ?? []).map((e: any) => ({ kind: "package-usage", ...e })),
+      ...(result.contractEntities ?? []).map((e: any) => ({ kind: "contract-entity", ...e })),
+      ...(result.operationRepos ?? []).map((e: any) => ({ kind: "operation-repo", ...e })),
+      ...(result.workflowOperations ?? []).map((e: any) => ({ kind: "workflow-operation", ...e })),
+    ],
+    contractSpecs: result.contractSpecs, contractSpecEdges: result.contractSpecEdges,
+    semanticRelations: result.semanticRelations
   };
 }
 
@@ -113,27 +125,6 @@ export function uniqueById<T extends { id: string }>(items: T[]): T[] {
   return [...new Map(items.map((item) => [item.id, item])).values()];
 }
 
-export function toFactBundle(result: CrossRepoExtraction): ExtractorFactBundle {
-  return {
-    contracts: result.contracts,
-    evidence: result.evidence,
-    entities: result.entities,
-    operations: result.operations,
-    workflows: result.workflows,
-    relations: [
-      ...result.repoContracts.map((edge) => ({ kind: "repo-contract" as const, ...edge })),
-      ...result.repoDependencies.map((edge) => ({ kind: "repo-dependency" as const, ...edge })),
-      ...result.packageUsages.map((edge) => ({ kind: "package-usage" as const, ...edge })),
-      ...result.contractEntities.map((edge) => ({ kind: "contract-entity" as const, ...edge })),
-      ...result.operationRepos.map((edge) => ({ kind: "operation-repo" as const, ...edge })),
-      ...result.workflowOperations.map((edge) => ({ kind: "workflow-operation" as const, ...edge }))
-    ],
-    contractSpecs: result.contractSpecs,
-    contractSpecEdges: result.contractSpecEdges,
-    semanticRelations: result.semanticRelations
-  };
-}
-
 export function sourceLine(source: string, offset: number, startLine: number): number {
   return startLine + source.slice(0, offset).split(/\r?\n/).length - 1;
 }
@@ -153,14 +144,14 @@ export function operationVerb(contractNode: ContractNode, role: ContractRole): s
   return "share-contract";
 }
 
-export function pushContractEvidence(result: CrossRepoExtraction, repoId: string, contractNode: ContractNode, role: ContractRole, evidenceNode: EvidenceNode): void {
-  result.contracts.push(contractNode);
-  result.evidence.push(evidenceNode);
-  result.repoContracts.push({ repoId, contractId: contractNode.id, role, evidenceId: evidenceNode.id, confidence: evidenceNode.confidence });
+export function pushContractEvidence(collector: FactCollector, repoId: string, contractNode: ContractNode, role: ContractRole, evidenceNode: EvidenceNode): void {
+  collector.addContract(contractNode);
+  collector.addEvidence(evidenceNode);
+  collector.addRepoContract({ repoId, contractId: contractNode.id, role, evidenceId: evidenceNode.id, confidence: evidenceNode.confidence });
 }
 
 function pushApiOperation(input: {
-  result: CrossRepoExtraction;
+  collector: FactCollector;
   file: ParsedFile;
   apiContract: ContractNode;
   role: ContractRole;
@@ -168,20 +159,20 @@ function pushApiOperation(input: {
 }): void {
   const entityName = toBusinessEntityName(input.apiContract);
   if (!entityName) return;
-  input.result.contractEntities.push({
+  input.collector.addContractEntity({
     contractId: input.apiContract.id,
     entityId: entityId(entityName),
     evidenceId: input.evidenceNode.id,
     confidence: input.evidenceNode.confidence
   });
   const operationId = `operation:${normalizeName(`${operationVerb(input.apiContract, input.role)}:${entityName}:${input.apiContract.key}:${input.file.repoId}`)}`;
-  input.result.operations.push({
+  input.collector.addOperation({
     id: operationId,
     verb: operationVerb(input.apiContract, input.role),
     entityName,
     description: `${input.role} ${input.apiContract.kind} ${input.apiContract.key}`
   });
-  input.result.operationRepos.push({
+  input.collector.addOperationRepo({
     operationId,
     repoId: input.file.repoId,
     role: input.role,
@@ -197,7 +188,7 @@ function pushApiOperation(input: {
  * lifted out of specJson for backend indexing.
  */
 export function pushContractSpec(input: {
-  result: CrossRepoExtraction;
+  collector: FactCollector;
   contractNode: ContractNode;
   spec: ContractSpec;
   repoId: string;
@@ -216,7 +207,7 @@ export function pushContractSpec(input: {
     : input.spec.kind === "event"
       ? "event"
       : "schema";
-  input.result.contractSpecs.push({
+  input.collector.addContractSpec({
     id: specId,
     contractId: input.contractNode.id,
     specKind,
@@ -233,7 +224,7 @@ export function pushContractSpec(input: {
     specJson: serializeSpec(input.spec),
     confidence: input.evidenceNode.confidence
   });
-  input.result.contractSpecEdges.push({
+  input.collector.addContractSpecEdge({
     contractId: input.contractNode.id,
     specId,
     evidenceId: input.evidenceNode.id,
@@ -273,7 +264,7 @@ function buildHttpEndpointSpec(
 }
 
 export function pushApiContractFromMatch(input: {
-  result: CrossRepoExtraction;
+  collector: FactCollector;
   file: ParsedFile;
   symbol: CodeSymbol;
   match: RegExpMatchArray;
@@ -292,12 +283,12 @@ export function pushApiContractFromMatch(input: {
     rule: input.rule,
     confidence: input.confidence
   });
-  pushContractEvidence(input.result, input.file.repoId, apiContract, input.role, evidenceNode);
-  pushApiOperation({ result: input.result, file: input.file, apiContract, role: input.role, evidenceNode });
+  pushContractEvidence(input.collector, input.file.repoId, apiContract, input.role, evidenceNode);
+  pushApiOperation({ collector: input.collector, file: input.file, apiContract, role: input.role, evidenceNode });
 }
 
 export function pushApiContractFromPath(input: {
-  result: CrossRepoExtraction;
+  collector: FactCollector;
   file: ParsedFile;
   symbol: CodeSymbol;
   apiPath: string;
@@ -321,10 +312,10 @@ export function pushApiContractFromPath(input: {
     rule: input.rule,
     confidence: input.confidence
   });
-  pushContractEvidence(input.result, input.file.repoId, apiContract, input.role, evidenceNode);
-  pushApiOperation({ result: input.result, file: input.file, apiContract, role: input.role, evidenceNode });
+  pushContractEvidence(input.collector, input.file.repoId, apiContract, input.role, evidenceNode);
+  pushApiOperation({ collector: input.collector, file: input.file, apiContract, role: input.role, evidenceNode });
   pushContractSpec({
-    result: input.result,
+    collector: input.collector,
     contractNode: apiContract,
     spec: buildHttpEndpointSpec(apiContract, input.apiPath, input.method, input.requestBodyType, input.responseBodyType),
     repoId: input.file.repoId,
@@ -347,7 +338,7 @@ export function pushApiContractFromPath(input: {
  * audit (e.g. `payload-type-unresolvable`) referencing the same site.
  */
 export function pushEventContract(input: {
-  result: CrossRepoExtraction;
+  collector: FactCollector;
   file: ParsedFile;
   topic: string;
   role: ContractRole;
@@ -370,7 +361,7 @@ export function pushEventContract(input: {
     rule: input.rule,
     confidence: input.confidence
   });
-  pushContractEvidence(input.result, input.file.repoId, eventContract, input.role, evidenceNode);
+  pushContractEvidence(input.collector, input.file.repoId, eventContract, input.role, evidenceNode);
 
   const eventSpec: EventSpec = {
     kind: "event",
@@ -381,7 +372,7 @@ export function pushEventContract(input: {
     broker: input.broker
   };
   pushContractSpec({
-    result: input.result,
+    collector: input.collector,
     contractNode: eventContract,
     spec: eventSpec,
     repoId: input.file.repoId,
@@ -394,11 +385,11 @@ export function pushEventContract(input: {
 
   const entityName = toBusinessEntityName(eventContract);
   if (entityName) {
-    input.result.entities.push({ id: entityId(entityName), name: entityName, kind: "domain", description: "Domain entity inferred from cross-repo contracts" });
-    input.result.contractEntities.push({ contractId: eventContract.id, entityId: entityId(entityName), evidenceId: evidenceNode.id, confidence: evidenceNode.confidence });
+    input.collector.addEntity({ id: entityId(entityName), name: entityName, kind: "domain", description: "Domain entity inferred from cross-repo contracts" });
+    input.collector.addContractEntity({ contractId: eventContract.id, entityId: entityId(entityName), evidenceId: evidenceNode.id, confidence: evidenceNode.confidence });
     const operationId = `operation:${normalizeName(`${operationVerb(eventContract, input.role)}:${entityName}:${eventContract.key}:${input.file.repoId}`)}`;
-    input.result.operations.push({ id: operationId, verb: operationVerb(eventContract, input.role), entityName, description: `${input.role} ${eventContract.kind} ${eventContract.key}` });
-    input.result.operationRepos.push({ operationId, repoId: input.file.repoId, role: input.role, evidenceId: evidenceNode.id, confidence: evidenceNode.confidence });
+    input.collector.addOperation({ id: operationId, verb: operationVerb(eventContract, input.role), entityName, description: `${input.role} ${eventContract.kind} ${eventContract.key}` });
+    input.collector.addOperationRepo({ operationId, repoId: input.file.repoId, role: input.role, evidenceId: evidenceNode.id, confidence: evidenceNode.confidence });
   }
 
   return { contractNode: eventContract, evidenceNode };
@@ -506,7 +497,7 @@ export function resolvePackageOwner(packageName: string, identities: RepoIdentit
   return undefined;
 }
 
-export function pushResolvedPackageOwner(result: CrossRepoExtraction, packageName: string, identities: RepoIdentity[]): void {
+export function pushResolvedPackageOwner(collector: FactCollector, packageName: string, identities: RepoIdentity[]): void {
   const owner = resolvePackageOwner(packageName, identities);
   if (!owner) return;
   const packageContract = contract("package", packageName, `Package ${packageName} resolved to ${owner.identity.repo.name}`);
@@ -520,7 +511,7 @@ export function pushResolvedPackageOwner(result: CrossRepoExtraction, packageNam
     rule: ownership ? "package-json-name" : "package-owner-alias",
     confidence: ownership ? confidenceFor("exact-manifest") : confidenceFor("heuristic-package-owner-alias")
   });
-  pushContractEvidence(result, owner.identity.repo.id, packageContract, "owner", evidenceNode);
+  pushContractEvidence(collector, owner.identity.repo.id, packageContract, "owner", evidenceNode);
 }
 
 export function dependencyEntries(packageJson: PackageJson | undefined): [string, string][] {

@@ -1,13 +1,12 @@
+import { compatExtractor } from "./compat.js";
 import type Parser from "tree-sitter";
 import type { CodeSymbol, ParsedFile } from "../../../parsing/types.js";
 import type { ContractExtractor } from "../../../plugins/types.js";
+import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import {
-  createCrossRepoExtraction,
   isParsedCodeFile,
-  pushApiContractFromPath,
-  toFactBundle
-} from "./shared.js";
+  pushApiContractFromPath, } from "./shared.js";
 import {
   callArguments,
   namedChildren,
@@ -178,12 +177,11 @@ function sdkCallBridge(
     : undefined;
 }
 
-export const sdkGeneratedClientExtractor: ContractExtractor = {
+export const sdkGeneratedClientExtractor = compatExtractor({
   name: "builtin:js-sdk-generated-client",
   languages: ["javascript", "typescript"],
   frameworks: ["js:package-json"],
-  extract(context) {
-    const result = createCrossRepoExtraction();
+  extract(context, collector: FactCollector) {
     const codeFiles = context.parsedFiles.filter(isParsedCodeFile).filter((file): file is ParsedFile =>
       file.language === "typescript" || file.language === "tsx" || file.language === "javascript" || file.language === "jsx"
     );
@@ -204,7 +202,7 @@ export const sdkGeneratedClientExtractor: ContractExtractor = {
         // The SDK evidence chain is only accepted when import, construction,
         // method call, and generated-client bridge all agree on the same class.
         pushApiContractFromPath({
-          result,
+          collector,
           file,
           symbol,
           apiPath: hit.bridge.apiPath,
@@ -216,6 +214,5 @@ export const sdkGeneratedClientExtractor: ContractExtractor = {
         });
       });
     }
-    return toFactBundle(result);
   }
-};
+});

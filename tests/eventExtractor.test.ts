@@ -12,9 +12,6 @@ import { repoId } from "../src/shared/path.js";
 import type { ExtractedRelation } from "../src/core/contracts/extraction/crossRepoContracts.js";
 import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
 
-function isRepoContractRelation(relation: ExtractedRelation): relation is ExtractedRelation & { kind: "repo-contract" } {
-  return relation.kind === "repo-contract";
-}
 
 async function extractEvents(source: string): Promise<ExtractorFactBundle> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-event-unit-"));
@@ -77,7 +74,7 @@ describe("Event Extractor", () => {
     expect(uniqueKeys).not.toContain("not.event");
 
     // 2. Verify Relations (repo-contracts)
-    const repoContracts = extracted.relations.filter(isRepoContractRelation);
+    const repoContracts = extracted.repoContracts;
     expect(repoContracts.length).toBe(6);
 
     const producers = repoContracts.filter((r) => r.role === "producer");

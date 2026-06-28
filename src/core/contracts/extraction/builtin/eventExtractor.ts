@@ -1,13 +1,12 @@
+import { compatExtractor } from "./compat.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import type { ContractRole } from "../../../parsing/types.js";
 import type { ContractExtractor } from "../../../plugins/types.js";
+import type { FactCollector } from "../factCollector.js";
 import {
-  createCrossRepoExtraction,
   evidence,
   isParsedCodeFile,
-  pushEventContract,
-  toFactBundle
-} from "./shared.js";
+  pushEventContract, } from "./shared.js";
 import {
   parseJsAst,
   walkAst,
@@ -31,10 +30,9 @@ function eventFramework(broker: EventBroker): string | undefined {
   return broker !== "unknown" ? broker : undefined;
 }
 
-export const eventExtractor: ContractExtractor = {
+export const eventExtractor = compatExtractor({
   name: "builtin:event",
-  extract(context) {
-    const result = createCrossRepoExtraction();
+  extract(context, collector: FactCollector) {
     for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
       if (!(file.language === "typescript" || file.language === "tsx" || file.language === "javascript" || file.language === "jsx" || file.language === "vue")) continue;
 
@@ -86,7 +84,7 @@ export const eventExtractor: ContractExtractor = {
 
         const line = node.startPosition.row + 1;
         pushEventContract({
-          result,
+          collector,
           file,
           topic: resolved.value,
           role,
@@ -103,7 +101,7 @@ export const eventExtractor: ContractExtractor = {
         // resolved to a named type (dynamic construction / bare reference).
         // Anonymous object/array literals are valid inline payloads, not unresolved.
         if (!payloadType && payloadArg && payloadArg.type !== "object" && payloadArg.type !== "array") {
-          result.evidence.push(evidence({
+          collector.addEvidence(evidence({
             repoId: file.repoId,
             fileId: file.fileId,
             filePath: file.path,
@@ -115,6 +113,5 @@ export const eventExtractor: ContractExtractor = {
         }
       });
     }
-    return toFactBundle(result);
   }
-};
+});

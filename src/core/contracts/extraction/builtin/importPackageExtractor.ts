@@ -1,17 +1,16 @@
+import { compatExtractor } from "./compat.js";
 import type { ContractExtractor } from "../../../plugins/types.js";
+import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import {
   buildOwnership,
   contract,
-  createCrossRepoExtraction,
   evidence,
   isParsedCodeFile,
   packageContractKeyForImport,
   pushContractEvidence,
   pushResolvedPackageOwner,
-  readRepoPackageManifests,
-  toFactBundle
-} from "./shared.js";
+  readRepoPackageManifests, } from "./shared.js";
 
 /**
  * Extracts import-to-package contracts from all parsed code files.
@@ -25,10 +24,9 @@ import {
  *
  * This extractor has no `languages` or `frameworks` restriction — it runs for all repos.
  */
-export const importPackageExtractor: ContractExtractor = {
+export const importPackageExtractor = compatExtractor({
   name: "builtin:import-package",
-  async extract(context) {
-    const result = createCrossRepoExtraction();
+  async extract(context, collector: FactCollector) {
     const manifests = (await Promise.all(context.repos.map(readRepoPackageManifests))).flat();
     const identities = buildOwnership(context.repos, manifests, context.aliasOverrides);
 
@@ -46,12 +44,11 @@ export const importPackageExtractor: ContractExtractor = {
           rule: "import-specifier-package-owner",
           confidence: confidenceFor("strong-static-import")
         });
-        pushContractEvidence(result, file.repoId, packageContract, "consumer", evidenceNode);
-        if (file.language !== "java") pushResolvedPackageOwner(result, importRef.module, identities);
-        result.packageUsages.push({ repoId: file.repoId, packageContractId: packageContract.id, packageName, evidenceId: evidenceNode.id, raw: importRef.raw, confidence: confidenceFor("strong-static-import") });
+        pushContractEvidence(collector, file.repoId, packageContract, "consumer", evidenceNode);
+        if (file.language !== "java") pushResolvedPackageOwner(collector, importRef.module, identities);
+        collector.addPackageUsage({ repoId: file.repoId, packageContractId: packageContract.id, packageName, evidenceId: evidenceNode.id, raw: importRef.raw, confidence: confidenceFor("strong-static-import") });
       }
     }
 
-    return toFactBundle(result);
   }
-};
+});

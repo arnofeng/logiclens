@@ -1,16 +1,15 @@
+import { compatExtractor } from "./compat.js";
 import type Parser from "tree-sitter";
 import type { CodeSymbol, ParsedFile } from "../../../parsing/types.js";
 import type { ContractExtractor } from "../../../plugins/types.js";
+import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import {
-  createCrossRepoExtraction,
   evidence,
   isParsedCodeFile,
   pushApiContractFromPath,
   pushEventContract,
-  sourceLine,
-  toFactBundle
-} from "./shared.js";
+  sourceLine, } from "./shared.js";
 import {
   callArguments,
   findContainingSymbol,
@@ -61,13 +60,13 @@ function firstCallExpression(node: Parser.SyntaxNode | undefined): Parser.Syntax
 }
 
 function pushDynamicUnresolvedEvidence(input: {
-  result: ReturnType<typeof createCrossRepoExtraction>;
+  collector: FactCollector;
   file: ParsedFile;
   symbol: CodeSymbol;
   offset: number;
   raw: string;
 }): void {
-  input.result.evidence.push(evidence({
+  input.collector.addEvidence(evidence({
     repoId: input.file.repoId,
     fileId: input.file.fileId,
     filePath: input.file.path,
@@ -121,7 +120,7 @@ function kafkaStructTopic(node: Parser.SyntaxNode): { topic?: string; relevant: 
 }
 
 function extractGoEvents(
-  result: ReturnType<typeof createCrossRepoExtraction>,
+  collector: FactCollector,
   file: ParsedFile,
   root: Parser.SyntaxNode,
   importBroker: EventBroker
@@ -139,7 +138,7 @@ function extractGoEvents(
         const topic = call.args[0] ? stringLiteralValue(call.args[0]) : undefined;
         const line = node.startPosition.row + 1;
         if (!topic) {
-          result.evidence.push(evidence({
+          collector.addEvidence(evidence({
             repoId: file.repoId,
             fileId: file.fileId,
             filePath: file.path,
@@ -151,7 +150,7 @@ function extractGoEvents(
           return;
         }
         pushEventContract({
-          result,
+          collector,
           file,
           topic,
           role: isProducer ? "producer" : "consumer",
@@ -172,7 +171,7 @@ function extractGoEvents(
     if (struct) {
       const line = node.startPosition.row + 1;
       if (!struct.topic) {
-        result.evidence.push(evidence({
+        collector.addEvidence(evidence({
           repoId: file.repoId,
           fileId: file.fileId,
           filePath: file.path,
@@ -184,7 +183,7 @@ function extractGoEvents(
         return;
       }
       pushEventContract({
-        result,
+        collector,
         file,
         topic: struct.topic,
         role: struct.role,
@@ -200,19 +199,18 @@ function extractGoEvents(
   });
 }
 
-export const goExtractor: ContractExtractor = {
+export const goExtractor = compatExtractor({
   name: "builtin:go-extractor",
   languages: ["go"],
   frameworks: ["go:generic", "go:gin", "go:mod"],
-  extract(context) {
-    const result = createCrossRepoExtraction();
+  extract(context, collector: FactCollector) {
     for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
       if (file.language !== "go") continue;
       const ast = parseSourceAst(file, "go");
       if (!ast) continue;
 
       const importBroker = inferBrokerFromImports(file.imports);
-      if (importBroker !== "unknown") extractGoEvents(result, file, ast.tree.rootNode, importBroker);
+      if (importBroker !== "unknown") extractGoEvents(collector, file, ast.tree.rootNode, importBroker);
 
       const ginRouters = collectGinRouterVars(ast.tree.rootNode);
       const seenStringOffsets = new Set<number>();
@@ -230,7 +228,7 @@ export const goExtractor: ContractExtractor = {
             seenStringOffsets.add(firstArg!.startIndex);
             const ginMethod = call.method !== "Handle" ? call.method.toUpperCase() : undefined;
             pushApiContractFromPath({
-              result,
+              collector,
               file,
               symbol,
               apiPath,
@@ -248,7 +246,7 @@ export const goExtractor: ContractExtractor = {
           if (call.object === "http" && NET_HTTP_PRODUCER_METHODS.has(call.method) && apiPath?.startsWith("/")) {
             seenStringOffsets.add(firstArg!.startIndex);
             pushApiContractFromPath({
-              result,
+              collector,
               file,
               symbol,
               apiPath,
@@ -264,7 +262,7 @@ export const goExtractor: ContractExtractor = {
 
           if (call.object === "http" && NET_HTTP_CONSUMER_METHODS.has(call.method)) {
             if (!apiPath?.startsWith("/")) {
-              pushDynamicUnresolvedEvidence({ result, file, symbol, offset, raw: call.raw });
+              pushDynamicUnresolvedEvidence({ collector, file, symbol, offset, raw: call.raw });
               return;
             }
             seenStringOffsets.add(firstArg!.startIndex);
@@ -272,7 +270,7 @@ export const goExtractor: ContractExtractor = {
               : call.method === "Post" || call.method === "PostForm" ? "POST"
               : call.method === "Head" ? "HEAD" : undefined;
             pushApiContractFromPath({
-              result,
+              collector,
               file,
               symbol,
               apiPath,
@@ -300,7 +298,7 @@ export const goExtractor: ContractExtractor = {
         const symbol = findContainingSymbol(file.symbols, node);
         if (!symbol) return;
         pushApiContractFromPath({
-          result,
+          collector,
           file,
           symbol,
           apiPath,
@@ -313,6 +311,5 @@ export const goExtractor: ContractExtractor = {
         });
       });
     }
-    return toFactBundle(result);
   }
-};
+});

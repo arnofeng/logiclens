@@ -7,9 +7,6 @@ import { goExtractor } from "../src/core/contracts/extraction/builtin/goExtracto
 import { repoId } from "../src/shared/path.js";
 import type { ExtractedRelation } from "../src/core/contracts/extraction/crossRepoContracts.js";
 
-function isRepoContractRelation(relation: ExtractedRelation): relation is ExtractedRelation & { kind: "repo-contract" } {
-  return relation.kind === "repo-contract";
-}
 
 describe("Go support", () => {
   it("parses Go files and extracts structures/methods/imports/calls", async () => {
@@ -90,14 +87,14 @@ func main() {
     const extracted = await goExtractor.extract(context);
     
     // Check producer API contracts
-    const producers = extracted.relations.filter(isRepoContractRelation).filter((r) => r.role === "producer");
+    const producers = extracted.repoContracts.filter((r) => r.role === "producer");
     const producerContractIds = producers.map((p) => p.contractId);
     expect(producers.length).toBe(2);
     expect(producerContractIds).toContain("contract:api:api-info");
     expect(producerContractIds).toContain("contract:api:get:-api-users");
 
     // Check consumer API contract (http.Get)
-    const consumers = extracted.relations.filter(isRepoContractRelation).filter((r) => r.role === "consumer");
+    const consumers = extracted.repoContracts.filter((r) => r.role === "consumer");
     expect(consumers.length).toBe(1);
     expect(consumers[0]?.contractId).toContain("api:get:-api-orders");
     expect(extracted.evidence).toEqual(expect.arrayContaining([

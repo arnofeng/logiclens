@@ -137,13 +137,13 @@ describe("framework detection", () => {
       name: "test:python",
       languages: ["python"],
       frameworks: ["python:generic", "python:fastapi"],
-      extract: () => ({ contracts: [], evidence: [], entities: [], operations: [], workflows: [], relations: [], contractSpecs: [], contractSpecEdges: [], semanticRelations: [] })
+      extract: () => {}
     };
     const goExtractor: ContractExtractor = {
       name: "test:go",
       languages: ["go"],
       frameworks: ["go:generic", "go:gin", "go:mod"],
-      extract: () => ({ contracts: [], evidence: [], entities: [], operations: [], workflows: [], relations: [], contractSpecs: [], contractSpecEdges: [], semanticRelations: [] })
+      extract: () => {}
     };
 
     expect(isExtractorEnabled(pythonExtractor, [{ repoId: "r1", name: "python:generic", language: "python", confidence: 0.8, evidence: [] }], config)).toBe(true);
@@ -160,18 +160,18 @@ describe("framework detection", () => {
     const springExtractor: ContractExtractor = {
       name: "spring-extractor",
       frameworks: ["java:spring-mvc"],
-      extract: () => ({ contracts: [], evidence: [], entities: [], operations: [], workflows: [], relations: [], contractSpecs: [], contractSpecEdges: [], semanticRelations: [] })
+      extract: () => {}
     };
 
     const fetchExtractor: ContractExtractor = {
       name: "fetch-extractor",
       frameworks: ["js:generic-fetch"],
-      extract: () => ({ contracts: [], evidence: [], entities: [], operations: [], workflows: [], relations: [], contractSpecs: [], contractSpecEdges: [], semanticRelations: [] })
+      extract: () => {}
     };
 
     const genericExtractor: ContractExtractor = {
       name: "generic-extractor",
-      extract: () => ({ contracts: [], evidence: [], entities: [], operations: [], workflows: [], relations: [], contractSpecs: [], contractSpecEdges: [], semanticRelations: [] })
+      extract: () => {}
     };
 
     // Even if no frameworks are detected, config.include forces it enabled

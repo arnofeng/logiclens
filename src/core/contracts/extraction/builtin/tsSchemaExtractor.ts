@@ -1,5 +1,7 @@
+import { compatExtractor } from "./compat.js";
 import type Parser from "tree-sitter";
 import type { ContractExtractor } from "../../../plugins/types.js";
+import type { FactCollector } from "../factCollector.js";
 import type { ParsedFile } from "../../../parsing/types.js";
 import type { SchemaFieldSpec, SchemaSpec } from "../../spec.js";
 import { normalizePrimitiveType } from "../../spec.js";
@@ -7,14 +9,11 @@ import { confidenceFor } from "../../../../shared/confidence.js";
 import {
   classifySharedContract,
   contract,
-  createCrossRepoExtraction,
   evidence,
   isParsedCodeFile,
   pushContractEvidence,
   pushContractSpec,
-  toBusinessEntityName,
-  toFactBundle
-} from "./shared.js";
+  toBusinessEntityName, } from "./shared.js";
 import {
   findContainingSymbol,
   parseSourceAst,
@@ -50,14 +49,13 @@ const TS_UTILITY_TYPES = new Set([
  * unwrapped to extract the base type reference so the semantic layer can
  * still link consumers to the canonical schema definition.
  */
-export const tsSchemaExtractor: ContractExtractor = {
+export const tsSchemaExtractor = compatExtractor({
   name: "builtin:ts-schema",
   // Include "javascript" / "jsx" so the jsFallbackDetector (which lumps JS/TS
   // under language:"javascript") enables this extractor for JS/TS repos.
   // Per-file filtering inside extract() still only processes TS/TSX files.
   languages: ["typescript", "tsx", "javascript", "jsx"],
-  extract(context) {
-    const result = createCrossRepoExtraction();
+  extract(context, collector: FactCollector) {
 
     for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
       if (file.language !== "typescript" && file.language !== "tsx") continue;
@@ -100,10 +98,10 @@ export const tsSchemaExtractor: ContractExtractor = {
           confidence: confidenceFor("heuristic-schema-fields")
         });
 
-        pushContractEvidence(result, file.repoId, schemaContract, "shared", evidenceNode);
+        pushContractEvidence(collector, file.repoId, schemaContract, "shared", evidenceNode);
 
         pushContractSpec({
-          result,
+          collector,
           contractNode: schemaContract,
           spec: schemaSpec,
           repoId: file.repoId,
@@ -117,13 +115,13 @@ export const tsSchemaExtractor: ContractExtractor = {
         // Wire up business entity if applicable
         const entityName = toBusinessEntityName(schemaContract);
         if (entityName) {
-          result.entities.push({
+          collector.addEntity({
             id: entityId(entityName),
             name: entityName,
             kind: "domain",
             description: "Domain entity inferred from cross-repo contracts"
           });
-          result.contractEntities.push({
+          collector.addContractEntity({
             contractId: schemaContract.id,
             entityId: entityId(entityName),
             evidenceId: evidenceNode.id,
@@ -138,7 +136,7 @@ export const tsSchemaExtractor: ContractExtractor = {
           // We record the base type as a referenced schema name; the actual
           // SEMANTIC_REL edge will be created in postExtract when the target
           // schema is guaranteed to be in the batch.
-          result.semanticRelations.push({
+          collector.addSemanticRelation({
             fromSpecId: `spec:${schemaContract.id}:pending`, // resolved in postExtract
             toSpecId: `schema-ref:${baseTypeRef}`,           // resolved in postExtract
             kind: "USES_SCHEMA",
@@ -150,10 +148,7 @@ export const tsSchemaExtractor: ContractExtractor = {
       }
     }
 
-    return toFactBundle(result);
-  },
-
-};
+  }, });
 
 // ---------------------------------------------------------------------------
 // AST traversal helpers

@@ -1,16 +1,15 @@
+import { compatExtractor } from "./compat.js";
 import { entityId } from "../../../../shared/path.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import type { ContractExtractor } from "../../../plugins/types.js";
+import type { FactCollector } from "../factCollector.js";
 import {
   classifySharedContract,
   contract,
-  createCrossRepoExtraction,
   evidence,
   isParsedCodeFile,
   pushContractEvidence,
-  toBusinessEntityName,
-  toFactBundle
-} from "./shared.js";
+  toBusinessEntityName, } from "./shared.js";
 
 /**
  * Languages that have a dedicated schema extractor producing higher-confidence
@@ -19,10 +18,9 @@ import {
  */
 const LANGUAGES_WITH_SCHEMA_EXTRACTOR = new Set(["typescript", "tsx", "java", "python", "go"]);
 
-export const sharedSymbolExtractor: ContractExtractor = {
+export const sharedSymbolExtractor = compatExtractor({
   name: "builtin:shared-symbol",
-  extract(context) {
-    const result = createCrossRepoExtraction();
+  extract(context, collector: FactCollector) {
     for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
       for (const symbol of file.symbols) {
         const sharedKind = classifySharedContract(symbol.name, symbol.kind);
@@ -48,14 +46,13 @@ export const sharedSymbolExtractor: ContractExtractor = {
           rule: `${sharedKind}-symbol`,
           confidence: confidenceFor("heuristic-shared-symbol")
         });
-        pushContractEvidence(result, file.repoId, sharedContract, "shared", evidenceNode);
+        pushContractEvidence(collector, file.repoId, sharedContract, "shared", evidenceNode);
         const entityName = toBusinessEntityName(sharedContract);
         if (entityName) {
-          result.entities.push({ id: entityId(entityName), name: entityName, kind: "domain", description: "Domain entity inferred from cross-repo contracts" });
-          result.contractEntities.push({ contractId: sharedContract.id, entityId: entityId(entityName), evidenceId: evidenceNode.id, confidence: evidenceNode.confidence });
+          collector.addEntity({ id: entityId(entityName), name: entityName, kind: "domain", description: "Domain entity inferred from cross-repo contracts" });
+          collector.addContractEntity({ contractId: sharedContract.id, entityId: entityId(entityName), evidenceId: evidenceNode.id, confidence: evidenceNode.confidence });
         }
       }
     }
-    return toFactBundle(result);
   }
-};
+});

@@ -1,14 +1,13 @@
+import { compatExtractor } from "./compat.js";
 import type { ContractExtractor } from "../../../plugins/types.js";
+import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import {
   contract,
-  createCrossRepoExtraction,
   evidence,
   isParsedCodeFile,
   javaPackageFromPath,
-  pushContractEvidence,
-  toFactBundle
-} from "./shared.js";
+  pushContractEvidence, } from "./shared.js";
 
 /**
  * Extracts Java package contracts from Java file paths.
@@ -18,11 +17,10 @@ import {
  *
  * Import-to-package extraction is handled by the separate `importPackageExtractor`.
  */
-export const javaPackageExtractor: ContractExtractor = {
+export const javaPackageExtractor = compatExtractor({
   name: "builtin:java-package",
   languages: ["java"],
-  async extract(context) {
-    const result = createCrossRepoExtraction();
+  async extract(context, collector: FactCollector) {
 
     for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
       if (file.language !== "java") continue;
@@ -38,10 +36,9 @@ export const javaPackageExtractor: ContractExtractor = {
           rule: "java-package-path",
           confidence: confidenceFor("probable-package-path")
         });
-        pushContractEvidence(result, file.repoId, packageContract, "owner", evidenceNode);
+        pushContractEvidence(collector, file.repoId, packageContract, "owner", evidenceNode);
       }
     }
 
-    return toFactBundle(result);
   }
-};
+});

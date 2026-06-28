@@ -26,7 +26,7 @@ describe("Python Event Extractor", () => {
     expect(spec).toBeDefined();
     expect(spec!.specKind).toBe("event");
     expect(JSON.parse(spec!.specJson).broker).toBe("kafka");
-    const producers = bundle.relations.filter((r) => r.kind === "repo-contract" && r.role === "producer");
+    const producers = bundle.repoContracts.filter((e) => e.role === "producer");
     expect(producers.length).toBe(1);
   });
 
@@ -34,7 +34,7 @@ describe("Python Event Extractor", () => {
     const bundle = await extract(`from kafka import KafkaConsumer\nconsumer = KafkaConsumer()\nconsumer.subscribe(["order.created"])`);
     const spec = bundle.contractSpecs.find((s) => s.eventTopic === "order.created");
     expect(spec).toBeDefined();
-    const consumers = bundle.relations.filter((r) => r.kind === "repo-contract" && r.role === "consumer");
+    const consumers = bundle.repoContracts.filter((e) => e.role === "consumer");
     expect(consumers.length).toBe(1);
   });
 
@@ -50,7 +50,7 @@ describe("Python Event Extractor", () => {
     const spec = bundle.contractSpecs.find((s) => s.eventTopic === "process_order");
     expect(spec).toBeDefined();
     expect(spec!.framework).toBe("celery");
-    const consumers = bundle.relations.filter((r) => r.kind === "repo-contract" && r.role === "consumer");
+    const consumers = bundle.repoContracts.filter((e) => e.role === "consumer");
     expect(consumers.length).toBe(1);
   });
 

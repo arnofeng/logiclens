@@ -7,9 +7,6 @@ import { pythonExtractor } from "../src/core/contracts/extraction/builtin/python
 import { repoId } from "../src/shared/path.js";
 import type { ExtractedRelation } from "../src/core/contracts/extraction/crossRepoContracts.js";
 
-function isRepoContractRelation(relation: ExtractedRelation): relation is ExtractedRelation & { kind: "repo-contract" } {
-  return relation.kind === "repo-contract";
-}
 
 describe("Python support", () => {
   it("parses Python files and extracts facts/symbols/calls", async () => {
@@ -83,12 +80,12 @@ def main():
     const extracted = await pythonExtractor.extract(context);
     
     // Check producer API contract
-    const producers = extracted.relations.filter(isRepoContractRelation).filter((r) => r.role === "producer");
+    const producers = extracted.repoContracts.filter((r) => r.role === "producer");
     expect(producers.length).toBe(1);
     expect(producers[0]?.contractId).toContain("api:get:-api-users");
 
     // Check consumer API contract (requests.get)
-    const consumers = extracted.relations.filter(isRepoContractRelation).filter((r) => r.role === "consumer");
+    const consumers = extracted.repoContracts.filter((r) => r.role === "consumer");
     expect(consumers.length).toBe(1);
     expect(consumers[0]?.contractId).toContain("api:get:-api-orders");
     expect(extracted.evidence).toEqual(expect.arrayContaining([

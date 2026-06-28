@@ -1,13 +1,12 @@
+import { compatExtractor } from "./compat.js";
 import type Parser from "tree-sitter";
 import type { ParsedFile } from "../../../parsing/types.js";
 import type { ContractExtractor } from "../../../plugins/types.js";
+import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import {
-  createCrossRepoExtraction,
   isParsedCodeFile,
-  pushEventContract,
-  toFactBundle
-} from "./shared.js";
+  pushEventContract, } from "./shared.js";
 import {
   attributeParts,
   callArguments,
@@ -83,12 +82,11 @@ function isCeleryTaskDecorator(name: string): boolean {
   return last === "task" || last === "shared_task";
 }
 
-export const pythonEventExtractor: ContractExtractor = {
+export const pythonEventExtractor = compatExtractor({
   name: "builtin:python-event",
   languages: ["python"],
   frameworks: ["python:kafka", "python:pika", "python:redis", "python:celery"],
-  extract(context) {
-    const result = createCrossRepoExtraction();
+  extract(context, collector: FactCollector) {
     for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
       if (file.language !== "python") continue;
 
@@ -102,7 +100,7 @@ export const pythonEventExtractor: ContractExtractor = {
           const ownerSymbol = file.symbols.find((s) => s.id === decorator.ownerSymbolId);
           if (!ownerSymbol) continue;
           pushEventContract({
-            result,
+            collector,
             file,
             topic: ownerSymbol.name,
             role: "consumer",
@@ -139,7 +137,7 @@ export const pythonEventExtractor: ContractExtractor = {
         const broker = config.broker ?? importBroker;
         const symbol = findContainingSymbol(file.symbols, node);
         pushEventContract({
-          result,
+          collector,
           file,
           topic,
           role: producer ? "producer" : "consumer",
@@ -153,6 +151,5 @@ export const pythonEventExtractor: ContractExtractor = {
         });
       });
     }
-    return toFactBundle(result);
   }
-};
+});
