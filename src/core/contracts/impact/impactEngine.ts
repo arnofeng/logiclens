@@ -14,6 +14,10 @@ import type {
 } from "../../parsing/types.js";
 import { deserializeSpec, type HttpEndpointSpec, type EventSpec, type SchemaSpec } from "../spec.js";
 import {
+  CONSUMER_TO_PRODUCER_KINDS,
+  SCHEMA_TO_USE_KINDS
+} from "../semanticRelations.js";
+import {
   type ChangeIntent,
   type ImpactItem,
   type ImpactReport,
@@ -280,16 +284,6 @@ export type ImpactAnalysisOptions = {
   /** Maximum BFS depth for transitive impact traversal (default 3). */
   maxHops?: number;
 };
-
-/** Edge kinds that go from a schema to the endpoint/event that uses it. */
-const SCHEMA_TO_USE_KINDS: Set<SemanticRelationKind> = new Set([
-  "REQUEST_SCHEMA", "RESPONSE_SCHEMA", "EVENT_PAYLOAD", "USES_SCHEMA"
-]);
-
-/** Edge kinds that represent a consumer depending on a producer. */
-const CONSUMER_TO_PRODUCER_KINDS: Set<SemanticRelationKind> = new Set([
-  "CALLS_ENDPOINT", "SUBSCRIBES_EVENT", "PUBLISHES_EVENT"
-]);
 
 /**
  * Analyzes the downstream impact of a contract change.

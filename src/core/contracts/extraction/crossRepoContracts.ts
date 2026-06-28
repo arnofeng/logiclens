@@ -32,6 +32,7 @@ import {
   uniqueById
 } from "./builtin/shared.js";
 import { mergeAndDedupeDeps } from "../depsMerge.js";
+import { SEMANTIC_REL_META } from "../semanticRelations.js";
 
 export type ExtractedRelation =
   | ({ kind: "repo-contract" } & RepoContractEdge)
@@ -289,75 +290,31 @@ export function materializeDependenciesFromSemanticRelations(
   const seen = new Set<string>();
 
   for (const rel of semanticRelations) {
+    const meta = SEMANTIC_REL_META[rel.kind];
+    if (!meta || meta.dependencyType === null) continue; // intra-spec, skip
+
     const fromSpec = specsById.get(rel.fromSpecId);
     const toSpec = specsById.get(rel.toSpecId);
     if (!fromSpec || !toSpec) continue;
 
-    // Resolve direction and dependency type
-    let consumerRepoId: string;
-    let producerRepoId: string;
-    let sourceContractId: string;
-    let targetContractId: string;
-    let dependencyType: RepoDependencyEdge["dependencyType"];
-
-    switch (rel.kind) {
-      case "CALLS_ENDPOINT":
-        // fromSpec = consumer, toSpec = producer
-        consumerRepoId = fromSpec.repoId;
-        producerRepoId = toSpec.repoId;
-        sourceContractId = fromSpec.contractId;
-        targetContractId = toSpec.contractId;
-        dependencyType = "api";
-        break;
-
-      case "PUBLISHES_EVENT":
-        // fromSpec = producer, toSpec = consumer → reverse for dependency
-        consumerRepoId = toSpec.repoId;
-        producerRepoId = fromSpec.repoId;
-        sourceContractId = toSpec.contractId;
-        targetContractId = fromSpec.contractId;
-        dependencyType = "event";
-        break;
-
-      case "SUBSCRIBES_EVENT":
-        // fromSpec = consumer, toSpec = producer
-        consumerRepoId = fromSpec.repoId;
-        producerRepoId = toSpec.repoId;
-        sourceContractId = fromSpec.contractId;
-        targetContractId = toSpec.contractId;
-        dependencyType = "event";
-        break;
-
-      case "USES_SCHEMA":
-        // fromSpec = schema user, toSpec = schema provider
-        consumerRepoId = fromSpec.repoId;
-        producerRepoId = toSpec.repoId;
-        sourceContractId = fromSpec.contractId;
-        targetContractId = toSpec.contractId;
-        dependencyType = "shared-contract";
-        break;
-
-      default:
-        // REQUEST_SCHEMA, RESPONSE_SCHEMA, EVENT_PAYLOAD — intra-spec
-        // associations, not cross-repo dependencies.
-        // IMPLEMENTS, COMPATIBLE_WITH, BREAKS, IMPACTS — not yet mapped;
-        // these are reserved for Phase 5 (Impact Analysis).
-        continue;
-    }
+    // Resolve consumer/producer from direction metadata
+    const [consumerSpec, producerSpec] = meta.direction === "forward"
+      ? [fromSpec, toSpec]
+      : [toSpec, fromSpec];
 
     // Skip same-repo edges
-    if (consumerRepoId === producerRepoId) continue;
+    if (consumerSpec.repoId === producerSpec.repoId) continue;
 
-    const key = `${consumerRepoId}:${producerRepoId}:${dependencyType}:${sourceContractId}:${targetContractId}:${rel.evidenceId}`;
+    const key = `${consumerSpec.repoId}:${producerSpec.repoId}:${meta.dependencyType}:${consumerSpec.contractId}:${producerSpec.contractId}:${rel.evidenceId}`;
     if (seen.has(key)) continue;
     seen.add(key);
 
     result.push({
-      fromRepoId: consumerRepoId,
-      toRepoId: producerRepoId,
-      dependencyType,
-      sourceContractId,
-      targetContractId,
+      fromRepoId: consumerSpec.repoId,
+      toRepoId: producerSpec.repoId,
+      dependencyType: meta.dependencyType,
+      sourceContractId: consumerSpec.contractId,
+      targetContractId: producerSpec.contractId,
       evidenceId: rel.evidenceId,
       raw: rel.reason,
       confidence: rel.confidence
