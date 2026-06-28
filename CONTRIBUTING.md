@@ -104,7 +104,7 @@ When committing code, write clear, concise, and meaningful commit messages. We r
 
 - `feat: support FastStream contract detection in Python`
 - `fix: resolve concurrency issue during Kuzu writes`
-- `docs: add plugin development guide`
+- `docs: clarify configuration options`
 
 ```bash
 git add .

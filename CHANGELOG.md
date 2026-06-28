@@ -25,13 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Documentation repositioning**: Repositioned as a cross-repo contract graph that reasons about change impact.
-- **Project restructure**: Reorganized source tree into `src/core/`, `src/features/`, `src/adapters/`, `src/interfaces/`, `src/shared/`, and `src/plugins/` layers.
+- **Project restructure**: Reorganized source tree into `src/core/`, `src/features/`, `src/adapters/`, `src/interfaces/`, and `src/shared/` layers.
 - Extracted indexing engine out of commands into a dedicated `indexing/` module.
 - Moved graph DB and embedding providers into `src/adapters/`.
-
-### Removed
-
-- **Breaking (plugin API)**: Removed the `registerContractExtractor`, `registerCliCommand`, and `registerFrameworkDetector` plugin hooks, along with the exported `ContractExtractor` type. The plugin API now exposes only `registerParser` and `registerEmbeddingProvider`. Built-in contract extractors and framework detectors are used directly and are no longer extensible via plugins.
 
 ### Fixed
 
@@ -45,19 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `logiclens plugin add/remove/list` commands for managing plugins.
-- Pluggable embeddings behind an `EmbeddingProvider` extension point.
 - Guard against re-indexing: refuse a full re-index of an already-indexed repo.
 
 ### Changed
 
 - Made the SDK config-agnostic — no disk writes; init/uninit/persistence moved to the CLI.
 - Renamed `providers/openaiProvider` to `resilience/providerPolicy`.
-
-### Fixed
-
-- Prevent plugins from overriding system CLI commands.
-- Install plugins into an isolated `.logiclens/plugins` store.
 
 ## [0.1.1-beta.11] - 2026-06-24
 

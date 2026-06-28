@@ -25,7 +25,6 @@
 - [🤖 MCP Integration (AI Coding Agents)](#-mcp-integration-ai-coding-agents)
 - [🧠 SDK (Programmatic Access)](#-sdk-programmatic-access)
 - [⚙️ Configuration](#️-configuration)
-- [🧩 SDK Plugins](#-sdk-plugins)
 - [👍 Current Language and Framework Support](#-current-language-and-framework-support)
 - [🧑‍💻 Contributing](#contributing)
 - [🛡️ Security](#security)
@@ -134,7 +133,6 @@ LogicLens automatically analyzes your multi-repository system and models the ent
 - **CLI / SDK / MCP**: Supports manual graph queries, Node.js integration, and AI coding assistant connectivity.
 - **Quality governance**: Audits low-confidence evidence, rejects false positives, registers alias overrides to ensure graph accuracy.
 - **Optional LLM / embedding layer**: When needed, integrates OpenAI-compatible chat and embedding providers to enhance graph semantics.
-- **Plugin API**: Registers custom parsers and embedding providers to extend graph coverage.
 
 **Upgrade from "code search" to "graph traversal + reasoning".**
 
@@ -260,7 +258,6 @@ try {
 |---|---|
 | `client.addRepo(path, options)` | Add a single repository to this client's in-memory config (not persisted). |
 | `client.addRepos(directory, options)` | Discover and add first-level Git repositories to in-memory config (not persisted). |
-| `client.ensurePlugins()` | Load configured and inline plugins. |
 | `client.index(options)` | Index repositories. |
 | `client.getIndexQueueStatus()` | Check SDK/MCP indexing queue status. |
 | `client.rebuildRelations(options)` | Rebuild dependency edges from indexed evidence. |
@@ -312,53 +309,6 @@ Indexing, graph writes, `stats`, `deps`, `contracts`, `trace`, `impact`, and raw
 
 ---
 
-## 🧩 SDK Plugins
-
-```ts
-import { createLogicLens, definePlugin } from "logiclens";
-
-const plugin = definePlugin({
-  name: "my-plugin",
-  version: "1.0.0",
-  pluginApiVersion: "1",
-  setup(context) {
-    context.registerParser({
-      name: "my-parser",
-      language: "my-lang",
-      extensions: [".mylang"],
-      parse(input) {
-        return {
-          repoId: input.repoId,
-          fileId: input.fileId,
-          path: input.relativePath,
-          language: input.language,
-          hash: input.hash,
-          loc: input.source.split(/\r?\n/).length,
-          imports: [],
-          symbols: [],
-          calls: []
-        };
-      }
-    });
-  }
-});
-
-const client = await createLogicLens({
-  cwd: process.cwd(),
-  plugins: [plugin]
-});
-
-await client.ensurePlugins();
-await client.close();
-```
-
-Plugins can register:
-
-- `registerParser(parser)` — Custom language parsing.
-- `registerEmbeddingProvider(provider)` — Custom text embedding provider.
-
----
-
 ## 👍 Current Language and Framework Support
 
 LogicLens currently scans and parses:
@@ -385,11 +335,11 @@ Built-in framework and contract extraction currently mainly covers:
 | Documentation | Markdown/MDX sections that can be linked to code and impact output. |
 | Config | YAML, TOML, properties, and environment/config-style contract evidence. |
 
-More languages, frameworks, and generated client patterns will be supported over time. For project-specific conventions, using plugins is recommended over waiting for built-in support.
+More languages, frameworks, and generated client patterns will be supported over time.
 
 ### Current Limitations
 
-- LogicLens is still in Beta — graph structure, extractor behavior, and plugin APIs may change.
+- LogicLens is still in Beta — graph structure and extractor behavior may change.
 - Static analysis is conservative. Dynamic API paths, reflection, runtime dependency injection, generated code, and framework magic may be incompletely extracted, or reported as unresolved evidence.
 - Built-in framework support is focused. Unsupported frameworks can still be parsed as source code, but contract extraction may be shallow until the corresponding detector or extractor is added.
 - Cross-repository dependency quality depends on repository names, package metadata, imports, aliases, and contract evidence.

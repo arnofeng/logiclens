@@ -46,7 +46,6 @@ logiclens <command> --help
 | [`impact`](#logiclens-impact-symbolorentity) | Change impact analysis |
 | [`quality`](#logiclens-quality-action) | Audit and govern relation/contract quality |
 | [`rebuild-relations`](#logiclens-rebuild-relations) | Rebuild cross-repository dependency edges |
-| [`plugin`](#logiclens-plugin) | Add, remove, and list plugins |
 | [`frameworks`](#logiclens-frameworks) | List detected frameworks |
 | [`mcp`](#logiclens-mcp) | Start MCP server |
 | [`watch`](#logiclens-watch) | Start file watcher for auto-indexing |
@@ -396,53 +395,7 @@ logiclens quality --alias my-service --target-repo service-a
 
 ---
 
-## Plugins & Frameworks
-
-### `logiclens plugin`
-
-Manage LogicLens plugins. Plugins are recorded in `.logiclens/config.yaml` and loaded at startup.
-
-#### `logiclens plugin add <name>`
-
-Install a plugin package and register it in the configuration. `<name>` is either an npm package (optionally with a version, e.g. `my-plugin@1.2.3`, `@scope/my-plugin`) or a local path (e.g. `./plugins/my-plugin.mjs`).
-
-```bash
-logiclens plugin add my-logiclens-plugin
-logiclens plugin add my-logiclens-plugin@1.2.0 --options '{"team":"platform"}'
-logiclens plugin add ./plugins/internal.mjs
-```
-
-For npm packages, the package is installed into LogicLens's private plugin store at `.logiclens/plugins/` (using the detected package manager — pnpm / yarn / npm, by lockfile), so it never pollutes your project's or analyzed repos' dependencies. The plugin is then imported and validated, and the entry is written to config. Local paths skip installation. The plugin store is removed together with the workspace on `logiclens uninit`.
-
-**Options**:
-
-| Option | Description |
-| --- | --- |
-| `--options <json>` | JSON options object stored with the plugin entry and passed to its `setup`. |
-| `--no-install` | Only write config; skip installing the package. |
-| `--skip-verify` | Skip importing and validating the plugin after install. |
-
-Re-adding an existing plugin (matched by name) updates its entry instead of duplicating it.
-
-#### `logiclens plugin remove <name>`
-
-Remove a plugin entry from the configuration (alias: `rm`). The installed package, if any, is left in place.
-
-```bash
-logiclens plugin remove my-logiclens-plugin
-```
-
-#### `logiclens plugin list`
-
-List all configured and loaded plugins along with their registered extension hooks.
-
-```bash
-logiclens plugin list
-```
-
-**Output**: Configured plugin count, loaded plugin details (name, version, path, load time), registered parsers.
-
----
+## Frameworks
 
 ### `logiclens frameworks`
 
@@ -558,6 +511,3 @@ logiclens uninstall -t claude-code
 | `-t, --target <ids>` | Target agents, comma-separated IDs or `all` (default: `all`) |
 | `-l, --location <where>` | Uninstall location: `global` or `local` (default: interactive selection) |
 | `-y, --yes` | Non-interactive mode, defaults to `--location=global --target=all` |
-
-
-For more plugin development details, see the `plugins` section in the [Configuration Guide](./configuration.md).

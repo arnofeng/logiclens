@@ -17,11 +17,6 @@ repos:
   - name: service-b
     path: ../service-b
 
-plugins:
-  - name: ./plugins/internal-contract-plugin.mjs
-    options:
-      team: platform
-
 graph:
   provider: kuzu
   path: .logiclens/graph
@@ -81,7 +76,6 @@ indexing:
 
 - `systemName`: The unique name for this logiclens project system (defaults to `"default-system"`).
 - `repos`: List of repositories to index and analyze. Each repo contains a `name` and relative/absolute `path`.
-- `plugins`: List of custom plugin configurations. Each entry has a `name` (an npm package or a local path) and optional `options`. Manage entries with `logiclens plugin add/remove/list` instead of editing by hand — see the [CLI reference](./cli-reference.md#logiclens-plugin).
 
 ### Graph Database (`graph`)
 
