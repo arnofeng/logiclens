@@ -3,6 +3,7 @@ import type { SpecRoleMap } from "./matching/types.js";
 import { resolveHttpRelations } from "./matching/httpResolver.js";
 import { resolveEventRelations } from "./matching/eventResolver.js";
 import { resolveSchemaRelations } from "./matching/schemaResolver.js";
+import { resolveGrpcRelations } from "./matching/grpcResolver.js";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -48,9 +49,10 @@ export function resolveSemanticRelations(
   const httpEdges = resolveHttpRelations(contractSpecs, specRoles);
   const eventEdges = resolveEventRelations(contractSpecs, specRoles);
   const schemaEdges = resolveSchemaRelations(contractSpecs, specRoles, existingSemanticRelations);
+  const grpcEdges = resolveGrpcRelations(contractSpecs, specRoles);
 
   // Merge and deduplicate
-  const allEdges = [...httpEdges, ...eventEdges, ...schemaEdges];
+  const allEdges = [...httpEdges, ...eventEdges, ...schemaEdges, ...grpcEdges];
   return deduplicateEdges(allEdges);
 }
 

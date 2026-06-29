@@ -29,7 +29,10 @@ export type ConfidenceRule =
   | "path-only-match"
   | "template-compatible-match"
   | "static-path-to-template-match"
-  | "wildcard-path-match";
+  | "wildcard-path-match"
+  | "exact-grpc-match"
+  | "probable-grpc-package-unspecified"
+  | "probable-grpc-package-mismatch";
 
 export type ConfidenceBand = "exact" | "probable" | "heuristic";
 
@@ -66,7 +69,10 @@ const CONFIDENCE_BY_RULE: Record<ConfidenceRule, number> = {
   "path-only-match": 0.75,
   "template-compatible-match": 0.9,
   "static-path-to-template-match": 0.9,
-  "wildcard-path-match": 0.8
+  "wildcard-path-match": 0.8,
+  "exact-grpc-match": 0.95,
+  "probable-grpc-package-unspecified": 0.9,
+  "probable-grpc-package-mismatch": 0.8
 };
 
 export function confidenceFor(rule: ConfidenceRule): number {

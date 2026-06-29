@@ -261,4 +261,63 @@ describe("Resolver Integration", () => {
     );
     expect(crossEdges).toHaveLength(0);
   });
+
+  it("resolves gRPC CALLS_ENDPOINT relations across repos", () => {
+    const producerSpec: ContractSpecNode = {
+      id: "spec:g-p",
+      contractId: "c:g-p",
+      specKind: "grpc-method",
+      repoId: "repo-server",
+      fileId: "file:repo-server:server.proto",
+      evidenceId: "ev:g-p",
+      canonicalKey: "acme.order.v1.OrderService/CreateOrder",
+      specJson: serializeSpec({
+        kind: "grpc-method",
+        fullName: "acme.order.v1.OrderService/CreateOrder",
+        service: "OrderService",
+        method: "CreateOrder",
+        package: "acme.order.v1",
+        requestType: "CreateOrderRequest",
+        responseType: "Order",
+        streaming: "unary"
+      }),
+      confidence: 0.9
+    };
+
+    const consumerSpec: ContractSpecNode = {
+      id: "spec:g-c",
+      contractId: "c:g-c",
+      specKind: "grpc-method",
+      repoId: "repo-client",
+      fileId: "file:repo-client:client.go",
+      evidenceId: "ev:g-c",
+      canonicalKey: "OrderService/CreateOrder",
+      specJson: serializeSpec({
+        kind: "grpc-method",
+        fullName: "OrderService/CreateOrder",
+        service: "OrderService",
+        method: "CreateOrder",
+        requestType: "CreateOrderRequest",
+        streaming: "unary"
+      }),
+      confidence: 0.9
+    };
+
+    const repoContracts = [
+      makeRepoContract({ contractId: "c:g-p", repoId: "repo-server", role: "producer" }),
+      makeRepoContract({ contractId: "c:g-c", repoId: "repo-client", role: "consumer" })
+    ];
+
+    const edges = resolveSemanticRelations({
+      contractSpecs: [producerSpec, consumerSpec],
+      repoContracts,
+      existingSemanticRelations: []
+    });
+
+    const callsEdges = edges.filter((e) => e.kind === "CALLS_ENDPOINT");
+    expect(callsEdges).toHaveLength(1);
+    expect(callsEdges[0]!.fromSpecId).toBe("spec:g-c");
+    expect(callsEdges[0]!.toSpecId).toBe("spec:g-p");
+    expect(callsEdges[0]!.confidence).toBe(0.9); // consumer package unspecified -> 0.9
+  });
 });
