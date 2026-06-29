@@ -17,7 +17,7 @@ import { contractId, entityId, evidenceId, fileId, normalizeName } from "../../.
 import { normalizeApiPath, canonicalHttpContractKey, canonicalGrpcContractKey } from "../../apiPath.js";
 import { canonicalEventContractKey, type EventBroker } from "../../event.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
-import { serializeSpec, type ContractSpec, type EventSpec, type HttpEndpointSpec, type GrpcMethodSpec, type GrpcStreaming } from "../../spec.js";
+import { serializeSpec, type ContractSpec, type EventSpec, type HttpEndpointSpec, type GrpcMethodSpec, type GrpcStreaming, type SchemaSpec, type SchemaFieldSpec } from "../../spec.js";
 import type { AliasOverride } from "../crossRepoContracts.js";
 import type { FactCollector, PackageUsageEntry } from "../factCollector.js";
 
@@ -509,6 +509,50 @@ export function pushGrpcContract(input: {
       confidence: evidenceNode.confidence
     });
   }
+
+  return { contractNode, evidenceNode };
+}
+
+export function pushSchemaContract(input: {
+  collector: FactCollector;
+  file: ParsedFile;
+  symbol: CodeSymbol;
+  name: string;
+  language: string;
+  fields: SchemaFieldSpec[];
+  raw: string;
+  rule: string;
+  confidence: number;
+}): { contractNode: ContractNode; evidenceNode: EvidenceNode } {
+  const contractNode = contract("schema", input.name);
+  const evidenceNode = evidence({
+    repoId: input.file.repoId,
+    fileId: input.file.fileId,
+    filePath: input.file.path,
+    line: input.symbol.startLine,
+    raw: input.raw,
+    rule: input.rule,
+    confidence: input.confidence
+  });
+
+  pushContractEvidence(input.collector, input.file.repoId, contractNode, "shared", evidenceNode);
+
+  const schemaSpec: SchemaSpec = {
+    kind: "schema",
+    name: input.name,
+    language: input.language,
+    fields: input.fields
+  };
+
+  pushContractSpec({
+    collector: input.collector,
+    contractNode,
+    spec: schemaSpec,
+    repoId: input.file.repoId,
+    fileId: input.file.fileId,
+    evidenceNode,
+    sourceSymbolId: input.symbol.id
+  });
 
   return { contractNode, evidenceNode };
 }

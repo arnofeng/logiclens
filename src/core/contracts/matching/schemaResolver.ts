@@ -2,7 +2,7 @@ import type { ContractSpecNode, SemanticRelationEdge } from "../../parsing/types
 import type { SpecRoleMap } from "./types.js";
 import { confidenceFor } from "../../../shared/confidence.js";
 import { deserializeSpec } from "../spec.js";
-import type { HttpEndpointSpec, EventSpec, SchemaSpec } from "../spec.js";
+import type { HttpEndpointSpec, EventSpec, SchemaSpec, GrpcMethodSpec } from "../spec.js";
 
 // ---------------------------------------------------------------------------
 // Schema name → specId index
@@ -73,6 +73,70 @@ function resolveHttpSchemaRelations(
             evidenceId: spec.evidenceId,
             reason: `Response type ${httpSpec.responseBodyType}`,
             confidence: confidenceFor("heuristic-response-body-type")
+          });
+        }
+      }
+    }
+  }
+
+  return edges;
+}
+
+// ---------------------------------------------------------------------------
+// gRPC → Schema relations (REQUEST_SCHEMA / RESPONSE_SCHEMA)
+// ---------------------------------------------------------------------------
+
+function resolveGrpcSchemaRelations(
+  allSpecs: ContractSpecNode[],
+  schemaIndex: Map<string, string>
+): SemanticRelationEdge[] {
+  const edges: SemanticRelationEdge[] = [];
+  const seen = new Set<string>();
+
+  for (const spec of allSpecs) {
+    if (spec.specKind !== "grpc-method") continue;
+    const grpcSpec = safeJsonParse<GrpcMethodSpec>(spec.specJson);
+    if (!grpcSpec) continue;
+
+    // REQUEST_SCHEMA
+    if (grpcSpec.requestType) {
+      const lookupKey = grpcSpec.package && !grpcSpec.requestType.includes(".")
+        ? `${grpcSpec.package}.${grpcSpec.requestType}`
+        : grpcSpec.requestType;
+      const schemaId = schemaIndex.get(lookupKey.toLowerCase());
+      if (schemaId) {
+        const key = `${spec.id}:${schemaId}:REQUEST_SCHEMA`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          edges.push({
+            fromSpecId: spec.id,
+            toSpecId: schemaId,
+            kind: "REQUEST_SCHEMA",
+            evidenceId: spec.evidenceId,
+            reason: `RPC request type ${grpcSpec.requestType}`,
+            confidence: 1.0
+          });
+        }
+      }
+    }
+
+    // RESPONSE_SCHEMA
+    if (grpcSpec.responseType) {
+      const lookupKey = grpcSpec.package && !grpcSpec.responseType.includes(".")
+        ? `${grpcSpec.package}.${grpcSpec.responseType}`
+        : grpcSpec.responseType;
+      const schemaId = schemaIndex.get(lookupKey.toLowerCase());
+      if (schemaId) {
+        const key = `${spec.id}:${schemaId}:RESPONSE_SCHEMA`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          edges.push({
+            fromSpecId: spec.id,
+            toSpecId: schemaId,
+            kind: "RESPONSE_SCHEMA",
+            evidenceId: spec.evidenceId,
+            reason: `RPC response type ${grpcSpec.responseType}`,
+            confidence: 1.0
           });
         }
       }
@@ -204,6 +268,7 @@ export function resolveSchemaRelations(
 
   const edges: SemanticRelationEdge[] = [
     ...resolveHttpSchemaRelations(allSpecs, schemaIndex),
+    ...resolveGrpcSchemaRelations(allSpecs, schemaIndex),
     ...resolveEventPayloadRelations(allSpecs, schemaIndex),
     ...resolvePendingUsesSchema(allSpecs, existingRelations, schemaIndex)
   ];

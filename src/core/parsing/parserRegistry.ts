@@ -119,7 +119,8 @@ export function builtinLanguageForPath(relativePath: string): string | undefined
     [".yml", "yaml"],
     [".toml", "toml"],
     [".properties", "properties"],
-    [".vue", "vue"]
+    [".vue", "vue"],
+    [".proto", "proto"]
   ];
   const matchedStatic = staticExtensions.find(([ext]) => normalized.endsWith(ext));
   if (matchedStatic) return matchedStatic[1];
@@ -129,6 +130,31 @@ export function builtinLanguageForPath(relativePath: string): string | undefined
   if (registryDef) return registryDef.id;
 
   return undefined;
+}
+
+function createProtoParser(): LanguageParser {
+  return {
+    name: "builtin:proto",
+    language: "proto",
+    extensions: [".proto"],
+    parse(input) {
+      const loc = input.source.split(/\r?\n/).length;
+      const parsedFile: ParsedFile = {
+        repoId: input.repoId,
+        fileId: input.fileId,
+        path: input.relativePath,
+        absolutePath: input.absolutePath,
+        language: input.language,
+        hash: input.hash,
+        loc,
+        source: input.source,
+        imports: [],
+        symbols: [],
+        calls: []
+      };
+      return Promise.resolve(parsedFile);
+    }
+  };
 }
 
 /**
@@ -151,6 +177,10 @@ export function registerBuiltinParsers(languages?: Set<string>): void {
   }
 
   const should = (lang: string) => !languages || languages.has(lang);
+
+  if (should("proto") && !parserRegistry.resolve({ language: "proto" })) {
+    parserRegistry.register(createProtoParser());
+  }
 
   for (const def of LANGUAGE_DEFINITIONS) {
     if (should(def.id) && !parserRegistry.resolve({ language: def.id })) {

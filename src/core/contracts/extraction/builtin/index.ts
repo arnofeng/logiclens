@@ -16,6 +16,7 @@ import { tsSchemaExtractor } from "./tsSchemaExtractor.js";
 import { javaSchemaExtractor } from "./javaSchemaExtractor.js";
 import { pythonSchemaExtractor } from "./pythonSchemaExtractor.js";
 import { goSchemaExtractor } from "./goSchemaExtractor.js";
+import { protoExtractor } from "./protoExtractor.js";
 
 /** Each extractor already self-wraps via compatExtractor at its export site. */
 export const builtinContractExtractors: ContractExtractor[] = [
@@ -30,6 +31,7 @@ export const builtinContractExtractors: ContractExtractor[] = [
   javaSchemaExtractor,
   pythonSchemaExtractor,
   goSchemaExtractor,
+  protoExtractor,
   sharedSymbolExtractor,
   envConfigExtractor,
   pythonExtractor,
