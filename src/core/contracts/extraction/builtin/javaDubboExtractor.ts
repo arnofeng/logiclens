@@ -12,7 +12,6 @@ type JavaImportMap = Map<string, string>;
 
 const DUBBO_SERVICE_ANNOTATIONS = new Set([
   "DubboService",
-  "Service",
   "org.apache.dubbo.config.annotation.DubboService",
   "org.apache.dubbo.config.annotation.Service",
   "com.alibaba.dubbo.config.annotation.Service"
@@ -20,11 +19,12 @@ const DUBBO_SERVICE_ANNOTATIONS = new Set([
 
 const DUBBO_REFERENCE_ANNOTATIONS = new Set([
   "DubboReference",
-  "Reference",
   "org.apache.dubbo.config.annotation.DubboReference",
   "org.apache.dubbo.config.annotation.Reference",
   "com.alibaba.dubbo.config.annotation.Reference"
 ]);
+
+const AMBIGUOUS_DUBBO_SIMPLE_NAMES = new Set(["Service", "Reference"]);
 
 function makeSymbol(file: ParsedFile, node: Parser.SyntaxNode, kind: CodeSymbol["kind"], name: string, qualifiedName: string): CodeSymbol {
   const startLine = node.startPosition.row + 1;
@@ -91,9 +91,9 @@ function hasAnyAnnotation(node: Parser.SyntaxNode, names: Set<string>, imports: 
   return annotationNames(node).some((name) => {
     if (names.has(name)) return true;
     const simple = name.split(".").at(-1) ?? name;
-    if (!names.has(simple)) return false;
+    if (!names.has(simple) && !AMBIGUOUS_DUBBO_SIMPLE_NAMES.has(simple)) return false;
     const imported = imports.get(simple);
-    return !imported || names.has(imported) || imported.startsWith("org.apache.dubbo.") || imported.startsWith("com.alibaba.dubbo.");
+    return Boolean(imported && (names.has(imported) || imported.startsWith("org.apache.dubbo.") || imported.startsWith("com.alibaba.dubbo.")));
   });
 }
 
@@ -128,6 +128,16 @@ function implementedInterfaces(classNode: Parser.SyntaxNode): string[] {
     .filter(Boolean);
 }
 
+function selectDubboInterface(interfaces: string[]): string | undefined {
+  return interfaces.find((name) => /(?:^|[.$])\w*Service$/.test(name)) ?? interfaces[0];
+}
+
+function directMethodDeclarations(classNode: Parser.SyntaxNode): Parser.SyntaxNode[] {
+  const body = classNode.childForFieldName("body");
+  if (!body) return [];
+  return namedChildren(body).filter((child) => child.type === "method_declaration");
+}
+
 function javaMethodCall(node: Parser.SyntaxNode): { object?: string; method?: string; args: Parser.SyntaxNode[] } | undefined {
   if (node.type !== "method_invocation") return undefined;
   const object = node.childForFieldName("object");
@@ -146,6 +156,10 @@ function typeFromObjectCreation(node: Parser.SyntaxNode | undefined): string | u
     ?? text.match(/\bnew\s+([A-Za-z_$][\w$]*)\s*\(/)?.[1];
 }
 
+function referenceReceiverName(objectText: string): string {
+  return objectText.replace(/^this\./, "");
+}
+
 export const javaDubboExtractor = compatExtractor({
   name: "builtin:java-dubbo",
   languages: ["java"],
@@ -161,16 +175,15 @@ export const javaDubboExtractor = compatExtractor({
       walkSourceAst(ast.tree.rootNode, (node) => {
         if (node.type !== "class_declaration") return;
         if (!hasAnyAnnotation(node, DUBBO_SERVICE_ANNOTATIONS, imports)) return;
-        const implemented = implementedInterfaces(node)[0];
+        const implemented = selectDubboInterface(implementedInterfaces(node));
         const interfaceName = resolveJavaType(implemented, imports, packageName);
         if (!interfaceName) return;
         const group = annotationValue(node, "DubboService", "group") ?? annotationValue(node, "Service", "group");
         const version = annotationValue(node, "DubboService", "version") ?? annotationValue(node, "Service", "version");
 
-        walkSourceAst(node, (child) => {
-          if (child.type !== "method_declaration") return;
+        for (const child of directMethodDeclarations(node)) {
           const method = child.childForFieldName("name")?.text;
-          if (!method) return;
+          if (!method) continue;
           const symbol = makeSymbol(file, child, "method", method, `${interfaceName}.${method}`);
           pushDubboContract({
             collector,
@@ -190,7 +203,7 @@ export const javaDubboExtractor = compatExtractor({
             config: "annotation",
             framework: "dubbo-java"
           });
-        });
+        }
       });
 
       const referenceFields = new Map<string, { interfaceName: string; group?: string; version?: string }>();
@@ -211,7 +224,7 @@ export const javaDubboExtractor = compatExtractor({
       walkSourceAst(ast.tree.rootNode, (node) => {
         const call = javaMethodCall(node);
         if (!call?.object || !call.method) return;
-        const reference = referenceFields.get(call.object);
+        const reference = referenceFields.get(referenceReceiverName(call.object));
         if (!reference) return;
         const fullName = `${reference.interfaceName}#${call.method}`;
         if (seen.has(fullName)) return;

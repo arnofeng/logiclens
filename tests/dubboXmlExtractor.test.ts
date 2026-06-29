@@ -64,4 +64,16 @@ describe("Dubbo XML extractor", () => {
     const bundle = await extract(`<beans><bean id="plain" class="com.acme.Plain" /></beans>`);
     expect(bundle.contractSpecs).toHaveLength(0);
   });
+
+  it("uses distinct symbol ids for repeated interface declarations", async () => {
+    const bundle = await extract(`
+      <beans xmlns:dubbo="http://dubbo.apache.org/schema/dubbo">
+        <dubbo:service interface="com.acme.api.OrderService" group="orders" />
+        <dubbo:service interface="com.acme.api.OrderService" group="billing" />
+      </beans>
+    `);
+
+    const sourceSymbolIds = bundle.contractSpecs.map((spec) => spec.sourceSymbolId);
+    expect(new Set(sourceSymbolIds).size).toBe(2);
+  });
 });

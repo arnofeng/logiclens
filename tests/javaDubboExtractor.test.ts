@@ -96,4 +96,90 @@ describe("Java Dubbo extractor", () => {
       })
     ]);
   });
+
+  it("does not treat Spring @Service as Dubbo without a Dubbo import", async () => {
+    const bundle = await extract(`
+      package com.acme.order;
+      import org.springframework.stereotype.Service;
+      import com.acme.api.OrderService;
+
+      @Service
+      class OrderServiceImpl implements OrderService {
+        public OrderResponse createOrder(CreateOrderRequest request) { return null; }
+      }
+    `);
+
+    expect(bundle.contractSpecs).toHaveLength(0);
+    expect(bundle.contracts).toHaveLength(0);
+  });
+
+  it("allows legacy Dubbo @Service only when imported from Dubbo", async () => {
+    const bundle = await extract(`
+      package com.acme.order;
+      import org.apache.dubbo.config.annotation.Service;
+      import com.acme.api.OrderService;
+
+      @Service
+      class OrderServiceImpl implements OrderService {
+        public OrderResponse createOrder(CreateOrderRequest request) { return null; }
+      }
+    `);
+
+    expect(roleKeys(bundle, "producer")).toEqual(["com.acme.api.orderservice#createOrder"]);
+  });
+
+  it("detects this.field consumer calls", async () => {
+    const bundle = await extract(`
+      package com.acme.web;
+      import org.apache.dubbo.config.annotation.DubboReference;
+      import com.acme.api.OrderService;
+      import com.acme.dto.CreateOrderRequest;
+
+      class OrderController {
+        @DubboReference
+        private OrderService orderService;
+
+        public void submit() {
+          this.orderService.createOrder(new CreateOrderRequest());
+        }
+      }
+    `);
+
+    expect(roleKeys(bundle, "consumer")).toEqual(["com.acme.api.orderservice#createOrder"]);
+  });
+
+  it("does not extract nested class methods as outer Dubbo service methods", async () => {
+    const bundle = await extract(`
+      package com.acme.order;
+      import org.apache.dubbo.config.annotation.DubboService;
+      import com.acme.api.OrderService;
+
+      @DubboService
+      class OrderServiceImpl implements OrderService {
+        public OrderResponse createOrder(CreateOrderRequest request) { return null; }
+        class Helper {
+          public void helperMethod() {}
+        }
+      }
+    `);
+
+    expect(roleKeys(bundle, "producer")).toEqual(["com.acme.api.orderservice#createOrder"]);
+  });
+
+  it("prefers service-like interface when a class implements multiple interfaces", async () => {
+    const bundle = await extract(`
+      package com.acme.order;
+      import org.apache.dubbo.config.annotation.DubboService;
+      import com.acme.api.OrderService;
+      import org.springframework.beans.factory.InitializingBean;
+
+      @DubboService
+      class OrderServiceImpl implements InitializingBean, OrderService {
+        public OrderResponse createOrder(CreateOrderRequest request) { return null; }
+      }
+    `);
+
+    expect(roleKeys(bundle, "producer")).toEqual(["com.acme.api.orderservice#createOrder"]);
+    expect(specs(bundle)[0]).toMatchObject({ interfaceName: "com.acme.api.OrderService" });
+  });
 });

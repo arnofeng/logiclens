@@ -9,14 +9,15 @@ import { parseDubboXmlConfig } from "./dubboXmlConfig.js";
 
 function makeXmlSymbol(file: ParsedFile, raw: string, offset: number, name: string): CodeSymbol {
   const source = file.source ?? raw;
-  const startLine = 1;
+  const startLine = source.slice(0, offset).split(/\r?\n/).length;
+  const qualifiedName = `${name}@${offset}`;
   return {
-    id: codeId(file.repoId, file.path, "variable", name, startLine),
+    id: codeId(file.repoId, file.path, "variable", qualifiedName, startLine),
     repoId: file.repoId,
     fileId: file.fileId,
     kind: "variable",
     name,
-    qualifiedName: name,
+    qualifiedName,
     startLine,
     endLine: startLine,
     signature: raw,
