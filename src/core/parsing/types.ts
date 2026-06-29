@@ -277,7 +277,7 @@ export type CallEdge = {
   active?: boolean;
 };
 
-export const CONTRACT_SPEC_KINDS = ["http-endpoint", "event", "schema", "grpc-method"] as const;
+export const CONTRACT_SPEC_KINDS = ["http-endpoint", "event", "schema", "grpc-method", "dubbo-method"] as const;
 
 export type ContractSpecKind = (typeof CONTRACT_SPEC_KINDS)[number];
 

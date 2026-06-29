@@ -52,7 +52,20 @@ export type GrpcMethodSpec = {
   framework?: "proto" | "grpc-go" | "grpc-java" | "grpc-python" | "grpc-js";
 };
 
-export type ContractSpec = HttpEndpointSpec | EventSpec | SchemaSpec | GrpcMethodSpec;
+export type DubboMethodSpec = {
+  kind: "dubbo-method";
+  interfaceName: string;
+  method: string;
+  group?: string;
+  version?: string;
+  fullName: string;
+  requestTypes?: string[];
+  responseType?: string;
+  config: "annotation" | "xml";
+  framework?: "dubbo-java" | "dubbo-go";
+};
+
+export type ContractSpec = HttpEndpointSpec | EventSpec | SchemaSpec | GrpcMethodSpec | DubboMethodSpec;
 
 // Compile-time assertion: ContractSpec kind union === ContractSpecKind
 type _AssertSpecKindsAligned =
@@ -68,6 +81,8 @@ export function interactionStyleOfSpecKind(kind: ContractSpecKind): InteractionS
     case "http-endpoint":
       return "sync-rpc";
     case "grpc-method":
+      return "sync-rpc";
+    case "dubbo-method":
       return "sync-rpc";
     case "event":
       return "async-message";

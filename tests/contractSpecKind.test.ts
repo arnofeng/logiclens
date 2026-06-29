@@ -5,9 +5,10 @@ import { CONTRACT_SPEC_KINDS, isKnownSpecKind } from "../src/core/parsing/types.
 
 describe("ContractSpecKind domain", () => {
   it("uses a runtime source of truth for known spec kinds", () => {
-    expect(CONTRACT_SPEC_KINDS).toEqual(["http-endpoint", "event", "schema", "grpc-method"]);
+    expect(CONTRACT_SPEC_KINDS).toEqual(["http-endpoint", "event", "schema", "grpc-method", "dubbo-method"]);
     expect(isKnownSpecKind("http-endpoint")).toBe(true);
     expect(isKnownSpecKind("grpc-method")).toBe(true);
+    expect(isKnownSpecKind("dubbo-method")).toBe(true);
     expect(isKnownSpecKind("package")).toBe(false);
     expect(isKnownSpecKind("graphql-operation")).toBe(false);
   });
@@ -15,6 +16,7 @@ describe("ContractSpecKind domain", () => {
   it("derives interaction style from known spec kinds", () => {
     expect(interactionStyleOfSpecKind("http-endpoint")).toBe("sync-rpc");
     expect(interactionStyleOfSpecKind("grpc-method")).toBe("sync-rpc");
+    expect(interactionStyleOfSpecKind("dubbo-method")).toBe("sync-rpc");
     expect(interactionStyleOfSpecKind("event")).toBe("async-message");
     expect(interactionStyleOfSpecKind("schema")).toBe("shared-data");
   });

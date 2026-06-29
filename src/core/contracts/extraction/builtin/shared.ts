@@ -14,10 +14,10 @@ import type {
   RepoNode
 } from "../../../parsing/types.js";
 import { contractId, entityId, evidenceId, fileId, normalizeName } from "../../../../shared/path.js";
-import { normalizeApiPath, canonicalHttpContractKey, canonicalGrpcContractKey } from "../../apiPath.js";
+import { normalizeApiPath, canonicalHttpContractKey, canonicalGrpcContractKey, canonicalDubboContractKey } from "../../apiPath.js";
 import { canonicalEventContractKey, type EventBroker } from "../../event.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
-import { serializeSpec, type ContractSpec, type EventSpec, type HttpEndpointSpec, type GrpcMethodSpec, type GrpcStreaming, type SchemaSpec, type SchemaFieldSpec } from "../../spec.js";
+import { serializeSpec, type ContractSpec, type DubboMethodSpec, type EventSpec, type HttpEndpointSpec, type GrpcMethodSpec, type GrpcStreaming, type SchemaSpec, type SchemaFieldSpec } from "../../spec.js";
 import type { AliasOverride } from "../crossRepoContracts.js";
 import type { FactCollector, PackageUsageEntry } from "../factCollector.js";
 
@@ -122,6 +122,12 @@ export function httpApiContract(method: string | undefined, path: string, descri
 export function grpcContract(fullName: string, description = ""): ContractNode {
   const key = canonicalGrpcContractKey(fullName);
   return { id: contractId("api", key), kind: "api", key, name: fullName, description };
+}
+
+export function dubboContract(interfaceName: string, method?: string, description = ""): ContractNode {
+  const key = canonicalDubboContractKey(interfaceName, method);
+  const name = method?.trim() ? `${interfaceName}#${method.trim()}` : interfaceName;
+  return { id: contractId("api", key), kind: "api", key, name, description };
 }
 
 export function evidence(input: {
@@ -493,6 +499,103 @@ export function pushGrpcContract(input: {
       confidence: evidenceNode.confidence
     });
 
+    const opVerb = operationVerb(contractNode, input.role);
+    const operationId = `operation:${normalizeName(`${opVerb}:${entityName}:${contractNode.key}:${input.file.repoId}`)}`;
+    input.collector.addOperation({
+      id: operationId,
+      verb: opVerb,
+      entityName,
+      description: `${input.role} ${contractNode.kind} ${contractNode.key}`
+    });
+    input.collector.addOperationRepo({
+      operationId,
+      repoId: input.file.repoId,
+      role: input.role,
+      evidenceId: evidenceNode.id,
+      confidence: evidenceNode.confidence
+    });
+  }
+
+  return { contractNode, evidenceNode };
+}
+
+export function pushDubboContract(input: {
+  collector: FactCollector;
+  file: ParsedFile;
+  symbol: CodeSymbol;
+  interfaceName: string;
+  method?: string;
+  role: ContractRole;
+  offset: number;
+  raw: string;
+  rule: string;
+  confidence: number;
+  group?: string;
+  version?: string;
+  requestTypes?: string[];
+  responseType?: string;
+  config: "annotation" | "xml";
+  framework?: "dubbo-java" | "dubbo-go";
+}): { contractNode: ContractNode; evidenceNode: EvidenceNode } {
+  const fullName = input.method ? `${input.interfaceName}#${input.method}` : input.interfaceName;
+  const contractNode = dubboContract(input.interfaceName, input.method, `Dubbo ${fullName}`);
+  const evidenceNode = evidence({
+    repoId: input.file.repoId,
+    fileId: input.file.fileId,
+    filePath: input.file.path,
+    line: sourceLine(input.symbol.source, input.offset, input.symbol.startLine),
+    raw: input.raw,
+    rule: input.rule,
+    confidence: input.confidence
+  });
+
+  pushContractEvidence(input.collector, input.file.repoId, contractNode, input.role, evidenceNode);
+
+  const dubboSpec: DubboMethodSpec = {
+    kind: "dubbo-method",
+    interfaceName: input.interfaceName,
+    method: input.method ?? "",
+    group: input.group,
+    version: input.version,
+    fullName,
+    requestTypes: input.requestTypes,
+    responseType: input.responseType,
+    config: input.config,
+    framework: input.framework
+  };
+
+  pushContractSpec({
+    collector: input.collector,
+    contractNode,
+    spec: dubboSpec,
+    repoId: input.file.repoId,
+    fileId: input.file.fileId,
+    evidenceNode,
+    sourceSymbolId: input.symbol.id,
+    framework: input.framework,
+    version: input.version
+  });
+
+  const interfaceSimpleName = input.interfaceName.split(".").filter(Boolean).at(-1) ?? input.interfaceName;
+  let entityName = interfaceSimpleName.endsWith("Service") ? interfaceSimpleName.slice(0, -7) : interfaceSimpleName;
+  if (!entityName || entityName.length < 3) {
+    const fallback = input.requestTypes?.[0] || input.responseType;
+    if (fallback) entityName = fallback.replace(/(Request|Response|DTO|Dto|Schema)$/g, "");
+  }
+  if (entityName && entityName.length >= 3) {
+    entityName = entityName[0]!.toUpperCase() + entityName.slice(1);
+    input.collector.addEntity({
+      id: entityId(entityName),
+      name: entityName,
+      kind: "domain",
+      description: "Domain entity inferred from cross-repo contracts"
+    });
+    input.collector.addContractEntity({
+      contractId: contractNode.id,
+      entityId: entityId(entityName),
+      evidenceId: evidenceNode.id,
+      confidence: evidenceNode.confidence
+    });
     const opVerb = operationVerb(contractNode, input.role);
     const operationId = `operation:${normalizeName(`${opVerb}:${entityName}:${contractNode.key}:${input.file.repoId}`)}`;
     input.collector.addOperation({

@@ -49,3 +49,9 @@ export function canonicalGrpcContractKey(fullName: string): string {
 
   return method ? `${normalizedPackageService}/${method}` : normalizedPackageService;
 }
+
+export function canonicalDubboContractKey(interfaceName: string, method?: string): string {
+  const normalizedInterface = interfaceName.replace(/\s+/g, "").toLowerCase();
+  const normalizedMethod = method?.trim();
+  return normalizedMethod ? `${normalizedInterface}#${normalizedMethod}` : normalizedInterface;
+}
