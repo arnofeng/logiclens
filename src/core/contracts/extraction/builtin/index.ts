@@ -20,6 +20,7 @@ import { protoExtractor } from "./protoExtractor.js";
 import { goGrpcExtractor } from "./goGrpcExtractor.js";
 import { javaGrpcExtractor } from "./javaGrpcExtractor.js";
 import { javaDubboExtractor } from "./javaDubboExtractor.js";
+import { dubboXmlExtractor } from "./dubboXmlExtractor.js";
 import { pythonGrpcExtractor } from "./pythonGrpcExtractor.js";
 import { jsGrpcExtractor } from "./jsGrpcExtractor.js";
 
@@ -40,6 +41,7 @@ export const builtinContractExtractors: ContractExtractor[] = [
   goGrpcExtractor,
   javaGrpcExtractor,
   javaDubboExtractor,
+  dubboXmlExtractor,
   pythonGrpcExtractor,
   jsGrpcExtractor,
   sharedSymbolExtractor,

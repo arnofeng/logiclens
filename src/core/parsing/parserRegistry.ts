@@ -106,6 +106,31 @@ function createFileLevelParser(language: string, extensions: string[]): Language
   };
 }
 
+function createSourceOnlyParser(language: string, extensions: string[]): LanguageParser {
+  return {
+    name: `builtin:${language}`,
+    language,
+    extensions,
+    parse(input) {
+      const loc = input.source.split(/\r?\n/).length;
+      const parsedFile: ParsedFile = {
+        repoId: input.repoId,
+        fileId: input.fileId,
+        path: input.relativePath,
+        absolutePath: input.absolutePath,
+        language: input.language,
+        hash: input.hash,
+        loc,
+        source: input.source,
+        imports: [],
+        symbols: [],
+        calls: []
+      };
+      return Promise.resolve(parsedFile);
+    }
+  };
+}
+
 
 let builtinsRegistered = false;
 
@@ -120,7 +145,8 @@ export function builtinLanguageForPath(relativePath: string): string | undefined
     [".toml", "toml"],
     [".properties", "properties"],
     [".vue", "vue"],
-    [".proto", "proto"]
+    [".proto", "proto"],
+    [".xml", "xml"]
   ];
   const matchedStatic = staticExtensions.find(([ext]) => normalized.endsWith(ext));
   if (matchedStatic) return matchedStatic[1];
@@ -214,6 +240,9 @@ export function registerBuiltinParsers(languages?: Set<string>): void {
   }
   if (!parserRegistry.resolve({ language: "properties" })) {
     parserRegistry.register(createFileLevelParser("properties", [".properties"]));
+  }
+  if (!parserRegistry.resolve({ language: "xml" })) {
+    parserRegistry.register(createSourceOnlyParser("xml", [".xml"]));
   }
 
   if (!languages) builtinsRegistered = true;
