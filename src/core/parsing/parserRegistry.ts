@@ -106,13 +106,14 @@ function createFileLevelParser(language: string, extensions: string[]): Language
   };
 }
 
-function createSourceOnlyParser(language: string, extensions: string[]): LanguageParser {
+function createSourceOnlyParser(language: string, extensions: string[], sourceFilter?: (source: string) => boolean): LanguageParser {
   return {
     name: `builtin:${language}`,
     language,
     extensions,
     parse(input) {
       const loc = input.source.split(/\r?\n/).length;
+      const shouldKeepSource = sourceFilter ? sourceFilter(input.source) : true;
       const parsedFile: ParsedFile = {
         repoId: input.repoId,
         fileId: input.fileId,
@@ -121,7 +122,7 @@ function createSourceOnlyParser(language: string, extensions: string[]): Languag
         language: input.language,
         hash: input.hash,
         loc,
-        source: input.source,
+        source: shouldKeepSource ? input.source : undefined,
         imports: [],
         symbols: [],
         calls: []
@@ -129,6 +130,11 @@ function createSourceOnlyParser(language: string, extensions: string[]): Languag
       return Promise.resolve(parsedFile);
     }
   };
+}
+
+function hasDubboXmlConfig(source: string): boolean {
+  return /<dubbo:(?:service|reference)\b/i.test(source) ||
+    /xmlns:dubbo\s*=\s*["'][^"']*dubbo[^"']*["']/i.test(source);
 }
 
 
@@ -242,7 +248,7 @@ export function registerBuiltinParsers(languages?: Set<string>): void {
     parserRegistry.register(createFileLevelParser("properties", [".properties"]));
   }
   if (!parserRegistry.resolve({ language: "xml" })) {
-    parserRegistry.register(createSourceOnlyParser("xml", [".xml"]));
+    parserRegistry.register(createSourceOnlyParser("xml", [".xml"], hasDubboXmlConfig));
   }
 
   if (!languages) builtinsRegistered = true;

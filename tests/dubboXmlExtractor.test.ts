@@ -38,6 +38,41 @@ describe("Dubbo XML extractor", () => {
     expect(builtinLanguageForPath("src/main/resources/dubbo.xml")).toBe("xml");
   });
 
+  it("does not retain source for unrelated XML files", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-plain-xml-"));
+    const rel = "pom.xml";
+    const abs = path.join(dir, rel);
+    await fs.writeFile(abs, `<project><modelVersion>4.0.0</modelVersion></project>`, "utf8");
+    const parsed = await parseSourceFile({
+      repoId: repoId("plain-xml"),
+      absolutePath: abs,
+      relativePath: rel,
+      language: "xml"
+    });
+    await fs.rm(dir, { recursive: true, force: true });
+
+    expect(parsed.language).toBe("xml");
+    expect("source" in parsed ? parsed.source : undefined).toBeUndefined();
+  });
+
+  it("retains source for Dubbo XML files so the extractor can inspect them", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-dubbo-source-"));
+    const rel = "src/main/resources/dubbo.xml";
+    const abs = path.join(dir, rel);
+    await fs.mkdir(path.dirname(abs), { recursive: true });
+    await fs.writeFile(abs, `<beans xmlns:dubbo="http://dubbo.apache.org/schema/dubbo"><dubbo:service interface="com.acme.OrderService" /></beans>`, "utf8");
+    const parsed = await parseSourceFile({
+      repoId: repoId("dubbo-source"),
+      absolutePath: abs,
+      relativePath: rel,
+      language: "xml"
+    });
+    await fs.rm(dir, { recursive: true, force: true });
+
+    expect(parsed.language).toBe("xml");
+    expect("source" in parsed ? parsed.source : undefined).toContain("<dubbo:service");
+  });
+
   it("extracts service and reference declarations as interface-level specs", async () => {
     const bundle = await extract(`
       <beans xmlns:dubbo="http://dubbo.apache.org/schema/dubbo">
