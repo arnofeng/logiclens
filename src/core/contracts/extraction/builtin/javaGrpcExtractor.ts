@@ -7,6 +7,7 @@ import { codeId } from "../../../../shared/path.js";
 import { hashText } from "../../../../shared/hash.js";
 import { isParsedCodeFile, pushGrpcContract } from "./shared.js";
 import { namedChildren, parseSourceAst, walkSourceAst } from "./sourceAstUtils.js";
+import type { GrpcStreaming } from "../../spec.js";
 
 function upperFirst(value: string): string {
   return value ? value[0]!.toUpperCase() + value.slice(1) : value;
@@ -66,8 +67,34 @@ function methodSignatureTypes(methodNode: Parser.SyntaxNode): { requestType?: st
   return { requestType, responseType };
 }
 
+/** Type texts of a method's formal parameters (e.g. ["CreateOrderRequest", "StreamObserver<Order>"]). */
+function javaParamTypes(methodNode: Parser.SyntaxNode): string[] {
+  const params = methodNode.childForFieldName("parameters");
+  if (!params) return [];
+  return namedChildren(params)
+    .filter((p) => p.type === "formal_parameter" || p.type === "spread_parameter")
+    .map((p) => p.childForFieldName("type")?.text ?? "");
+}
+
+/**
+ * A gRPC ImplBase server method always carries a `StreamObserver<...>` response
+ * observer parameter. Inspecting the parameter types (rather than the whole
+ * method text) avoids false positives from helper methods that merely mention
+ * StreamObserver in their body.
+ */
 function isGrpcServerMethod(methodNode: Parser.SyntaxNode): boolean {
-  return /\bStreamObserver\s*</.test(methodNode.text);
+  return javaParamTypes(methodNode).some((t) => /\bStreamObserver\s*</.test(t));
+}
+
+/**
+ * Best-effort streaming detection for an ImplBase server method. Client-/bidi-
+ * streaming methods return a `StreamObserver<Request>`, whereas unary/server-
+ * streaming methods return void — the latter two are indistinguishable from the
+ * Java signature alone (the proto extractor remains the source of truth).
+ */
+function javaServerStreaming(methodNode: Parser.SyntaxNode): GrpcStreaming {
+  const returnType = methodNode.childForFieldName("type")?.text ?? "";
+  return /\bStreamObserver\s*</.test(returnType) ? "client-stream" : "unary";
 }
 
 function variableDeclarator(node: Parser.SyntaxNode): { name?: string; value?: Parser.SyntaxNode } | undefined {
@@ -128,7 +155,7 @@ export const javaGrpcExtractor = compatExtractor({
             method,
             requestType,
             responseType,
-            streaming: "unary",
+            streaming: javaServerStreaming(child),
             framework: "grpc-java"
           });
         });

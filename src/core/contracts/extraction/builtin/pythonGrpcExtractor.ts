@@ -7,6 +7,7 @@ import { codeId } from "../../../../shared/path.js";
 import { hashText } from "../../../../shared/hash.js";
 import { isParsedCodeFile, pushGrpcContract } from "./shared.js";
 import { attributeParts, callArguments, namedChildren, parseSourceAst, walkSourceAst } from "./sourceAstUtils.js";
+import type { GrpcStreaming } from "../../spec.js";
 
 function makeSymbol(file: ParsedFile, node: Parser.SyntaxNode, kind: CodeSymbol["kind"], name: string, qualifiedName: string): CodeSymbol {
   const startLine = node.startPosition.row + 1;
@@ -67,7 +68,26 @@ function pythonParameterNames(functionNode: Parser.SyntaxNode): string[] {
 
 function isGrpcServicerMethod(functionNode: Parser.SyntaxNode): boolean {
   const params = pythonParameterNames(functionNode);
-  return params.length >= 3 && params[0] === "self" && params.includes("request") && params.includes("context");
+  // Unary/server-streaming take `request`; client-/bidi-streaming take
+  // `request_iterator`. Both carry the trailing `context` argument.
+  return params.length >= 3 && params[0] === "self" && params.includes("context")
+    && (params.includes("request") || params.includes("request_iterator"));
+}
+
+/**
+ * Best-effort streaming detection for a servicer method: a streaming request is
+ * delivered as `request_iterator`, while a streaming response is produced with
+ * `yield` in the method body.
+ */
+function pythonServicerStreaming(functionNode: Parser.SyntaxNode): GrpcStreaming {
+  const params = pythonParameterNames(functionNode);
+  const clientStreams = params.some((name) => name !== "self" && name !== "context" && /iterator/i.test(name));
+  const body = functionNode.childForFieldName("body");
+  const serverStreams = body ? /\byield\b/.test(body.text) : false;
+  if (clientStreams && serverStreams) return "bidi-stream";
+  if (clientStreams) return "client-stream";
+  if (serverStreams) return "server-stream";
+  return "unary";
 }
 
 export const pythonGrpcExtractor = compatExtractor({
@@ -103,7 +123,7 @@ export const pythonGrpcExtractor = compatExtractor({
               confidence: confidenceFor("exact-parser-route"),
               service,
               method,
-              streaming: "unary",
+              streaming: pythonServicerStreaming(member),
               framework: "grpc-python"
             });
           }

@@ -7,6 +7,7 @@ import { codeId } from "../../../../shared/path.js";
 import { hashText } from "../../../../shared/hash.js";
 import { isParsedCodeFile, pushGrpcContract } from "./shared.js";
 import { callArguments, namedChildren, parseJsAst, staticPropertyPath, walkAst } from "./jsAstUtils.js";
+import type { GrpcStreaming } from "../../spec.js";
 
 function upperFirst(value: string): string {
   return value ? value[0]!.toUpperCase() + value.slice(1) : value;
@@ -104,6 +105,21 @@ function typeFromExpression(node: Parser.SyntaxNode | undefined): string | undef
   return normalizeServiceName(path.split(".").filter(Boolean).at(-1));
 }
 
+/**
+ * Best-effort streaming detection for a @grpc/grpc-js server handler: a handler
+ * that calls `call.write(...)` streams responses, and one that listens for
+ * `call.on('data', ...)` reads a request stream.
+ */
+function jsHandlerStreaming(handler: Parser.SyntaxNode): GrpcStreaming {
+  const text = handler.text;
+  const writes = /\.write\s*\(/.test(text);
+  const reads = /\.on\s*\(\s*['"`]data['"`]/.test(text);
+  if (writes && reads) return "bidi-stream";
+  if (reads) return "client-stream";
+  if (writes) return "server-stream";
+  return "unary";
+}
+
 function shouldScanFile(file: ParsedFile): boolean {
   if (importsGrpcJs(file)) return true;
   return /\bgrpc\b|GrpcClient|ServiceClient|addService/.test(file.source ?? "");
@@ -143,7 +159,7 @@ export const jsGrpcExtractor = compatExtractor({
             confidence: confidenceFor("exact-parser-route"),
             service,
             method,
-            streaming: "unary",
+            streaming: jsHandlerStreaming(value),
             framework: "grpc-js"
           });
         }

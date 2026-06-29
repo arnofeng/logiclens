@@ -161,4 +161,64 @@ describe("multi-language gRPC extractors", () => {
     expect(consumerSpecs[0]).toMatchObject({ framework: "grpc-js", service: "OrderService", method: "CreateOrder" });
     expect(consumerSpecs[0]?.requestType).toBeUndefined();
   });
+
+  it("detects Java request-streaming server methods", async () => {
+    const bundle = await extractOne("java", "src/main/java/acme/Stream.java", `
+      import io.grpc.stub.StreamObserver;
+      class StreamEndpoint extends ChatServiceGrpc.ChatServiceImplBase {
+        public void send(SendRequest request, StreamObserver<Ack> responseObserver) {}
+        public StreamObserver<ChatMessage> collect(StreamObserver<Summary> responseObserver) { return null; }
+      }
+    `, javaGrpcExtractor);
+
+    const byMethod = Object.fromEntries(specs(bundle).map((s) => [s.method, s.streaming]));
+    // unary/server-streaming are indistinguishable from the ImplBase signature → unary
+    expect(byMethod["Send"]).toBe("unary");
+    expect(byMethod["Collect"]).toBe("client-stream");
+  });
+
+  it("detects Python servicer streaming kinds", async () => {
+    const bundle = await extractOne("python", "service/chat.py", `
+      import chat_pb2_grpc
+      class ChatService(chat_pb2_grpc.ChatServiceServicer):
+          def Unary(self, request, context):
+              return 1
+          def ServerStream(self, request, context):
+              yield 1
+          def ClientStream(self, request_iterator, context):
+              return 2
+          def BidiStream(self, request_iterator, context):
+              yield 3
+    `, pythonGrpcExtractor);
+
+    const byMethod = Object.fromEntries(specs(bundle).map((s) => [s.method, s.streaming]));
+    expect(byMethod).toEqual({
+      Unary: "unary",
+      ServerStream: "server-stream",
+      ClientStream: "client-stream",
+      BidiStream: "bidi-stream"
+    });
+  });
+
+  it("detects @grpc/grpc-js handler streaming kinds", async () => {
+    const bundle = await extractOne("typescript", "src/chat-grpc.ts", `
+      import * as grpc from "@grpc/grpc-js";
+      import { ChatServiceService } from "./generated/chat";
+      const server = new grpc.Server();
+      server.addService(ChatServiceService, {
+        unary(call: any, callback: any) { callback(null, {}); },
+        serverStream(call: any) { call.write({}); call.end(); },
+        clientStream(call: any, callback: any) { call.on('data', () => {}); },
+        bidiStream(call: any) { call.on('data', () => {}); call.write({}); }
+      });
+    `, jsGrpcExtractor);
+
+    const byMethod = Object.fromEntries(specs(bundle).map((s) => [s.method, s.streaming]));
+    expect(byMethod).toEqual({
+      Unary: "unary",
+      ServerStream: "server-stream",
+      ClientStream: "client-stream",
+      BidiStream: "bidi-stream"
+    });
+  });
 });
