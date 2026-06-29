@@ -21,7 +21,11 @@ export type ChangeType =
   // Schema field changes
   | "field-added"
   | "field-removed"
-  | "field-type-changed";
+  | "field-type-changed"
+  // gRPC method changes
+  | "rpc-removed"
+  | "rpc-renamed"
+  | "rpc-signature-change";
 
 /** Describes a proposed or hypothetical change to a contract. */
 export type ChangeIntent = {

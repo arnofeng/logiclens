@@ -31,6 +31,7 @@ import { findFieldReferences } from "./fieldSearch.js";
 import { assessHttpEndpointChange, classifyHttpEndpointTargetChange } from "./rules/httpImpactRules.js";
 import { assessEventChange, classifyEventTargetChange } from "./rules/eventImpactRules.js";
 import { assessSchemaFieldChange, classifySchemaTargetChange } from "./rules/schemaImpactRules.js";
+import { assessGrpcMethodChange, classifyGrpcMethodTargetChange } from "./rules/grpcImpactRules.js";
 
 // Re-export for backward compatibility (tests and external consumers)
 export { findFieldReferences } from "./fieldSearch.js";
@@ -39,22 +40,6 @@ export type { ImpactAnalysisOptions } from "./types.js";
 // ---------------------------------------------------------------------------
 // Graph traversal helpers
 // ---------------------------------------------------------------------------
-
-/** Builds an adjacency list from SEMANTIC_REL edges (outgoing direction). */
-function buildAdjacency(
-  edges: SemanticRelationEdge[]
-): Map<string, { toSpecId: string; kind: SemanticRelationKind; reason: string; confidence: number }[]> {
-  const adj = new Map<string, { toSpecId: string; kind: SemanticRelationKind; reason: string; confidence: number }[]>();
-  for (const e of edges) {
-    const list = adj.get(e.fromSpecId);
-    if (list) {
-      list.push({ toSpecId: e.toSpecId, kind: e.kind, reason: e.reason, confidence: e.confidence });
-    } else {
-      adj.set(e.fromSpecId, [{ toSpecId: e.toSpecId, kind: e.kind, reason: e.reason, confidence: e.confidence }]);
-    }
-  }
-  return adj;
-}
 
 /** Builds a reverse adjacency list (incoming direction). */
 function buildReverseAdjacency(
@@ -70,38 +55,6 @@ function buildReverseAdjacency(
     }
   }
   return adj;
-}
-
-/**
- * Finds all specs reachable from `startSpecIds` by following outgoing edges
- * up to `maxHops` hops. Returns a map of specId → hop distance.
- */
-function traverseOutgoing(
-  startSpecIds: Set<string>,
-  adjacency: Map<string, { toSpecId: string; kind: SemanticRelationKind; confidence: number }[]>,
-  maxHops: number
-): Map<string, number> {
-  const visited = new Map<string, number>();
-  let frontier = new Set(startSpecIds);
-  for (const id of frontier) visited.set(id, 0);
-
-  for (let hop = 1; hop <= maxHops; hop++) {
-    const next = new Set<string>();
-    for (const id of frontier) {
-      const neighbors = adjacency.get(id);
-      if (!neighbors) continue;
-      for (const n of neighbors) {
-        if (!visited.has(n.toSpecId)) {
-          visited.set(n.toSpecId, hop);
-          next.add(n.toSpecId);
-        }
-      }
-    }
-    if (next.size === 0) break;
-    frontier = next;
-  }
-
-  return visited;
 }
 
 /**
@@ -140,29 +93,38 @@ function traverseIncoming(
 // Edge collection — finds the specific edges on shortest paths
 // ---------------------------------------------------------------------------
 
-/** Collects the incoming edges that connect visited specs to their predecessors. */
+/** Collects the edges that connect visited specs to their predecessors. */
 function collectIncomingEdgesOnPaths(
   visited: Map<string, number>,
-  reverseAdj: Map<string, { fromSpecId: string; kind: SemanticRelationKind; reason: string; confidence: number }[]>
+  relations: SemanticRelationEdge[]
 ): { fromSpecId: string; toSpecId: string; kind: SemanticRelationKind; reason: string; confidence: number; hop: number }[] {
   const result: { fromSpecId: string; toSpecId: string; kind: SemanticRelationKind; reason: string; confidence: number; hop: number }[] = [];
 
-  for (const [toId, hop] of visited) {
-    if (hop === 0) continue; // starting nodes
-    const incoming = reverseAdj.get(toId);
-    if (!incoming) continue;
-    // Find the incoming edge that gives the shortest path
-    let bestHop = Infinity;
-    let bestEdge: { fromSpecId: string; kind: SemanticRelationKind; reason: string; confidence: number } | null = null;
-    for (const e of incoming) {
-      const fromHop = visited.get(e.fromSpecId);
-      if (fromHop !== undefined && fromHop < bestHop) {
-        bestHop = fromHop;
-        bestEdge = e;
-      }
-    }
-    if (bestEdge && bestHop === hop - 1) {
-      result.push({ ...bestEdge, toSpecId: toId, hop });
+  for (const edge of relations) {
+    const hopFrom = visited.get(edge.fromSpecId);
+    const hopTo = visited.get(edge.toSpecId);
+    if (hopFrom === undefined || hopTo === undefined) continue;
+
+    if (hopFrom === hopTo - 1) {
+      // Forward edge: from (predecessor, hop H-1) -> to (successor, hop H)
+      result.push({
+        fromSpecId: edge.fromSpecId,
+        toSpecId: edge.toSpecId,
+        kind: edge.kind,
+        reason: edge.reason,
+        confidence: edge.confidence,
+        hop: hopTo
+      });
+    } else if (hopTo === hopFrom - 1) {
+      // Backward edge: from (successor, hop H) -> to (predecessor, hop H-1)
+      result.push({
+        fromSpecId: edge.fromSpecId,
+        toSpecId: edge.toSpecId,
+        kind: edge.kind,
+        reason: edge.reason,
+        confidence: edge.confidence,
+        hop: hopFrom
+      });
     }
   }
 
@@ -205,8 +167,7 @@ export function findTargetSpecs(
     event: "event",
     schema: "schema",
     dto: "schema",
-    package: "package",
-    config: "config",
+    grpc: "grpc-method",
   };
   const targetSpecKind = specKindMap[parsed.kind] ?? parsed.kind;
 
@@ -245,12 +206,14 @@ function worstSeverity(a: ImpactSeverity, b: ImpactSeverity): ImpactSeverity {
  *
  * Algorithm:
  * 1. Resolve the target change to matching ContractSpec node(s)
- * 2. Phase 1 (schema changes): walk outgoing edges to find endpoints/events
- *    that use the schema, then walk incoming edges to find consumers
- * 3. Phase 1 (endpoint/event changes): walk incoming edges to find consumers
- * 4. For each reachable dependent spec, apply the appropriate impact rule
- * 5. For schema field changes, search consumer files for field references
- * 6. Aggregate into a structured ImpactReport
+ * 2. Walk incoming edges (consumer-to-producer and schema-to-use only) from the
+ *    target spec(s) to find all directly and indirectly affected dependents.
+ *    This single traversal covers schema, endpoint, event, and gRPC targets:
+ *    e.g. for a schema change it reaches the endpoints/events that use the
+ *    schema and, transitively, their consumers.
+ * 3. For each reachable dependent spec, apply the appropriate impact rule
+ * 4. For schema field changes, search consumer files for field references
+ * 5. Aggregate into a structured ImpactReport
  */
 export function analyzeImpact(
   change: ChangeIntent,
@@ -278,10 +241,11 @@ export function analyzeImpact(
   const targetSpecIds = new Set(targetSpecs.map((s) => s.id));
   const specMap = new Map(specs.map((s) => [s.id, s]));
   const isSchemaChange = targetSpecs[0]?.specKind === "schema";
-  const isEventChange = targetSpecs[0]?.specKind === "event";
 
-  const adjacency = buildAdjacency(relations);
-  const reverseAdj = buildReverseAdjacency(relations);
+  const transitiveRelations = relations.filter((e) =>
+    CONSUMER_TO_PRODUCER_KINDS.has(e.kind) || SCHEMA_TO_USE_KINDS.has(e.kind)
+  );
+  const reverseAdj = buildReverseAdjacency(transitiveRelations);
 
   // -- Step 2: Traverse the graph --------------------------------------------
   const impacts: ImpactItem[] = [];
@@ -294,86 +258,22 @@ export function analyzeImpact(
     if (targetItem) impacts.push(targetItem);
   }
 
-  if (isSchemaChange) {
-    // Phase 1a: Outgoing from schema → endpoints/events that use it
-    const outgoingVisited = traverseOutgoing(targetSpecIds, adjacency, maxHops);
+  // Walk incoming edges to find all directly and indirectly affected consumers
+  const visited = traverseIncoming(targetSpecIds, reverseAdj, maxHops);
+  const pathEdges = collectIncomingEdgesOnPaths(visited, transitiveRelations);
 
-    for (const [specId, hop] of outgoingVisited) {
-      if (hop === 0) continue; // skip the schema itself
-      const spec = specMap.get(specId);
-      if (!spec) continue;
-      inspectedSpecIds.add(specId);
+  for (const pe of pathEdges) {
+    const fromSpec = specMap.get(pe.fromSpecId);
+    if (!fromSpec || targetSpecIds.has(pe.fromSpecId)) continue;
+    inspectedSpecIds.add(pe.fromSpecId);
+    inspectedSpecIds.add(pe.toSpecId);
 
-      // Find the edge that connects this spec to its predecessor
-      const incoming = reverseAdj.get(specId);
-      if (incoming) {
-        for (const e of incoming) {
-          if (outgoingVisited.has(e.fromSpecId) && SCHEMA_TO_USE_KINDS.has(e.kind)) {
-            const edgeKey = `${e.fromSpecId}:${specId}:${e.kind}`;
-            if (seenEdges.has(edgeKey)) continue;
-            seenEdges.add(edgeKey);
+    const edgeKey = `${pe.fromSpecId}:${pe.toSpecId}:${pe.kind}`;
+    if (seenEdges.has(edgeKey)) continue;
+    seenEdges.add(edgeKey);
 
-            const items = classifyImpact(change, spec, e.kind, e.reason, e.confidence, options);
-            impacts.push(...items);
-          }
-        }
-      }
-
-      // Phase 1b: From endpoints/events, follow incoming consumer edges
-      if (incoming) {
-        for (const ce of incoming) {
-          if (CONSUMER_TO_PRODUCER_KINDS.has(ce.kind)) {
-            const consumerSpec = specMap.get(ce.fromSpecId);
-            if (!consumerSpec) continue;
-            const edgeKey = `${ce.fromSpecId}:${specId}:${ce.kind}`;
-            if (seenEdges.has(edgeKey)) continue;
-            seenEdges.add(edgeKey);
-            inspectedSpecIds.add(ce.fromSpecId);
-
-            const items = classifyImpact(change, consumerSpec, ce.kind, ce.reason, ce.confidence, options);
-            impacts.push(...items);
-          }
-        }
-      }
-    }
-  } else if (isEventChange) {
-    // For event changes: walk incoming edges to find consumers.
-    // SUBSCRIBES_EVENT 是 consumer → producer, CALLS_ENDPOINT 也是 consumer → producer,
-    // 因此与 HTTP 分支一致使用 traverseIncoming.
-    const visited = traverseIncoming(targetSpecIds, reverseAdj, maxHops);
-    const pathEdges = collectIncomingEdgesOnPaths(visited, reverseAdj);
-
-    for (const pe of pathEdges) {
-      const fromSpec = specMap.get(pe.fromSpecId);
-      if (!fromSpec || targetSpecIds.has(pe.fromSpecId)) continue;
-      inspectedSpecIds.add(pe.fromSpecId);
-      inspectedSpecIds.add(pe.toSpecId);
-
-      const edgeKey = `${pe.fromSpecId}:${pe.toSpecId}:${pe.kind}`;
-      if (seenEdges.has(edgeKey)) continue;
-      seenEdges.add(edgeKey);
-
-      const items = classifyImpact(change, fromSpec, pe.kind, pe.reason, pe.confidence, options);
-      impacts.push(...items);
-    }
-  } else {
-    // For HTTP endpoint changes: walk incoming edges to find consumers
-    const visited = traverseIncoming(targetSpecIds, reverseAdj, maxHops);
-    const pathEdges = collectIncomingEdgesOnPaths(visited, reverseAdj);
-
-    for (const pe of pathEdges) {
-      const fromSpec = specMap.get(pe.fromSpecId);
-      if (!fromSpec || targetSpecIds.has(pe.fromSpecId)) continue;
-      inspectedSpecIds.add(pe.fromSpecId);
-      inspectedSpecIds.add(pe.toSpecId);
-
-      const edgeKey = `${pe.fromSpecId}:${pe.toSpecId}:${pe.kind}`;
-      if (seenEdges.has(edgeKey)) continue;
-      seenEdges.add(edgeKey);
-
-      const items = classifyImpact(change, fromSpec, pe.kind, pe.reason, pe.confidence, options);
-      impacts.push(...items);
-    }
+    const items = classifyImpact(change, fromSpec, pe.kind, pe.reason, pe.confidence, options);
+    impacts.push(...items);
   }
 
   // -- Step 3: Field-level search in consumer files (schema changes only) ----
@@ -452,6 +352,7 @@ const TARGET_CLASSIFIERS: Partial<Record<
   "http-endpoint": classifyHttpEndpointTargetChange,
   "event":         classifyEventTargetChange,
   "schema":        classifySchemaTargetChange,
+  "grpc-method":   classifyGrpcMethodTargetChange,
 };
 
 /** Registry: downstream impact classifiers keyed by specKind. */
@@ -463,6 +364,7 @@ const IMPACT_CLASSIFIERS: Partial<Record<
   "http-endpoint": assessHttpEndpointChange,
   "event":         assessEventChange,
   "schema":        assessSchemaFieldChange,
+  "grpc-method":   assessGrpcMethodChange,
 };
 
 function classifyTargetChange(

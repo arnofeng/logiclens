@@ -7,14 +7,14 @@
 // across repository boundaries.
 //
 // Edge direction conventions (from the resolver / schemaResolver):
-//   REQUEST_SCHEMA   schema → endpoint   ("this schema IS the request body of that endpoint")
-//   RESPONSE_SCHEMA  schema → endpoint   ("this schema IS the response body of that endpoint")
+//   REQUEST_SCHEMA   endpoint → schema   ("this endpoint references that schema as request body")
+//   RESPONSE_SCHEMA  endpoint → schema   ("this endpoint references that schema as response body")
 //   CALLS_ENDPOINT   consumer → producer  ("consumer calls producer")
 //   USES_SCHEMA      outer → inner       ("outer schema contains inner schema as a field type")
 //   SUBSCRIBES_EVENT subscriber → publisher
 //
-// Impact analysis traverses OUTGOING edges from the target spec, so:
-//   schema target → REQUEST_SCHEMA → endpoint → CALLS_ENDPOINT → frontend consumer ✓
+// Impact analysis traverses INCOMING edges starting from the target spec, so:
+//   schema target ◀── REQUEST_SCHEMA ◀── endpoint ◀── CALLS_ENDPOINT ◀── consumer ✓
 // ---------------------------------------------------------------------------
 
 import { describe, expect, it } from "vitest";
@@ -184,9 +184,9 @@ describe("impact analysis — DTO field change across repos", () => {
   const specs = [dto, beAdd, beEdit, feAdd, feEdit];
 
   const rels = [
-    // schema → endpoint (schema IS the request body of the endpoint)
-    makeRel({ from: dto.id, to: beAdd.id,  kind: "REQUEST_SCHEMA", reason: "@RequestBody SmartCustomerActivity" }),
-    makeRel({ from: dto.id, to: beEdit.id, kind: "REQUEST_SCHEMA", reason: "@RequestBody SmartCustomerActivity" }),
+    // schema ← endpoint (schema IS the request body of the endpoint)
+    makeRel({ from: beAdd.id, to: dto.id,  kind: "REQUEST_SCHEMA", reason: "@RequestBody SmartCustomerActivity" }),
+    makeRel({ from: beEdit.id, to: dto.id, kind: "REQUEST_SCHEMA", reason: "@RequestBody SmartCustomerActivity" }),
     // consumer → producer (frontend calls backend)
     makeRel({ from: feAdd.id,  to: beAdd.id,  kind: "CALLS_ENDPOINT", reason: "exact method+path match" }),
     makeRel({ from: feEdit.id, to: beEdit.id, kind: "CALLS_ENDPOINT", reason: "exact method+path match" }),
@@ -502,8 +502,8 @@ describe("impact analysis — transitive multi-hop chain", () => {
 
   const specs = [dto, beExport, feExport];
   const rels = [
-    // schema → endpoint (DTO IS the request body of the export endpoint)
-    makeRel({ from: dto.id, to: beExport.id, kind: "REQUEST_SCHEMA", reason: "@RequestBody CustomerActivityDTO" }),
+    // schema ← endpoint (DTO IS the request body of the export endpoint)
+    makeRel({ from: beExport.id, to: dto.id, kind: "REQUEST_SCHEMA", reason: "@RequestBody CustomerActivityDTO" }),
     // consumer → producer (frontend calls backend)
     makeRel({ from: feExport.id, to: beExport.id, kind: "CALLS_ENDPOINT", reason: "exact method+path match" }),
   ];
@@ -573,7 +573,7 @@ describe("impact analysis — composed DTOs via USES_SCHEMA", () => {
   const specs = [orderDto, itemDto, beCreateOrder, feCreateOrder];
   const rels = [
     // OrderDTO IS the request body of POST /orders
-    makeRel({ from: orderDto.id, to: beCreateOrder.id, kind: "REQUEST_SCHEMA", reason: "@RequestBody CreateOrderDTO" }),
+    makeRel({ from: beCreateOrder.id, to: orderDto.id, kind: "REQUEST_SCHEMA", reason: "@RequestBody CreateOrderDTO" }),
     // OrderDTO USES ItemDTO (field type reference)
     makeRel({ from: orderDto.id, to: itemDto.id, kind: "USES_SCHEMA", reason: "field items: List<OrderItemDTO>" }),
     // Frontend calls backend

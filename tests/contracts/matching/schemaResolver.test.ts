@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolveSchemaRelations } from "../../../src/core/contracts/matching/schemaResolver.js";
+import { analyzeImpact } from "../../../src/core/contracts/impact/impactEngine.js";
 import type { ContractSpecNode, SemanticRelationEdge } from "../../../src/core/parsing/types.js";
 import { serializeSpec } from "../../../src/core/contracts/spec.js";
 
@@ -56,6 +57,7 @@ function makeEventSpec(opts: {
 
 function makeSchemaSpec(opts: {
   id: string; contractId: string; name: string; repoId?: string;
+  fields?: { name: string; type: string; optional?: boolean }[];
 }): ContractSpecNode {
   return {
     id: opts.id,
@@ -69,7 +71,11 @@ function makeSchemaSpec(opts: {
       kind: "schema",
       name: opts.name,
       language: "java",
-      fields: []
+      fields: (opts.fields ?? []).map((f) => ({
+        name: f.name,
+        type: f.type,
+        optional: f.optional ?? false
+      }))
     }),
     confidence: 0.85
   };
@@ -201,5 +207,33 @@ describe("Schema Resolver", () => {
     );
     expect(edges.filter((e) => e.kind === "REQUEST_SCHEMA")).toHaveLength(1);
     expect(edges.filter((e) => e.kind === "RESPONSE_SCHEMA")).toHaveLength(1);
+  });
+
+  it("integrates with analyzeImpact using edges returned by resolveSchemaRelations", () => {
+    const httpSpec = makeHttpSpec({
+      id: "spec:h1", contractId: "c:h1", repoId: "repo-a",
+      requestBodyType: "CreateOrderDTO"
+    });
+    const schemaSpec = makeSchemaSpec({
+      id: "spec:s1", contractId: "contract:schema:createorderdto", repoId: "repo-a", name: "CreateOrderDTO",
+      fields: [{ name: "userId", type: "string" }]
+    });
+
+    const edges = resolveSchemaRelations([httpSpec, schemaSpec], new Map(), []);
+    expect(edges).toHaveLength(1);
+    expect(edges[0]!.kind).toBe("REQUEST_SCHEMA");
+
+    // Feed these resolved edges directly into analyzeImpact to verify regression
+    const report = analyzeImpact(
+      { target: "schema:CreateOrderDTO", changeType: "field-removed", detail: "userId" },
+      [schemaSpec, httpSpec],
+      edges
+    );
+
+    // The impact should propagate successfully to the http-endpoint using the resolved edge
+    expect(report.overallSeverity).toBe("breaking");
+    expect(report.impacts).toHaveLength(2); // target schema + dependent endpoint
+    const endpointImpact = report.impacts.find(i => i.specId === "spec:h1");
+    expect(endpointImpact).toBeDefined();
   });
 });

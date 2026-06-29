@@ -70,6 +70,7 @@ const VALID_CHANGE_TYPES = new Set([
   "field-added", "field-removed", "field-type-changed",
   "endpoint-removed", "endpoint-renamed", "endpoint-schema-change",
   "topic-removed", "topic-renamed", "event-payload-change",
+  "rpc-removed", "rpc-renamed", "rpc-signature-change",
 ]);
 
 function parseChangeOption(raw: string): { changeType: string; detail?: string } | null {

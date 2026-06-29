@@ -396,7 +396,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
       description: "Before editing an API, event, schema, or cross-repo symbol, check what your change will break. Evaluates the downstream blast radius of changing a code symbol or contract and rates each impact (breaking/risky/compatible) with file/line evidence. Pass `change` in '<changeType>:<detail>' format (e.g. 'field-removed:couponCode') for structured, severity-rated analysis; omit it for a broad symbol/entity impact survey.",
       inputSchema: {
         target: z.string().describe("The target symbol, entity, or contract to analyze (e.g. 'OrderCreatedEvent', 'event:OrderCreatedEvent', or 'schema:CreateOrderRequest')"),
-        change: z.string().optional().describe("Optional proposed change in '<changeType>:<detail>' format. Change types: field-added, field-removed, field-type-changed, endpoint-removed, endpoint-renamed, endpoint-schema-change, topic-removed, topic-renamed, event-payload-change. Example: 'field-removed:couponCode'"),
+        change: z.string().optional().describe("Optional proposed change in '<changeType>:<detail>' format. Change types: field-added, field-removed, field-type-changed, endpoint-removed, endpoint-renamed, endpoint-schema-change, topic-removed, topic-renamed, event-payload-change, rpc-removed, rpc-renamed, rpc-signature-change. Example: 'field-removed:couponCode'"),
       },
     },
     async ({ target, change }) => {
@@ -407,6 +407,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
             "field-added", "field-removed", "field-type-changed",
             "endpoint-removed", "endpoint-renamed", "endpoint-schema-change",
             "topic-removed", "topic-renamed", "event-payload-change",
+            "rpc-removed", "rpc-renamed", "rpc-signature-change",
           ]);
           const colonIdx = change.indexOf(":");
           const changeType = colonIdx === -1 ? change : change.slice(0, colonIdx);

@@ -110,6 +110,33 @@ function makeSchemaSpec(opts: {
   };
 }
 
+function makeGrpcSpec(opts: {
+  id: string; contractId: string; repoId: string; fileId?: string;
+  service: string; method: string; package?: string;
+  confidence?: number;
+}): ContractSpecNode {
+  return {
+    id: opts.id,
+    contractId: opts.contractId,
+    specKind: "grpc-method",
+    repoId: opts.repoId,
+    fileId: opts.fileId ?? `file:${opts.repoId}:test`,
+    evidenceId: `ev:${opts.id}`,
+    canonicalKey: opts.package ? `${opts.package}.${opts.service}/${opts.method}` : `${opts.service}/${opts.method}`,
+    specJson: serializeSpec({
+      kind: "grpc-method",
+      fullName: opts.package ? `${opts.package}.${opts.service}/${opts.method}` : `${opts.service}/${opts.method}`,
+      service: opts.service,
+      method: opts.method,
+      package: opts.package,
+      requestType: "SomeRequest",
+      responseType: "SomeResponse",
+      streaming: "unary"
+    }),
+    confidence: opts.confidence ?? 0.9
+  };
+}
+
 function makeSemanticRel(opts: {
   fromSpecId: string; toSpecId: string;
   kind: SemanticRelationEdge["kind"];
@@ -398,7 +425,7 @@ describe("analyzeImpact — Schema field changes", () => {
   });
 
   const rels = [
-    makeSemanticRel({ fromSpecId: "spec-schema", toSpecId: "spec-consumer", kind: "REQUEST_SCHEMA", reason: "request body" })
+    makeSemanticRel({ fromSpecId: "spec-consumer", toSpecId: "spec-schema", kind: "REQUEST_SCHEMA", reason: "request body" })
   ];
 
   it("field-removed (required) → breaking", () => {
@@ -482,7 +509,7 @@ describe("analyzeImpact — Schema field changes", () => {
     const report = analyzeImpact(
       { target: "schema:CreateOrderRequest", changeType: "field-type-changed", detail: "quantity" },
       [schemaSpec, opaque],
-      [makeSemanticRel({ fromSpecId: "spec-schema", toSpecId: "spec-opaque", kind: "USES_SCHEMA", reason: "future relation", confidence: 0.7 })]
+      [makeSemanticRel({ fromSpecId: "spec-opaque", toSpecId: "spec-schema", kind: "USES_SCHEMA", reason: "future relation", confidence: 0.7 })]
     );
 
     const opaqueImpact = report.impacts.find((i) => i.specId === "spec-opaque");
@@ -519,7 +546,7 @@ describe("analyImpact — transitive traversal", () => {
 
   const rels = [
     // Schema is the response body of the endpoint
-    makeSemanticRel({ fromSpecId: "s1", toSpecId: "h1", kind: "RESPONSE_SCHEMA", reason: "response body" }),
+    makeSemanticRel({ fromSpecId: "h1", toSpecId: "s1", kind: "RESPONSE_SCHEMA", reason: "response body" }),
     // Consumer calls the endpoint
     makeSemanticRel({ fromSpecId: "h2", toSpecId: "h1", kind: "CALLS_ENDPOINT", reason: "consumer calls" })
   ];
@@ -731,8 +758,8 @@ describe("analyzeImpact — report structure", () => {
     const consumer = makeHttpSpec({ id: "h1", contractId: "contract:api:GET:/x", repoId: "web-app", method: "GET", path: "/x" });
     // Multiple edges from the same schema to the same consumer (e.g. REQUEST_SCHEMA + RESPONSE_SCHEMA)
     const rels = [
-      makeSemanticRel({ fromSpecId: "s1", toSpecId: "h1", kind: "REQUEST_SCHEMA" }),
-      makeSemanticRel({ fromSpecId: "s1", toSpecId: "h1", kind: "RESPONSE_SCHEMA" })
+      makeSemanticRel({ fromSpecId: "h1", toSpecId: "s1", kind: "REQUEST_SCHEMA" }),
+      makeSemanticRel({ fromSpecId: "h1", toSpecId: "s1", kind: "RESPONSE_SCHEMA" })
     ];
 
     const report = analyzeImpact(
@@ -750,6 +777,114 @@ describe("analyzeImpact — report structure", () => {
   });
 });
 
+describe("grpc impact analysis", () => {
+  const schema = makeSchemaSpec({
+    id: "s1", contractId: "contract:schema:MyDto", repoId: "core-lib", name: "MyDto",
+    fields: [{ name: "userId", type: "string", optional: true }]
+  });
+
+  it("classifies target changes correctly", () => {
+    const spec = makeGrpcSpec({
+      id: "spec:p1", contractId: "c:p1", repoId: "repo-order",
+      service: "OrderService", method: "CreateOrder", package: "acme.order.v1"
+    });
+
+    const removeReport = analyzeImpact(
+      { target: "grpc:acme.order.v1.OrderService/CreateOrder", changeType: "rpc-removed" },
+      [spec],
+      []
+    );
+    expect(removeReport.overallSeverity).toBe("breaking");
+    expect(removeReport.impacts).toHaveLength(1);
+    expect(removeReport.impacts[0]!.severity).toBe("breaking");
+    expect(removeReport.impacts[0]!.description).toContain("will be removed");
+
+    const renameReport = analyzeImpact(
+      { target: "grpc:acme.order.v1.OrderService/CreateOrder", changeType: "rpc-renamed", detail: "NewCreateOrder" },
+      [spec],
+      []
+    );
+    expect(renameReport.overallSeverity).toBe("breaking");
+    expect(renameReport.impacts[0]!.description).toContain("renamed to NewCreateOrder");
+
+    const sigReport = analyzeImpact(
+      { target: "grpc:acme.order.v1.OrderService/CreateOrder", changeType: "rpc-signature-change" },
+      [spec],
+      []
+    );
+    expect(sigReport.overallSeverity).toBe("risky");
+    expect(sigReport.impacts[0]!.description).toContain("Signature changed");
+  });
+
+  it("propagates impact to downstream grpc consumers", () => {
+    const producer = makeGrpcSpec({
+      id: "spec:prod", contractId: "c:prod", repoId: "repo-order-srv",
+      service: "OrderService", method: "CreateOrder", package: "acme.order.v1"
+    });
+    const consumer = makeGrpcSpec({
+      id: "spec:cons", contractId: "c:cons", repoId: "repo-web-client",
+      service: "OrderService", method: "CreateOrder"
+    });
+
+    const rels: SemanticRelationEdge[] = [
+      {
+        fromSpecId: "spec:cons",
+        toSpecId: "spec:prod",
+        kind: "CALLS_ENDPOINT",
+        evidenceId: "ev:call",
+        reason: "gRPC call",
+        confidence: 0.9
+      }
+    ];
+
+    const report = analyzeImpact(
+      { target: "grpc:acme.order.v1.OrderService/CreateOrder", changeType: "rpc-removed" },
+      [producer, consumer],
+      rels
+    );
+
+    expect(report.overallSeverity).toBe("breaking");
+    expect(report.impacts).toHaveLength(2);
+    
+    const consumerImpact = report.impacts.find((i) => i.specId === "spec:cons");
+    expect(consumerImpact).toBeDefined();
+    expect(consumerImpact!.severity).toBe("breaking");
+    expect(consumerImpact!.description).toContain("Consumer calls removed gRPC method");
+  });
+
+  it("handles request/response schema field removal and propagates to grpc method", () => {
+    const method = makeGrpcSpec({
+      id: "spec:method", contractId: "c:method", repoId: "repo-order-srv",
+      service: "OrderService", method: "CreateOrder"
+    });
+
+    const rels: SemanticRelationEdge[] = [
+      {
+        fromSpecId: "spec:method",
+        toSpecId: "s1",
+        kind: "REQUEST_SCHEMA",
+        evidenceId: "ev:req-schema",
+        reason: "request parameter schema",
+        confidence: 0.9
+      }
+    ];
+
+    const report = analyzeImpact(
+      { target: "schema:MyDto", changeType: "field-removed", detail: "userId" },
+      [schema, method],
+      rels
+    );
+
+    expect(report.overallSeverity).toBe("risky");
+    expect(report.impacts).toHaveLength(2);
+
+    const methodImpact = report.impacts.find((i) => i.specId === "spec:method");
+    expect(methodImpact).toBeDefined();
+    expect(methodImpact!.severity).toBe("risky");
+    expect(methodImpact!.description).toContain("schema field 'userId' removed — affects gRPC method");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // CLI option parser (exported from commands/impact.ts)
 // ---------------------------------------------------------------------------
@@ -763,6 +898,7 @@ describe("change option parsing", () => {
       "field-added", "field-removed", "field-type-changed",
       "endpoint-removed", "endpoint-renamed", "endpoint-schema-change",
       "topic-removed", "topic-renamed", "event-payload-change",
+      "rpc-removed", "rpc-renamed", "rpc-signature-change",
     ]);
     const colonIdx = raw.indexOf(":");
     if (colonIdx === -1) {
@@ -792,6 +928,19 @@ describe("change option parsing", () => {
     expect(parseChangeOption("topic-renamed:order.placed")).toEqual({
       changeType: "topic-renamed",
       detail: "order.placed"
+    });
+  });
+
+  it("parses rpc-renamed:newRpc", () => {
+    expect(parseChangeOption("rpc-renamed:CreateNewOrder")).toEqual({
+      changeType: "rpc-renamed",
+      detail: "CreateNewOrder"
+    });
+  });
+
+  it("parses rpc-signature-change (no detail)", () => {
+    expect(parseChangeOption("rpc-signature-change")).toEqual({
+      changeType: "rpc-signature-change"
     });
   });
 
