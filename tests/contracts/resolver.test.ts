@@ -320,4 +320,63 @@ describe("Resolver Integration", () => {
     expect(callsEdges[0]!.toSpecId).toBe("spec:g-p");
     expect(callsEdges[0]!.confidence).toBe(0.9); // consumer package unspecified -> 0.9
   });
+
+  it("resolves Dubbo CALLS_ENDPOINT relations across repos", () => {
+    const producerSpec: ContractSpecNode = {
+      id: "spec:d-p",
+      contractId: "c:d-p",
+      specKind: "dubbo-method",
+      repoId: "repo-provider",
+      fileId: "file:repo-provider:OrderServiceImpl.java",
+      evidenceId: "ev:d-p",
+      canonicalKey: "com.acme.api.orderservice#createOrder",
+      specJson: serializeSpec({
+        kind: "dubbo-method",
+        interfaceName: "com.acme.api.OrderService",
+        method: "createOrder",
+        fullName: "com.acme.api.OrderService#createOrder",
+        group: "orders",
+        version: "1.0.0",
+        config: "annotation",
+        framework: "dubbo-java"
+      }),
+      confidence: 0.9
+    };
+    const consumerSpec: ContractSpecNode = {
+      id: "spec:d-c",
+      contractId: "c:d-c",
+      specKind: "dubbo-method",
+      repoId: "repo-web",
+      fileId: "file:repo-web:OrderController.java",
+      evidenceId: "ev:d-c",
+      canonicalKey: "com.acme.api.orderservice#createOrder",
+      specJson: serializeSpec({
+        kind: "dubbo-method",
+        interfaceName: "com.acme.api.OrderService",
+        method: "createOrder",
+        fullName: "com.acme.api.OrderService#createOrder",
+        group: "orders",
+        version: "1.0.0",
+        config: "annotation",
+        framework: "dubbo-java"
+      }),
+      confidence: 0.9
+    };
+    const repoContracts = [
+      makeRepoContract({ contractId: "c:d-p", repoId: "repo-provider", role: "producer" }),
+      makeRepoContract({ contractId: "c:d-c", repoId: "repo-web", role: "consumer" })
+    ];
+
+    const edges = resolveSemanticRelations({
+      contractSpecs: [producerSpec, consumerSpec],
+      repoContracts,
+      existingSemanticRelations: []
+    });
+
+    const callsEdges = edges.filter((e) => e.kind === "CALLS_ENDPOINT");
+    expect(callsEdges).toHaveLength(1);
+    expect(callsEdges[0]!.fromSpecId).toBe("spec:d-c");
+    expect(callsEdges[0]!.toSpecId).toBe("spec:d-p");
+    expect(callsEdges[0]!.confidence).toBe(0.95);
+  });
 });
