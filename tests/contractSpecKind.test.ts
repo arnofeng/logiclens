@@ -5,28 +5,30 @@ import { CONTRACT_SPEC_KINDS, isKnownSpecKind } from "../src/core/parsing/types.
 
 describe("ContractSpecKind domain", () => {
   it("uses a runtime source of truth for known spec kinds", () => {
-    expect(CONTRACT_SPEC_KINDS).toEqual(["http-endpoint", "event", "schema"]);
+    expect(CONTRACT_SPEC_KINDS).toEqual(["http-endpoint", "event", "schema", "grpc-method"]);
     expect(isKnownSpecKind("http-endpoint")).toBe(true);
+    expect(isKnownSpecKind("grpc-method")).toBe(true);
     expect(isKnownSpecKind("package")).toBe(false);
-    expect(isKnownSpecKind("grpc-method")).toBe(false);
+    expect(isKnownSpecKind("graphql-operation")).toBe(false);
   });
 
   it("derives interaction style from known spec kinds", () => {
     expect(interactionStyleOfSpecKind("http-endpoint")).toBe("sync-rpc");
+    expect(interactionStyleOfSpecKind("grpc-method")).toBe("sync-rpc");
     expect(interactionStyleOfSpecKind("event")).toBe("async-message");
     expect(interactionStyleOfSpecKind("schema")).toBe("shared-data");
   });
 
   it("maps unknown DB spec kinds to opaque readable specs", () => {
     const row: SpecRow = {
-      id: "spec:grpc",
-      contractId: "contract:api:grpc",
-      specKind: "grpc-method",
+      id: "spec:graphql",
+      contractId: "contract:api:graphql",
+      specKind: "graphql-operation",
       repoId: "repo:svc",
-      fileId: "file:svc:proto",
-      evidenceId: "ev:grpc",
+      fileId: "file:svc:graphql",
+      evidenceId: "ev:graphql",
       sourceSymbolId: null,
-      canonicalKey: "UserService/GetUser",
+      canonicalKey: "UserQuery/GetUser",
       httpMethod: null,
       pathTemplate: null,
       eventTopic: null,
@@ -40,8 +42,8 @@ describe("ContractSpecKind domain", () => {
     };
 
     const spec = rowToReadableContractSpec(row);
-    expect(spec.specKind).toBe("grpc-method");
+    expect(spec.specKind).toBe("graphql-operation");
     expect("opaque" in spec && spec.opaque).toBe(true);
-    expect("warning" in spec && spec.warning).toContain("grpc-method");
+    expect("warning" in spec && spec.warning).toContain("graphql-operation");
   });
 });

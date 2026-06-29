@@ -300,6 +300,46 @@ describe("normalizePrimitiveType", () => {
     });
   });
 
+  // -- Proto -----------------------------------------------------------------
+
+  describe("Proto", () => {
+    it("maps primitive types", () => {
+      expect(normalizePrimitiveType("proto", "double")).toBe("number");
+      expect(normalizePrimitiveType("proto", "float")).toBe("number");
+      expect(normalizePrimitiveType("proto", "int32")).toBe("number");
+      expect(normalizePrimitiveType("proto", "int64")).toBe("number");
+      expect(normalizePrimitiveType("proto", "uint32")).toBe("number");
+      expect(normalizePrimitiveType("proto", "uint64")).toBe("number");
+      expect(normalizePrimitiveType("proto", "sint32")).toBe("number");
+      expect(normalizePrimitiveType("proto", "sint64")).toBe("number");
+      expect(normalizePrimitiveType("proto", "fixed32")).toBe("number");
+      expect(normalizePrimitiveType("proto", "fixed64")).toBe("number");
+      expect(normalizePrimitiveType("proto", "sfixed32")).toBe("number");
+      expect(normalizePrimitiveType("proto", "sfixed64")).toBe("number");
+      expect(normalizePrimitiveType("proto", "bool")).toBe("boolean");
+      expect(normalizePrimitiveType("proto", "string")).toBe("string");
+      expect(normalizePrimitiveType("proto", "bytes")).toBe("string");
+      expect(normalizePrimitiveType("proto", "google.protobuf.Timestamp")).toBe("date");
+    });
+
+    it("handles repeated types", () => {
+      expect(normalizePrimitiveType("proto", "repeated int32")).toBe("array<number>");
+      expect(normalizePrimitiveType("proto", "repeated string")).toBe("array<string>");
+      expect(normalizePrimitiveType("proto", "repeated google.protobuf.Timestamp")).toBe("array<date>");
+      expect(normalizePrimitiveType("proto", "repeated CreateOrderRequest")).toBe("array<CreateOrderRequest>");
+    });
+
+    it("handles map types", () => {
+      expect(normalizePrimitiveType("proto", "map<string, string>")).toBe("map");
+      expect(normalizePrimitiveType("proto", "map<int32, Order>")).toBe("map");
+    });
+
+    it("returns complex messages as-is", () => {
+      expect(normalizePrimitiveType("proto", "CreateOrderRequest")).toBe("CreateOrderRequest");
+      expect(normalizePrimitiveType("proto", "acme.order.v1.Order")).toBe("acme.order.v1.Order");
+    });
+  });
+
   // -- Edge cases -----------------------------------------------------------
 
   describe("edge cases", () => {

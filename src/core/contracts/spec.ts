@@ -38,13 +38,36 @@ export type SchemaSpec = {
   fields: SchemaFieldSpec[];
 };
 
-export type ContractSpec = HttpEndpointSpec | EventSpec | SchemaSpec;
+export type GrpcStreaming = "unary" | "client-stream" | "server-stream" | "bidi-stream";
+
+export type GrpcMethodSpec = {
+  kind: "grpc-method";
+  service: string;          // "OrderService"
+  method: string;           // "CreateOrder"
+  package?: string;         // "acme.order.v1"
+  fullName: string;         // "acme.order.v1.OrderService/CreateOrder"  ← Canonical identifier
+  requestType?: string;     // "CreateOrderRequest"
+  responseType?: string;    // "Order"
+  streaming: GrpcStreaming;
+  framework?: "proto" | "grpc-go" | "grpc-java" | "grpc-python" | "grpc-js";
+};
+
+export type ContractSpec = HttpEndpointSpec | EventSpec | SchemaSpec | GrpcMethodSpec;
+
+// Compile-time assertion: ContractSpec kind union === ContractSpecKind
+type _AssertSpecKindsAligned =
+  [ContractSpec["kind"]] extends [ContractSpecKind]
+    ? ([ContractSpecKind] extends [ContractSpec["kind"]] ? true : never)
+    : never;
+export const _specKindsAligned: _AssertSpecKindsAligned = true;
 
 export type InteractionStyle = "sync-rpc" | "async-message" | "shared-data";
 
 export function interactionStyleOfSpecKind(kind: ContractSpecKind): InteractionStyle {
   switch (kind) {
     case "http-endpoint":
+      return "sync-rpc";
+    case "grpc-method":
       return "sync-rpc";
     case "event":
       return "async-message";
@@ -72,7 +95,7 @@ export function deserializeSpec(json: string): ContractSpec {
 // ---------------------------------------------------------------------------
 
 /** Source language identifier for the normalization table. */
-export type SupportedLanguage = "typescript" | "java" | "go" | "python";
+export type SupportedLanguage = "typescript" | "java" | "go" | "python" | "proto";
 
 /**
  * Normalized primitive type vocabulary shared across languages.
@@ -212,6 +235,27 @@ const PYTHON_PRIMITIVE_MAP: Record<string, NormalizedPrimitive> = {
   UUID: "uuid"
 };
 
+// -- Proto primitive map -----------------------------------------------------
+
+const PROTO_PRIMITIVE_MAP: Record<string, NormalizedPrimitive> = {
+  double: "number",
+  float: "number",
+  int32: "number",
+  int64: "number",
+  uint32: "number",
+  uint64: "number",
+  sint32: "number",
+  sint64: "number",
+  fixed32: "number",
+  fixed64: "number",
+  sfixed32: "number",
+  sfixed64: "number",
+  bool: "boolean",
+  string: "string",
+  bytes: "string",
+  "google.protobuf.Timestamp": "date"
+};
+
 // -- Normalization entry point -----------------------------------------------
 
 /**
@@ -254,6 +298,20 @@ export function normalizePrimitiveType(
     }
   }
 
+  // -- unwrap proto repeated / map -------------------------------------------
+  if (language === "proto") {
+    const repeatedMatch = trimmed.match(/^repeated\s+(.+)$/);
+    if (repeatedMatch) {
+      const inner = repeatedMatch[1]!.trim();
+      const base = normalizePrimitiveType(language, inner);
+      return base.endsWith("?") ? `array<${base.slice(0, -1)}>?` : `array<${base}>`;
+    }
+    // unwrap proto map
+    if (/^map<.+>$/.test(trimmed)) {
+      return "map";
+    }
+  }
+
   // -- unwrap Python Optional[T] / Union[T, None] ----------------------------
   if (language === "python") {
     const inner = unwrapPythonOptional(trimmed);
@@ -274,6 +332,7 @@ export function normalizePrimitiveType(
   const map = language === "typescript" ? TS_PRIMITIVE_MAP
     : language === "java" ? JAVA_PRIMITIVE_MAP
     : language === "go" ? GO_PRIMITIVE_MAP
+    : language === "proto" ? PROTO_PRIMITIVE_MAP
     : PYTHON_PRIMITIVE_MAP;
 
   const hit = map[trimmed];

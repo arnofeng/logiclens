@@ -33,3 +33,19 @@ export function canonicalHttpContractKey(input: { method?: string; path: string 
   if (input.method) return `${input.method.trim().toUpperCase()}:${normalizedPath}`;
   return normalizedPath;
 }
+
+export function canonicalGrpcContractKey(fullName: string): string {
+  const cleaned = fullName.replace(/\s+/g, "");
+  const slashIndex = cleaned.lastIndexOf("/");
+  const packageService = slashIndex === -1 ? cleaned : cleaned.slice(0, slashIndex);
+  const method = slashIndex === -1 ? "" : cleaned.slice(slashIndex + 1);
+
+  const dots = packageService.split(".");
+  const service = dots.pop() || "";
+  const pkg = dots.join(".");
+
+  const normalizedPkg = pkg.toLowerCase();
+  const normalizedPackageService = normalizedPkg ? `${normalizedPkg}.${service}` : service;
+
+  return method ? `${normalizedPackageService}/${method}` : normalizedPackageService;
+}
