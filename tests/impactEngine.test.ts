@@ -137,6 +137,35 @@ function makeGrpcSpec(opts: {
   };
 }
 
+function makeDubboSpec(opts: {
+  id: string; contractId: string; repoId: string; fileId?: string;
+  interfaceName: string; method: string; group?: string; version?: string;
+  confidence?: number;
+}): ContractSpecNode {
+  return {
+    id: opts.id,
+    contractId: opts.contractId,
+    specKind: "dubbo-method",
+    repoId: opts.repoId,
+    fileId: opts.fileId ?? `file:${opts.repoId}:test`,
+    evidenceId: `ev:${opts.id}`,
+    canonicalKey: `${opts.interfaceName.toLowerCase()}#${opts.method}`,
+    specJson: serializeSpec({
+      kind: "dubbo-method",
+      fullName: `${opts.interfaceName}#${opts.method}`,
+      interfaceName: opts.interfaceName,
+      method: opts.method,
+      group: opts.group,
+      version: opts.version,
+      requestTypes: ["SomeRequest"],
+      responseType: "SomeResponse",
+      config: "annotation",
+      framework: "dubbo-java"
+    }),
+    confidence: opts.confidence ?? 0.9
+  };
+}
+
 function makeSemanticRel(opts: {
   fromSpecId: string; toSpecId: string;
   kind: SemanticRelationEdge["kind"];
@@ -882,6 +911,105 @@ describe("grpc impact analysis", () => {
     expect(methodImpact).toBeDefined();
     expect(methodImpact!.severity).toBe("risky");
     expect(methodImpact!.description).toContain("schema field 'userId' removed — affects gRPC method");
+  });
+});
+
+describe("dubbo impact analysis", () => {
+  const schema = makeSchemaSpec({
+    id: "dubbo-schema", contractId: "contract:schema:DubboDto", repoId: "core-lib", name: "DubboDto",
+    fields: [{ name: "userId", type: "string", optional: true }]
+  });
+
+  it("classifies target changes correctly", () => {
+    const spec = makeDubboSpec({
+      id: "spec:dubbo-p1", contractId: "c:dubbo-p1", repoId: "repo-order",
+      interfaceName: "com.acme.api.OrderService", method: "createOrder"
+    });
+
+    const removeReport = analyzeImpact(
+      { target: "dubbo:com.acme.api.orderservice#createOrder", changeType: "rpc-removed" },
+      [spec],
+      []
+    );
+    expect(removeReport.overallSeverity).toBe("breaking");
+    expect(removeReport.impacts).toHaveLength(1);
+    expect(removeReport.impacts[0]!.description).toContain("will be removed");
+
+    const renameReport = analyzeImpact(
+      { target: "dubbo:com.acme.api.orderservice#createOrder", changeType: "rpc-renamed", detail: "submitOrder" },
+      [spec],
+      []
+    );
+    expect(renameReport.overallSeverity).toBe("breaking");
+    expect(renameReport.impacts[0]!.description).toContain("renamed to submitOrder");
+
+    const sigReport = analyzeImpact(
+      { target: "dubbo:com.acme.api.orderservice#createOrder", changeType: "rpc-signature-change" },
+      [spec],
+      []
+    );
+    expect(sigReport.overallSeverity).toBe("risky");
+    expect(sigReport.impacts[0]!.description).toContain("Signature changed");
+  });
+
+  it("propagates impact to downstream dubbo consumers", () => {
+    const producer = makeDubboSpec({
+      id: "spec:dubbo-prod", contractId: "c:dubbo-prod", repoId: "repo-order-srv",
+      interfaceName: "com.acme.api.OrderService", method: "createOrder"
+    });
+    const consumer = makeDubboSpec({
+      id: "spec:dubbo-cons", contractId: "c:dubbo-cons", repoId: "repo-web-client",
+      interfaceName: "com.acme.api.OrderService", method: "createOrder"
+    });
+
+    const rels: SemanticRelationEdge[] = [
+      makeSemanticRel({
+        fromSpecId: "spec:dubbo-cons",
+        toSpecId: "spec:dubbo-prod",
+        kind: "CALLS_ENDPOINT",
+        reason: "Dubbo exact match",
+        confidence: 0.95
+      })
+    ];
+
+    const report = analyzeImpact(
+      { target: "dubbo:dubbo-prod", changeType: "rpc-removed" },
+      [producer, consumer],
+      rels
+    );
+
+    expect(report.overallSeverity).toBe("breaking");
+    expect(report.impacts).toHaveLength(2);
+    const consumerImpact = report.impacts.find((i) => i.specId === "spec:dubbo-cons");
+    expect(consumerImpact).toBeDefined();
+    expect(consumerImpact!.description).toContain("Consumer calls removed Dubbo method");
+  });
+
+  it("handles request/response schema field removal and propagates to dubbo method", () => {
+    const method = makeDubboSpec({
+      id: "spec:dubbo-method", contractId: "c:dubbo-method", repoId: "repo-order-srv",
+      interfaceName: "com.acme.api.OrderService", method: "createOrder"
+    });
+    const rels: SemanticRelationEdge[] = [
+      makeSemanticRel({
+        fromSpecId: "spec:dubbo-method",
+        toSpecId: "dubbo-schema",
+        kind: "REQUEST_SCHEMA",
+        reason: "request parameter schema",
+        confidence: 0.9
+      })
+    ];
+
+    const report = analyzeImpact(
+      { target: "schema:DubboDto", changeType: "field-removed", detail: "userId" },
+      [schema, method],
+      rels
+    );
+
+    expect(report.overallSeverity).toBe("risky");
+    const methodImpact = report.impacts.find((i) => i.specId === "spec:dubbo-method");
+    expect(methodImpact).toBeDefined();
+    expect(methodImpact!.description).toContain("affects Dubbo method");
   });
 });
 
