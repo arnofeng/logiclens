@@ -14,10 +14,10 @@ import type {
   RepoNode
 } from "../../../parsing/types.js";
 import { contractId, entityId, evidenceId, fileId, normalizeName } from "../../../../shared/path.js";
-import { normalizeApiPath, canonicalHttpContractKey } from "../../apiPath.js";
+import { normalizeApiPath, canonicalHttpContractKey, canonicalGrpcContractKey } from "../../apiPath.js";
 import { canonicalEventContractKey, type EventBroker } from "../../event.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
-import { serializeSpec, type ContractSpec, type EventSpec, type HttpEndpointSpec } from "../../spec.js";
+import { serializeSpec, type ContractSpec, type EventSpec, type HttpEndpointSpec, type GrpcMethodSpec, type GrpcStreaming } from "../../spec.js";
 import type { AliasOverride } from "../crossRepoContracts.js";
 import type { FactCollector, PackageUsageEntry } from "../factCollector.js";
 
@@ -101,9 +101,27 @@ export function canonicalContractKey(kind: ContractKind, value: string, method?:
   return normalizeName(trimmed);
 }
 
+/**
+ * Construct identity representation for a contract node.
+ * 
+ * @remarks
+ * Note: When `kind === "api"`, this function will apply HTTP-specific canonicalization.
+ * HTTP API contracts should use `httpApiContract()` and gRPC service methods should use `grpcContract()`.
+ * Other kinds (event, package, config, schema, etc.) should continue using this function.
+ */
 export function contract(kind: ContractKind, name: string, description = "", method?: string): ContractNode {
   const key = canonicalContractKey(kind, name, method);
   return { id: contractId(kind, key), kind, key, name, description };
+}
+
+export function httpApiContract(method: string | undefined, path: string, description = ""): ContractNode {
+  const key = canonicalHttpContractKey({ method: method?.trim(), path });
+  return { id: contractId("api", key), kind: "api", key, name: path, description };
+}
+
+export function grpcContract(fullName: string, description = ""): ContractNode {
+  const key = canonicalGrpcContractKey(fullName);
+  return { id: contractId("api", key), kind: "api", key, name: fullName, description };
 }
 
 export function evidence(input: {
@@ -269,7 +287,7 @@ export function pushApiContractFromMatch(input: {
   confidence: number;
 }): void {
   const apiPath = input.match[1] ?? "";
-  const apiContract = contract("api", apiPath, `HTTP API ${apiPath}`);
+  const apiContract = httpApiContract(undefined, apiPath, `HTTP API ${apiPath}`);
   const evidenceNode = evidence({
     repoId: input.file.repoId,
     fileId: input.file.fileId,
@@ -298,7 +316,7 @@ export function pushApiContractFromPath(input: {
   requestBodyType?: string;
   responseBodyType?: string;
 }): void {
-  const apiContract = contract("api", input.apiPath, `HTTP API ${input.apiPath}`, input.method);
+  const apiContract = httpApiContract(input.method, input.apiPath, `HTTP API ${input.apiPath}`);
   const evidenceNode = evidence({
     repoId: input.file.repoId,
     fileId: input.file.fileId,
@@ -389,6 +407,110 @@ export function pushEventContract(input: {
   }
 
   return { contractNode: eventContract, evidenceNode };
+}
+
+export function pushGrpcContract(input: {
+  collector: FactCollector;
+  file: ParsedFile;
+  symbol: CodeSymbol;
+  fullName: string;
+  role: ContractRole;
+  offset: number;
+  raw: string;
+  rule: string;
+  confidence: number;
+  service: string;
+  method: string;
+  package?: string;
+  requestType?: string;
+  responseType?: string;
+  streaming: GrpcStreaming;
+  framework?: "proto" | "grpc-go" | "grpc-java" | "grpc-python" | "grpc-js";
+}): { contractNode: ContractNode; evidenceNode: EvidenceNode } {
+  const contractNode = grpcContract(input.fullName, `gRPC ${input.fullName}`);
+  const evidenceNode = evidence({
+    repoId: input.file.repoId,
+    fileId: input.file.fileId,
+    filePath: input.file.path,
+    line: sourceLine(input.symbol.source, input.offset, input.symbol.startLine),
+    raw: input.raw,
+    rule: input.rule,
+    confidence: input.confidence
+  });
+
+  pushContractEvidence(input.collector, input.file.repoId, contractNode, input.role, evidenceNode);
+
+  const grpcSpec: GrpcMethodSpec = {
+    kind: "grpc-method",
+    service: input.service,
+    method: input.method,
+    package: input.package,
+    fullName: input.fullName,
+    requestType: input.requestType,
+    responseType: input.responseType,
+    streaming: input.streaming,
+    framework: input.framework
+  };
+
+  pushContractSpec({
+    collector: input.collector,
+    contractNode,
+    spec: grpcSpec,
+    repoId: input.file.repoId,
+    fileId: input.file.fileId,
+    evidenceNode,
+    sourceSymbolId: input.symbol.id,
+    framework: input.framework
+  });
+
+  // Minimum characters required for an inferred business entity name
+  const MIN_ENTITY_NAME_LENGTH = 3;
+
+  // entity derivation: service name without "Service" suffix, fallback to message names
+  const serviceName = input.service;
+  let entityName = serviceName.endsWith("Service") ? serviceName.slice(0, -7) : serviceName;
+  if (!entityName || entityName.length < MIN_ENTITY_NAME_LENGTH) {
+    const fallback = input.requestType || input.responseType;
+    if (fallback) {
+      entityName = fallback.replace(/(Request|Response|DTO|Dto|Schema)$/g, "");
+    }
+  }
+
+  if (entityName && entityName.length >= MIN_ENTITY_NAME_LENGTH) {
+    entityName = entityName[0]!.toUpperCase() + entityName.slice(1);
+
+    input.collector.addEntity({
+      id: entityId(entityName),
+      name: entityName,
+      kind: "domain",
+      description: "Domain entity inferred from cross-repo contracts"
+    });
+
+    input.collector.addContractEntity({
+      contractId: contractNode.id,
+      entityId: entityId(entityName),
+      evidenceId: evidenceNode.id,
+      confidence: evidenceNode.confidence
+    });
+
+    const opVerb = operationVerb(contractNode, input.role);
+    const operationId = `operation:${normalizeName(`${opVerb}:${entityName}:${contractNode.key}:${input.file.repoId}`)}`;
+    input.collector.addOperation({
+      id: operationId,
+      verb: opVerb,
+      entityName,
+      description: `${input.role} ${contractNode.kind} ${contractNode.key}`
+    });
+    input.collector.addOperationRepo({
+      operationId,
+      repoId: input.file.repoId,
+      role: input.role,
+      evidenceId: evidenceNode.id,
+      confidence: evidenceNode.confidence
+    });
+  }
+
+  return { contractNode, evidenceNode };
 }
 
 async function readPackageManifest(repo: RepoNode, manifestPath: string): Promise<RepoPackageManifest | undefined> {

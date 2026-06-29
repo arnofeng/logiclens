@@ -3,8 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { canonicalContractKey, buildRepoDependenciesFromParticipants, type ContractParticipant } from "../src/core/contracts/extraction/crossRepoContracts.js";
-import { canonicalHttpContractKey } from "../src/core/contracts/apiPath.js";
-import { createCrossRepoExtraction, toFactBundle, contract, evidence } from "../src/core/contracts/extraction/builtin/shared.js";
+import { canonicalHttpContractKey, canonicalGrpcContractKey } from "../src/core/contracts/apiPath.js";
+import { createCrossRepoExtraction, toFactBundle, contract, evidence, pushGrpcContract, grpcContract } from "../src/core/contracts/extraction/builtin/shared.js";
 import { buildGraphFactsBatch } from "../src/core/graph-model/facts.js";
 import { KuzuGraphDB } from "../src/core/graph-model/db.js";
 import { writeGraphFactsWithMerge } from "../src/core/graph-model/upsert.js";
@@ -88,6 +88,112 @@ describe("canonicalHttpContractKey", () => {
 
   it("trims and uppercases method", () => {
     expect(canonicalHttpContractKey({ method: " get ", path: "/api/orders" })).toBe("GET:/api/orders");
+  });
+});
+
+describe("canonicalGrpcContractKey", () => {
+  it("normalizes gRPC fullNames and lowercase package segment", () => {
+    expect(canonicalGrpcContractKey("acme.order.v1.OrderService/CreateOrder")).toBe("acme.order.v1.OrderService/CreateOrder");
+    expect(canonicalGrpcContractKey("Acme.Order.V1.OrderService/CreateOrder")).toBe("acme.order.v1.OrderService/CreateOrder");
+    expect(canonicalGrpcContractKey("OrderService/CreateOrder")).toBe("OrderService/CreateOrder");
+    expect(canonicalGrpcContractKey("  acme.order.v1.OrderService / CreateOrder  ")).toBe("acme.order.v1.OrderService/CreateOrder");
+  });
+});
+
+describe("pushGrpcContract", () => {
+  it("emits contract, evidence, spec and derives entity/operations", () => {
+    const facts = {
+      contracts: [] as any[],
+      evidence: [] as any[],
+      entities: [] as any[],
+      contractEntities: [] as any[],
+      operations: [] as any[],
+      operationRepos: [] as any[],
+      contractSpecs: [] as any[],
+      contractSpecEdges: [] as any[],
+      repoContracts: [] as any[]
+    };
+
+    const collector = {
+      addContract(node: any) { facts.contracts.push(node); },
+      addEvidence(node: any) { facts.evidence.push(node); },
+      addEntity(node: any) { facts.entities.push(node); },
+      addContractEntity(edge: any) { facts.contractEntities.push(edge); },
+      addOperation(node: any) { facts.operations.push(node); },
+      addOperationRepo(edge: any) { facts.operationRepos.push(edge); },
+      addContractSpec(node: any) { facts.contractSpecs.push(node); },
+      addContractSpecEdge(edge: any) { facts.contractSpecEdges.push(edge); },
+      addRepoContract(edge: any) { facts.repoContracts.push(edge); }
+    } as any;
+
+    const repo = makeRepo("acme-order");
+    const file = makeParsedFile(repo, "order.proto");
+    const symbol = {
+      id: "sym:1",
+      name: "CreateOrder",
+      kind: "rpc",
+      source: "rpc CreateOrder(CreateOrderRequest) returns (Order);",
+      startLine: 10,
+      endLine: 10
+    } as any;
+
+    pushGrpcContract({
+      collector,
+      file,
+      symbol,
+      fullName: "acme.order.v1.OrderService/CreateOrder",
+      role: "producer",
+      offset: 4,
+      raw: "rpc CreateOrder",
+      rule: "proto-rpc",
+      confidence: 1.0,
+      service: "OrderService",
+      method: "CreateOrder",
+      package: "acme.order.v1",
+      requestType: "CreateOrderRequest",
+      responseType: "Order",
+      streaming: "unary",
+      framework: "proto"
+    });
+
+    // 1. Contract Node
+    expect(facts.contracts.length).toBe(1);
+    expect(facts.contracts[0]).toEqual({
+      id: "contract:api:acme.order.v1.orderservice-createorder",
+      kind: "api",
+      key: "acme.order.v1.OrderService/CreateOrder",
+      name: "acme.order.v1.OrderService/CreateOrder",
+      description: "gRPC acme.order.v1.OrderService/CreateOrder"
+    });
+
+    // 2. Evidence Node
+    expect(facts.evidence.length).toBe(1);
+    expect(facts.evidence[0].raw).toBe("rpc CreateOrder");
+
+    // 3. Contract Spec
+    expect(facts.contractSpecs.length).toBe(1);
+    expect(facts.contractSpecs[0].specKind).toBe("grpc-method");
+    const parsedSpec = JSON.parse(facts.contractSpecs[0].specJson);
+    expect(parsedSpec).toEqual({
+      kind: "grpc-method",
+      service: "OrderService",
+      method: "CreateOrder",
+      package: "acme.order.v1",
+      fullName: "acme.order.v1.OrderService/CreateOrder",
+      requestType: "CreateOrderRequest",
+      responseType: "Order",
+      streaming: "unary",
+      framework: "proto"
+    });
+
+    // 4. Entity Derivation
+    expect(facts.entities.length).toBe(1);
+    expect(facts.entities[0].name).toBe("Order"); // "OrderService" -> "Order"
+
+    // 5. Operations
+    expect(facts.operations.length).toBe(1);
+    expect(facts.operations[0].verb).toBe("serve-api"); // role: producer -> serve-api
+    expect(facts.operations[0].entityName).toBe("Order");
   });
 });
 
