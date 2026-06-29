@@ -19,6 +19,7 @@ import { goSchemaExtractor } from "./goSchemaExtractor.js";
 import { protoExtractor } from "./protoExtractor.js";
 import { goGrpcExtractor } from "./goGrpcExtractor.js";
 import { javaGrpcExtractor } from "./javaGrpcExtractor.js";
+import { javaDubboExtractor } from "./javaDubboExtractor.js";
 import { pythonGrpcExtractor } from "./pythonGrpcExtractor.js";
 import { jsGrpcExtractor } from "./jsGrpcExtractor.js";
 
@@ -38,6 +39,7 @@ export const builtinContractExtractors: ContractExtractor[] = [
   protoExtractor,
   goGrpcExtractor,
   javaGrpcExtractor,
+  javaDubboExtractor,
   pythonGrpcExtractor,
   jsGrpcExtractor,
   sharedSymbolExtractor,
