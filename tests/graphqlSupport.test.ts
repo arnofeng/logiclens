@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { graphqlSdlExtractor } from "../src/core/contracts/extraction/builtin/graphqlSdlExtractor.js";
+import { graphqlClientExtractor } from "../src/core/contracts/extraction/builtin/graphqlClientExtractor.js";
 import { repoId } from "../src/shared/path.js";
 import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
 import type { SchemaSpec, GraphQLOperationSpec } from "../src/core/contracts/spec.js";
@@ -17,6 +18,18 @@ async function extract(source: string): Promise<ExtractorFactBundle> {
   const repo = { id: repoId("graphql-sdl"), name: "graphql-sdl", path: dir, remoteUrl: "", branch: "", commitSha: "", language: "graphql", indexedAt: "now" } as any;
   const parsed = await parseSourceFile({ repoId: repo.id, absolutePath: abs, relativePath: rel, language: "graphql" });
   const bundle = await graphqlSdlExtractor.extract({ repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
+  await fs.rm(dir, { recursive: true, force: true });
+  return bundle;
+}
+
+async function extractClient(source: string, filename: string, language: string): Promise<ExtractorFactBundle> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-graphql-client-"));
+  const abs = path.join(dir, filename);
+  await fs.mkdir(path.dirname(abs), { recursive: true });
+  await fs.writeFile(abs, source, "utf8");
+  const repo = { id: repoId("graphql-client"), name: "graphql-client", path: dir, remoteUrl: "", branch: "", commitSha: "", language, indexedAt: "now" } as any;
+  const parsed = await parseSourceFile({ repoId: repo.id, absolutePath: abs, relativePath: filename, language });
+  const bundle = await graphqlClientExtractor.extract({ repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
   await fs.rm(dir, { recursive: true, force: true });
   return bundle;
 }
@@ -100,5 +113,59 @@ describe("GraphQL SDL Extractor", () => {
     const createUserRequestRel = relations.find(r => r.fromSpecId === createUserOp!.id && r.kind === "REQUEST_SCHEMA");
     expect(createUserRequestRel).toBeDefined();
     expect(createUserRequestRel!.toSpecId).toBe("schema-ref:CreateUserInput");
+  });
+});
+
+describe("GraphQL Client Extractor", () => {
+  it("extracts consumer operations from .graphql query documents", async () => {
+    const query = `
+      query GetUserProfile($id: ID!) {
+        user(id: $id) {
+          id
+          name
+        }
+      }
+    `;
+    const bundle = await extractClient(query, "getUser.graphql", "graphql");
+    const userSpec = bundle.contractSpecs.find(s => {
+      const c = bundle.contracts.find(ct => ct.id === s.contractId);
+      return c?.key === "query.user" && c?.kind === "api";
+    });
+    expect(userSpec).toBeDefined();
+    const userSpecData = JSON.parse(userSpec!.specJson) as GraphQLOperationSpec;
+    expect(userSpecData).toMatchObject({
+      kind: "graphql-operation",
+      operationType: "query",
+      field: "user",
+      operationName: "GetUserProfile",
+      source: "client-document"
+    });
+  });
+
+  it("extracts consumer operations from JS/TS tagged templates", async () => {
+    const tsCode = `
+      import { gql } from '@apollo/client';
+      const MUTATION_CREATE_USER = gql\`
+        mutation CreateUser($input: CreateUserInput!) {
+          createUser(input: $input) {
+            id
+          }
+        }
+      \`;
+    `;
+    const bundle = await extractClient(tsCode, "userMutations.ts", "typescript");
+    const createUserSpec = bundle.contractSpecs.find(s => {
+      const c = bundle.contracts.find(ct => ct.id === s.contractId);
+      return c?.key === "mutation.createuser" && c?.kind === "api";
+    });
+    expect(createUserSpec).toBeDefined();
+    const specData = JSON.parse(createUserSpec!.specJson) as GraphQLOperationSpec;
+    expect(specData).toMatchObject({
+      kind: "graphql-operation",
+      operationType: "mutation",
+      field: "createUser",
+      operationName: "CreateUser",
+      source: "client-document"
+    });
   });
 });
