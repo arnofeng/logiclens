@@ -55,6 +55,31 @@ function makeEventSpec(opts: {
   };
 }
 
+function makeGraphqlSpec(opts: {
+  id: string; contractId: string; repoId: string;
+  requestType?: string; responseType?: string;
+}): ContractSpecNode {
+  return {
+    id: opts.id,
+    contractId: opts.contractId,
+    specKind: "graphql-operation",
+    repoId: opts.repoId,
+    fileId: `file:${opts.repoId}:test`,
+    evidenceId: `ev:${opts.id}`,
+    canonicalKey: "query.user",
+    specJson: serializeSpec({
+      kind: "graphql-operation",
+      operationType: "query",
+      field: "user",
+      fullName: "Query.user",
+      source: "sdl",
+      requestType: opts.requestType,
+      responseType: opts.responseType
+    } as any),
+    confidence: 0.9
+  };
+}
+
 function makeSchemaSpec(opts: {
   id: string; contractId: string; name: string; repoId?: string;
   fields?: { name: string; type: string; optional?: boolean }[];
@@ -235,5 +260,24 @@ describe("Schema Resolver", () => {
     expect(report.impacts).toHaveLength(2); // target schema + dependent endpoint
     const endpointImpact = report.impacts.find(i => i.specId === "spec:h1");
     expect(endpointImpact).toBeDefined();
+  });
+
+  it("resolves REQUEST_SCHEMA and RESPONSE_SCHEMA for graphql-operation", () => {
+    const gqlSpec = makeGraphqlSpec({
+      id: "spec:g1", contractId: "c:g1", repoId: "repo-a",
+      requestType: "CreateUserInput", responseType: "User"
+    });
+    const reqSchema = makeSchemaSpec({
+      id: "spec:s1", contractId: "c:s1", name: "CreateUserInput"
+    });
+    const respSchema = makeSchemaSpec({
+      id: "spec:s2", contractId: "c:s2", name: "User"
+    });
+
+    const edges = resolveSchemaRelations(
+      [gqlSpec, reqSchema, respSchema], new Map(), []
+    );
+    expect(edges.filter((e) => e.kind === "REQUEST_SCHEMA")).toHaveLength(1);
+    expect(edges.filter((e) => e.kind === "RESPONSE_SCHEMA")).toHaveLength(1);
   });
 });

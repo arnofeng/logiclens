@@ -2,7 +2,7 @@ import type { ContractSpecNode, SemanticRelationEdge } from "../../parsing/types
 import type { SpecRoleMap } from "./types.js";
 import { confidenceFor } from "../../../shared/confidence.js";
 import { deserializeSpec } from "../spec.js";
-import type { HttpEndpointSpec, EventSpec, SchemaSpec, GrpcMethodSpec } from "../spec.js";
+import type { HttpEndpointSpec, EventSpec, SchemaSpec, GrpcMethodSpec, GraphQLOperationSpec } from "../spec.js";
 
 // ---------------------------------------------------------------------------
 // Schema name → specId index
@@ -146,6 +146,60 @@ function resolveGrpcSchemaRelations(
   return edges;
 }
 
+function resolveGraphqlSchemaRelations(
+  allSpecs: ContractSpecNode[],
+  schemaIndex: Map<string, string>
+): SemanticRelationEdge[] {
+  const edges: SemanticRelationEdge[] = [];
+  const seen = new Set<string>();
+
+  for (const spec of allSpecs) {
+    if (spec.specKind !== "graphql-operation") continue;
+    const gqlSpec = safeJsonParse<GraphQLOperationSpec>(spec.specJson);
+    if (!gqlSpec) continue;
+
+    // REQUEST_SCHEMA
+    if (gqlSpec.requestType) {
+      const schemaId = schemaIndex.get(gqlSpec.requestType.toLowerCase());
+      if (schemaId) {
+        const key = `${spec.id}:${schemaId}:REQUEST_SCHEMA`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          edges.push({
+            fromSpecId: spec.id,
+            toSpecId: schemaId,
+            kind: "REQUEST_SCHEMA",
+            evidenceId: spec.evidenceId,
+            reason: `GraphQL request type ${gqlSpec.requestType}`,
+            confidence: 1.0
+          });
+        }
+      }
+    }
+
+    // RESPONSE_SCHEMA
+    if (gqlSpec.responseType) {
+      const schemaId = schemaIndex.get(gqlSpec.responseType.toLowerCase());
+      if (schemaId) {
+        const key = `${spec.id}:${schemaId}:RESPONSE_SCHEMA`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          edges.push({
+            fromSpecId: spec.id,
+            toSpecId: schemaId,
+            kind: "RESPONSE_SCHEMA",
+            evidenceId: spec.evidenceId,
+            reason: `GraphQL response type ${gqlSpec.responseType}`,
+            confidence: 1.0
+          });
+        }
+      }
+    }
+  }
+
+  return edges;
+}
+
 // ---------------------------------------------------------------------------
 // Event → Schema relations (EVENT_PAYLOAD)
 // ---------------------------------------------------------------------------
@@ -269,6 +323,7 @@ export function resolveSchemaRelations(
   const edges: SemanticRelationEdge[] = [
     ...resolveHttpSchemaRelations(allSpecs, schemaIndex),
     ...resolveGrpcSchemaRelations(allSpecs, schemaIndex),
+    ...resolveGraphqlSchemaRelations(allSpecs, schemaIndex),
     ...resolveEventPayloadRelations(allSpecs, schemaIndex),
     ...resolvePendingUsesSchema(allSpecs, existingRelations, schemaIndex)
   ];

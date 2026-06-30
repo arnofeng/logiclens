@@ -32,6 +32,7 @@ export type ConfidenceRule =
   | "wildcard-path-match"
   | "exact-grpc-match"
   | "exact-graphql-match"
+  | "probable-regex-route"
   | "probable-grpc-package-unspecified"
   | "probable-grpc-package-mismatch";
 
@@ -73,6 +74,7 @@ const CONFIDENCE_BY_RULE: Record<ConfidenceRule, number> = {
   "wildcard-path-match": 0.8,
   "exact-grpc-match": 0.95,
   "exact-graphql-match": 0.95,
+  "probable-regex-route": 0.85,
   "probable-grpc-package-unspecified": 0.9,
   "probable-grpc-package-mismatch": 0.8
 };

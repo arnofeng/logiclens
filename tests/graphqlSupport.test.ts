@@ -53,7 +53,7 @@ function makeGraphqlSpec(opts: {
     repoId: opts.repoId,
     fileId: `file:${opts.repoId}:graphql/schema`,
     evidenceId: opts.evidenceId ?? `ev:${opts.id}`,
-    canonicalKey: `${opts.operationType}.${opts.field}`.toLowerCase(),
+    canonicalKey: `${opts.operationType.trim().toLowerCase()}.${opts.field.trim()}`,
     specJson: JSON.stringify({
       kind: "graphql-operation",
       operationType: opts.operationType,
@@ -145,7 +145,7 @@ describe("GraphQL SDL Extractor", () => {
 
     const createUserOp = bundle.contractSpecs.find(s => {
       const c = bundle.contracts.find(ct => ct.id === s.contractId);
-      return c?.key === "mutation.createuser" && c?.kind === "api";
+      return c?.key === "mutation.createUser" && c?.kind === "api";
     });
     expect(createUserOp).toBeDefined();
     const createUserOpData = JSON.parse(createUserOp!.specJson) as GraphQLOperationSpec;
@@ -213,7 +213,7 @@ describe("GraphQL Client Extractor", () => {
     const bundle = await extractClient(tsCode, "userMutations.ts", "typescript");
     const createUserSpec = bundle.contractSpecs.find(s => {
       const c = bundle.contracts.find(ct => ct.id === s.contractId);
-      return c?.key === "mutation.createuser" && c?.kind === "api";
+      return c?.key === "mutation.createUser" && c?.kind === "api";
     });
     expect(createUserSpec).toBeDefined();
     const specData = JSON.parse(createUserSpec!.specJson) as GraphQLOperationSpec;
@@ -269,6 +269,30 @@ describe("GraphQL Resolver", () => {
       id: "spec-cons",
       contractId: "contract-cons",
       repoId: "repo-shared",
+      operationType: "query",
+      field: "user"
+    });
+
+    const specs = [producer, consumer];
+    const roles = { "spec-prod": "producer", "spec-cons": "consumer" };
+    const specRoles = makeRoleMap(specs, roles);
+
+    const edges = resolveGraphqlRelations(specs, specRoles);
+    expect(edges).toHaveLength(0);
+  });
+
+  it("does not match different casings (case-sensitive)", () => {
+    const producer = makeGraphqlSpec({
+      id: "spec-prod",
+      contractId: "contract-prod",
+      repoId: "repo-prod",
+      operationType: "query",
+      field: "User"
+    });
+    const consumer = makeGraphqlSpec({
+      id: "spec-cons",
+      contractId: "contract-cons",
+      repoId: "repo-cons",
       operationType: "query",
       field: "user"
     });

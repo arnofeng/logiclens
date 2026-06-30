@@ -57,5 +57,5 @@ export function canonicalDubboContractKey(interfaceName: string, method?: string
 }
 
 export function canonicalGraphqlContractKey(operationType: string, field: string): string {
-  return `${operationType.trim().toLowerCase()}.${field.trim().toLowerCase()}`;
+  return `${operationType.trim().toLowerCase()}.${field.trim()}`;
 }
