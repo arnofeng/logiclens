@@ -5,9 +5,12 @@ import { describe, expect, it } from "vitest";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { graphqlSdlExtractor } from "../src/core/contracts/extraction/builtin/graphqlSdlExtractor.js";
 import { graphqlClientExtractor } from "../src/core/contracts/extraction/builtin/graphqlClientExtractor.js";
+import { resolveGraphqlRelations } from "../src/core/contracts/matching/graphqlResolver.js";
 import { repoId } from "../src/shared/path.js";
 import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
 import type { SchemaSpec, GraphQLOperationSpec } from "../src/core/contracts/spec.js";
+import type { ContractSpecNode } from "../src/core/parsing/types.js";
+import type { SpecRoleMap } from "../src/core/contracts/matching/types.js";
 
 async function extract(source: string): Promise<ExtractorFactBundle> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-graphql-sdl-"));
@@ -32,6 +35,42 @@ async function extractClient(source: string, filename: string, language: string)
   const bundle = await graphqlClientExtractor.extract({ repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
   await fs.rm(dir, { recursive: true, force: true });
   return bundle;
+}
+
+function makeGraphqlSpec(opts: {
+  id: string;
+  contractId: string;
+  repoId: string;
+  operationType: "query" | "mutation" | "subscription";
+  field: string;
+  evidenceId?: string;
+}): ContractSpecNode {
+  return {
+    id: opts.id,
+    contractId: opts.contractId,
+    specKind: "graphql-operation",
+    repoId: opts.repoId,
+    fileId: `file:${opts.repoId}:graphql/schema`,
+    evidenceId: opts.evidenceId ?? `ev:${opts.id}`,
+    canonicalKey: `${opts.operationType}.${opts.field}`.toLowerCase(),
+    specJson: JSON.stringify({
+      kind: "graphql-operation",
+      operationType: opts.operationType,
+      field: opts.field,
+      fullName: `${opts.operationType === "query" ? "Query" : opts.operationType === "mutation" ? "Mutation" : "Subscription"}.${opts.field}`,
+      source: "sdl"
+    }),
+    confidence: 0.9
+  };
+}
+
+function makeRoleMap(specs: ContractSpecNode[], roles: Record<string, string>): SpecRoleMap {
+  const map: SpecRoleMap = new Map();
+  for (const spec of specs) {
+    const role = roles[spec.id] ?? "shared";
+    map.set(`${spec.contractId}:${spec.repoId}`, role as any);
+  }
+  return map;
 }
 
 describe("GraphQL SDL Extractor", () => {
@@ -167,5 +206,60 @@ describe("GraphQL Client Extractor", () => {
       operationName: "CreateUser",
       source: "client-document"
     });
+  });
+});
+
+describe("GraphQL Resolver", () => {
+  it("matches consumer and producer by operationtype.field", () => {
+    const producer = makeGraphqlSpec({
+      id: "spec-prod",
+      contractId: "contract-prod",
+      repoId: "repo-prod",
+      operationType: "query",
+      field: "user"
+    });
+    const consumer = makeGraphqlSpec({
+      id: "spec-cons",
+      contractId: "contract-cons",
+      repoId: "repo-cons",
+      operationType: "query",
+      field: "user"
+    });
+
+    const specs = [producer, consumer];
+    const roles = { "spec-prod": "producer", "spec-cons": "consumer" };
+    const specRoles = makeRoleMap(specs, roles);
+
+    const edges = resolveGraphqlRelations(specs, specRoles);
+    expect(edges).toHaveLength(1);
+    expect(edges[0]).toMatchObject({
+      fromSpecId: "spec-cons",
+      toSpecId: "spec-prod",
+      kind: "CALLS_ENDPOINT"
+    });
+  });
+
+  it("does not match within the same repository", () => {
+    const producer = makeGraphqlSpec({
+      id: "spec-prod",
+      contractId: "contract-prod",
+      repoId: "repo-shared",
+      operationType: "query",
+      field: "user"
+    });
+    const consumer = makeGraphqlSpec({
+      id: "spec-cons",
+      contractId: "contract-cons",
+      repoId: "repo-shared",
+      operationType: "query",
+      field: "user"
+    });
+
+    const specs = [producer, consumer];
+    const roles = { "spec-prod": "producer", "spec-cons": "consumer" };
+    const specRoles = makeRoleMap(specs, roles);
+
+    const edges = resolveGraphqlRelations(specs, specRoles);
+    expect(edges).toHaveLength(0);
   });
 });

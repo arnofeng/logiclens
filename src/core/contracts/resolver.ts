@@ -5,6 +5,7 @@ import { resolveEventRelations } from "./matching/eventResolver.js";
 import { resolveSchemaRelations } from "./matching/schemaResolver.js";
 import { resolveGrpcRelations } from "./matching/grpcResolver.js";
 import { resolveDubboRelations } from "./matching/dubboResolver.js";
+import { resolveGraphqlRelations } from "./matching/graphqlResolver.js";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -52,9 +53,10 @@ export function resolveSemanticRelations(
   const schemaEdges = resolveSchemaRelations(contractSpecs, specRoles, existingSemanticRelations);
   const grpcEdges = resolveGrpcRelations(contractSpecs, specRoles);
   const dubboEdges = resolveDubboRelations(contractSpecs, specRoles);
+  const graphqlEdges = resolveGraphqlRelations(contractSpecs, specRoles);
 
   // Merge and deduplicate
-  const allEdges = [...httpEdges, ...eventEdges, ...schemaEdges, ...grpcEdges, ...dubboEdges];
+  const allEdges = [...httpEdges, ...eventEdges, ...schemaEdges, ...grpcEdges, ...dubboEdges, ...graphqlEdges];
   return deduplicateEdges(allEdges);
 }
 

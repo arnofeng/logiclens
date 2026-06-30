@@ -31,6 +31,7 @@ export type ConfidenceRule =
   | "static-path-to-template-match"
   | "wildcard-path-match"
   | "exact-grpc-match"
+  | "exact-graphql-match"
   | "probable-grpc-package-unspecified"
   | "probable-grpc-package-mismatch";
 
@@ -71,6 +72,7 @@ const CONFIDENCE_BY_RULE: Record<ConfidenceRule, number> = {
   "static-path-to-template-match": 0.9,
   "wildcard-path-match": 0.8,
   "exact-grpc-match": 0.95,
+  "exact-graphql-match": 0.95,
   "probable-grpc-package-unspecified": 0.9,
   "probable-grpc-package-mismatch": 0.8
 };
