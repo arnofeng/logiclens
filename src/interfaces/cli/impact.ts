@@ -114,7 +114,7 @@ function printImpactReport(report: ImpactReport): void {
       : imp.severity === "risky" ? "🟡"
       : "🟢";
     const lineInfo = imp.line ? `:${imp.line}` : "";
-    console.log(`  ${icon} [${imp.severity}] ${imp.repoId} ${imp.symbol}`);
+    console.log(`  ${icon} [${imp.severity}] ${imp.repoId} ${imp.symbol} (confidence=${formatConfidence(imp.confidence)})`);
     console.log(`    evidence: ${imp.repoId}/${imp.filePath}${lineInfo} '${imp.evidence}'`);
   }
 
@@ -125,4 +125,8 @@ function printImpactReport(report: ImpactReport): void {
       console.log(`  ${file}`);
     }
   }
+}
+
+function formatConfidence(confidence: number): string {
+  return Number.isFinite(confidence) ? confidence.toFixed(2) : "n/a";
 }

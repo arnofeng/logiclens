@@ -269,6 +269,12 @@ logiclens spec-trace "http POST /orders"
 logiclens spec-trace "api GET /users/:id"
 logiclens spec-trace "event OrderCreated"
 logiclens spec-trace "schema CreateOrderRequest"
+logiclens spec-trace "grpc OrderService/CreateOrder"
+logiclens spec-trace "grpc acme.order.v1.OrderService/CreateOrder"
+logiclens spec-trace "dubbo com.acme.OrderService#createOrder"
+logiclens spec-trace "graphql Query.user"
+logiclens spec-trace "graphql Mutation.createOrder"
+logiclens spec-trace "graphql Subscription.orderCreated"
 logiclens spec-trace http "POST /orders"            # extra tokens are joined too
 logiclens spec-trace "http POST /orders" --json     # structured output
 logiclens spec-trace "http POST /orders" --max-hops 5
@@ -285,10 +291,12 @@ Target: POST /orders  request=CreateOrderRequest  response=CreateOrderResponse
 
 Downstream (schemas / payloads it uses):
 - [hop 1] CreateOrderRequest (3 fields)  (REQUEST_SCHEMA)
+    via REQUEST_SCHEMA confidence=0.90 reason=@RequestBody type CreateOrderRequest
     order-service src/.../CreateOrderRequest.java
 
 Upstream (consumers / callers):
 - [hop 1] POST /orders  (CALLS_ENDPOINT)
+    via CALLS_ENDPOINT confidence=0.95 reason=Exact method+path match: POST /orders
     web-app src/api/order.ts
 ```
 
@@ -296,8 +304,12 @@ Upstream (consumers / callers):
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `<target>` | Yes | Natural contract identifier: a contract kind (`http`, `api`, `event`, `schema`, `dto`, `package`, `config`) plus its key, e.g. `"http POST /orders"` |
+| `<target>` | Yes | Natural contract identifier: a contract kind (`http`, `api`, `event`, `schema`, `dto`, `grpc`, `dubbo`, `graphql`, `package`, `config`) plus its key, e.g. `"http POST /orders"` or `"graphql Query.user"` |
 | `[rest...]` | No | Extra tokens, joined onto `target` — so `spec-trace http "POST /orders"` is equivalent to `spec-trace "http POST /orders"` |
+
+> RPC service/method names and GraphQL fields are matched case-sensitively. Use
+> the same casing as the source definition, e.g. `OrderService/CreateOrder` and
+> `Query.user`.
 
 **Options**:
 
@@ -308,7 +320,7 @@ Upstream (consumers / callers):
 | `--json` | Emit the structured trace graph as JSON |
 
 > The same capability is exposed to agents via the MCP tool `logiclens_semantic_trace`
-> using its `target` parameter (e.g. `{ "target": "http POST /orders" }`).
+> using its `target` parameter (e.g. `{ "target": "http POST /orders" }` or `{ "target": "grpc OrderService/CreateOrder" }`).
 
 ---
 

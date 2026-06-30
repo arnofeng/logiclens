@@ -41,7 +41,7 @@ export async function specTraceCommand(
 function printSemanticTrace(target: string, graph: SemanticTraceGraph): void {
   if (graph.targets.length === 0) {
     console.log(`No contract spec matched "${target}".`);
-    console.log(`Hints: try a method+path ("http POST /orders"), an event topic ("event OrderCreated"), or a schema name ("schema CreateOrderRequest").`);
+    console.log(`Hints: try "http POST /orders", "event OrderCreated", "schema CreateOrderRequest", "grpc OrderService/CreateOrder", "dubbo com.acme.OrderService#createOrder", or "graphql Query.user". RPC methods and GraphQL fields are case-sensitive.`);
     return;
   }
 
@@ -62,6 +62,9 @@ function printSemanticTrace(target: string, graph: SemanticTraceGraph): void {
     console.log("Downstream (schemas / payloads it uses):");
     for (const n of downstream) {
       console.log(`- [hop ${n.hop}] ${n.summary}  (${kindHint(graph, n.specId)})`);
+      for (const e of reachingEdges(graph, n.specId, "downstream")) {
+        console.log(`    via ${e.kind} confidence=${formatConfidence(e.confidence)} reason=${e.reason || "n/a"}`);
+      }
       console.log(`    ${repoOf(n.repoId)} ${fileOf(n.fileId)}`);
     }
   }
@@ -71,6 +74,9 @@ function printSemanticTrace(target: string, graph: SemanticTraceGraph): void {
     console.log("Upstream (consumers / callers):");
     for (const n of upstream) {
       console.log(`- [hop ${n.hop}] ${n.summary}  (${kindHint(graph, n.specId)})`);
+      for (const e of reachingEdges(graph, n.specId, "upstream")) {
+        console.log(`    via ${e.kind} confidence=${formatConfidence(e.confidence)} reason=${e.reason || "n/a"}`);
+      }
       console.log(`    ${repoOf(n.repoId)} ${fileOf(n.fileId)}`);
     }
   }
@@ -93,6 +99,21 @@ function kindHint(graph: SemanticTraceGraph, specId: string): string {
     if (e.fromSpecId === specId || e.toSpecId === specId) kinds.add(e.kind);
   }
   return kinds.size > 0 ? [...kinds].join(", ") : "—";
+}
+
+function reachingEdges(
+  graph: SemanticTraceGraph,
+  specId: string,
+  role: "downstream" | "upstream"
+): SemanticTraceGraph["edges"] {
+  if (role === "downstream") {
+    return graph.edges.filter((e) => e.direction === "outgoing" && e.toSpecId === specId);
+  }
+  return graph.edges.filter((e) => e.direction === "incoming" && e.fromSpecId === specId);
+}
+
+function formatConfidence(confidence: number): string {
+  return Number.isFinite(confidence) ? confidence.toFixed(2) : "n/a";
 }
 
 function repoOf(repoId: string): string {

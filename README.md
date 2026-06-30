@@ -7,7 +7,7 @@
 
 </center>
 
-**A local-first, cross-repository contract graph that resolves APIs, events, and schemas across repos and reasons about change impact — for AI coding agents.**
+**Local-first semantic contract graph for AI coding agents to reason about cross-repository interfaces and change impact.**
 
 **English** · [中文](README-ZH.md)
 
@@ -112,7 +112,7 @@ LogicLens automatically analyzes your multi-repository system and models the ent
 - Repository
 - File
 - Symbol
-- Contract — API / Event / DTO / Schema / Package and other contractual relationships
+- Contract — API / Event / DTO / Schema / RPC / GraphQL / Dubbo / Package and other contractual relationships
 
 ### 🔗 Edges
 
@@ -127,7 +127,7 @@ LogicLens automatically analyzes your multi-repository system and models the ent
 - **Local-first**: Builds code knowledge graph on Kuzu graph database, stored locally in `.logiclens/graph` by default — data stays entirely on your machine.
 - **Cross-repository workspace**: One workspace can point to multiple repositories, building a unified graph covering the entire code system.
 - **Static code intelligence**: Extracts symbols, imports, calls, documentation, language facts, and framework signals as graph nodes and edges.
-- **Contract model**: Normalizes cross-repository evidence into contract types like `api`, `event`, `package`, `dto`, `schema`, `enum`, `config`, enriching graph semantics.
+- **Contract model**: Normalizes cross-repository evidence into contract types like `api`, `event`, `package`, `dto`, `schema`, `grpc-method`, `dubbo-method`, `graphql-operation`, `enum`, `config`, enriching graph semantics.
 - **Dependency views**: Displays inter-repository dependency strength, type, evidence location, rules, and resolution information.
 - **Trace and impact analysis**: Starting from contracts or symbols, follows graph paths to return producers, consumers, related code, calls, documentation, and recommended files to inspect.
 - **CLI / SDK / MCP**: Supports manual graph queries, Node.js integration, and AI coding assistant connectivity.
@@ -143,7 +143,7 @@ Repositories
         ↓
 Parser & Extractor
         ↓
-Contract Model (API / Event / Schema / Package)
+Contract Model (API / Event / Schema / RPC / GraphQL / Dubbo / Package)
         ↓
 Code Graph Builder
         ↓

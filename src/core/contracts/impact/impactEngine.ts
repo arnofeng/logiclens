@@ -34,6 +34,7 @@ import { assessSchemaFieldChange, classifySchemaTargetChange } from "./rules/sch
 import { assessGrpcMethodChange, classifyGrpcMethodTargetChange } from "./rules/grpcImpactRules.js";
 import { assessDubboMethodChange, classifyDubboMethodTargetChange } from "./rules/dubboImpactRules.js";
 import { assessGraphqlOperationChange, classifyGraphqlOperationTargetChange } from "./rules/graphqlImpactRules.js";
+import { normalizeSemanticTarget } from "../targetNormalization.js";
 
 // Re-export for backward compatibility (tests and external consumers)
 export { findFieldReferences } from "./fieldSearch.js";
@@ -159,7 +160,7 @@ export function findTargetSpecs(
   target: string,
   specs: ContractSpecNode[]
 ): ContractSpecNode[] {
-  const parsed = parseTarget(target);
+  const parsed = parseTarget(normalizeSemanticTarget(target));
   if (!parsed) return [];
 
   // Map user-facing kind to specKind

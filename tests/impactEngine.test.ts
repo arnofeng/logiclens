@@ -6,6 +6,7 @@ import {
   parseTarget,
   type ImpactAnalysisOptions
 } from "../src/core/contracts/impact/impactEngine.js";
+import { normalizeSemanticTarget } from "../src/core/contracts/semanticTrace.js";
 import {
   assessHttpEndpointChange
 } from "../src/core/contracts/impact/rules/httpImpactRules.js";
@@ -244,6 +245,74 @@ describe("findTargetSpecs", () => {
     const spec = makeSchemaSpec({ id: "s1", contractId: "contract:schema:MyDto", repoId: "repo-a", name: "MyDto" });
     const found = findTargetSpecs("schema:MyDto", [spec]);
     expect(found).toHaveLength(1);
+  });
+
+  it("accepts semantic-trace-normalized grpc, dubbo, and graphql targets", () => {
+    const grpcSpec = makeGrpcSpec({
+      id: "grpc-1", contractId: "contract:api:OrderService/CreateOrder", repoId: "repo-grpc",
+      service: "OrderService", method: "CreateOrder"
+    });
+    const dubboSpec = makeDubboSpec({
+      id: "dubbo-1", contractId: "contract:api:com.acme.orderservice#createOrder", repoId: "repo-dubbo",
+      interfaceName: "com.acme.OrderService", method: "createOrder"
+    });
+    const graphqlSpec: ContractSpecNode = {
+      id: "graphql-1",
+      contractId: "contract:api:query.user",
+      specKind: "graphql-operation",
+      repoId: "repo-graphql",
+      fileId: "file:repo-graphql:schema.graphql",
+      evidenceId: "ev:graphql-1",
+      canonicalKey: "query.user",
+      specJson: serializeSpec({
+        kind: "graphql-operation",
+        operationType: "query",
+        field: "user",
+        fullName: "Query.user",
+        requestType: "UserInput",
+        responseType: "User",
+        source: "sdl"
+      }),
+      confidence: 0.9
+    };
+
+    expect(findTargetSpecs(normalizeSemanticTarget("grpc OrderService/CreateOrder"), [grpcSpec])).toHaveLength(1);
+    expect(findTargetSpecs(normalizeSemanticTarget("dubbo com.acme.OrderService#createOrder"), [dubboSpec])).toHaveLength(1);
+    expect(findTargetSpecs(normalizeSemanticTarget("graphql Query.user"), [graphqlSpec])).toHaveLength(1);
+  });
+
+  it("accepts natural grpc, dubbo, and graphql targets directly", () => {
+    const grpcSpec = makeGrpcSpec({
+      id: "grpc-1", contractId: "contract:api:OrderService/CreateOrder", repoId: "repo-grpc",
+      service: "OrderService", method: "CreateOrder"
+    });
+    const dubboSpec = makeDubboSpec({
+      id: "dubbo-1", contractId: "contract:api:com.acme.orderservice#createOrder", repoId: "repo-dubbo",
+      interfaceName: "com.acme.OrderService", method: "createOrder"
+    });
+    const graphqlSpec: ContractSpecNode = {
+      id: "graphql-1",
+      contractId: "contract:api:query.user",
+      specKind: "graphql-operation",
+      repoId: "repo-graphql",
+      fileId: "file:repo-graphql:schema.graphql",
+      evidenceId: "ev:graphql-1",
+      canonicalKey: "query.user",
+      specJson: serializeSpec({
+        kind: "graphql-operation",
+        operationType: "query",
+        field: "user",
+        fullName: "Query.user",
+        requestType: "UserInput",
+        responseType: "User",
+        source: "sdl"
+      }),
+      confidence: 0.9
+    };
+
+    expect(findTargetSpecs("grpc OrderService/CreateOrder", [grpcSpec])).toHaveLength(1);
+    expect(findTargetSpecs("dubbo com.acme.OrderService#createOrder", [dubboSpec])).toHaveLength(1);
+    expect(findTargetSpecs("graphql Query.user", [graphqlSpec])).toHaveLength(1);
   });
 });
 
@@ -950,6 +1019,22 @@ describe("dubbo impact analysis", () => {
     );
     expect(sigReport.overallSeverity).toBe("risky");
     expect(sigReport.impacts[0]!.description).toContain("Signature changed");
+  });
+
+  it("accepts natural grpc target text in analyzeImpact", () => {
+    const spec = makeGrpcSpec({
+      id: "spec:natural-grpc", contractId: "c:natural-grpc", repoId: "repo-order",
+      service: "OrderService", method: "CreateOrder"
+    });
+
+    const report = analyzeImpact(
+      { target: "grpc OrderService/CreateOrder", changeType: "rpc-removed" },
+      [spec],
+      []
+    );
+
+    expect(report.overallSeverity).toBe("breaking");
+    expect(report.impacts).toHaveLength(1);
   });
 
   it("propagates impact to downstream dubbo consumers", () => {

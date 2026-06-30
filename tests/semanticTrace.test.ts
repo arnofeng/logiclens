@@ -40,6 +40,66 @@ function schemaSpec(id: string, repo: string, name: string): ContractSpecNode {
   };
 }
 
+function grpcSpec(id: string, repo: string): ContractSpecNode {
+  return {
+    id, contractId: "contract:api:orderservice/createorder", specKind: "grpc-method",
+    repoId: `repo:${repo}`, fileId: `file:${repo}:order.proto`, evidenceId: `ev:${id}`,
+    canonicalKey: "OrderService/CreateOrder",
+    specJson: serializeSpec({
+      kind: "grpc-method",
+      service: "OrderService",
+      method: "CreateOrder",
+      fullName: "OrderService/CreateOrder",
+      requestType: "CreateOrderRequest",
+      responseType: "CreateOrderResponse",
+      streaming: "unary",
+      framework: "proto"
+    }),
+    confidence: 0.95
+  };
+}
+
+function dubboSpec(id: string, repo: string): ContractSpecNode {
+  return {
+    id, contractId: "contract:api:com.acme.orderservice#createorder", specKind: "dubbo-method",
+    repoId: `repo:${repo}`, fileId: `file:${repo}:OrderService.java`, evidenceId: `ev:${id}`,
+    canonicalKey: "com.acme.orderservice#createOrder",
+    specJson: serializeSpec({
+      kind: "dubbo-method",
+      interfaceName: "com.acme.OrderService",
+      method: "createOrder",
+      fullName: "com.acme.OrderService#createOrder",
+      requestTypes: ["CreateOrderRequest"],
+      responseType: "CreateOrderResponse",
+      group: "orders",
+      version: "v1",
+      config: "annotation",
+      framework: "dubbo-java"
+    }),
+    confidence: 0.9
+  };
+}
+
+function graphqlSpec(id: string, repo: string, roleKey = "Query.user"): ContractSpecNode {
+  const [rootType, field] = roleKey.split(".");
+  const operationType = rootType === "Mutation" ? "mutation" : rootType === "Subscription" ? "subscription" : "query";
+  return {
+    id, contractId: `contract:api:${roleKey.toLowerCase()}`, specKind: "graphql-operation",
+    repoId: `repo:${repo}`, fileId: `file:${repo}:schema.graphql`, evidenceId: `ev:${id}`,
+    canonicalKey: roleKey.toLowerCase(),
+    specJson: serializeSpec({
+      kind: "graphql-operation",
+      operationType,
+      field: field!,
+      fullName: roleKey,
+      requestType: "UserInput",
+      responseType: "User",
+      source: "sdl"
+    }),
+    confidence: 0.92
+  };
+}
+
 describe("normalizeSemanticTarget", () => {
   it("normalizes space-separated http target to canonical key form", () => {
     expect(normalizeSemanticTarget("http POST /orders")).toBe(`http:${ORDERS_KEY}`);
@@ -58,6 +118,14 @@ describe("normalizeSemanticTarget", () => {
   });
   it("passes through existing kind:key forms", () => {
     expect(normalizeSemanticTarget("schema:CreateOrderRequest")).toBe("schema:CreateOrderRequest");
+  });
+  it("normalizes grpc, dubbo, and graphql targets to impact-compatible forms", () => {
+    expect(normalizeSemanticTarget("grpc OrderService/CreateOrder")).toBe("grpc:OrderService/CreateOrder");
+    expect(normalizeSemanticTarget("grpc acme.order.v1.OrderService/CreateOrder")).toBe("grpc:acme.order.v1.OrderService/CreateOrder");
+    expect(normalizeSemanticTarget("dubbo com.acme.OrderService#createOrder")).toBe("dubbo:com.acme.orderservice#createOrder");
+    expect(normalizeSemanticTarget("graphql Query.user")).toBe("graphql:query.user");
+    expect(normalizeSemanticTarget("graphql Mutation.createOrder")).toBe("graphql:mutation.createOrder");
+    expect(normalizeSemanticTarget("graphql Subscription.orderCreated")).toBe("graphql:subscription.orderCreated");
   });
 });
 
@@ -139,6 +207,32 @@ describe("traceSemanticGraph", () => {
     expect(opaqueNode!.specKind).toBe("grpc-method");
     expect(opaqueNode!.summary).toContain("Unknown ContractSpec specKind");
   });
+
+  it("resolves natural grpc and graphql targets and traverses schema relations", () => {
+    const grpcProducer = grpcSpec("spec:grpc-prod", "order-service");
+    const grpcConsumer = grpcSpec("spec:grpc-cons", "web-app");
+    const gqlOperation = graphqlSpec("spec:gql", "graphql-api");
+    const responseSchema = schemaSpec("spec:user", "graphql-api", "User");
+    const graph = traceSemanticGraph(
+      "graphql Query.user",
+      [grpcProducer, grpcConsumer, gqlOperation, responseSchema],
+      [
+        { fromSpecId: grpcConsumer.id, toSpecId: grpcProducer.id, kind: "CALLS_ENDPOINT", evidenceId: "ev:grpc", reason: "gRPC exact match: OrderService/CreateOrder", confidence: 0.95 },
+        { fromSpecId: gqlOperation.id, toSpecId: responseSchema.id, kind: "RESPONSE_SCHEMA", evidenceId: "ev:gql", reason: "GraphQL response type User", confidence: 1 }
+      ]
+    );
+
+    expect(graph.targets.map((t) => t.specId)).toContain(gqlOperation.id);
+    expect(graph.edges.map((e) => e.kind)).toContain("RESPONSE_SCHEMA");
+
+    const grpcGraph = traceSemanticGraph(
+      "grpc OrderService/CreateOrder",
+      [grpcProducer, grpcConsumer],
+      [{ fromSpecId: grpcConsumer.id, toSpecId: grpcProducer.id, kind: "CALLS_ENDPOINT", evidenceId: "ev:grpc", reason: "gRPC exact match: OrderService/CreateOrder", confidence: 0.95 }]
+    );
+    expect(grpcGraph.targets.map((t) => t.specId).sort()).toEqual([grpcConsumer.id, grpcProducer.id].sort());
+    expect(grpcGraph.edges.map((e) => e.kind)).toContain("CALLS_ENDPOINT");
+  });
 });
 
 describe("summarizeSpec", () => {
@@ -150,5 +244,10 @@ describe("summarizeSpec", () => {
   it("summarizes a schema with field count", () => {
     const s = summarizeSpec(schemaSpec("x", "r", "CreateOrderRequest"));
     expect(s).toBe("CreateOrderRequest (1 field)");
+  });
+  it("summarizes grpc, dubbo, and graphql specs", () => {
+    expect(summarizeSpec(grpcSpec("grpc", "r"))).toBe("OrderService/CreateOrder  request=CreateOrderRequest  response=CreateOrderResponse  streaming=unary");
+    expect(summarizeSpec(dubboSpec("dubbo", "r"))).toBe("com.acme.OrderService#createOrder  request=CreateOrderRequest  response=CreateOrderResponse  group=orders  version=v1");
+    expect(summarizeSpec(graphqlSpec("graphql", "r"))).toBe("Query.user  request=UserInput  response=User  source=sdl");
   });
 });

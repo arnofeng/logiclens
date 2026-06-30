@@ -23,7 +23,12 @@ import type {
 import { isKnownContractSpecNode } from "../parsing/types.js";
 import { deserializeSpec } from "./spec.js";
 import { findTargetSpecs } from "./impact/impactEngine.js";
-import { canonicalHttpContractKey } from "./apiPath.js";
+import {
+  canonicalDubboContractKey,
+  canonicalGraphqlContractKey,
+  canonicalGrpcContractKey,
+  canonicalHttpContractKey
+} from "./apiPath.js";
 import { canonicalEventContractKey } from "./event.js";
 import type { GraphDB } from "../graph-model/db.js";
 import {
@@ -97,7 +102,7 @@ export type SemanticTraceOptions = {
 
 /** Contract kinds recognized as the leading token of a semantic target. */
 const SEMANTIC_KINDS = new Set([
-  "http", "api", "event", "schema", "dto", "package", "config"
+  "http", "api", "event", "schema", "dto", "grpc", "dubbo", "graphql", "package", "config"
 ]);
 
 const HTTP_VERBS = new Set([
@@ -116,6 +121,9 @@ const HTTP_VERBS = new Set([
  *   - "POST /orders"           (bare method + path → inferred as http)
  *   - "event OrderCreated"
  *   - "schema CreateOrderRequest"
+ *   - "grpc OrderService/CreateOrder"
+ *   - "dubbo com.acme.OrderService#createOrder"
+ *   - "graphql Query.user"
  *   - "schema:CreateOrderRequest" / "event:order.created" (existing colon form)
  */
 export function normalizeSemanticTarget(raw: string): string {
@@ -156,6 +164,17 @@ export function normalizeSemanticTarget(raw: string): string {
   if (kind === "dto" || kind === "schema") {
     return `schema:${rest}`; // schema names match case-sensitively by name
   }
+  if (kind === "grpc") {
+    return `grpc:${canonicalGrpcContractKey(rest)}`;
+  }
+  if (kind === "dubbo") {
+    const { interfaceName, method } = splitDubboTarget(rest);
+    return `dubbo:${canonicalDubboContractKey(interfaceName, method)}`;
+  }
+  if (kind === "graphql") {
+    const { operationType, field } = splitGraphqlTarget(rest);
+    return `graphql:${canonicalGraphqlContractKey(operationType, field)}`;
+  }
   if (kind === "package" || kind === "config") {
     return `${kind}:${rest}`;
   }
@@ -175,6 +194,26 @@ function splitMethodPath(rest: string): { method?: string; path: string } {
     }
   }
   return { path: rest };
+}
+
+/** Splits "com.acme.OrderService#createOrder" into interface + method. */
+function splitDubboTarget(rest: string): { interfaceName: string; method?: string } {
+  const hashIdx = rest.indexOf("#");
+  if (hashIdx === -1) return { interfaceName: rest.trim() };
+  return {
+    interfaceName: rest.slice(0, hashIdx).trim(),
+    method: rest.slice(hashIdx + 1).trim() || undefined
+  };
+}
+
+/** Splits "Query.user" / "Mutation.createOrder" into root type + field. */
+function splitGraphqlTarget(rest: string): { operationType: string; field: string } {
+  const dotIdx = rest.indexOf(".");
+  if (dotIdx === -1) return { operationType: "query", field: rest.trim() };
+  return {
+    operationType: rest.slice(0, dotIdx).trim(),
+    field: rest.slice(dotIdx + 1).trim()
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -329,6 +368,28 @@ export function summarizeSpec(node: ReadableContractSpecNode): string {
     }
     if (spec.kind === "schema") {
       return `${spec.name} (${spec.fields.length} field${spec.fields.length === 1 ? "" : "s"})`;
+    }
+    if (spec.kind === "grpc-method") {
+      const parts = [spec.fullName];
+      if (spec.requestType) parts.push(`request=${spec.requestType}`);
+      if (spec.responseType) parts.push(`response=${spec.responseType}`);
+      parts.push(`streaming=${spec.streaming}`);
+      return parts.join("  ");
+    }
+    if (spec.kind === "dubbo-method") {
+      const parts = [spec.fullName];
+      if (spec.requestTypes?.length) parts.push(`request=${spec.requestTypes.join(",")}`);
+      if (spec.responseType) parts.push(`response=${spec.responseType}`);
+      if (spec.group) parts.push(`group=${spec.group}`);
+      if (spec.version) parts.push(`version=${spec.version}`);
+      return parts.join("  ");
+    }
+    if (spec.kind === "graphql-operation") {
+      const parts = [spec.fullName];
+      if (spec.requestType) parts.push(`request=${spec.requestType}`);
+      if (spec.responseType) parts.push(`response=${spec.responseType}`);
+      parts.push(`source=${spec.source}`);
+      return parts.join("  ");
     }
   } catch {
     /* fall through to canonicalKey */
