@@ -1,4 +1,4 @@
-import type { ContractSpecNode, SemanticRelationEdge } from "../../parsing/types.js";
+import type { ContractSpecNode, SemanticRelationEdge, SemanticRelationKind } from "../../parsing/types.js";
 import type { SpecRoleMap } from "./types.js";
 import { confidenceFor } from "../../../shared/confidence.js";
 import { deserializeSpec } from "../spec.js";
@@ -249,7 +249,14 @@ function resolveEventPayloadRelations(
  * extract() so that schema inheritance / utility-type wrapping is captured.
  * This function resolves them once all ContractSpecs are available.
  */
-function resolvePendingUsesSchema(
+const PENDING_SCHEMA_REF_KINDS = new Set<SemanticRelationKind>([
+  "USES_SCHEMA",
+  "REQUEST_SCHEMA",
+  "RESPONSE_SCHEMA",
+  "EVENT_PAYLOAD"
+]);
+
+function resolvePendingSchemaRefs(
   contractSpecs: ContractSpecNode[],
   existingRelations: SemanticRelationEdge[],
   schemaIndex: Map<string, string>
@@ -258,6 +265,7 @@ function resolvePendingUsesSchema(
   const seen = new Set<string>();
 
   // Build lookup: contractId → specId (for resolving the `fromSpecId` side)
+  const specIds = new Set(contractSpecs.map((spec) => spec.id));
   const contractIdToSpecId = new Map<string, string>();
   for (const spec of contractSpecs) {
     if (!contractIdToSpecId.has(spec.contractId)) {
@@ -266,14 +274,16 @@ function resolvePendingUsesSchema(
   }
 
   for (const rel of existingRelations) {
-    if (rel.kind !== "USES_SCHEMA") continue;
+    if (!PENDING_SCHEMA_REF_KINDS.has(rel.kind)) continue;
     if (!rel.toSpecId.startsWith("schema-ref:")) continue;
 
-    // Resolve fromSpecId: extract contractId from `spec:<contractId>:pending`
-    const fromMatch = rel.fromSpecId.match(/^spec:(.+):pending$/);
-    if (!fromMatch) continue;
-    const fromContractId = fromMatch[1]!;
-    const resolvedFromSpecId = contractIdToSpecId.get(fromContractId);
+    let resolvedFromSpecId = specIds.has(rel.fromSpecId) ? rel.fromSpecId : undefined;
+    if (!resolvedFromSpecId) {
+      const fromMatch = rel.fromSpecId.match(/^spec:(.+):pending$/);
+      if (!fromMatch) continue;
+      const fromContractId = fromMatch[1]!;
+      resolvedFromSpecId = contractIdToSpecId.get(fromContractId);
+    }
     if (!resolvedFromSpecId) continue;
 
     // Resolve toSpecId: strip `schema-ref:` prefix, look up schema name
@@ -284,13 +294,13 @@ function resolvePendingUsesSchema(
     // Skip self-references
     if (resolvedFromSpecId === resolvedToSpecId) continue;
 
-    const key = `${resolvedFromSpecId}:${resolvedToSpecId}:USES_SCHEMA`;
+    const key = `${resolvedFromSpecId}:${resolvedToSpecId}:${rel.kind}`;
     if (!seen.has(key)) {
       seen.add(key);
       edges.push({
         fromSpecId: resolvedFromSpecId,
         toSpecId: resolvedToSpecId,
-        kind: "USES_SCHEMA",
+        kind: rel.kind,
         evidenceId: rel.evidenceId,
         reason: rel.reason,
         confidence: rel.confidence
@@ -325,7 +335,7 @@ export function resolveSchemaRelations(
     ...resolveGrpcSchemaRelations(allSpecs, schemaIndex),
     ...resolveGraphqlSchemaRelations(allSpecs, schemaIndex),
     ...resolveEventPayloadRelations(allSpecs, schemaIndex),
-    ...resolvePendingUsesSchema(allSpecs, existingRelations, schemaIndex)
+    ...resolvePendingSchemaRefs(allSpecs, existingRelations, schemaIndex)
   ];
 
   return edges;

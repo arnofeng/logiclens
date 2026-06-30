@@ -280,4 +280,40 @@ describe("Schema Resolver", () => {
     expect(edges.filter((e) => e.kind === "REQUEST_SCHEMA")).toHaveLength(1);
     expect(edges.filter((e) => e.kind === "RESPONSE_SCHEMA")).toHaveLength(1);
   });
+
+  it("resolves graphql schema-ref placeholders for additional operation arguments", () => {
+    const gqlSpec = makeGraphqlSpec({
+      id: "spec:g1", contractId: "c:g1", repoId: "repo-a",
+      requestType: "ID", responseType: "User"
+    });
+    const inputSchema = makeSchemaSpec({
+      id: "spec:s1", contractId: "c:s1", name: "UpdateUserInput"
+    });
+    const userSchema = makeSchemaSpec({
+      id: "spec:s2", contractId: "c:s2", name: "User"
+    });
+    const existingRelations: SemanticRelationEdge[] = [{
+      fromSpecId: gqlSpec.id,
+      toSpecId: "schema-ref:UpdateUserInput",
+      kind: "REQUEST_SCHEMA",
+      evidenceId: gqlSpec.evidenceId,
+      reason: "GraphQL operation request schema for arg input: UpdateUserInput",
+      confidence: 1.0
+    }];
+
+    const edges = resolveSchemaRelations(
+      [gqlSpec, inputSchema, userSchema], new Map(), existingRelations
+    );
+
+    expect(edges).toContainEqual(expect.objectContaining({
+      fromSpecId: gqlSpec.id,
+      toSpecId: inputSchema.id,
+      kind: "REQUEST_SCHEMA"
+    }));
+    expect(edges).toContainEqual(expect.objectContaining({
+      fromSpecId: gqlSpec.id,
+      toSpecId: userSchema.id,
+      kind: "RESPONSE_SCHEMA"
+    }));
+  });
 });
