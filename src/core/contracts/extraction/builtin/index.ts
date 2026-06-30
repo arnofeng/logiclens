@@ -23,6 +23,7 @@ import { javaDubboExtractor } from "./javaDubboExtractor.js";
 import { dubboXmlExtractor } from "./dubboXmlExtractor.js";
 import { pythonGrpcExtractor } from "./pythonGrpcExtractor.js";
 import { jsGrpcExtractor } from "./jsGrpcExtractor.js";
+import { graphqlSdlExtractor } from "./graphqlSdlExtractor.js";
 
 /** Each extractor already self-wraps via compatExtractor at its export site. */
 export const builtinContractExtractors: ContractExtractor[] = [
@@ -49,5 +50,6 @@ export const builtinContractExtractors: ContractExtractor[] = [
   pythonExtractor,
   pythonEventExtractor,
   javaEventExtractor,
-  goExtractor
+  goExtractor,
+  graphqlSdlExtractor
 ];

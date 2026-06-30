@@ -524,7 +524,7 @@ describe("analyzeImpact — Schema field changes", () => {
     const opaque = {
       id: "spec-opaque",
       contractId: "contract:api:opaque",
-      specKind: "graphql-operation",
+      specKind: "thrift-method",
       repoId: "future-service",
       fileId: "graphql/future.graphql",
       evidenceId: "ev:opaque",
@@ -532,7 +532,7 @@ describe("analyzeImpact — Schema field changes", () => {
       specJson: "{}",
       confidence: 0.4,
       opaque: true,
-      warning: "Unknown ContractSpec specKind \"graphql-operation\""
+      warning: "Unknown ContractSpec specKind \"thrift-method\""
     } satisfies ReadableContractSpecNode;
 
     const report = analyzeImpact(
@@ -544,7 +544,7 @@ describe("analyzeImpact — Schema field changes", () => {
     const opaqueImpact = report.impacts.find((i) => i.specId === "spec-opaque");
     expect(opaqueImpact).toBeDefined();
     expect(opaqueImpact!.severity).toBe("risky");
-    expect(opaqueImpact!.description).toContain("Opaque contract spec graphql-operation");
+    expect(opaqueImpact!.description).toContain("Opaque contract spec thrift-method");
   });
 });
 

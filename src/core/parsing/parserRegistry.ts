@@ -5,6 +5,7 @@ import { parseMarkdownDocument } from "./markdown/adapter.js";
 import { LANGUAGE_DEFINITIONS, getLanguageDefinition, languageDefForExtension, type LanguageDefinition } from "./languages/registry.js";
 import { GenericTreeSitterParser } from "./genericTreeSitterParser.js";
 import { createVueParser } from "./languages/vue.js";
+import { createGraphqlParser } from "./languages/graphql.js";
 import { parserRegistry } from "../registries/registry.js";
 import { fileId } from "../../shared/path.js";
 import { hashText } from "../../shared/hash.js";
@@ -152,7 +153,9 @@ export function builtinLanguageForPath(relativePath: string): string | undefined
     [".properties", "properties"],
     [".vue", "vue"],
     [".proto", "proto"],
-    [".xml", "xml"]
+    [".xml", "xml"],
+    [".graphql", "graphql"],
+    [".gql", "graphql"]
   ];
   const matchedStatic = staticExtensions.find(([ext]) => normalized.endsWith(ext));
   if (matchedStatic) return matchedStatic[1];
@@ -212,6 +215,10 @@ export function registerBuiltinParsers(languages?: Set<string>): void {
 
   if (should("proto") && !parserRegistry.resolve({ language: "proto" })) {
     parserRegistry.register(createProtoParser());
+  }
+
+  if (should("graphql") && !parserRegistry.resolve({ language: "graphql" })) {
+    parserRegistry.register(createGraphqlParser());
   }
 
   for (const def of LANGUAGE_DEFINITIONS) {
