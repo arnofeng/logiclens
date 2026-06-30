@@ -55,3 +55,7 @@ export function canonicalDubboContractKey(interfaceName: string, method?: string
   const normalizedMethod = method?.trim();
   return normalizedMethod ? `${normalizedInterface}#${normalizedMethod}` : normalizedInterface;
 }
+
+export function canonicalGraphqlContractKey(operationType: string, field: string): string {
+  return `${operationType.trim().toLowerCase()}.${field.trim().toLowerCase()}`;
+}

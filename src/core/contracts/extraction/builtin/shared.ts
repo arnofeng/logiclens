@@ -14,10 +14,10 @@ import type {
   RepoNode
 } from "../../../parsing/types.js";
 import { contractId, entityId, evidenceId, fileId, normalizeName } from "../../../../shared/path.js";
-import { normalizeApiPath, canonicalHttpContractKey, canonicalGrpcContractKey, canonicalDubboContractKey } from "../../apiPath.js";
+import { normalizeApiPath, canonicalHttpContractKey, canonicalGrpcContractKey, canonicalDubboContractKey, canonicalGraphqlContractKey } from "../../apiPath.js";
 import { canonicalEventContractKey, type EventBroker } from "../../event.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
-import { serializeSpec, type ContractSpec, type DubboMethodSpec, type EventSpec, type HttpEndpointSpec, type GrpcMethodSpec, type GrpcStreaming, type SchemaSpec, type SchemaFieldSpec } from "../../spec.js";
+import { serializeSpec, type ContractSpec, type DubboMethodSpec, type EventSpec, type HttpEndpointSpec, type GrpcMethodSpec, type GrpcStreaming, type SchemaSpec, type SchemaFieldSpec, type GraphQLOperationSpec } from "../../spec.js";
 import type { AliasOverride } from "../crossRepoContracts.js";
 import type { FactCollector, PackageUsageEntry } from "../factCollector.js";
 
@@ -127,6 +127,12 @@ export function grpcContract(fullName: string, description = ""): ContractNode {
 export function dubboContract(interfaceName: string, method?: string, description = ""): ContractNode {
   const key = canonicalDubboContractKey(interfaceName, method);
   const name = method?.trim() ? `${interfaceName}#${method.trim()}` : interfaceName;
+  return { id: contractId("api", key), kind: "api", key, name, description };
+}
+
+export function graphqlContract(operationType: string, field: string, description = ""): ContractNode {
+  const key = canonicalGraphqlContractKey(operationType, field);
+  const name = `${operationType}.${field}`;
   return { id: contractId("api", key), kind: "api", key, name, description };
 }
 
@@ -483,6 +489,103 @@ export function pushGrpcContract(input: {
   }
 
   if (entityName && entityName.length >= MIN_ENTITY_NAME_LENGTH) {
+    entityName = entityName[0]!.toUpperCase() + entityName.slice(1);
+
+    input.collector.addEntity({
+      id: entityId(entityName),
+      name: entityName,
+      kind: "domain",
+      description: "Domain entity inferred from cross-repo contracts"
+    });
+
+    input.collector.addContractEntity({
+      contractId: contractNode.id,
+      entityId: entityId(entityName),
+      evidenceId: evidenceNode.id,
+      confidence: evidenceNode.confidence
+    });
+
+    const opVerb = operationVerb(contractNode, input.role);
+    const operationId = `operation:${normalizeName(`${opVerb}:${entityName}:${contractNode.key}:${input.file.repoId}`)}`;
+    input.collector.addOperation({
+      id: operationId,
+      verb: opVerb,
+      entityName,
+      description: `${input.role} ${contractNode.kind} ${contractNode.key}`
+    });
+    input.collector.addOperationRepo({
+      operationId,
+      repoId: input.file.repoId,
+      role: input.role,
+      evidenceId: evidenceNode.id,
+      confidence: evidenceNode.confidence
+    });
+  }
+
+  return { contractNode, evidenceNode };
+}
+
+export function pushGraphqlContract(input: {
+  collector: FactCollector;
+  file: ParsedFile;
+  operationType: "query" | "mutation" | "subscription";
+  field: string;
+  role: ContractRole;
+  line: number;
+  raw: string;
+  rule: string;
+  confidence: number;
+  requestType?: string;
+  responseType?: string;
+  source: "sdl" | "code-first" | "client-document";
+  operationName?: string;
+  sourceSymbolId?: string;
+}): { contractNode: ContractNode; evidenceNode: EvidenceNode } {
+  const name = `${input.operationType}.${input.field}`;
+  const contractNode = graphqlContract(input.operationType, input.field, `GraphQL ${name}`);
+  const evidenceNode = evidence({
+    repoId: input.file.repoId,
+    fileId: input.file.fileId,
+    filePath: input.file.path,
+    line: input.line,
+    raw: input.raw,
+    rule: input.rule,
+    confidence: input.confidence
+  });
+
+  pushContractEvidence(input.collector, input.file.repoId, contractNode, input.role, evidenceNode);
+
+  const graphqlSpec: GraphQLOperationSpec = {
+    kind: "graphql-operation",
+    operationType: input.operationType,
+    field: input.field,
+    operationName: input.operationName,
+    fullName: `${input.operationType === "query" ? "Query" : input.operationType === "mutation" ? "Mutation" : "Subscription"}.${input.field}`,
+    requestType: input.requestType,
+    responseType: input.responseType,
+    source: input.source
+  };
+
+  pushContractSpec({
+    collector: input.collector,
+    contractNode,
+    spec: graphqlSpec,
+    repoId: input.file.repoId,
+    fileId: input.file.fileId,
+    evidenceNode,
+    sourceSymbolId: input.sourceSymbolId
+  });
+
+  // entity derivation
+  let entityName = input.field;
+  if (!entityName || entityName.length < 3) {
+    const fallback = input.requestType || input.responseType;
+    if (fallback) {
+      entityName = fallback.replace(/(Request|Response|DTO|Dto|Schema)$/g, "");
+    }
+  }
+
+  if (entityName && entityName.length >= 3) {
     entityName = entityName[0]!.toUpperCase() + entityName.slice(1);
 
     input.collector.addEntity({

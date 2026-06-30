@@ -65,7 +65,18 @@ export type DubboMethodSpec = {
   framework?: "dubbo-java" | "dubbo-go";
 };
 
-export type ContractSpec = HttpEndpointSpec | EventSpec | SchemaSpec | GrpcMethodSpec | DubboMethodSpec;
+export type GraphQLOperationSpec = {
+  kind: "graphql-operation";
+  operationType: "query" | "mutation" | "subscription";
+  field: string;             // 根字段名 "user" / "createOrder"
+  operationName?: string;    // 命名 operation（client 侧）
+  fullName: string;          // "Query.user"  ← 规范标识来源
+  requestType?: string;      // input 类型（参数）
+  responseType?: string;     // 返回类型
+  source: "sdl" | "code-first" | "client-document";
+};
+
+export type ContractSpec = HttpEndpointSpec | EventSpec | SchemaSpec | GrpcMethodSpec | DubboMethodSpec | GraphQLOperationSpec;
 
 // Compile-time assertion: ContractSpec kind union === ContractSpecKind
 type _AssertSpecKindsAligned =
@@ -83,6 +94,8 @@ export function interactionStyleOfSpecKind(kind: ContractSpecKind): InteractionS
     case "grpc-method":
       return "sync-rpc";
     case "dubbo-method":
+      return "sync-rpc";
+    case "graphql-operation":
       return "sync-rpc";
     case "event":
       return "async-message";
@@ -110,7 +123,7 @@ export function deserializeSpec(json: string): ContractSpec {
 // ---------------------------------------------------------------------------
 
 /** Source language identifier for the normalization table. */
-export type SupportedLanguage = "typescript" | "java" | "go" | "python" | "proto";
+export type SupportedLanguage = "typescript" | "java" | "go" | "python" | "proto" | "graphql";
 
 /**
  * Normalized primitive type vocabulary shared across languages.
@@ -271,6 +284,16 @@ const PROTO_PRIMITIVE_MAP: Record<string, NormalizedPrimitive> = {
   "google.protobuf.Timestamp": "date"
 };
 
+// -- GraphQL primitive map ---------------------------------------------------
+
+const GRAPHQL_PRIMITIVE_MAP: Record<string, NormalizedPrimitive> = {
+  Int: "number",
+  Float: "number",
+  String: "string",
+  ID: "string",
+  Boolean: "boolean"
+};
+
 // -- Normalization entry point -----------------------------------------------
 
 /**
@@ -290,6 +313,19 @@ export function normalizePrimitiveType(
 ): string {
   const trimmed = rawType.trim();
   if (!trimmed) return "any";
+
+  // -- unwrap GraphQL list and nullability -----------------------------------
+  if (language === "graphql") {
+    const isNonNull = trimmed.endsWith("!");
+    const inner = isNonNull ? trimmed.slice(0, -1).trim() : trimmed;
+    if (inner.startsWith("[") && inner.endsWith("]")) {
+      const listInner = inner.slice(1, -1).trim();
+      const base = normalizePrimitiveType(language, listInner);
+      return `array<${base}>` + (isNonNull ? "" : "?");
+    }
+    const mapped = GRAPHQL_PRIMITIVE_MAP[inner] || inner;
+    return mapped + (isNonNull ? "" : "?");
+  }
 
   // -- unwrap nullable wrappers ----------------------------------------------
   // Java Optional<T>
