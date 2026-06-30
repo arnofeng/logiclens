@@ -33,6 +33,7 @@ import { assessEventChange, classifyEventTargetChange } from "./rules/eventImpac
 import { assessSchemaFieldChange, classifySchemaTargetChange } from "./rules/schemaImpactRules.js";
 import { assessGrpcMethodChange, classifyGrpcMethodTargetChange } from "./rules/grpcImpactRules.js";
 import { assessDubboMethodChange, classifyDubboMethodTargetChange } from "./rules/dubboImpactRules.js";
+import { assessGraphqlOperationChange, classifyGraphqlOperationTargetChange } from "./rules/graphqlImpactRules.js";
 
 // Re-export for backward compatibility (tests and external consumers)
 export { findFieldReferences } from "./fieldSearch.js";
@@ -170,6 +171,7 @@ export function findTargetSpecs(
     dto: "schema",
     grpc: "grpc-method",
     dubbo: "dubbo-method",
+    graphql: "graphql-operation",
   };
   const targetSpecKind = specKindMap[parsed.kind] ?? parsed.kind;
 
@@ -356,6 +358,7 @@ const TARGET_CLASSIFIERS: Partial<Record<
   "schema":        classifySchemaTargetChange,
   "grpc-method":   classifyGrpcMethodTargetChange,
   "dubbo-method":  classifyDubboMethodTargetChange,
+  "graphql-operation": classifyGraphqlOperationTargetChange,
 };
 
 /** Registry: downstream impact classifiers keyed by specKind. */
@@ -369,6 +372,7 @@ const IMPACT_CLASSIFIERS: Partial<Record<
   "schema":        assessSchemaFieldChange,
   "grpc-method":   assessGrpcMethodChange,
   "dubbo-method":  assessDubboMethodChange,
+  "graphql-operation": assessGraphqlOperationChange,
 };
 
 function classifyTargetChange(

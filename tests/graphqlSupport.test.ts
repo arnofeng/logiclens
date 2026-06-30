@@ -6,6 +6,7 @@ import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { graphqlSdlExtractor } from "../src/core/contracts/extraction/builtin/graphqlSdlExtractor.js";
 import { graphqlClientExtractor } from "../src/core/contracts/extraction/builtin/graphqlClientExtractor.js";
 import { resolveGraphqlRelations } from "../src/core/contracts/matching/graphqlResolver.js";
+import { analyzeImpact } from "../src/core/contracts/impact/impactEngine.js";
 import { repoId } from "../src/shared/path.js";
 import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
 import type { SchemaSpec, GraphQLOperationSpec } from "../src/core/contracts/spec.js";
@@ -71,6 +72,23 @@ function makeRoleMap(specs: ContractSpecNode[], roles: Record<string, string>): 
     map.set(`${spec.contractId}:${spec.repoId}`, role as any);
   }
   return map;
+}
+
+function makeSemanticRel(opts: {
+  fromSpecId: string;
+  toSpecId: string;
+  kind: any;
+  reason?: string;
+  confidence?: number;
+}) {
+  return {
+    fromSpecId: opts.fromSpecId,
+    toSpecId: opts.toSpecId,
+    kind: opts.kind,
+    evidenceId: "ev-rel",
+    reason: opts.reason ?? "some relation",
+    confidence: opts.confidence ?? 0.9
+  };
 }
 
 describe("GraphQL SDL Extractor", () => {
@@ -261,5 +279,118 @@ describe("GraphQL Resolver", () => {
 
     const edges = resolveGraphqlRelations(specs, specRoles);
     expect(edges).toHaveLength(0);
+  });
+});
+
+describe("GraphQL Impact Analysis", () => {
+  it("classifies operation target removal correctly as breaking", () => {
+    const spec = makeGraphqlSpec({
+      id: "spec-op",
+      contractId: "contract-op",
+      repoId: "repo-prod",
+      operationType: "query",
+      field: "user"
+    });
+
+    const report = analyzeImpact(
+      { target: "graphql:query.user", changeType: "rpc-removed" },
+      [spec],
+      []
+    );
+
+    expect(report.overallSeverity).toBe("breaking");
+    expect(report.impacts).toHaveLength(1);
+    expect(report.impacts[0]).toMatchObject({
+      specId: "spec-op",
+      severity: "breaking",
+      description: "GraphQL operation Query.user will be removed"
+    });
+  });
+
+  it("propagates operation removal to downstream consumers", () => {
+    const producer = makeGraphqlSpec({
+      id: "spec-prod",
+      contractId: "contract-prod",
+      repoId: "repo-prod",
+      operationType: "query",
+      field: "user"
+    });
+    const consumer = makeGraphqlSpec({
+      id: "spec-cons",
+      contractId: "contract-cons-client",
+      repoId: "repo-cons",
+      operationType: "query",
+      field: "user"
+    });
+    // Set different canonicalKey so it is not matched directly by target query
+    consumer.canonicalKey = "query.user.client";
+
+    const relations = [
+      makeSemanticRel({
+        fromSpecId: "spec-cons",
+        toSpecId: "spec-prod",
+        kind: "CALLS_ENDPOINT"
+      })
+    ];
+
+    const report = analyzeImpact(
+      { target: "graphql:query.user", changeType: "rpc-removed" },
+      [producer, consumer],
+      relations
+    );
+
+    expect(report.overallSeverity).toBe("breaking");
+    expect(report.impacts).toHaveLength(2);
+    const consumerImpact = report.impacts.find(i => i.specId === "spec-cons");
+    expect(consumerImpact).toBeDefined();
+    expect(consumerImpact!.severity).toBe("breaking");
+    expect(consumerImpact!.description).toContain("Consumer calls removed GraphQL operation Query.user");
+  });
+
+  it("propagates schema field removal to query using it", () => {
+    const operation = makeGraphqlSpec({
+      id: "spec-op",
+      contractId: "contract-op",
+      repoId: "repo-prod",
+      operationType: "query",
+      field: "user"
+    });
+
+    const schemaSpec: ContractSpecNode = {
+      id: "spec-schema",
+      contractId: "contract-schema",
+      specKind: "schema",
+      repoId: "repo-prod",
+      fileId: "graphql/schema",
+      evidenceId: "ev-schema",
+      canonicalKey: "User",
+      specJson: JSON.stringify({
+        kind: "schema",
+        name: "User",
+        language: "graphql",
+        fields: [{ name: "email", type: "String", optional: true }]
+      }),
+      confidence: 1.0
+    };
+
+    const relations = [
+      makeSemanticRel({
+        fromSpecId: "spec-op",
+        toSpecId: "spec-schema",
+        kind: "RESPONSE_SCHEMA"
+      })
+    ];
+
+    const report = analyzeImpact(
+      { target: "schema:User", changeType: "field-removed", detail: "email" },
+      [operation, schemaSpec],
+      relations
+    );
+
+    expect(report.overallSeverity).toBe("risky");
+    const opImpact = report.impacts.find(i => i.specId === "spec-op");
+    expect(opImpact).toBeDefined();
+    expect(opImpact!.severity).toBe("risky");
+    expect(opImpact!.description).toContain("Request/response schema field 'email' removed — affects GraphQL operation Query.user");
   });
 });
