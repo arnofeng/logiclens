@@ -1,6 +1,6 @@
 {
   "name": "logiclens",
-  "version": "0.1.1-beta.13",
+  "version": "0.1.1-beta.14",
   "description": "Local-first semantic contract graph for AI coding agents to reason about cross-repository interfaces and change impact.",
   "type": "module",
   "bin": {
