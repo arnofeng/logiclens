@@ -169,11 +169,11 @@ logiclens deps --limit 20
 logiclens contracts --kind api
 ```
 
-### 💥 Contract Tracing
+### 💥 Semantic Contract Trace
 
 ```bash
-logiclens trace api:/api/order/:id
-logiclens trace event:OrderCreatedEvent
+logiclens spec-trace "http GET /api/order/:id"
+logiclens spec-trace "event OrderCreatedEvent"
 ```
 
 ### 🔎 Impact Analysis

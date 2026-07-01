@@ -169,11 +169,11 @@ logiclens deps --limit 20
 logiclens contracts --kind api
 ```
 
-### 💥 契约追踪
+### 💥 契约语义追踪
 
 ```bash
-logiclens trace api:/api/order/:id
-logiclens trace event:OrderCreatedEvent
+logiclens spec-trace "http GET /api/order/:id"
+logiclens spec-trace "event OrderCreatedEvent"
 ```
 
 ### 🔎 影响分析
