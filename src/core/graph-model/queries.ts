@@ -181,6 +181,19 @@ export async function findImpact(db: GraphDB, term: string): Promise<CodeSearchR
   );
 }
 
+export async function findContractSourceSymbols(db: GraphDB, contractIds: string[]): Promise<CodeSearchRow[]> {
+  if (contractIds.length === 0) return [];
+  return db.query<CodeSearchRow>(
+    `MATCH (c:Contract)-[hs:HAS_SPEC]->(s:ContractSpec), (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(code:Code)
+     WHERE c.id IN $contractIds AND s.sourceSymbolId = code.id
+       AND (hs.active IS NULL OR hs.active = true)
+       AND (s.active IS NULL OR s.active = true)
+       AND (f.active IS NULL OR f.active = true) AND (code.active IS NULL OR code.active = true)
+     RETURN r.name AS repoName, f.path AS filePath, code.id AS codeId, code.kind AS kind, code.name AS name, code.qualifiedName AS qualifiedName, code.summary AS summary, code.signature AS signature;`,
+    { contractIds }
+  );
+}
+
 export async function listCode(db: GraphDB, limit = 50): Promise<CodeSearchRow[]> {
   return db.query<CodeSearchRow>(
     `MATCH (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(c:Code)
@@ -408,4 +421,23 @@ export async function semanticTrace(
   }
 
   return db.query<SemanticTraceRow>(cypher, { specId });
+}
+
+export async function explainSemanticRelationsBetweenRepos(
+  db: GraphDB,
+  fromRepoId: string,
+  toRepoId: string
+): Promise<SemanticTraceRow[]> {
+  return db.query<SemanticTraceRow>(
+    `MATCH (a:ContractSpec)-[r:SEMANTIC_REL]->(b:ContractSpec)
+     WHERE a.repoId = $fromRepoId AND b.repoId = $toRepoId
+       AND (a.active IS NULL OR a.active = true)
+       AND (b.active IS NULL OR b.active = true)
+       AND (r.active IS NULL OR r.active = true)
+     RETURN a.id AS fromSpecId, b.id AS toSpecId, r.kind AS kind,
+            r.reason AS reason, r.confidence AS confidence,
+            a.canonicalKey AS fromContractKey, a.specKind AS fromSpecKind, a.repoId AS fromRepoId,
+            b.canonicalKey AS toContractKey, b.specKind AS toSpecKind, b.repoId AS toRepoId;`,
+    { fromRepoId, toRepoId }
+  );
 }

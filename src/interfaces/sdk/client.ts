@@ -114,6 +114,7 @@ export class LogicLensClient {
   private config: LogicLensConfig;
   private cwd: string;
   private dbInstance?: GraphDB;
+  private dbPromise?: Promise<GraphDB>;
   private closed = false;
   private providersRegistered = false;
   private options: LogicLensClientOptions;
@@ -147,12 +148,27 @@ export class LogicLensClient {
     if (this.closed) {
       throw new Error("Client is closed");
     }
-    if (!this.dbInstance) {
-      const graphPath = path.resolve(this.cwd, this.config.graph.path);
-      this.dbInstance = await createGraphDB(this.config.graph.provider, { path: graphPath, url: this.config.graph.url, username: this.config.graph.username, password: this.config.graph.password });
-      await this.dbInstance.initSchema(this.config.systemName);
+    if (!this.dbPromise) {
+      this.dbPromise = this.openDb()
+        .catch((error) => {
+          this.dbPromise = undefined;
+          throw error;
+        });
     }
-    return this.dbInstance;
+    return this.dbPromise;
+  }
+
+  private async openDb(): Promise<GraphDB> {
+    const graphPath = path.resolve(this.cwd, this.config.graph.path);
+    const db = await createGraphDB(this.config.graph.provider, {
+      path: graphPath,
+      url: this.config.graph.url,
+      username: this.config.graph.username,
+      password: this.config.graph.password
+    });
+    await db.initSchema(this.config.systemName);
+    this.dbInstance = db;
+    return db;
   }
 
   /**
@@ -393,21 +409,13 @@ export class LogicLensClient {
     const contractTrace = parsedContract ? await traceContract(db, parsedContract.kind, parsedContract.value) : [];
     const entityTrace = await traceEntity(db, target);
     
-    const { findImpact, findImpactSections, sectionsDocumentingCode } = await import("../../core/graph-model/queries.js");
+    const { findContractSourceSymbols, findImpact, findImpactSections, sectionsDocumentingCode } = await import("../../core/graph-model/queries.js");
     const { callEdgesAround } = await import("../../core/graph-model/subgraph.js");
     
     let seeds: CodeSearchRow[] = [];
     if (isContract && contractTrace.length > 0) {
       const contractIds = [...new Set(contractTrace.map((row) => row.contractId))];
-      seeds = await db.query<CodeSearchRow>(
-        `MATCH (c:Contract)-[hs:HAS_SPEC]->(s:ContractSpec), (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(code:Code)
-         WHERE c.id IN $contractIds AND s.sourceSymbolId = code.id
-           AND (hs.active IS NULL OR hs.active = true)
-           AND (s.active IS NULL OR s.active = true)
-           AND (f.active IS NULL OR f.active = true) AND (code.active IS NULL OR code.active = true)
-         RETURN r.name AS repoName, f.path AS filePath, code.id AS codeId, code.kind AS kind, code.name AS name, code.qualifiedName AS qualifiedName, code.summary AS summary, code.signature AS signature;`,
-        { contractIds }
-      );
+      seeds = await findContractSourceSymbols(db, contractIds);
     }
     if (seeds.length === 0) {
       seeds = await findImpact(db, target);
@@ -684,29 +692,9 @@ export class LogicLensClient {
     const db = await this.getDb();
     const fromRepoId = repoId(fromRepo);
     const toRepoId = repoId(toRepo);
-
-    // Find ContractSpec IDs in the source repo.
-    // LIMIT 100: for repos with >100 specs this may silently drop edges.
-    // In practice typical repos have tens of specs; if this becomes a
-    // problem we can paginate or remove the cap.
-    const fromSpecs = await db.query<{ id: string }>(
-      "MATCH (s:ContractSpec) WHERE s.repoId = $repoId AND (s.active IS NULL OR s.active = true) RETURN s.id AS id LIMIT 100",
-      { repoId: fromRepoId }
-    );
-
-    const { semanticTrace } = await import("../../core/graph-model/queries.js");
-    const allRelations: import("../../core/graph-model/queries.js").SemanticTraceRow[] = [];
-
-    for (const fromSpec of fromSpecs) {
-      const relations = await semanticTrace(db, fromSpec.id, "outgoing");
-      for (const rel of relations) {
-        if (rel.toRepoId === toRepoId) {
-          allRelations.push(rel);
-        }
-      }
-    }
-
-    return { fromRepo, toRepo, relations: allRelations };
+    const { explainSemanticRelationsBetweenRepos } = await import("../../core/graph-model/queries.js");
+    const relations = await explainSemanticRelationsBetweenRepos(db, fromRepoId, toRepoId);
+    return { fromRepo, toRepo, relations };
   }
 
   /**
@@ -724,6 +712,7 @@ export class LogicLensClient {
       await this.dbInstance.close();
       this.dbInstance = undefined;
     }
+    this.dbPromise = undefined;
     this.closed = true;
   }
 
