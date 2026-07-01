@@ -5,19 +5,12 @@ import { schemaStatements } from "../../core/graph-model/schema.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { PendingFile, WatchStatus } from "../../features/watch/watcher.js";
-import { assertReadOnlyCypher } from "../../shared/cypherSafety.js";
 import { logicLensVersion } from "../../shared/version.js";
 import { BRAND, BRAND_DEFAULTS, BRAND_PATHS, brandedMcpToolName, configFilePath } from "../../shared/branding.js";
 import { z } from "zod";
 
 type CatchUpState = WatchStatus["catchUp"];
 
-// Guardrails for the raw-Cypher escape hatch. The structured tools are the
-// primary interface; query_cypher is a last resort, so bound both the wall-clock
-// time and the response size to keep one bad query from stalling the server or
-// flooding the model's context.
-const CYPHER_TIMEOUT_MS = 15_000;
-const CYPHER_MAX_ROWS = 1000;
 const MCP_TOOLS = {
   getStats: brandedMcpToolName("get_stats"),
   getWatchStatus: brandedMcpToolName("get_watch_status"),
@@ -26,7 +19,6 @@ const MCP_TOOLS = {
   trace: brandedMcpToolName("trace"),
   impactAnalysis: brandedMcpToolName("impact_analysis"),
   askQuestion: brandedMcpToolName("ask_question"),
-  queryCypher: brandedMcpToolName("query_cypher"),
   semanticTrace: brandedMcpToolName("semantic_trace")
 } as const;
 const MCP_RESOURCE_URIS = {
@@ -472,65 +464,6 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
         const retrieval = await client.retrieve(question);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(retrieval, null, 2) }],
-        };
-      });
-    }
-  );
-
-  server.registerTool(
-    MCP_TOOLS.queryCypher,
-    {
-      description:
-        "LAST RESORT. Run a raw, read-only Cypher query against the Kuzu graph database. Prefer the " +
-        `structured tools first — ${MCP_TOOLS.trace} / ${MCP_TOOLS.semanticTrace} (producers/consumers/schemas), ` +
-        `${MCP_TOOLS.impactAnalysis} (blast radius), ${MCP_TOOLS.listContracts} / ${MCP_TOOLS.listDependencies} ` +
-        `(surveys), ${MCP_TOOLS.askQuestion} (free-form retrieval). Those return evidence-carrying, schema-stable ` +
-        "answers; raw Cypher couples you to the internal graph schema and bypasses that framing. Only reach for " +
-        "this when no structured tool can express the question. Writes are rejected; queries are capped at " +
-        `${CYPHER_TIMEOUT_MS / 1000}s and ${CYPHER_MAX_ROWS} rows, so add WHERE filters and LIMIT for large graphs.`,
-      inputSchema: {
-        cypher: z.string().describe("The read-only Cypher query to run (e.g. 'MATCH (r:Repo) RETURN r.name LIMIT 5')"),
-      },
-    },
-    async ({ cypher }) => {
-      return wrapWithFreshness(MCP_TOOLS.queryCypher, { cypher }, async () => {
-        assertReadOnlyCypher(cypher);
-
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const timeout = new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () =>
-              reject(
-                new Error(
-                  `Cypher query exceeded the ${CYPHER_TIMEOUT_MS / 1000}s limit. Add WHERE filters / LIMIT, ` +
-                    "or use a structured tool (logiclens_trace, logiclens_impact_analysis, …)."
-                )
-              ),
-            CYPHER_TIMEOUT_MS
-          );
-        });
-
-        let rows: Awaited<ReturnType<typeof client.query>>;
-        try {
-          rows = await Promise.race([client.query(cypher), timeout]);
-        } finally {
-          if (timer) clearTimeout(timer);
-        }
-
-        const truncated = rows.length > CYPHER_MAX_ROWS;
-        const payload = {
-          ...(truncated
-            ? {
-                truncated: true,
-                rowsReturned: CYPHER_MAX_ROWS,
-                totalRows: rows.length,
-                note: `Result truncated to the first ${CYPHER_MAX_ROWS} rows. Add a LIMIT or tighter WHERE clause for complete results.`,
-              }
-            : {}),
-          rows: truncated ? rows.slice(0, CYPHER_MAX_ROWS) : rows,
-        };
-        return {
-          content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
         };
       });
     }

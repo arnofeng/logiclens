@@ -3,7 +3,7 @@ import fs from "node:fs";
 import { repoId } from "../../shared/path.js";
 import { loadConfig, defaultConfig } from "../../config/loadConfig.js";
 import type { LogicLensConfig } from "../../config/schema.js";
-import type { GraphDB, GraphValue, Stats } from "../../core/graph-model/db.js";
+import type { GraphDB, Stats } from "../../core/graph-model/db.js";
 import { createGraphDB } from "../../core/graph-model/factory.js";
 import { registerBuiltinEmbeddingProviders } from "../../adapters/embeddings/builtinProviders.js";
 import {
@@ -493,18 +493,6 @@ export class LogicLensClient {
       { readFile }
     );
     return report;
-  }
-
-  /**
-   * Executes a raw Cypher query against the underlying graph database.
-   * 
-   * @param cypher - The Cypher query string.
-   * @param params - Optional query parameters.
-   * @returns The query result rows.
-   */
-  async query<T = Record<string, GraphValue>>(cypher: string, params?: Record<string, GraphValue>): Promise<T[]> {
-    const db = await this.getDb();
-    return db.query<T>(cypher, params);
   }
 
   /**

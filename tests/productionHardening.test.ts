@@ -4,7 +4,6 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { defaultConfig, writeConfig, loadConfig } from "../src/config/loadConfig.js";
 import { KuzuGraphDB } from "../src/core/graph-model/db.js";
-import { assertReadOnlyCypher, isReadOnlyCypher } from "../src/shared/cypherSafety.js";
 import { logicLensVersion } from "../src/shared/version.js";
 
 describe("production hardening", () => {
@@ -12,11 +11,12 @@ describe("production hardening", () => {
     expect(logicLensVersion).toMatch(/^\d+\.\d+\.\d+/);
   });
 
-  it("does not expose an MCP escape hatch for unsafe Cypher", async () => {
+  it("does not expose an MCP escape hatch for raw graph queries", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-config-hardening-"));
     await writeConfig(defaultConfig(), cwd);
     const config = await loadConfig(cwd);
-    expect((config.mcp as Record<string, unknown>).allowUnsafeCypher).toBeUndefined();
+    const legacyRawQueryFlag = ["allowUnsafe", "Cypher"].join("");
+    expect((config.mcp as Record<string, unknown>)[legacyRawQueryFlag]).toBeUndefined();
   });
 
   it("preserves systemName in config even if it has the default value", async () => {
@@ -30,17 +30,6 @@ describe("production hardening", () => {
     
     const loaded = await loadConfig(cwd);
     expect(loaded.systemName).toBe("default-system");
-  });
-
-  it("allows read-only Cypher and rejects mutating or multi-statement Cypher", () => {
-    expect(isReadOnlyCypher("MATCH (r:Repo) RETURN r.name LIMIT 5")).toBe(true);
-    expect(isReadOnlyCypher("WITH 1 AS x RETURN x;")).toBe(true);
-    expect(isReadOnlyCypher("MATCH (n) RETURN 'DELETE is just text' AS value")).toBe(true);
-
-    expect(() => assertReadOnlyCypher("MATCH (n) SET n.name = 'x' RETURN n")).toThrow(/SET/);
-    expect(() => assertReadOnlyCypher("CREATE (n:Repo {id: 'x'}) RETURN n")).toThrow(/CREATE|must start/);
-    expect(() => assertReadOnlyCypher("MATCH (n) RETURN n; DELETE n")).toThrow(/one read-only statement/);
-    expect(() => assertReadOnlyCypher("CALL table_info('Repo') RETURN name")).toThrow(/must start/);
   });
 
   it("marks graph connections closed and rejects later queries", async () => {

@@ -28,7 +28,6 @@ export function getLogicLensPermissions(): string[] {
     'trace',
     'impact_analysis',
     'ask_question',
-    'query_cypher',
   ].map((name) => brandedMcpPermission(brandedMcpToolName(name)));
 }
 

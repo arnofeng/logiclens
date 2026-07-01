@@ -105,13 +105,6 @@ describe("LogicLens SDK Client", () => {
     expect(stats.repos).toBe(2);
     expect(stats.files).toBeGreaterThan(0);
     
-    // Test query()
-    const reposRow = await client.query<{ name: string }>("MATCH (r:Repo) RETURN r.name AS name ORDER BY name;");
-    expect(reposRow).toEqual([
-      { name: "service-a" },
-      { name: "service-b" }
-    ]);
-    
     // Test dependencies()
     const deps = await client.dependencies();
     expect(deps.length).toBeGreaterThan(0);

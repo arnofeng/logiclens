@@ -11,7 +11,6 @@ import { impactCommand } from "./interfaces/cli/impact.js";
 import { indexCommand } from "./interfaces/cli/index.js";
 import { initCommand } from "./interfaces/cli/init.js";
 import { uninitCommand } from "./interfaces/cli/uninit.js";
-import { queryCommand } from "./interfaces/cli/query.js";
 import { qualityCommand } from "./interfaces/cli/quality.js";
 import { rebuildRelationsCommand } from "./interfaces/cli/rebuildRelations.js";
 import { statsCommand } from "./interfaces/cli/stats.js";
@@ -65,7 +64,6 @@ program
   .action((target: string, rest: string[], options: { maxHops?: number; direction?: string; json?: boolean }) =>
     specTraceCommand(target, rest, { maxHops: options.maxHops, direction: options.direction as any, json: options.json })
   );
-program.command("query").argument("<cypher>").description("Run a raw Kuzu Cypher query").action((cypher: string) => queryCommand(cypher));
 program.command("ask").argument("<question>").description("Answer a natural-language question from the graph").action((question: string) => askCommand(question));
 program.command("impact").argument("<symbolOrEntity>").option("--change <change>", "Proposed change, e.g. \"field-removed:couponCode\"").description("Run impact analysis for a symbol, entity, or contract change").action((symbolOrEntity: string, options: { change?: string }) => impactCommand(symbolOrEntity, { change: options.change }));
 program

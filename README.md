@@ -208,7 +208,6 @@ You can use the interactive installer to automatically register the LogicLens MC
 | `logiclens_trace` | Trace a specific contract or entity, finding all producers, consumers, and references |
 | `logiclens_impact_analysis` | Evaluate downstream impact scope when modifying code symbols or contracts |
 | `logiclens_ask_question` | RAG-based Q&A, retrieving structured context from code symbols, documentation, contracts, dependencies, etc. |
-| `logiclens_query_cypher` | Execute raw Cypher queries on the Kuzu graph database (read-only by default) |
 
 ### MCP Configuration Example
 
@@ -269,7 +268,6 @@ try {
 | `client.impact(target)` | Analyze downstream impact scope. |
 | `client.retrieve(question)` | Return structured retrieval context without generating an answer. |
 | `client.ask(question)` | Generate an answer based on retrieval context. |
-| `client.query(cypher, params)` | Execute a Kuzu query. |
 | `client.watch(options)` | Enable automatic changed-file indexing. |
 | `client.unwatch()` | Stop the watcher. |
 | `client.getWatchStatus()` | Check watcher, catch-up, pending files, and queue status. |
@@ -303,7 +301,7 @@ For the complete list of supported parameters and their default values, see the 
 
 ### Cost and Privacy Notes
 
-Indexing, graph writes, `stats`, `deps`, `contracts`, `trace`, `impact`, and raw graph queries are all local graph operations by default, not requiring an LLM provider.
+Indexing, graph writes, `stats`, `deps`, `contracts`, `trace`, and `impact` are all local graph operations by default, not requiring an LLM provider.
 
 `ask` performs graph retrieval first, then calls the configured LLM to generate an answer. Optional LLM summaries and embeddings may also send selected source code or document text to your configured provider. If you want the indexing process to be completely local, keep `embedding.level: off` and `indexing.llmSummaryLevel: off`.
 
@@ -365,7 +363,7 @@ For more detailed steps, see the [Contributing Guide](CONTRIBUTING.md).
 
 ## Security
 
-LogicLens indexes local source code and may expose graph context to CLI users, SDK callers, and MCP clients. Be especially cautious when connecting the MCP Server to third-party tools or enabling raw Cypher writes.
+LogicLens indexes local source code and exposes graph context through structured CLI, SDK, and MCP interfaces. Raw graph-query entry points are not exposed through these public interfaces; be especially cautious when connecting the MCP Server to third-party tools.
 
 Security issue reporting instructions can be found in [SECURITY.md](SECURITY.md).
 
