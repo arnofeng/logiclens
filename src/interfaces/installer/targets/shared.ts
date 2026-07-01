@@ -9,26 +9,27 @@ import {
   LOGICLENS_SECTION_START,
   LOGICLENS_SECTION_END,
 } from '../instructions-template.js';
+import { BRAND, brandedMcpPermission, brandedMcpToolName } from '../../../shared/branding.js';
 
 export function getMcpServerConfig(): { type: string; command: string; args: string[] } {
   return {
     type: 'stdio',
-    command: 'logiclens',
+    command: BRAND.cliName,
     args: ['mcp'],
   };
 }
 
 export function getLogicLensPermissions(): string[] {
   return [
-    'mcp__logiclens__logiclens_get_stats',
-    'mcp__logiclens__logiclens_get_watch_status',
-    'mcp__logiclens__logiclens_list_dependencies',
-    'mcp__logiclens__logiclens_list_contracts',
-    'mcp__logiclens__logiclens_trace',
-    'mcp__logiclens__logiclens_impact_analysis',
-    'mcp__logiclens__logiclens_ask_question',
-    'mcp__logiclens__logiclens_query_cypher',
-  ];
+    'get_stats',
+    'get_watch_status',
+    'list_dependencies',
+    'list_contracts',
+    'trace',
+    'impact_analysis',
+    'ask_question',
+    'query_cypher',
+  ].map((name) => brandedMcpPermission(brandedMcpToolName(name)));
 }
 
 export function readJsonFile(filePath: string): Record<string, any> {

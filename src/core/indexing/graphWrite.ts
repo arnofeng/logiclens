@@ -10,6 +10,7 @@ import type { IndexWriteMode } from "./context.js";
 import { runIndexPhase } from "./phases.js";
 import { shouldSummarizeGraphWithLlm, summarizeGraphWithProgress } from "./summaries.js";
 import type { ProgressReporter } from "../../shared/progress.js";
+import { BRAND_PATHS } from "../../shared/branding.js";
 
 export type GraphWriterMode = "bulk-copy" | "append-copy" | "bulk-upsert" | "merge";
 
@@ -250,7 +251,7 @@ export async function runGraphWritePhase(input: {
   }, async () => {
     let fallback = false;
     let fallbackError: string | undefined;
-    const stagingRoot = path.resolve(cwd, ".logiclens/tmp/batches");
+    const stagingRoot = path.resolve(cwd, BRAND_PATHS.batchStaging);
     const repoIds = repos.map((repo) => repo.id);
     const repoNames = repos.map((repo) => repo.name);
     const atomicityMode = graphWriteAtomicityMode(selection.mode);

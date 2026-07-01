@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { loadConfig, defaultConfig, configPath } from "../../config/loadConfig.js";
+import { BRAND, BRAND_PATHS } from "../../shared/branding.js";
 
 function isProcessAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -22,7 +23,7 @@ async function waitForDeath(pid: number, timeoutMs: number): Promise<boolean> {
 }
 
 /**
- * Removes the `.logiclens` workspace: stops a running MCP server (via its pid
+ * Removes the branded workspace: stops a running MCP server (via its pid
  * lock file) and deletes the config, graph database, and semantic index.
  *
  * Workspace teardown lives in the CLI layer (not the SDK) so that embedding the
@@ -37,7 +38,7 @@ export async function uninitCommand(cwd = process.cwd()): Promise<void> {
   }
 
   // Stop a running MCP service safely if a lock file exists.
-  const mcpPidPath = path.join(cwd, ".logiclens", "mcp.pid");
+  const mcpPidPath = path.resolve(cwd, BRAND_PATHS.mcpPid);
   try {
     const info = JSON.parse(await fs.readFile(mcpPidPath, "utf8"));
     const pid = info.pid;
@@ -66,7 +67,7 @@ export async function uninitCommand(cwd = process.cwd()): Promise<void> {
   await fs.rm(semanticPath, { force: true });
   await fs.rm(configPath(cwd), { force: true });
   await fs.rm(mcpPidPath, { force: true });
-  await fs.rm(path.join(cwd, ".logiclens"), { recursive: true, force: true });
+  await fs.rm(path.join(cwd, BRAND.configDirName), { recursive: true, force: true });
 
-  console.log("Uninitialized LogicLens workspace successfully (removed config, graph DB, and stopped running MCP service).");
+  console.log(`Uninitialized ${BRAND.displayName} workspace successfully (removed config, graph DB, and stopped running MCP service).`);
 }

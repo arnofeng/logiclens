@@ -23,15 +23,17 @@ import { watchCommand } from "./interfaces/cli/watch.js";
 import { installCommand } from "./interfaces/cli/install.js";
 import { uninstallCommand } from "./interfaces/cli/uninstall.js";
 import { logicLensVersion } from "./shared/version.js";
+import { BRAND } from "./shared/branding.js";
 
 const program = new Command();
+const configDisplayPath = `${BRAND.configDirName}/${BRAND.configFileName}`;
 
-program.name("logiclens").description("LogicLens cross-repository semantic dependency graph CLI").version(logicLensVersion);
+program.name(BRAND.cliName).description(`${BRAND.displayName} cross-repository semantic dependency graph CLI`).version(logicLensVersion);
 
-program.command("init").description("Create .logiclens config and graph directories").action(() => initCommand());
-program.command("uninit").description("Remove .logiclens config, graph, and semantic-index, and stop running MCP server").action(() => uninitCommand());
-program.command("add-repo").argument("<path>").option("--name <name>").description("Add a repository to .logiclens/config.yaml").action((repoPath: string, options: { name?: string }) => addRepoCommand(repoPath, options));
-program.command("add-repos").argument("<directory>").option("--index", "Index discovered repositories after adding them").option("--changed-only").option("--max-files <number>", "Maximum files to index per repository", (value) => Number(value)).option("--batch-size <number>", "Number of repositories to index per batch for large full imports", (value) => Number(value)).option("--write-mode <mode>", "Graph write mode: auto, merge, bulk, or bulk-upsert", "auto").description("Add first-level Git repositories from a directory to .logiclens/config.yaml").action((directory: string, options: { index?: boolean; changedOnly?: boolean; maxFiles?: number; batchSize?: number; writeMode?: "auto" | "merge" | "bulk" | "bulk-upsert" }) => addReposCommand(directory, options));
+program.command("init").description(`Create ${BRAND.configDirName} config and graph directories`).action(() => initCommand());
+program.command("uninit").description(`Remove ${BRAND.configDirName} config, graph, and semantic-index, and stop running MCP server`).action(() => uninitCommand());
+program.command("add-repo").argument("<path>").option("--name <name>").description(`Add a repository to ${configDisplayPath}`).action((repoPath: string, options: { name?: string }) => addRepoCommand(repoPath, options));
+program.command("add-repos").argument("<directory>").option("--index", "Index discovered repositories after adding them").option("--changed-only").option("--max-files <number>", "Maximum files to index per repository", (value) => Number(value)).option("--batch-size <number>", "Number of repositories to index per batch for large full imports", (value) => Number(value)).option("--write-mode <mode>", "Graph write mode: auto, merge, bulk, or bulk-upsert", "auto").description(`Add first-level Git repositories from a directory to ${configDisplayPath}`).action((directory: string, options: { index?: boolean; changedOnly?: boolean; maxFiles?: number; batchSize?: number; writeMode?: "auto" | "merge" | "bulk" | "bulk-upsert" }) => addReposCommand(directory, options));
 program.command("index").option("--repo <name>").option("--changed-only").option("--max-files <number>", "Maximum files to index", (value) => Number(value)).option("--batch-size <number>", "Number of repositories to index per batch for large full imports", (value) => Number(value)).option("--write-mode <mode>", "Graph write mode: auto, merge, bulk, or bulk-upsert", "auto").description("Index configured repositories").action((options: { repo?: string; changedOnly?: boolean; maxFiles?: number; batchSize?: number; writeMode?: "auto" | "merge" | "bulk" | "bulk-upsert" }) => indexCommand(options));
 program.command("stats").description("Print graph statistics").action(() => statsCommand());
 program
@@ -84,10 +86,10 @@ program
   .option("-p, --path <path>", "Workspace root path")
   .description("Start the Model Context Protocol (MCP) server over stdio")
   .action((options: { path?: string }) => mcpCommand(options.path));
-program.command("watch").option("--debounce-ms <number>", "Debounce time in milliseconds for file events", (value) => Number(value)).option("--repo <name>", "Limit watching to a specific repository").description("Start the LogicLens file watcher to automatically index repository changes").action((options: { debounceMs?: number; repo?: string }) => watchCommand(options));
+program.command("watch").option("--debounce-ms <number>", "Debounce time in milliseconds for file events", (value) => Number(value)).option("--repo <name>", "Limit watching to a specific repository").description(`Start the ${BRAND.displayName} file watcher to automatically index repository changes`).action((options: { debounceMs?: number; repo?: string }) => watchCommand(options));
 program
   .command("install")
-  .description("Install logiclens MCP server into one or more agents (Claude Code, Cursor, Codex CLI, opencode, Hermes Agent, Gemini CLI, Antigravity IDE)")
+  .description(`Install ${BRAND.cliName} MCP server into one or more agents (Claude Code, Cursor, Codex CLI, opencode, Hermes Agent, Gemini CLI, Antigravity IDE)`)
   .option("-t, --target <ids>", 'Target agent(s): comma-separated ids, or "auto"|"all"|"none". Default: prompt')
   .option("-l, --location <where>", 'Install location: "global" or "local". Default: prompt')
   .option("-y, --yes", "Non-interactive: defaults to --location=global --target=auto, auto-allow on")
@@ -96,7 +98,7 @@ program
   .action((options: any) => installCommand(options));
 program
   .command("uninstall")
-  .description("Remove logiclens from your agents (Claude Code, Cursor, Codex CLI, opencode, Hermes Agent, Gemini CLI, Antigravity IDE)")
+  .description(`Remove ${BRAND.cliName} from your agents (Claude Code, Cursor, Codex CLI, opencode, Hermes Agent, Gemini CLI, Antigravity IDE)`)
   .option("-t, --target <ids>", 'Target agent(s): comma-separated ids, or "all". Default: all')
   .option("-l, --location <where>", 'Uninstall location: "global" or "local". Default: prompt')
   .option("-y, --yes", "Non-interactive: defaults to --location=global --target=all")

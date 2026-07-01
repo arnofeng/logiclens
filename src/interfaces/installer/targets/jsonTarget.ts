@@ -23,6 +23,9 @@ import {
   LOGICLENS_SECTION_END,
   LOGICLENS_SECTION_START,
 } from '../instructions-template.js';
+import { BRAND } from '../../../shared/branding.js';
+
+const MCP_SERVER_KEY = BRAND.mcpServerName;
 
 export interface JsonTargetOptions {
   id: TargetId;
@@ -82,7 +85,7 @@ export class BaseJsonTarget implements AgentTarget {
     }
     const mcpPath = this.configPathFn(loc);
     const config = readJsonFile(mcpPath);
-    const alreadyConfigured = !!config.mcpServers?.logiclens;
+    const alreadyConfigured = !!config.mcpServers?.[MCP_SERVER_KEY];
 
     const dir = this.detectInstallDirFn ? this.detectInstallDirFn(loc) : path.dirname(mcpPath);
     const installed = fs.existsSync(dir) || fs.existsSync(mcpPath);
@@ -131,8 +134,8 @@ export class BaseJsonTarget implements AgentTarget {
     const mcpPath = this.configPathFn(loc);
     if (fs.existsSync(mcpPath)) {
       const config = readJsonFile(mcpPath);
-      if (config.mcpServers?.logiclens) {
-        delete config.mcpServers.logiclens;
+      if (config.mcpServers?.[MCP_SERVER_KEY]) {
+        delete config.mcpServers[MCP_SERVER_KEY];
         if (Object.keys(config.mcpServers).length === 0) {
           delete config.mcpServers;
         }
@@ -171,7 +174,7 @@ export class BaseJsonTarget implements AgentTarget {
     }
     const target = this.configPathFn(loc);
     const after = this.buildEntryFn ? this.buildEntryFn(loc) : getMcpServerConfig();
-    const snippet = JSON.stringify({ mcpServers: { logiclens: after } }, null, 2);
+    const snippet = JSON.stringify({ mcpServers: { [MCP_SERVER_KEY]: after } }, null, 2);
     return `# Add to ${target}\n\n${snippet}\n`;
   }
 
@@ -189,7 +192,7 @@ export class BaseJsonTarget implements AgentTarget {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
     const existing = readJsonFile(file);
-    const before = existing.mcpServers?.logiclens;
+    const before = existing.mcpServers?.[MCP_SERVER_KEY];
     const after = this.buildEntryFn ? this.buildEntryFn(loc) : getMcpServerConfig();
 
     if (jsonDeepEqual(before, after)) {
@@ -198,7 +201,7 @@ export class BaseJsonTarget implements AgentTarget {
     const action: 'created' | 'updated' =
       before ? 'updated' : (fs.existsSync(file) ? 'updated' : 'created');
     if (!existing.mcpServers) existing.mcpServers = {};
-    existing.mcpServers.logiclens = after;
+    existing.mcpServers[MCP_SERVER_KEY] = after;
     writeJsonFile(file, existing);
     return { path: file, action };
   }
@@ -318,9 +321,9 @@ function preferredMcpConfigPath(): string {
 }
 
 function resolveLogicLensCommand(): string {
-  if (process.platform !== 'darwin') return 'logiclens';
+  if (process.platform !== 'darwin') return BRAND.cliName;
   try {
-    const resolved = execSync('command -v logiclens || which logiclens', {
+    const resolved = execSync(`command -v ${BRAND.cliName} || which ${BRAND.cliName}`, {
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
       shell: '/bin/bash',
@@ -328,7 +331,7 @@ function resolveLogicLensCommand(): string {
     }).trim();
     if (resolved && fs.existsSync(resolved)) return resolved;
   } catch { /* ignore */ }
-  return 'logiclens';
+  return BRAND.cliName;
 }
 
 function cleanupLegacyAntigravityEntry(): WriteResult['files'][number] | null {
@@ -336,8 +339,8 @@ function cleanupLegacyAntigravityEntry(): WriteResult['files'][number] | null {
   const legacy = legacyMcpConfigPath();
   if (!fs.existsSync(legacy)) return null;
   const config = readJsonFile(legacy);
-  if (!config.mcpServers?.logiclens) return null;
-  delete config.mcpServers.logiclens;
+  if (!config.mcpServers?.[MCP_SERVER_KEY]) return null;
+  delete config.mcpServers[MCP_SERVER_KEY];
   if (Object.keys(config.mcpServers).length === 0) {
     delete config.mcpServers;
   }
@@ -348,8 +351,8 @@ function cleanupLegacyAntigravityEntry(): WriteResult['files'][number] | null {
 function removeLegacyAntigravityFromFile(file: string): WriteResult['files'][number] {
   if (!fs.existsSync(file)) return { path: file, action: 'not-found' };
   const config = readJsonFile(file);
-  if (!config.mcpServers?.logiclens) return { path: file, action: 'not-found' };
-  delete config.mcpServers.logiclens;
+  if (!config.mcpServers?.[MCP_SERVER_KEY]) return { path: file, action: 'not-found' };
+  delete config.mcpServers[MCP_SERVER_KEY];
   if (Object.keys(config.mcpServers).length === 0) {
     delete config.mcpServers;
   }
@@ -386,7 +389,7 @@ export const antigravityTarget = new BaseJsonTarget({
 // 5. Kiro Target Helper Functions
 function kiroSteeringPath(loc: Location): string {
   const base = loc === 'global' ? path.join(os.homedir(), '.kiro') : path.join(process.cwd(), '.kiro');
-  return path.join(base, 'steering', 'logiclens.md');
+  return path.join(base, 'steering', `${BRAND.cliName}.md`);
 }
 
 export const kiroTarget = new BaseJsonTarget({

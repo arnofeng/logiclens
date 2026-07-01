@@ -9,6 +9,10 @@ import {
   WriteResult,
 } from './types.js';
 import { atomicWriteFileSync } from './shared.js';
+import { BRAND } from '../../../shared/branding.js';
+
+const MCP_SERVER_KEY = BRAND.mcpServerName;
+const MCP_TOOLSET_NAME = `mcp-${BRAND.mcpServerName}`;
 
 type LineRange = { start: number; end: number };
 
@@ -76,7 +80,7 @@ class HermesTarget implements AgentTarget {
       'platform_toolsets:',
       '  cli:',
       '    - hermes-cli',
-      '    - mcp-logiclens',
+      `    - ${MCP_TOOLSET_NAME}`,
       '',
     ].join('\n');
   }
@@ -219,8 +223,8 @@ function escapeRegExp(value: string): string {
 
 function renderLogicLensMcpChild(): string[] {
   return [
-    '  logiclens:',
-    '    command: logiclens',
+    `  ${MCP_SERVER_KEY}:`,
+    `    command: ${BRAND.cliName}`,
     '    args:',
     '      - mcp',
     '    timeout: 120',
@@ -236,13 +240,13 @@ function renderLogicLensMcpBlock(): string[] {
 function hasLogicLensMcpServer(content: string): boolean {
   const lines = splitLines(content);
   const parent = topLevelRange(lines, 'mcp_servers');
-  return !!parent && !!childRange(lines, parent, 'logiclens');
+  return !!parent && !!childRange(lines, parent, MCP_SERVER_KEY);
 }
 
 function upsertLogicLensMcpServer(content: string): string {
   const lines = splitLines(content);
   const parent = topLevelRange(lines, 'mcp_servers');
-  const child = parent ? childRange(lines, parent, 'logiclens') : null;
+  const child = parent ? childRange(lines, parent, MCP_SERVER_KEY) : null;
   const replacement = renderLogicLensMcpChild();
 
   if (!parent) {
@@ -266,7 +270,7 @@ function upsertLogicLensMcpServer(content: string): string {
 function removeLogicLensMcpServer(content: string): string {
   const lines = splitLines(content);
   const parent = topLevelRange(lines, 'mcp_servers');
-  const child = parent ? childRange(lines, parent, 'logiclens') : null;
+  const child = parent ? childRange(lines, parent, MCP_SERVER_KEY) : null;
   if (!child) return content;
   lines.splice(child.start, child.end - child.start);
   return joinLines(lines);
@@ -280,21 +284,21 @@ function upsertLogicLensToolset(content: string): string {
   if (!parent) {
     if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
     if (lines.length > 0) lines.push('');
-    lines.push('platform_toolsets:', '  cli:', '    - hermes-cli', '    - mcp-logiclens');
+    lines.push('platform_toolsets:', '  cli:', '    - hermes-cli', `    - ${MCP_TOOLSET_NAME}`);
     return joinLines(lines);
   }
 
   if (!cli) {
-    lines.splice(parent.end, 0, '  cli:', '    - hermes-cli', '    - mcp-logiclens');
+    lines.splice(parent.end, 0, '  cli:', '    - hermes-cli', `    - ${MCP_TOOLSET_NAME}`);
     return joinLines(lines);
   }
 
   const hasEntry = lines
     .slice(cli.start + 1, cli.end)
-    .some((line) => line.trim() === '- mcp-logiclens');
+    .some((line) => line.trim() === `- ${MCP_TOOLSET_NAME}`);
   if (hasEntry) return joinLines(lines);
 
-  lines.splice(cli.end, 0, `${cli.itemIndent}- mcp-logiclens`);
+  lines.splice(cli.end, 0, `${cli.itemIndent}- ${MCP_TOOLSET_NAME}`);
   return joinLines(lines);
 }
 
@@ -306,12 +310,12 @@ function removeLogicLensToolset(content: string): string {
 
   const hasEntry = lines
     .slice(cli.start + 1, cli.end)
-    .some((line) => line.trim() === '- mcp-logiclens');
+    .some((line) => line.trim() === `- ${MCP_TOOLSET_NAME}`);
   if (!hasEntry) return content;
 
   const next = lines.filter((line, idx) => {
     if (idx <= cli.start || idx >= cli.end) return true;
-    return line.trim() !== '- mcp-logiclens';
+    return line.trim() !== `- ${MCP_TOOLSET_NAME}`;
   });
   return joinLines(next);
 }

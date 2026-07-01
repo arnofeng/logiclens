@@ -9,8 +9,9 @@ import {
   defaultInclude,
   defaultExclude
 } from "./schema.js";
+import { BRAND_DEFAULTS, BRAND_PATHS, configFilePath } from "../shared/branding.js";
 
-export const configPath = (cwd = process.cwd()): string => path.join(cwd, ".logiclens", "config.yaml");
+export const configPath = (cwd = process.cwd()): string => configFilePath(cwd);
 
 export async function loadConfig(cwd = process.cwd()): Promise<LogicLensConfig> {
   const file = configPath(cwd);
@@ -48,7 +49,7 @@ export function pruneConfig(config: LogicLensConfig): any {
   if (config.graph) {
     const graphPruned: any = {};
     if (config.graph.provider !== "kuzu") graphPruned.provider = config.graph.provider;
-    if (config.graph.path !== ".logiclens/graph") graphPruned.path = config.graph.path;
+    if (config.graph.path !== BRAND_PATHS.graph) graphPruned.path = config.graph.path;
     if (Object.keys(graphPruned).length > 0) {
       pruned.graph = graphPruned;
     }
@@ -111,10 +112,10 @@ export function pruneConfig(config: LogicLensConfig): any {
   if (config.semantic) {
     const semPruned: any = {};
     if (config.semantic.provider !== "json") semPruned.provider = config.semantic.provider;
-    if (config.semantic.jsonPath !== ".logiclens/semantic-index.json") semPruned.jsonPath = config.semantic.jsonPath;
+    if (config.semantic.jsonPath !== BRAND_PATHS.semanticIndex) semPruned.jsonPath = config.semantic.jsonPath;
     
     // Chroma
-    if (config.semantic.chroma && JSON.stringify(config.semantic.chroma) !== JSON.stringify({ mode: "local", url: "http://localhost:8000", collection: "logiclens" })) {
+    if (config.semantic.chroma && JSON.stringify(config.semantic.chroma) !== JSON.stringify({ mode: "local", url: "http://localhost:8000", collection: BRAND_DEFAULTS.chromaCollection })) {
       semPruned.chroma = config.semantic.chroma;
     }
 

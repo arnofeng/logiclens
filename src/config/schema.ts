@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BRAND_DEFAULTS, BRAND_PATHS } from "../shared/branding.js";
 
 export const repoConfigSchema = z.object({
   name: z.string().min(1),
@@ -66,11 +67,11 @@ export const configSchema = z.object({
   exclude: z.array(z.string()).default(defaultExclude),
   graph: z.object({
     provider: z.enum(["kuzu", "neo4j"]).default("kuzu"),
-    path: z.string().default(".logiclens/graph"),
+    path: z.string().default(BRAND_PATHS.graph),
     url: z.string().optional(),
     username: optionalSecretString,
     password: optionalSecretString
-  }).default({ provider: "kuzu", path: ".logiclens/graph" }),
+  }).default({ provider: "kuzu", path: BRAND_PATHS.graph }),
   llm: z.object({
     provider: z.literal("openai").default("openai"),
     apiKey: optionalSecretString,
@@ -95,19 +96,19 @@ export const configSchema = z.object({
   }).default({ provider: "off", level: "off", batchSize: 64, concurrency: 2, retry: defaultProviderRetry, budget: {}, rateLimit: defaultProviderRateLimit }),
   semantic: z.object({
     provider: z.enum(["json", "chroma"]).default("json"),
-    jsonPath: z.string().default(".logiclens/semantic-index.json"),
+    jsonPath: z.string().default(BRAND_PATHS.semanticIndex),
     chroma: z.object({
       mode: z.enum(["local", "remote"]).default("local"),
       url: z.string().default("http://localhost:8000"),
-      collection: z.string().default("logiclens"),
+      collection: z.string().default(BRAND_DEFAULTS.chromaCollection),
       authToken: z.string().optional(),
       tenant: z.string().optional(),
       database: z.string().optional()
-    }).default({ mode: "local", url: "http://localhost:8000", collection: "logiclens" })
+    }).default({ mode: "local", url: "http://localhost:8000", collection: BRAND_DEFAULTS.chromaCollection })
   }).default({
     provider: "json",
-    jsonPath: ".logiclens/semantic-index.json",
-    chroma: { mode: "local", url: "http://localhost:8000", collection: "logiclens" }
+    jsonPath: BRAND_PATHS.semanticIndex,
+    chroma: { mode: "local", url: "http://localhost:8000", collection: BRAND_DEFAULTS.chromaCollection }
   }),
   mcp: z.object({
     logCalls: z.boolean().default(false)

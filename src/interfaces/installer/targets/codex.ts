@@ -19,8 +19,9 @@ import {
   LOGICLENS_SECTION_START,
 } from '../instructions-template.js';
 import { buildTomlTable, removeTomlTable, upsertTomlTable } from './toml.js';
+import { BRAND } from '../../../shared/branding.js';
 
-const TOML_HEADER = 'mcp_servers.logiclens';
+const TOML_HEADER = `mcp_servers.${BRAND.mcpServerName}`;
 
 function configDir(): string {
   return path.join(os.homedir(), '.codex');

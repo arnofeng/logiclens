@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { BRAND, getBrandedEnv } from "../../shared/branding.js";
 
 export type PolicyResult = {
   allowed: boolean;
@@ -39,11 +40,14 @@ function isWslWindowsDriveMount(repoPath: string): boolean {
  * Checks if a specific repository path is allowed to be watched.
  */
 export function shouldWatchRepo(repoPath: string): PolicyResult {
-  if (process.env.LOGICLENS_NO_WATCH === "1") {
-    return { allowed: false, reason: "LOGICLENS_NO_WATCH env var is set" };
+  const noWatchEnv = `${BRAND.envPrefix}NO_WATCH`;
+  const forceWatchEnv = `${BRAND.envPrefix}FORCE_WATCH`;
+
+  if (getBrandedEnv("NO_WATCH") === "1") {
+    return { allowed: false, reason: `${noWatchEnv} env var is set` };
   }
 
-  if (process.env.LOGICLENS_FORCE_WATCH === "1") {
+  if (getBrandedEnv("FORCE_WATCH") === "1") {
     return { allowed: true };
   }
 
@@ -52,7 +56,7 @@ export function shouldWatchRepo(repoPath: string): PolicyResult {
     if (isWslWindowsDriveMount(repoPath)) {
       return {
         allowed: false,
-        reason: `WSL Windows-drive path "${repoPath}" detected. Watching is disabled due to high filesystem latency, unless LOGICLENS_FORCE_WATCH=1 is set.`
+        reason: `WSL Windows-drive path "${repoPath}" detected. Watching is disabled due to high filesystem latency, unless ${forceWatchEnv}=1 is set.`
       };
     }
   }
@@ -64,11 +68,13 @@ export function shouldWatchRepo(repoPath: string): PolicyResult {
  * Checks if the file watcher should be enabled overall for a list of repository paths.
  */
 export function shouldEnableWatcher(repoPaths: string[]): PolicyResult {
-  if (process.env.LOGICLENS_NO_WATCH === "1") {
-    return { allowed: false, reason: "LOGICLENS_NO_WATCH env var is set" };
+  const noWatchEnv = `${BRAND.envPrefix}NO_WATCH`;
+
+  if (getBrandedEnv("NO_WATCH") === "1") {
+    return { allowed: false, reason: `${noWatchEnv} env var is set` };
   }
 
-  if (process.env.LOGICLENS_FORCE_WATCH === "1") {
+  if (getBrandedEnv("FORCE_WATCH") === "1") {
     return { allowed: true };
   }
 

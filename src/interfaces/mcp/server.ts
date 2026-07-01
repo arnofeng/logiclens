@@ -7,6 +7,7 @@ import path from "node:path";
 import type { PendingFile, WatchStatus } from "../../features/watch/watcher.js";
 import { assertReadOnlyCypher } from "../../shared/cypherSafety.js";
 import { logicLensVersion } from "../../shared/version.js";
+import { BRAND, BRAND_DEFAULTS, BRAND_PATHS, brandedMcpToolName, configFilePath } from "../../shared/branding.js";
 import { z } from "zod";
 
 type CatchUpState = WatchStatus["catchUp"];
@@ -17,6 +18,24 @@ type CatchUpState = WatchStatus["catchUp"];
 // flooding the model's context.
 const CYPHER_TIMEOUT_MS = 15_000;
 const CYPHER_MAX_ROWS = 1000;
+const MCP_TOOLS = {
+  getStats: brandedMcpToolName("get_stats"),
+  getWatchStatus: brandedMcpToolName("get_watch_status"),
+  listDependencies: brandedMcpToolName("list_dependencies"),
+  listContracts: brandedMcpToolName("list_contracts"),
+  trace: brandedMcpToolName("trace"),
+  impactAnalysis: brandedMcpToolName("impact_analysis"),
+  askQuestion: brandedMcpToolName("ask_question"),
+  queryCypher: brandedMcpToolName("query_cypher"),
+  semanticTrace: brandedMcpToolName("semantic_trace")
+} as const;
+const MCP_RESOURCE_URIS = {
+  config: `${BRAND.mcpServerName}://config`,
+  schema: `${BRAND.mcpServerName}://schema`,
+  stats: `${BRAND.mcpServerName}://stats`,
+  dependencies: `${BRAND.mcpServerName}://dependencies`,
+  contracts: `${BRAND.mcpServerName}://contracts`
+} as const;
 
 export type FreshnessMetadata = {
   stale: boolean;
@@ -42,16 +61,16 @@ export function buildFreshnessWarning(input: {
   let prefix = "";
 
   if (input.catchUp?.running) {
-    prefix += `[WARNING] LogicLens startup catch-up indexing is still running for ${input.catchUp.pendingRepos.length} repo(s). The graph may be stale for repos not yet completed.\n\n`;
+    prefix += `[WARNING] ${BRAND.displayName} startup catch-up indexing is still running for ${input.catchUp.pendingRepos.length} repo(s). The graph may be stale for repos not yet completed.\n\n`;
   }
 
   if (input.catchUpError) {
     const message = input.catchUpError instanceof Error ? input.catchUpError.message : String(input.catchUpError);
-    prefix += `[WARNING] LogicLens startup catch-up indexing failed: ${message}. The graph may be stale; run 'logiclens index --changed-only' manually.\n\n`;
+    prefix += `[WARNING] ${BRAND.displayName} startup catch-up indexing failed: ${message}. The graph may be stale; run '${BRAND.cliName} index --changed-only' manually.\n\n`;
   }
 
   if (input.degradedReason !== undefined) {
-    prefix += `[WARNING] LogicLens file watcher has degraded: ${input.degradedReason || "unknown error"}. Automatic index synchronization is stopped. Please run 'logiclens index --changed-only' manually.\n\n`;
+    prefix += `[WARNING] ${BRAND.displayName} file watcher has degraded: ${input.degradedReason || "unknown error"}. Automatic index synchronization is stopped. Please run '${BRAND.cliName} index --changed-only' manually.\n\n`;
   }
 
   if (input.pending.length > 0) {
@@ -166,7 +185,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   await client.watch({ catchUp: "background" });
   const catchUpState = startCatchUp(client, "background");
 
-  const mcpPidPath = path.join(cwd, ".logiclens", "mcp.pid");
+  const mcpPidPath = path.resolve(cwd, BRAND_PATHS.mcpPid);
   await fs.mkdir(path.dirname(mcpPidPath), { recursive: true });
   await fs.writeFile(
     mcpPidPath,
@@ -181,11 +200,11 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
       await fs.rm(mcpPidPath, { force: true });
     } catch {}
 
-    const stopMessage = `[${new Date().toISOString()}] [MCP Server] Stopped logiclens-mcp-server\n`;
+    const stopMessage = `[${new Date().toISOString()}] [MCP Server] Stopped ${BRAND_DEFAULTS.mcpProcessName}\n`;
     process.stderr.write(stopMessage);
     if (client.getConfig().mcp.logCalls) {
       try {
-        const logsDir = path.resolve(cwd, ".logiclens/logs");
+        const logsDir = path.resolve(cwd, BRAND_PATHS.logs);
         await fs.appendFile(path.join(logsDir, "mcp.log"), stopMessage, "utf8");
       } catch {}
     }
@@ -211,23 +230,23 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
 
   const server = new McpServer(
     {
-      name: "logiclens-mcp-server",
+      name: BRAND_DEFAULTS.mcpProcessName,
       version: logicLensVersion,
     },
     {
       instructions:
-        "LogicLens is a local-first, cross-repository contract graph. It knows which repositories " +
+        `${BRAND.displayName} is a local-first, cross-repository contract graph. It knows which repositories ` +
         "produce and consume each API, event, and schema, and can reason about the downstream impact " +
         "of a change. The graph is derived statically from source code and every answer carries " +
         "evidence (file:line), so treat it as ground truth instead of guessing cross-repo relationships.\n\n" +
-        "Reach for LogicLens whenever you are about to change code that other repositories may depend on — " +
+        `Reach for ${BRAND.displayName} whenever you are about to change code that other repositories may depend on — ` +
         "before editing an API endpoint, event, DTO/schema, or a widely-used symbol:\n" +
-        "  • logiclens_impact_analysis — before proposing an edit, check what it breaks. Pass the proposed " +
+        `  • ${MCP_TOOLS.impactAnalysis} — before proposing an edit, check what it breaks. Pass the proposed ` +
         "`change` (e.g. \"field-removed:couponCode\") to get a severity-rated blast radius (breaking/risky/" +
         "compatible) with file/line evidence.\n" +
-        "  • logiclens_trace / logiclens_semantic_trace — find the producers, consumers, and request/" +
+        `  • ${MCP_TOOLS.trace} / ${MCP_TOOLS.semanticTrace} — find the producers, consumers, and request/` +
         "response/payload schemas connected to a contract.\n" +
-        "  • logiclens_list_contracts / logiclens_list_dependencies — survey cross-repo contracts and " +
+        `  • ${MCP_TOOLS.listContracts} / ${MCP_TOOLS.listDependencies} — survey cross-repo contracts and ` +
         "dependencies before making structural changes.",
     }
   );
@@ -243,7 +262,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
 
     // Append to local log file
     try {
-      const logsDir = path.resolve(cwd, ".logiclens/logs");
+      const logsDir = path.resolve(cwd, BRAND_PATHS.logs);
       await fs.mkdir(logsDir, { recursive: true });
       await fs.appendFile(path.join(logsDir, "mcp.log"), message, "utf8");
     } catch (e) {
@@ -260,7 +279,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
     await logMcpCall("tool", name, args);
     try {
       const response = await action();
-      if (name !== "logiclens_get_watch_status" && response && Array.isArray(response.content)) {
+      if (name !== MCP_TOOLS.getWatchStatus && response && Array.isArray(response.content)) {
         const pending = client.getPendingFiles();
         const degradedReason = client.isWatcherDegraded() ? client.getWatcherDegradedReason() : undefined;
         const prefix = buildFreshnessWarning({
@@ -280,7 +299,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
         }
         response.content.push({
           type: "text",
-          text: `LogicLens freshness metadata:\n${JSON.stringify(buildFreshnessMetadata({
+          text: `${BRAND.displayName} freshness metadata:\n${JSON.stringify(buildFreshnessMetadata({
             pending,
             watcherActive: client.isWatching(),
             degradedReason,
@@ -305,12 +324,12 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
 
   // Define Tools
   server.registerTool(
-    "logiclens_get_stats",
+    MCP_TOOLS.getStats,
     {
       description: "Get summary statistics of the graph database (number of repos, files, code nodes, calls, etc.)",
     },
     async () => {
-      return wrapWithFreshness("logiclens_get_stats", {}, async () => {
+      return wrapWithFreshness(MCP_TOOLS.getStats, {}, async () => {
         const stats = await client.stats();
         return {
           content: [{ type: "text" as const, text: JSON.stringify(stats, null, 2) }],
@@ -320,12 +339,12 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   );
 
   server.registerTool(
-    "logiclens_get_watch_status",
+    MCP_TOOLS.getWatchStatus,
     {
-      description: "Get LogicLens file watcher and startup catch-up status, including partial coverage and pending files",
+      description: `Get ${BRAND.displayName} file watcher and startup catch-up status, including partial coverage and pending files`,
     },
     async () => {
-      return wrapWithFreshness("logiclens_get_watch_status", {}, async () => {
+      return wrapWithFreshness(MCP_TOOLS.getWatchStatus, {}, async () => {
         return {
           content: [{ type: "text" as const, text: JSON.stringify(client.getWatchStatus(catchUpState), null, 2) }],
         };
@@ -334,7 +353,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   );
 
   server.registerTool(
-    "logiclens_list_dependencies",
+    MCP_TOOLS.listDependencies,
     {
       description: "List cross-repository dependencies and their evidence in the workspace",
       inputSchema: {
@@ -344,7 +363,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
       },
     },
     async ({ strength, type, limit }) => {
-      return wrapWithFreshness("logiclens_list_dependencies", { strength, type, limit }, async () => {
+      return wrapWithFreshness(MCP_TOOLS.listDependencies, { strength, type, limit }, async () => {
         const deps = await client.dependencies({ strength, type, limit });
         return {
           content: [{ type: "text" as const, text: JSON.stringify(deps, null, 2) }],
@@ -354,7 +373,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   );
 
   server.registerTool(
-    "logiclens_list_contracts",
+    MCP_TOOLS.listContracts,
     {
       description: "List recognized contracts and their producer/consumer/shares counts",
       inputSchema: {
@@ -363,7 +382,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
       },
     },
     async ({ kind, limit }) => {
-      return wrapWithFreshness("logiclens_list_contracts", { kind, limit }, async () => {
+      return wrapWithFreshness(MCP_TOOLS.listContracts, { kind, limit }, async () => {
         const contracts = await client.contracts({ kind, limit });
         return {
           content: [{ type: "text" as const, text: JSON.stringify(contracts, null, 2) }],
@@ -373,7 +392,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   );
 
   server.registerTool(
-    "logiclens_trace",
+    MCP_TOOLS.trace,
     {
       description: "Trace a specific contract (e.g. kind:value) or entity to find all producers, consumers, and references",
       inputSchema: {
@@ -381,7 +400,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
       },
     },
     async ({ target }) => {
-      return wrapWithFreshness("logiclens_trace", { target }, async () => {
+      return wrapWithFreshness(MCP_TOOLS.trace, { target }, async () => {
         const traceResult = await client.trace(target);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(traceResult, null, 2) }],
@@ -391,7 +410,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   );
 
   server.registerTool(
-    "logiclens_impact_analysis",
+    MCP_TOOLS.impactAnalysis,
     {
       description: "Before editing an API, event, schema, or cross-repo symbol, check what your change will break. Evaluates the downstream blast radius of changing a code symbol or contract and rates each impact (breaking/risky/compatible) with file/line evidence. Pass `change` in '<changeType>:<detail>' format (e.g. 'field-removed:couponCode') for structured, severity-rated analysis; omit it for a broad symbol/entity impact survey.",
       inputSchema: {
@@ -400,7 +419,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
       },
     },
     async ({ target, change }) => {
-      return wrapWithFreshness("logiclens_impact_analysis", { target, change }, async () => {
+      return wrapWithFreshness(MCP_TOOLS.impactAnalysis, { target, change }, async () => {
         // Phase 5: Use change-based impact analysis when --change is provided
         if (change) {
           const VALID_CHANGE_TYPES = new Set([
@@ -441,7 +460,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   );
 
   server.registerTool(
-    "logiclens_ask_question",
+    MCP_TOOLS.askQuestion,
     {
       description: "Retrieve structured codebase context (matching code symbols, markdown sections, contracts, dependencies, semantic matches, and call edges) for a query",
       inputSchema: {
@@ -449,7 +468,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
       },
     },
     async ({ question }) => {
-      return wrapWithFreshness("logiclens_ask_question", { question }, async () => {
+      return wrapWithFreshness(MCP_TOOLS.askQuestion, { question }, async () => {
         const retrieval = await client.retrieve(question);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(retrieval, null, 2) }],
@@ -459,13 +478,13 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   );
 
   server.registerTool(
-    "logiclens_query_cypher",
+    MCP_TOOLS.queryCypher,
     {
       description:
         "LAST RESORT. Run a raw, read-only Cypher query against the Kuzu graph database. Prefer the " +
-        "structured tools first — logiclens_trace / logiclens_semantic_trace (producers/consumers/schemas), " +
-        "logiclens_impact_analysis (blast radius), logiclens_list_contracts / logiclens_list_dependencies " +
-        "(surveys), logiclens_ask_question (free-form retrieval). Those return evidence-carrying, schema-stable " +
+        `structured tools first — ${MCP_TOOLS.trace} / ${MCP_TOOLS.semanticTrace} (producers/consumers/schemas), ` +
+        `${MCP_TOOLS.impactAnalysis} (blast radius), ${MCP_TOOLS.listContracts} / ${MCP_TOOLS.listDependencies} ` +
+        `(surveys), ${MCP_TOOLS.askQuestion} (free-form retrieval). Those return evidence-carrying, schema-stable ` +
         "answers; raw Cypher couples you to the internal graph schema and bypasses that framing. Only reach for " +
         "this when no structured tool can express the question. Writes are rejected; queries are capped at " +
         `${CYPHER_TIMEOUT_MS / 1000}s and ${CYPHER_MAX_ROWS} rows, so add WHERE filters and LIMIT for large graphs.`,
@@ -474,7 +493,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
       },
     },
     async ({ cypher }) => {
-      return wrapWithFreshness("logiclens_query_cypher", { cypher }, async () => {
+      return wrapWithFreshness(MCP_TOOLS.queryCypher, { cypher }, async () => {
         assertReadOnlyCypher(cypher);
 
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -519,7 +538,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
 
   // Phase 4.1: Semantic trace over SEMANTIC_REL edges (single-hop)
   server.registerTool(
-    "logiclens_semantic_trace",
+    MCP_TOOLS.semanticTrace,
     {
       description:
         "Trace SEMANTIC_REL edges between ContractSpecs to discover how services are connected " +
@@ -548,7 +567,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
     },
     async ({ target, specId, maxHops, direction }) => {
       return wrapWithFreshness(
-        "logiclens_semantic_trace",
+        MCP_TOOLS.semanticTrace,
         { target, specId, maxHops, direction },
         async () => {
           if (target) {
@@ -598,16 +617,15 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
 
   // Register Resources
   server.registerResource(
-    "LogicLens Configuration",
-    "logiclens://config",
+    `${BRAND.displayName} Configuration`,
+    MCP_RESOURCE_URIS.config,
     {
-      description: "Exposes the active .logiclens/config.yaml workspace settings",
+      description: `Exposes the active ${BRAND.configDirName}/${BRAND.configFileName} workspace settings`,
       mimeType: "application/yaml",
     },
     async (uri) => {
-      await logMcpCall("resource", "LogicLens Configuration", { uri: uri.href });
-      const configPath = path.resolve(cwd, ".logiclens", "config.yaml");
-      const content = await fs.readFile(configPath, "utf-8");
+      await logMcpCall("resource", `${BRAND.displayName} Configuration`, { uri: uri.href });
+      const content = await fs.readFile(configFilePath(cwd), "utf-8");
       return {
         contents: [{ uri: uri.href, mimeType: "application/yaml", text: content }],
       };
@@ -615,14 +633,14 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   );
 
   server.registerResource(
-    "LogicLens Graph DB Schema",
-    "logiclens://schema",
+    `${BRAND.displayName} Graph DB Schema`,
+    MCP_RESOURCE_URIS.schema,
     {
       description: "Exposes the Node and Relationship tables configured in Kuzu DB",
       mimeType: "text/markdown",
     },
     async (uri) => {
-      await logMcpCall("resource", "LogicLens Graph DB Schema", { uri: uri.href });
+      await logMcpCall("resource", `${BRAND.displayName} Graph DB Schema`, { uri: uri.href });
       const formattedSchema = [
         "# Kuzu Schema Statements",
         "This is the current graph structure of Logiclens database:",
@@ -638,14 +656,14 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   );
 
   server.registerResource(
-    "LogicLens Database Statistics",
-    "logiclens://stats",
+    `${BRAND.displayName} Database Statistics`,
+    MCP_RESOURCE_URIS.stats,
     {
       description: "Database node and edge counts in JSON",
       mimeType: "application/json",
     },
     async (uri) => {
-      await logMcpCall("resource", "LogicLens Database Statistics", { uri: uri.href });
+      await logMcpCall("resource", `${BRAND.displayName} Database Statistics`, { uri: uri.href });
       const stats = await client.stats();
       return {
         contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(stats, null, 2) }],
@@ -654,14 +672,14 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   );
 
   server.registerResource(
-    "LogicLens Dependency Summary",
-    "logiclens://dependencies",
+    `${BRAND.displayName} Dependency Summary`,
+    MCP_RESOURCE_URIS.dependencies,
     {
       description: "A summary table of cross-repository dependencies",
       mimeType: "application/json",
     },
     async (uri) => {
-      await logMcpCall("resource", "LogicLens Dependency Summary", { uri: uri.href });
+      await logMcpCall("resource", `${BRAND.displayName} Dependency Summary`, { uri: uri.href });
       const deps = await client.dependencies({ limit: 200 });
       return {
         contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(deps, null, 2) }],
@@ -670,14 +688,14 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   );
 
   server.registerResource(
-    "LogicLens Contracts Summary",
-    "logiclens://contracts",
+    `${BRAND.displayName} Contracts Summary`,
+    MCP_RESOURCE_URIS.contracts,
     {
       description: "A summary of all registered contract endpoints/packages",
       mimeType: "application/json",
     },
     async (uri) => {
-      await logMcpCall("resource", "LogicLens Contracts Summary", { uri: uri.href });
+      await logMcpCall("resource", `${BRAND.displayName} Contracts Summary`, { uri: uri.href });
       const contracts = await client.contracts({ limit: 200 });
       return {
         contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(contracts, null, 2) }],
@@ -703,7 +721,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
             role: "user",
             content: {
               type: "text",
-              text: `You are performing a change impact assessment for '${target}'. Use the 'logiclens_impact_analysis' tool to retrieve seeds, calls, and documents, then write a structured report outlining:\n1. The blast radius (which repositories/files/symbols are affected).\n2. Integration risks (which contracts are broken or consumer systems impacted).\n3. Recommended migration or upgrade steps.`,
+              text: `You are performing a change impact assessment for '${target}'. Use the '${MCP_TOOLS.impactAnalysis}' tool to retrieve seeds, calls, and documents, then write a structured report outlining:\n1. The blast radius (which repositories/files/symbols are affected).\n2. Integration risks (which contracts are broken or consumer systems impacted).\n3. Recommended migration or upgrade steps.`,
             },
           },
         ],
@@ -728,7 +746,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
             role: "user",
             content: {
               type: "text",
-              text: `Identify all cross-repository workflows and actions involving the domain entity '${entity}'. Use 'logiclens_trace' to find contract/evidence mentions, and construct a detailed sequential description showing how services consume and produce events/APIs related to this entity.`,
+              text: `Identify all cross-repository workflows and actions involving the domain entity '${entity}'. Use '${MCP_TOOLS.trace}' to find contract/evidence mentions, and construct a detailed sequential description showing how services consume and produce events/APIs related to this entity.`,
             },
           },
         ],
@@ -739,11 +757,11 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  const startMessage = `[${new Date().toISOString()}] [MCP Server] Started logiclens-mcp-server version ${logicLensVersion}\n`;
+  const startMessage = `[${new Date().toISOString()}] [MCP Server] Started ${BRAND_DEFAULTS.mcpProcessName} version ${logicLensVersion}\n`;
   process.stderr.write(startMessage);
   if (client.getConfig().mcp.logCalls) {
     try {
-      const logsDir = path.resolve(cwd, ".logiclens/logs");
+      const logsDir = path.resolve(cwd, BRAND_PATHS.logs);
       await fs.mkdir(logsDir, { recursive: true });
       await fs.appendFile(path.join(logsDir, "mcp.log"), startMessage, "utf8");
     } catch (e) {

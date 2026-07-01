@@ -25,6 +25,7 @@ import type {
   WorkflowOperationEdge
 } from "../../../core/parsing/types.js";
 import { schemaStatements, systemId } from "../../../core/graph-model/schema.js";
+import { getBrandedEnv } from "../../../shared/branding.js";
 import type {
   GraphDB,
   GraphValue,
@@ -104,7 +105,7 @@ const managedKuzuHandles: Array<{ db?: kuzu.Database; conn?: kuzu.Connection }> 
 const DEFAULT_MAX_DB_SIZE = 137438953472; // 128 GiB (2^37)
 
 function resolveMaxDBSize(): number {
-  const raw = process.env.LOGICLENS_KUZU_MAX_DB_SIZE;
+  const raw = getBrandedEnv("KUZU_MAX_DB_SIZE");
   if (!raw) return DEFAULT_MAX_DB_SIZE;
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_MAX_DB_SIZE;
@@ -754,7 +755,7 @@ export class KuzuGraphDB implements GraphDB {
 }
 
 function shouldUseManagedKuzuClose(): boolean {
-  const mode = process.env.LOGICLENS_KUZU_CLOSE_MODE?.toLowerCase();
+  const mode = getBrandedEnv("KUZU_CLOSE_MODE")?.toLowerCase();
   if (mode === "explicit") return false;
   return true;
 }

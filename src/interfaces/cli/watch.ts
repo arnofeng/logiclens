@@ -1,4 +1,5 @@
 import { createLogicLens } from "../sdk/client.js";
+import { BRAND } from "../../shared/branding.js";
 
 export type WatchCommandOptions = {
   debounceMs?: number;
@@ -50,7 +51,7 @@ export async function watchCommand(options: WatchCommandOptions, cwd = process.c
       process.exit(1);
     }
 
-    console.log("LogicLens file watcher started.");
+    console.log(`${BRAND.displayName} file watcher started.`);
     console.log("Press Ctrl+C to terminate.");
   } catch (error: any) {
     console.error(`Error: ${error.message}`);

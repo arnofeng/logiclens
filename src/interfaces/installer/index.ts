@@ -18,6 +18,7 @@ import {
   resolveTargetFlag,
 } from './targets/registry.js';
 import type { AgentTarget, Location, TargetId } from './targets/types.js';
+import { BRAND, configFilePath } from '../../shared/branding.js';
 
 function getVersion(): string {
   try {
@@ -44,7 +45,7 @@ export async function runInstaller(): Promise<void> {
 export async function runInstallerWithOptions(opts: RunInstallerOptions): Promise<void> {
   const clack = await import('@clack/prompts');
 
-  clack.intro(`LogicLens MCP Installer v${getVersion()}`);
+  clack.intro(`${BRAND.displayName} MCP Installer v${getVersion()}`);
 
   const useDefaults = opts.yes === true;
 
@@ -89,7 +90,7 @@ export async function runInstallerWithOptions(opts: RunInstallerOptions): Promis
     autoAllow = true;
   } else if (targets.some((t) => t.id === 'claude')) {
     const ans = await clack.confirm({
-      message: 'Auto-allow LogicLens commands? (Skips permission prompts in Claude Code)',
+      message: `Auto-allow ${BRAND.displayName} commands? (Skips permission prompts in Claude Code)`,
       initialValue: true,
     });
     if (clack.isCancel(ans)) {
@@ -125,11 +126,11 @@ export async function runInstallerWithOptions(opts: RunInstallerOptions): Promis
   }
 
   if (location === 'local') {
-    const configExists = fs.existsSync(path.join(process.cwd(), '.logiclens', 'config.yaml'));
+    const configExists = fs.existsSync(configFilePath(process.cwd()));
     if (!configExists) {
-      clack.log.info('This project is not yet initialized with LogicLens.');
+      clack.log.info(`This project is not yet initialized with ${BRAND.displayName}.`);
       const shouldInit = await clack.confirm({
-        message: 'Initialize LogicLens config in this project now?',
+        message: `Initialize ${BRAND.displayName} config in this project now?`,
         initialValue: true,
       });
       if (clack.isCancel(shouldInit)) {
@@ -139,14 +140,14 @@ export async function runInstallerWithOptions(opts: RunInstallerOptions): Promis
       if (shouldInit) {
         const { initCommand } = await import('../cli/init.js');
         await initCommand();
-        clack.log.success('Initialized .logiclens/config.yaml');
+        clack.log.success(`Initialized ${BRAND.configDirName}/${BRAND.configFileName}`);
       }
     }
-    clack.note('To index your project repositories, run:\nlogiclens index', 'Next Step');
+    clack.note(`To index your project repositories, run:\n${BRAND.cliName} index`, 'Next Step');
   }
 
   const finalNote = targets.length > 0
-    ? `Done! Restart your agent${targets.length > 1 ? 's' : ''} to use LogicLens.`
+    ? `Done! Restart your agent${targets.length > 1 ? 's' : ''} to use ${BRAND.displayName}.`
     : 'Done!';
   clack.outro(finalNote);
 }
@@ -199,7 +200,7 @@ export function uninstallTargets(
 export async function runUninstaller(opts: RunUninstallerOptions): Promise<void> {
   const clack = await import('@clack/prompts');
 
-  clack.intro(`LogicLens MCP Uninstaller v${getVersion()}`);
+  clack.intro(`${BRAND.displayName} MCP Uninstaller v${getVersion()}`);
 
   const useDefaults = opts.yes === true;
 
@@ -210,7 +211,7 @@ export async function runUninstaller(opts: RunUninstallerOptions): Promise<void>
     location = 'global';
   } else {
     const sel = await clack.select({
-      message: 'Remove LogicLens from all your projects, or just this one?',
+      message: `Remove ${BRAND.displayName} from all your projects, or just this one?`,
       options: [
         { value: 'global' as const, label: 'All projects (global)', hint: '~/.claude.json, ~/.cursor/mcp.json, etc.' },
         { value: 'local'  as const, label: 'Just this project (local)', hint: './.mcp.json, ./.cursor/mcp.json, etc.' },
@@ -250,18 +251,18 @@ export async function runUninstaller(opts: RunUninstallerOptions): Promise<void>
     }
   }
 
-  if (location === 'local' && fs.existsSync(path.join(process.cwd(), '.logiclens'))) {
-    clack.log.info(`The .logiclens/ index for this project is still here. Run \`logiclens uninit\` to delete it.`);
+  if (location === 'local' && fs.existsSync(path.join(process.cwd(), BRAND.configDirName))) {
+    clack.log.info(`The ${BRAND.configDirName}/ index for this project is still here. Run \`${BRAND.cliName} uninit\` to delete it.`);
   }
 
   if (removed.length > 0) {
     const names = removed.map((r) => r.displayName).join(', ');
     clack.outro(
-      `Removed LogicLens from ${removed.length} agent${removed.length > 1 ? 's' : ''}: ${names}. ` +
+      `Removed ${BRAND.displayName} from ${removed.length} agent${removed.length > 1 ? 's' : ''}: ${names}. ` +
       `Restart ${removed.length > 1 ? 'them' : 'it'} to apply.`,
     );
   } else {
-    clack.outro(`LogicLens was not configured in any ${location} agent — nothing to remove.`);
+    clack.outro(`${BRAND.displayName} was not configured in any ${location} agent — nothing to remove.`);
   }
 }
 
@@ -292,7 +293,7 @@ async function resolveTargets(
   const initial = initialValues.length > 0 ? initialValues : ['claude'];
 
   const choice = await clack.multiselect({
-    message: 'Which agents should LogicLens configure?',
+    message: `Which agents should ${BRAND.displayName} configure?`,
     options: ALL_TARGETS.map((t) => {
       const det = detected.find(({ target }) => target.id === t.id)!.detection;
       const flag = det.installed ? '(detected)' : '(not found)';

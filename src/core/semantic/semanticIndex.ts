@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { ChromaClient, type Metadata } from "chromadb";
 import type { EmbeddingLevel, LogicLensConfig } from "../../config/schema.js";
+import { BRAND_PATHS } from "../../shared/branding.js";
 import type { ParsedDocument, ParsedFile, ParsedGraphFile, RepoNode } from "../parsing/types.js";
 import { systemId } from "../graph-model/schema.js";
 import { hashText } from "../../shared/hash.js";
@@ -278,7 +279,7 @@ export class FallbackSemanticIndex implements SemanticIndex {
 }
 
 export function defaultSemanticIndex(cwd = process.cwd(), config?: Pick<LogicLensConfig, "semantic">): SemanticIndex {
-  const json = new JsonSemanticIndex(path.resolve(cwd, config?.semantic.jsonPath ?? ".logiclens/semantic-index.json"));
+  const json = new JsonSemanticIndex(path.resolve(cwd, config?.semantic.jsonPath ?? BRAND_PATHS.semanticIndex));
   if (config?.semantic.provider === "chroma") {
     const chroma = new ChromaSemanticIndex({
       url: config.semantic.chroma.url,

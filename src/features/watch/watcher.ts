@@ -5,6 +5,7 @@ import ignore from "ignore";
 import type { LogicLensClient } from "../../interfaces/sdk/client.js";
 import { shouldWatchRepo } from "./policy.js";
 import { isGeneratedFile } from "../../shared/generatedFile.js";
+import { BRAND } from "../../shared/branding.js";
 import { builtinLanguageForPath } from "../../core/parsing/parserRegistry.js";
 import { parserRegistry } from "../../core/registries/registry.js";
 import { toRepoNode } from "../../core/workspace/repoRegistry.js";
@@ -99,8 +100,8 @@ export class FileMatcher {
     if (
       posixPath === ".git" ||
       posixPath.startsWith(".git/") ||
-      posixPath === ".logiclens" ||
-      posixPath.startsWith(".logiclens/")
+      posixPath === BRAND.configDirName ||
+      posixPath.startsWith(`${BRAND.configDirName}/`)
     ) {
       return true;
     }
@@ -116,9 +117,9 @@ export class FileMatcher {
     const posixPath = relativePath.split(path.sep).join("/");
     if (
       posixPath.startsWith(".git/") ||
-      posixPath.startsWith(".logiclens/") ||
+      posixPath.startsWith(`${BRAND.configDirName}/`) ||
       posixPath.includes("/.git/") ||
-      posixPath.includes("/.logiclens/")
+      posixPath.includes(`/${BRAND.configDirName}/`)
     ) {
       return false;
     }

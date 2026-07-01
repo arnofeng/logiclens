@@ -2,6 +2,7 @@ import { ProgressBar } from "../../shared/progress.js";
 import { createLogicLens } from "../sdk/client.js";
 import { findBlockedReindexTargets } from "../../core/indexing/run.js";
 import type { IndexOptions } from "../../core/indexing/types.js";
+import { BRAND } from "../../shared/branding.js";
 
 export async function indexCommand(options: IndexOptions, cwd = process.cwd()): Promise<void> {
   const client = await createLogicLens({
@@ -29,7 +30,7 @@ export async function indexCommand(options: IndexOptions, cwd = process.cwd()): 
       if (blocked.length > 0) {
         const graphPath = client.getConfig().graph.path;
         console.error(`Already indexed: ${blocked.join(", ")}.`);
-        console.error(`Use "logiclens index --changed-only" to update incrementally, or delete the graph (${graphPath}) and re-run "logiclens index" for a clean full rebuild.`);
+        console.error(`Use "${BRAND.cliName} index --changed-only" to update incrementally, or delete the graph (${graphPath}) and re-run "${BRAND.cliName} index" for a clean full rebuild.`);
         process.exitCode = 1;
         return;
       }

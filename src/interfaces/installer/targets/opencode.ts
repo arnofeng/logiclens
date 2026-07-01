@@ -19,6 +19,9 @@ import {
   LOGICLENS_SECTION_END,
   LOGICLENS_SECTION_START,
 } from '../instructions-template.js';
+import { BRAND } from '../../../shared/branding.js';
+
+const MCP_SERVER_KEY = BRAND.mcpServerName;
 
 function globalConfigDir(): string {
   const xdg = process.env.XDG_CONFIG_HOME && process.env.XDG_CONFIG_HOME.trim().length > 0
@@ -69,7 +72,7 @@ function parseConfig(text: string): Record<string, any> {
 function getOpencodeServerEntry(): { type: string; command: string[]; enabled: boolean } {
   return {
     type: 'local',
-    command: ['logiclens', 'mcp'],
+    command: [BRAND.cliName, 'mcp'],
     enabled: true,
   };
 }
@@ -88,7 +91,7 @@ class OpencodeTarget implements AgentTarget {
   detect(loc: Location): DetectionResult {
     const file = configPath(loc);
     const config = parseConfig(readConfigText(file));
-    const alreadyConfigured = !!config.mcp?.logiclens;
+    const alreadyConfigured = !!config.mcp?.[MCP_SERVER_KEY];
     const legacy = legacyWindowsConfigDir();
     const installed = loc === 'global'
       ? fs.existsSync(globalConfigDir()) || (!!legacy && fs.existsSync(legacy))
@@ -120,7 +123,7 @@ class OpencodeTarget implements AgentTarget {
     const target = configPath(loc);
     const snippet = JSON.stringify({
       $schema: 'https://opencode.ai/config.json',
-      mcp: { logiclens: getOpencodeServerEntry() },
+      mcp: { [MCP_SERVER_KEY]: getOpencodeServerEntry() },
     }, null, 2);
     return `# Add to ${target}\n\n${snippet}\n`;
   }
@@ -140,7 +143,7 @@ function writeMcpEntry(loc: Location): WriteResult['files'][number] {
   }
 
   const config = parseConfig(text);
-  const before = config.mcp?.logiclens;
+  const before = config.mcp?.[MCP_SERVER_KEY];
   const after = getOpencodeServerEntry();
 
   if (jsonDeepEqual(before, after)) {
@@ -154,7 +157,7 @@ function writeMcpEntry(loc: Location): WriteResult['files'][number] {
     text = applyEdits(text, schemaEdits);
   }
 
-  const edits = modify(text, ['mcp', 'logiclens'], after, {
+  const edits = modify(text, ['mcp', MCP_SERVER_KEY], after, {
     formattingOptions: FORMATTING,
   });
   const updated = applyEdits(text, edits);
@@ -167,9 +170,9 @@ function removeMcpEntryAt(file: string): WriteResult['files'][number] {
   if (!fs.existsSync(file)) return { path: file, action: 'not-found' };
   const text = readConfigText(file);
   const config = parseConfig(text);
-  if (!config.mcp?.logiclens) return { path: file, action: 'not-found' };
+  if (!config.mcp?.[MCP_SERVER_KEY]) return { path: file, action: 'not-found' };
 
-  let edits = modify(text, ['mcp', 'logiclens'], undefined, {
+  let edits = modify(text, ['mcp', MCP_SERVER_KEY], undefined, {
     formattingOptions: FORMATTING,
   });
   let updated = applyEdits(text, edits);

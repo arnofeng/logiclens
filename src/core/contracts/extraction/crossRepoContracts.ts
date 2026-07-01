@@ -26,6 +26,7 @@ import {
   materializedWorkflowOperationDedupKey
 } from "./dedup.js";
 import type { LogicLensConfig } from "../../../config/schema.js";
+import { BRAND } from "../../../shared/branding.js";
 import { loadConfig, defaultConfig } from "../../../config/loadConfig.js";
 import { detectFrameworks, isExtractorEnabled } from "../../frameworks/detect.js";
 import type { DetectedFramework } from "../../frameworks/types.js";
@@ -427,17 +428,17 @@ function buildExtractContext(
       get(target, prop, receiver) {
         if (prop === "repoResolver" && !needs.repoResolver) {
           console.warn(
-            `[LogicLens Warning] Extractor "${extractor.name}" accessed "context.repoResolver" but did not declare it in "needs.repoResolver".`
+            `[${BRAND.displayName} Warning] Extractor "${extractor.name}" accessed "context.repoResolver" but did not declare it in "needs.repoResolver".`
           );
         }
         if (prop === "aliasOverrides" && !needs.aliasOverrides) {
           console.warn(
-            `[LogicLens Warning] Extractor "${extractor.name}" accessed "context.aliasOverrides" but did not declare it in "needs.aliasOverrides".`
+            `[${BRAND.displayName} Warning] Extractor "${extractor.name}" accessed "context.aliasOverrides" but did not declare it in "needs.aliasOverrides".`
           );
         }
         if (prop === "parsedFiles" && needs.parsedFiles === false) {
           console.warn(
-            `[LogicLens Warning] Extractor "${extractor.name}" accessed "context.parsedFiles" but declared "needs.parsedFiles: false".`
+            `[${BRAND.displayName} Warning] Extractor "${extractor.name}" accessed "context.parsedFiles" but declared "needs.parsedFiles: false".`
           );
         }
         return Reflect.get(target, prop, receiver);
