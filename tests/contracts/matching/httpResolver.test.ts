@@ -318,7 +318,30 @@ describe("HTTP Resolver", () => {
     expect(edges[0]!.toSpecId).toBe(beExact.id);
   });
 
+  it("does NOT match path-only if an exact match exists in the same repo", () => {
+    const beExact = makeHttpSpec({
+      id: "spec:be-exact", contractId: "c:be-exact", repoId: "repo-backend",
+      method: "POST", path: "/api/orders", pathTemplate: "/api/orders"
+    });
+    const beAny = makeHttpSpec({
+      id: "spec:be-any", contractId: "c:be-any", repoId: "repo-backend",
+      method: undefined, path: "/api/orders", pathTemplate: "/api/orders"
+    });
+    const consumer = makeHttpSpec({
+      id: "spec:c1", contractId: "c:c1", repoId: "repo-frontend",
+      method: "POST", path: "/api/orders", pathTemplate: "/api/orders"
+    });
+    const roleMap = makeRoleMap([beExact, beAny, consumer], {
+      "spec:be-exact": "producer",
+      "spec:be-any": "producer",
+      "spec:c1": "consumer"
+    });
 
+    const edges = resolveHttpRelations([beExact, beAny, consumer], roleMap);
+    // Should ONLY match the exact one, not the path-only (ANY method) one
+    expect(edges).toHaveLength(1);
+    expect(edges[0]!.toSpecId).toBe(beExact.id);
+  });
 
   it("does NOT match template-compatible when methods differ", () => {
     const producer = makeHttpSpec({

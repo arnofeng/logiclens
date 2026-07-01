@@ -325,14 +325,18 @@ export function resolveHttpRelations(
     }
 
     for (const [_, repoCandidates] of candidatesByRepo) {
-      // Check if we have an exact path match (either exact-method-path or path-only) in this repo group
-      const hasExactPath = repoCandidates.some(
-        c => c.matchKind === "exact-method-path" || c.matchKind === "path-only"
-      );
+      // Prioritize exact-method-path, then path-only, then fallback to other matches in this repo group
+      const hasExact = repoCandidates.some(c => c.matchKind === "exact-method-path");
+      const hasPathOnly = repoCandidates.some(c => c.matchKind === "path-only");
       for (const c of repoCandidates) {
-        // If an exact path match exists in this repo, discard any non-exact path match kinds (like static-to-template)
-        if (hasExactPath && c.matchKind !== "exact-method-path" && c.matchKind !== "path-only") {
-          continue;
+        if (hasExact) {
+          if (c.matchKind !== "exact-method-path") {
+            continue;
+          }
+        } else if (hasPathOnly) {
+          if (c.matchKind !== "path-only") {
+            continue;
+          }
         }
         finalEdges.push(c.edge);
       }
