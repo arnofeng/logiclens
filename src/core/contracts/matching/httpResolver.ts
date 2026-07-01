@@ -212,7 +212,13 @@ export function resolveHttpRelations(
   const producerBuckets = bucketSpecs(producers);
   const consumerBuckets = bucketSpecs(consumers);
 
-  const edges: SemanticRelationEdge[] = [];
+  interface Candidate {
+    consumerSpec: ContractSpecNode;
+    producerSpec: ContractSpecNode;
+    matchKind: HttpMatchKind;
+    edge: SemanticRelationEdge;
+  }
+  const candidates: Candidate[] = [];
   const seen = new Set<string>();
 
   // Match within each consumer bucket against its corresponding producer bucket,
@@ -241,13 +247,18 @@ export function resolveHttpRelations(
         if (seen.has(dedupKey)) continue;
         seen.add(dedupKey);
 
-        edges.push({
-          fromSpecId: consumerSpec.id,
-          toSpecId: producerSpec.id,
-          kind: "CALLS_ENDPOINT",
-          evidenceId: consumerSpec.evidenceId,
-          reason: match.reason,
-          confidence: match.confidence
+        candidates.push({
+          consumerSpec,
+          producerSpec,
+          matchKind: match.kind,
+          edge: {
+            fromSpecId: consumerSpec.id,
+            toSpecId: producerSpec.id,
+            kind: "CALLS_ENDPOINT",
+            evidenceId: consumerSpec.evidenceId,
+            reason: match.reason,
+            confidence: match.confidence
+          }
         });
       }
     }
@@ -269,20 +280,67 @@ export function resolveHttpRelations(
           if (seen.has(dedupKey)) continue;
           seen.add(dedupKey);
 
-          edges.push({
-            fromSpecId: consumerSpec.id,
-            toSpecId: producerSpec.id,
-            kind: "CALLS_ENDPOINT",
-            evidenceId: consumerSpec.evidenceId,
-            reason: match.reason,
-            confidence: match.confidence
+          candidates.push({
+            consumerSpec,
+            producerSpec,
+            matchKind: match.kind,
+            edge: {
+              fromSpecId: consumerSpec.id,
+              toSpecId: producerSpec.id,
+              kind: "CALLS_ENDPOINT",
+              evidenceId: consumerSpec.evidenceId,
+              reason: match.reason,
+              confidence: match.confidence
+            }
           });
         }
       }
     }
   }
 
-  return edges;
+  // Group candidates by consumerSpec.id
+  const candidatesByConsumer = new Map<string, Candidate[]>();
+  for (const c of candidates) {
+    let list = candidatesByConsumer.get(c.consumerSpec.id);
+    if (!list) {
+      list = [];
+      candidatesByConsumer.set(c.consumerSpec.id, list);
+    }
+    list.push(c);
+  }
+
+  const finalEdges: SemanticRelationEdge[] = [];
+
+  for (const [_, consumerCandidates] of candidatesByConsumer) {
+    // Group this consumer's candidates by the producer's repoId
+    const candidatesByRepo = new Map<string, Candidate[]>();
+    for (const c of consumerCandidates) {
+      const repoId = c.producerSpec.repoId;
+      let list = candidatesByRepo.get(repoId);
+      if (!list) {
+        list = [];
+        candidatesByRepo.set(repoId, list);
+      }
+      list.push(c);
+    }
+
+    for (const [_, repoCandidates] of candidatesByRepo) {
+      // Check if we have an exact path match (either exact-method-path or path-only) in this repo group
+      const hasExactPath = repoCandidates.some(
+        c => c.matchKind === "exact-method-path" || c.matchKind === "path-only"
+      );
+      for (const c of repoCandidates) {
+        // If an exact path match exists in this repo, discard any non-exact path match kinds (like static-to-template)
+        if (hasExactPath && c.matchKind !== "exact-method-path" && c.matchKind !== "path-only") {
+          continue;
+        }
+        finalEdges.push(c.edge);
+      }
+    }
+  }
+
+  return finalEdges;
+
 }
 
 function bucketSpecs(specs: ContractSpecNode[]): Map<string, ContractSpecNode[]> {

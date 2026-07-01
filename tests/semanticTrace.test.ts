@@ -7,6 +7,9 @@ import {
 import { canonicalHttpContractKey } from "../src/core/contracts/apiPath.js";
 import { serializeSpec } from "../src/core/contracts/spec.js";
 import type { ContractSpecNode, ReadableContractSpecNode, SemanticRelationEdge } from "../src/core/parsing/types.js";
+import { printSemanticTrace, relationVerb } from "../src/interfaces/cli/specTrace.js";
+import type { SemanticTraceGraph } from "../src/core/contracts/semanticTrace.js";
+
 
 // ---------------------------------------------------------------------------
 // Fixtures — mirror real extractor output (canonicalHttpContractKey = "METHOD:/path")
@@ -128,7 +131,6 @@ describe("normalizeSemanticTarget", () => {
     expect(normalizeSemanticTarget("graphql Subscription.orderCreated")).toBe("graphql:subscription.orderCreated");
   });
 });
-
 describe("traceSemanticGraph", () => {
   const producer = httpSpec("spec:prod", "order-service", "OrderController.ts");
   const consumer = httpSpec("spec:cons", "web-app", "api/order.ts");
@@ -249,5 +251,101 @@ describe("summarizeSpec", () => {
     expect(summarizeSpec(grpcSpec("grpc", "r"))).toBe("OrderService/CreateOrder  request=CreateOrderRequest  response=CreateOrderResponse  streaming=unary");
     expect(summarizeSpec(dubboSpec("dubbo", "r"))).toBe("com.acme.OrderService#createOrder  request=CreateOrderRequest  response=CreateOrderResponse  group=orders  version=v1");
     expect(summarizeSpec(graphqlSpec("graphql", "r"))).toBe("Query.user  request=UserInput  response=User  source=sdl");
+  });
+});
+
+describe("printSemanticTrace CLI text rendering", () => {
+  it("renders non-CALLS_ENDPOINT target connections with correct verbs", () => {
+    const graph: SemanticTraceGraph = {
+      target: "event OrderCreated",
+      targets: [
+        {
+          specId: "spec:publisher",
+          contractId: "contract:event:ordercreated",
+          specKind: "event",
+          canonicalKey: "ordercreated",
+          repoId: "repo:publisher-service",
+          fileId: "file:publisher-service:OrderService.ts",
+          confidence: 0.9,
+          hop: 0,
+          role: "target",
+          summary: "OrderCreated (event)"
+        },
+        {
+          specId: "spec:subscriber",
+          contractId: "contract:event:ordercreated",
+          specKind: "event",
+          canonicalKey: "ordercreated",
+          repoId: "repo:subscriber-service",
+          fileId: "file:subscriber-service:Handler.ts",
+          confidence: 0.9,
+          hop: 0,
+          role: "target",
+          summary: "OrderCreated (event)"
+        }
+      ],
+      nodes: [
+        {
+          specId: "spec:publisher",
+          contractId: "contract:event:ordercreated",
+          specKind: "event",
+          canonicalKey: "ordercreated",
+          repoId: "repo:publisher-service",
+          fileId: "file:publisher-service:OrderService.ts",
+          confidence: 0.9,
+          hop: 0,
+          role: "target",
+          summary: "OrderCreated (event)"
+        },
+        {
+          specId: "spec:subscriber",
+          contractId: "contract:event:ordercreated",
+          specKind: "event",
+          canonicalKey: "ordercreated",
+          repoId: "repo:subscriber-service",
+          fileId: "file:subscriber-service:Handler.ts",
+          confidence: 0.9,
+          hop: 0,
+          role: "target",
+          summary: "OrderCreated (event)"
+        }
+      ],
+      edges: [
+        {
+          fromSpecId: "spec:publisher",
+          toSpecId: "spec:subscriber",
+          kind: "PUBLISHES_EVENT",
+          reason: "annotated with @Publish",
+          confidence: 0.95,
+          hop: 1,
+          direction: "outgoing"
+        }
+      ],
+      truncated: false
+    };
+
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (msg?: any, ...args: any[]) => {
+      logs.push(msg === undefined ? "" : String(msg));
+    };
+
+    try {
+      printSemanticTrace("event OrderCreated", graph);
+    } finally {
+      console.log = originalLog;
+    }
+
+    const output = logs.join("\n");
+    expect(output).toContain("Connections between targets:");
+    expect(output).toContain("➔ publishes OrderCreated");
+    expect(output).toContain("via PUBLISHES_EVENT confidence=0.95 reason=annotated with @Publish");
+  });
+
+  it("relationVerb maps all kinds properly", () => {
+    expect(relationVerb("PUBLISHES_EVENT")).toBe("publishes");
+    expect(relationVerb("SUBSCRIBES_EVENT")).toBe("subscribes to");
+    expect(relationVerb("USES_SCHEMA")).toBe("uses");
+    expect(relationVerb("UNKNOWN_KIND")).toBe("relates to");
   });
 });

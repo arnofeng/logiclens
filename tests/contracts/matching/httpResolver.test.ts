@@ -244,6 +244,82 @@ describe("HTTP Resolver", () => {
     expect(edges).toHaveLength(0);
   });
 
+  it("does NOT match static-to-template if an exact match exists in the same repo", () => {
+    const beExact = makeHttpSpec({
+      id: "spec:be-exact", contractId: "c:be-exact", repoId: "repo-backend",
+      method: "GET", path: "/api/orders/list", pathTemplate: "/api/orders/list"
+    });
+    const beTemplate = makeHttpSpec({
+      id: "spec:be-template", contractId: "c:be-template", repoId: "repo-backend",
+      method: "GET", path: "/api/orders/{id}", pathTemplate: "/api/orders/{id}"
+    });
+    const consumer = makeHttpSpec({
+      id: "spec:c1", contractId: "c:c1", repoId: "repo-frontend",
+      method: "GET", path: "/api/orders/list", pathTemplate: "/api/orders/list"
+    });
+    const roleMap = makeRoleMap([beExact, beTemplate, consumer], {
+      "spec:be-exact": "producer",
+      "spec:be-template": "producer",
+      "spec:c1": "consumer"
+    });
+
+    const edges = resolveHttpRelations([beExact, beTemplate, consumer], roleMap);
+    // Should ONLY match the exact one, not the template one
+    expect(edges).toHaveLength(1);
+    expect(edges[0]!.toSpecId).toBe(beExact.id);
+  });
+
+  it("matches static-to-template if the exact match is in a different repo", () => {
+    const beExact = makeHttpSpec({
+      id: "spec:be-exact", contractId: "c:be-exact", repoId: "repo-backend-1",
+      method: "GET", path: "/api/orders/list", pathTemplate: "/api/orders/list"
+    });
+    const beTemplate = makeHttpSpec({
+      id: "spec:be-template", contractId: "c:be-template", repoId: "repo-backend-2",
+      method: "GET", path: "/api/orders/{id}", pathTemplate: "/api/orders/{id}"
+    });
+    const consumer = makeHttpSpec({
+      id: "spec:c1", contractId: "c:c1", repoId: "repo-frontend",
+      method: "GET", path: "/api/orders/list", pathTemplate: "/api/orders/list"
+    });
+    const roleMap = makeRoleMap([beExact, beTemplate, consumer], {
+      "spec:be-exact": "producer",
+      "spec:be-template": "producer",
+      "spec:c1": "consumer"
+    });
+
+    const edges = resolveHttpRelations([beExact, beTemplate, consumer], roleMap);
+    // Should match BOTH because they are in different producer repos
+    expect(edges).toHaveLength(2);
+  });
+
+  it("does NOT match static-to-template if a path-only match exists in the same repo", () => {
+    const beExact = makeHttpSpec({
+      id: "spec:be-exact", contractId: "c:be-exact", repoId: "repo-backend",
+      method: "GET", path: "/api/orders/list", pathTemplate: "/api/orders/list"
+    });
+    const beTemplate = makeHttpSpec({
+      id: "spec:be-template", contractId: "c:be-template", repoId: "repo-backend",
+      method: "GET", path: "/api/orders/{id}", pathTemplate: "/api/orders/{id}"
+    });
+    const consumer = makeHttpSpec({
+      id: "spec:c1", contractId: "c:c1", repoId: "repo-frontend",
+      method: undefined, path: "/api/orders/list", pathTemplate: "/api/orders/list"
+    });
+    const roleMap = makeRoleMap([beExact, beTemplate, consumer], {
+      "spec:be-exact": "producer",
+      "spec:be-template": "producer",
+      "spec:c1": "consumer"
+    });
+
+    const edges = resolveHttpRelations([beExact, beTemplate, consumer], roleMap);
+    // Should ONLY match the exact path (path-only match), not the template one
+    expect(edges).toHaveLength(1);
+    expect(edges[0]!.toSpecId).toBe(beExact.id);
+  });
+
+
+
   it("does NOT match template-compatible when methods differ", () => {
     const producer = makeHttpSpec({
       id: "spec:p1", contractId: "c:p1", repoId: "repo-orders",

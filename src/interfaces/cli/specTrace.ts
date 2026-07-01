@@ -38,7 +38,36 @@ export async function specTraceCommand(
 // Rendering
 // ---------------------------------------------------------------------------
 
-function printSemanticTrace(target: string, graph: SemanticTraceGraph): void {
+export function relationVerb(kind: string): string {
+  switch (kind) {
+    case "IMPLEMENTS":
+      return "implements";
+    case "CALLS_ENDPOINT":
+      return "calls";
+    case "PUBLISHES_EVENT":
+      return "publishes";
+    case "SUBSCRIBES_EVENT":
+      return "subscribes to";
+    case "USES_SCHEMA":
+      return "uses";
+    case "REQUEST_SCHEMA":
+      return "requests schema";
+    case "RESPONSE_SCHEMA":
+      return "responds with schema";
+    case "EVENT_PAYLOAD":
+      return "event payload schema";
+    case "COMPATIBLE_WITH":
+      return "compatible with";
+    case "BREAKS":
+      return "breaks";
+    case "IMPACTS":
+      return "impacts";
+    default:
+      return "relates to";
+  }
+}
+
+export function printSemanticTrace(target: string, graph: SemanticTraceGraph): void {
   if (graph.targets.length === 0) {
     console.log(`No contract spec matched "${target}".`);
     console.log(`Hints: try "http POST /orders", "event OrderCreated", "schema CreateOrderRequest", "grpc OrderService/CreateOrder", "dubbo com.acme.OrderService#createOrder", or "graphql Query.user". RPC methods and GraphQL fields are case-sensitive.`);
@@ -54,8 +83,27 @@ function printSemanticTrace(target: string, graph: SemanticTraceGraph): void {
     console.log(`  ${repoOf(t.repoId)} ${fileOf(t.fileId)}${t.framework ? ` [${t.framework}]` : ""}`);
   }
 
+  const targetIds = new Set(graph.targets.map((t) => t.specId));
+  const targetEdges = graph.edges.filter(
+    (e) => targetIds.has(e.fromSpecId) && targetIds.has(e.toSpecId)
+  );
+
   const downstream = graph.nodes.filter((n) => n.role === "downstream");
   const upstream = graph.nodes.filter((n) => n.role === "upstream");
+
+  if (targetEdges.length > 0) {
+    console.log("");
+    console.log("Connections between targets:");
+    for (const e of targetEdges) {
+      const fromNode = graph.targets.find((t) => t.specId === e.fromSpecId);
+      const toNode = graph.targets.find((t) => t.specId === e.toSpecId);
+      if (fromNode && toNode) {
+        console.log(`- ${fromNode.summary} (${repoOf(fromNode.repoId)})`);
+        console.log(`    ➔ ${relationVerb(e.kind)} ${toNode.summary} (${repoOf(toNode.repoId)})`);
+        console.log(`    via ${e.kind} confidence=${formatConfidence(e.confidence)} reason=${e.reason || "n/a"}`);
+      }
+    }
+  }
 
   if (downstream.length > 0) {
     console.log("");
@@ -81,7 +129,7 @@ function printSemanticTrace(target: string, graph: SemanticTraceGraph): void {
     }
   }
 
-  if (downstream.length === 0 && upstream.length === 0) {
+  if (downstream.length === 0 && upstream.length === 0 && targetEdges.length === 0) {
     console.log("");
     console.log("No connected specs found (no semantic relations from this contract).");
   }
