@@ -156,4 +156,16 @@ export async function getList() {
     const spec = bundle.contractSpecs.find((s) => s.canonicalKey === "GET:/mall/mgr/groupon/activity/list");
     expect(spec).toBeDefined();
   });
+
+  it("does not treat mutable camelCase URL variables as constants", async () => {
+    const bundle = await extractFromSource(`
+let baseUrl = "/mall/mgr/groupon/activity";
+baseUrl = window.RUNTIME_BASE_URL;
+export async function getList() {
+  return axios.get(\`\${baseUrl}/list\`);
+}`);
+    const spec = bundle.contractSpecs.find((s) => s.canonicalKey === "GET:/mall/mgr/groupon/activity/list");
+    expect(spec).toBeUndefined();
+    expect(bundle.evidence.some((e) => e.rule === "dynamic-unresolved")).toBe(true);
+  });
 });

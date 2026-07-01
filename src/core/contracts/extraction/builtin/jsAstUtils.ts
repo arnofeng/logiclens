@@ -66,6 +66,7 @@ export function buildAstConstantIndex(root: Parser.SyntaxNode): Map<string, stri
   const constants = new Map<string, string>();
   walkAst(root, (node) => {
     if (node.type !== "variable_declarator") return;
+    if (!isConstDeclarator(node)) return;
     const nameNode = node.childForFieldName("name");
     const valueNode = node.childForFieldName("value");
     if (!nameNode || !valueNode || !isConstantName(nameNode.text)) return;
@@ -156,6 +157,10 @@ function resolveTemplateString(node: Parser.SyntaxNode, constants: Map<string, s
 
 function isConstantName(name: string): boolean {
   return /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(name);
+}
+
+function isConstDeclarator(node: Parser.SyntaxNode): boolean {
+  return node.parent?.text.trimStart().startsWith("const ") ?? false;
 }
 
 function unquote(value: string): string {

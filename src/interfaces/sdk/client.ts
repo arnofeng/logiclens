@@ -400,8 +400,10 @@ export class LogicLensClient {
     if (isContract && contractTrace.length > 0) {
       const contractIds = [...new Set(contractTrace.map((row) => row.contractId))];
       seeds = await db.query<CodeSearchRow>(
-        `MATCH (c:Contract)-[:HAS_SPEC]->(s:ContractSpec), (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(code:Code)
+        `MATCH (c:Contract)-[hs:HAS_SPEC]->(s:ContractSpec), (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(code:Code)
          WHERE c.id IN $contractIds AND s.sourceSymbolId = code.id
+           AND (hs.active IS NULL OR hs.active = true)
+           AND (s.active IS NULL OR s.active = true)
            AND (f.active IS NULL OR f.active = true) AND (code.active IS NULL OR code.active = true)
          RETURN r.name AS repoName, f.path AS filePath, code.id AS codeId, code.kind AS kind, code.name AS name, code.qualifiedName AS qualifiedName, code.summary AS summary, code.signature AS signature;`,
         { contractIds }

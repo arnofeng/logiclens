@@ -26,6 +26,7 @@ import {
 import { BRAND } from '../../../shared/branding.js';
 
 const MCP_SERVER_KEY = BRAND.mcpServerName;
+const MCP_SERVER_KEYS = [...new Set([BRAND.mcpServerName, ...BRAND.legacy.mcpServerNames])];
 
 export interface JsonTargetOptions {
   id: TargetId;
@@ -85,7 +86,7 @@ export class BaseJsonTarget implements AgentTarget {
     }
     const mcpPath = this.configPathFn(loc);
     const config = readJsonFile(mcpPath);
-    const alreadyConfigured = !!config.mcpServers?.[MCP_SERVER_KEY];
+    const alreadyConfigured = hasAnyMcpServer(config);
 
     const dir = this.detectInstallDirFn ? this.detectInstallDirFn(loc) : path.dirname(mcpPath);
     const installed = fs.existsSync(dir) || fs.existsSync(mcpPath);
@@ -134,8 +135,7 @@ export class BaseJsonTarget implements AgentTarget {
     const mcpPath = this.configPathFn(loc);
     if (fs.existsSync(mcpPath)) {
       const config = readJsonFile(mcpPath);
-      if (config.mcpServers?.[MCP_SERVER_KEY]) {
-        delete config.mcpServers[MCP_SERVER_KEY];
+      if (removeAnyMcpServer(config)) {
         if (Object.keys(config.mcpServers).length === 0) {
           delete config.mcpServers;
         }
@@ -192,15 +192,16 @@ export class BaseJsonTarget implements AgentTarget {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
     const existing = readJsonFile(file);
-    const before = existing.mcpServers?.[MCP_SERVER_KEY];
+    const before = getAnyMcpServer(existing);
     const after = this.buildEntryFn ? this.buildEntryFn(loc) : getMcpServerConfig();
 
-    if (jsonDeepEqual(before, after)) {
+    if (existing.mcpServers?.[MCP_SERVER_KEY] && jsonDeepEqual(before, after)) {
       return { path: file, action: 'unchanged' };
     }
     const action: 'created' | 'updated' =
       before ? 'updated' : (fs.existsSync(file) ? 'updated' : 'created');
     if (!existing.mcpServers) existing.mcpServers = {};
+    removeAnyMcpServer(existing);
     existing.mcpServers[MCP_SERVER_KEY] = after;
     writeJsonFile(file, existing);
     return { path: file, action };
@@ -339,8 +340,7 @@ function cleanupLegacyAntigravityEntry(): WriteResult['files'][number] | null {
   const legacy = legacyMcpConfigPath();
   if (!fs.existsSync(legacy)) return null;
   const config = readJsonFile(legacy);
-  if (!config.mcpServers?.[MCP_SERVER_KEY]) return null;
-  delete config.mcpServers[MCP_SERVER_KEY];
+  if (!removeAnyMcpServer(config)) return null;
   if (Object.keys(config.mcpServers).length === 0) {
     delete config.mcpServers;
   }
@@ -351,8 +351,7 @@ function cleanupLegacyAntigravityEntry(): WriteResult['files'][number] | null {
 function removeLegacyAntigravityFromFile(file: string): WriteResult['files'][number] {
   if (!fs.existsSync(file)) return { path: file, action: 'not-found' };
   const config = readJsonFile(file);
-  if (!config.mcpServers?.[MCP_SERVER_KEY]) return { path: file, action: 'not-found' };
-  delete config.mcpServers[MCP_SERVER_KEY];
+  if (!removeAnyMcpServer(config)) return { path: file, action: 'not-found' };
   if (Object.keys(config.mcpServers).length === 0) {
     delete config.mcpServers;
   }
@@ -419,3 +418,27 @@ export const kiroTarget = new BaseJsonTarget({
     'Kiro IDE: also enable MCP in Settings (search "MCP" → "Enabled"). Kiro CLI users can skip this step.',
   ],
 });
+
+function hasAnyMcpServer(config: Record<string, any>): boolean {
+  return getAnyMcpServer(config) !== undefined;
+}
+
+function getAnyMcpServer(config: Record<string, any>): any {
+  for (const key of MCP_SERVER_KEYS) {
+    const server = config.mcpServers?.[key];
+    if (server) return server;
+  }
+  return undefined;
+}
+
+function removeAnyMcpServer(config: Record<string, any>): boolean {
+  if (!config.mcpServers) return false;
+  let removed = false;
+  for (const key of MCP_SERVER_KEYS) {
+    if (config.mcpServers[key]) {
+      delete config.mcpServers[key];
+      removed = true;
+    }
+  }
+  return removed;
+}
