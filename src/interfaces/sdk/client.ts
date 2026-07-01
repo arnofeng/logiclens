@@ -16,7 +16,8 @@ import {
   type ContractSummaryRow,
   type ContractTraceRow,
   type EntityTraceRow,
-  type UnresolvedEvidenceRow
+  type UnresolvedEvidenceRow,
+  type CodeSearchRow
 } from "../../core/graph-model/queries.js";
 import { retrieveForQuestion, type RetrievalResult } from "../../features/ask/retrieve.js";
 import { answerQuestion } from "../../features/ask/answer.js";
@@ -395,7 +396,20 @@ export class LogicLensClient {
     const { findImpact, findImpactSections, sectionsDocumentingCode } = await import("../../core/graph-model/queries.js");
     const { callEdgesAround } = await import("../../core/graph-model/subgraph.js");
     
-    const seeds = await findImpact(db, target);
+    let seeds: CodeSearchRow[] = [];
+    if (isContract && contractTrace.length > 0) {
+      const contractIds = [...new Set(contractTrace.map((row) => row.contractId))];
+      seeds = await db.query<CodeSearchRow>(
+        `MATCH (c:Contract)-[:HAS_SPEC]->(s:ContractSpec), (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(code:Code)
+         WHERE c.id IN $contractIds AND s.sourceSymbolId = code.id
+           AND (f.active IS NULL OR f.active = true) AND (code.active IS NULL OR code.active = true)
+         RETURN r.name AS repoName, f.path AS filePath, code.id AS codeId, code.kind AS kind, code.name AS name, code.qualifiedName AS qualifiedName, code.summary AS summary, code.signature AS signature;`,
+        { contractIds }
+      );
+    }
+    if (seeds.length === 0) {
+      seeds = await findImpact(db, target);
+    }
     const directSections = await findImpactSections(db, target);
     const documentedSections = await sectionsDocumentingCode(db, seeds.map((seed) => seed.codeId));
     const sections = [...new Map([...directSections, ...documentedSections].map((section) => [section.sectionId, section])).values()];

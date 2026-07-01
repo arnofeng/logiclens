@@ -1,4 +1,4 @@
-﻿import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { RetrievalResult } from "../src/features/ask/retrieve.js";
 
 const openAiMock = vi.hoisted(() => ({
@@ -46,11 +46,7 @@ describe("answerQuestion", () => {
         messages: expect.arrayContaining([
           expect.objectContaining({
             role: "system",
-            content: expect.stringContaining("untrusted evidence")
-          }),
-          expect.objectContaining({
-            role: "developer",
-            content: expect.stringContaining("citation ids")
+            content: expect.stringMatching(/untrusted evidence[\s\S]*citation ids/)
           }),
           expect.objectContaining({
             role: "user",

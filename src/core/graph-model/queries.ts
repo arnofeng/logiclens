@@ -314,7 +314,8 @@ export async function traceEntity(db: GraphDB, value: string, limit = 100): Prom
   for (const [rel, role] of [["OWNS_PACKAGE", "owner"], ["PRODUCES", "producer"], ["CONSUMES", "consumer"], ["SHARES_CONTRACT", "shared"]] as const) {
     rows.push(...await db.query<EntityTraceRow>(
       `MATCH (r:Repo)-[:${rel}]->(c:Contract)-[m:CONTRACT_MENTIONS]->(e:Entity), (ev:Evidence)
-       WHERE m.evidenceId = ev.id AND (lower(e.name) CONTAINS $term OR lower(c.name) CONTAINS $term OR lower(c.key) CONTAINS $term)
+       WHERE m.evidenceId = ev.id AND ev.repoId = r.id
+         AND (lower(e.name) CONTAINS $term OR lower(c.name) CONTAINS $term OR lower(c.key) CONTAINS $term)
          AND (m.active IS NULL OR m.active = true) AND (ev.active IS NULL OR ev.active = true)
        RETURN e.id AS entityId, e.name AS entityName, r.name AS repoName, 'contract' AS sourceKind, c.kind + ':' + c.key AS name, ev.filePath AS filePath, ev.line AS line, '${role}' AS role, ev.raw AS evidence, m.confidence AS confidence
        LIMIT ${limit};`,

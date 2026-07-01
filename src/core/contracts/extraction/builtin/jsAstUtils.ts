@@ -142,8 +142,12 @@ function resolveTemplateString(node: Parser.SyntaxNode, constants: Map<string, s
     } else if (child.type === "template_substitution") {
       const expression = firstNamedChild(child);
       const name = expression ? staticPropertyPath(expression) ?? "param" : "param";
-      value += `{${name}}`;
-      dynamic = true;
+      if (constants.has(name)) {
+        value += constants.get(name);
+      } else {
+        value += `{${name}}`;
+        dynamic = true;
+      }
     }
   }
   if (value) return { value, dynamic };
@@ -151,7 +155,7 @@ function resolveTemplateString(node: Parser.SyntaxNode, constants: Map<string, s
 }
 
 function isConstantName(name: string): boolean {
-  return /^[A-Z_$][A-Z0-9_$]*$/.test(name);
+  return /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(name);
 }
 
 function unquote(value: string): string {

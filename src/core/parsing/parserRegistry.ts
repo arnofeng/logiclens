@@ -49,7 +49,12 @@ function getQualifiedPrefix(node: Parser.SyntaxNode): string {
   const classes: string[] = [];
   let curr = node.parent;
   while (curr) {
-    if (curr.type === "class_declaration" || curr.type === "class_definition") {
+    if (
+      curr.type === "class_declaration" ||
+      curr.type === "class_definition" ||
+      curr.type === "interface_declaration" ||
+      curr.type === "enum_declaration"
+    ) {
       const nameNode = curr.childForFieldName("name");
       if (nameNode) {
         classes.unshift(nameNode.text);

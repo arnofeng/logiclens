@@ -146,4 +146,14 @@ export async function fetchData() {
     expect(spec!.httpMethod).toBeUndefined();
     expect(JSON.parse(spec!.specJson).method).toBeUndefined();
   });
+
+  it("resolves template strings using camelCase baseUrl constants", async () => {
+    const bundle = await extractFromSource(`
+const baseUrl = "/mall/mgr/groupon/activity";
+export async function getList() {
+  return axios.get(\`\${baseUrl}/list\`);
+}`);
+    const spec = bundle.contractSpecs.find((s) => s.canonicalKey === "GET:/mall/mgr/groupon/activity/list");
+    expect(spec).toBeDefined();
+  });
 });
