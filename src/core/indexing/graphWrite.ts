@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { LogicLensConfig } from "../../config/schema.js";
+import type { AppConfig } from "../../config/schema.js";
 import { writeGraphFactsBatch } from "../graph-model/batchWriter.js";
 import { writeGraphFactsWithKuzuAppendCopy, writeGraphFactsWithKuzuBulk, writeGraphFactsWithKuzuBulkUpsert } from "../graph-model/bulkWriter.js";
 import type { GraphDB, GraphWriteAtomicityMode, GraphWriteBatchStatus } from "../graph-model/db.js";
@@ -145,7 +145,7 @@ export async function runFactBuildPhase(input: {
   indexedAt: string;
   repos: RepoNode[];
   parsedFiles: ParsedGraphFile[];
-  config: LogicLensConfig;
+  config: AppConfig;
   repoName?: string;
 }): Promise<FactBuildResult> {
   const { batchId, indexedAt, repos, parsedFiles, config, repoName } = input;
@@ -166,15 +166,15 @@ export async function runFactBuildPhase(input: {
   return result.result;
 }
 
-// ── summary helper (shared between Neo4j batch path and Kuzu path) ────────
+// 鈹€鈹€ summary helper (shared between Neo4j batch path and Kuzu path) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 async function generateAndUpdateSummaries(input: {
   db: GraphDB;
   repos: RepoNode[];
   parsedFiles: ParsedGraphFile[];
   crossRepo: GraphFactsBatch["crossRepo"];
-  config: LogicLensConfig;
-  llmSummaryLevel: LogicLensConfig["indexing"]["llmSummaryLevel"];
+  config: AppConfig;
+  llmSummaryLevel: AppConfig["indexing"]["llmSummaryLevel"];
   openAiApiKey?: string;
   openAiBaseUrl?: string;
   label: string;
@@ -198,15 +198,15 @@ async function generateAndUpdateSummaries(input: {
   await db.updateSystemSummary(summaries.systemSummary);
 }
 
-// ── legacy one-by-one merge writer (kept as fallback) ──────────────────────
+// 鈹€鈹€ legacy one-by-one merge writer (kept as fallback) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 async function writeWithMerge(input: {
   db: GraphDB;
   batchId: string;
   repos: RepoNode[];
   parsedFiles: ParsedGraphFile[];
-  config: LogicLensConfig;
-  llmSummaryLevel: LogicLensConfig["indexing"]["llmSummaryLevel"];
+  config: AppConfig;
+  llmSummaryLevel: AppConfig["indexing"]["llmSummaryLevel"];
   openAiApiKey?: string;
   openAiBaseUrl?: string;
 }): Promise<void> {
@@ -232,8 +232,8 @@ export async function runGraphWritePhase(input: {
   facts: GraphFactsBatch;
   repos: RepoNode[];
   parsedFiles: ParsedGraphFile[];
-  config: LogicLensConfig;
-  llmSummaryLevel: LogicLensConfig["indexing"]["llmSummaryLevel"];
+  config: AppConfig;
+  llmSummaryLevel: AppConfig["indexing"]["llmSummaryLevel"];
   openAiApiKey?: string;
   openAiBaseUrl?: string;
   label: string;
@@ -288,7 +288,7 @@ export async function runGraphWritePhase(input: {
     try {
       const doSummaries = shouldSummarizeGraphWithLlm(llmSummaryLevel);
       if (selection.mode === "merge") {
-        // Neo4j: use UNWIND-based batch writer — 50-100× faster than the
+        // Neo4j: use UNWIND-based batch writer - 50-100x faster than the
         // one-by-one merge writer because it reduces ~40 000 individual
         // transactions to about 30.
         const writeProgress = createProgressBar(`Graph write ${label}`, 1);

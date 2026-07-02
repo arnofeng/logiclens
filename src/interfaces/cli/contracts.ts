@@ -1,4 +1,4 @@
-import { createLogicLens } from "../sdk/client.js";
+import { createClient } from "../sdk/client.js";
 
 export type ContractsCommandOptions = {
   kind?: string;
@@ -6,7 +6,7 @@ export type ContractsCommandOptions = {
 };
 
 export async function contractsCommand(options: ContractsCommandOptions = {}, cwd = process.cwd()): Promise<void> {
-  const client = await createLogicLens({ cwd });
+  const client = await createClient({ cwd });
   try {
     const rows = await client.contracts(options);
     console.log("Contracts:");

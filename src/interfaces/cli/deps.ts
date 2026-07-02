@@ -1,4 +1,4 @@
-import { createLogicLens } from "../sdk/client.js";
+import { createClient } from "../sdk/client.js";
 
 export type DepsCommandOptions = {
   strength?: "strong" | "weak";
@@ -20,7 +20,7 @@ export function getDependencyStrength(type: string): "Strong" | "Weak" {
 }
 
 export async function depsCommand(options: DepsCommandOptions = {}, cwd = process.cwd()): Promise<void> {
-  const client = await createLogicLens({ cwd });
+  const client = await createClient({ cwd });
   try {
     const rows = await client.dependencies(options);
     console.log("Repo dependencies:");

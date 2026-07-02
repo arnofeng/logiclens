@@ -1,7 +1,7 @@
 /**
- * LogicLens MCP Installer & Uninstaller
+ * Branded MCP Installer & Uninstaller
  *
- * Interactive / non-interactive installer that configures LogicLens as an MCP server
+ * Interactive / non-interactive installer that configures the branded MCP server
  * across multiple AI agents (Claude Code, Cursor, Codex, Gemini, Antigravity, etc.).
  *
  * Inspired by / adapted from the Colby McHenry CodeGraph target configuration installer.

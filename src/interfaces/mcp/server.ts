@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { createLogicLens, LogicLensClient } from "../sdk/client.js";
+import { createClient, GraphClient } from "../sdk/client.js";
 import { schemaStatements } from "../../core/graph-model/schema.js";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -130,7 +130,7 @@ function createCatchUpState(mode: CatchUpState["mode"], repos: string[]): CatchU
   };
 }
 
-function startCatchUp(client: LogicLensClient, mode: CatchUpState["mode"], batchSize = 10): CatchUpState {
+function startCatchUp(client: InstanceType<typeof GraphClient>, mode: CatchUpState["mode"], batchSize = 10): CatchUpState {
   const repoNames = client.getConfig().repos.map((repo) => repo.name);
   const state = createCatchUpState(mode, repoNames);
   if (mode === "off" || repoNames.length === 0) return state;
@@ -173,7 +173,7 @@ function startCatchUp(client: LogicLensClient, mode: CatchUpState["mode"], batch
  * Starts the Model Context Protocol (MCP) server.
  */
 export async function runMcpServer(cwd = process.cwd()): Promise<void> {
-  const client: LogicLensClient = await createLogicLens({ cwd });
+  const client: InstanceType<typeof GraphClient> = await createClient({ cwd });
   await client.watch({ catchUp: "background" });
   const catchUpState = startCatchUp(client, "background");
 
@@ -231,14 +231,14 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
         "produce and consume each API, event, and schema, and can reason about the downstream impact " +
         "of a change. The graph is derived statically from source code and every answer carries " +
         "evidence (file:line), so treat it as ground truth instead of guessing cross-repo relationships.\n\n" +
-        `Reach for ${BRAND.displayName} whenever you are about to change code that other repositories may depend on — ` +
+        `Reach for ${BRAND.displayName} whenever you are about to change code that other repositories may depend on - ` +
         "before editing an API endpoint, event, DTO/schema, or a widely-used symbol:\n" +
-        `  • ${MCP_TOOLS.impactAnalysis} — before proposing an edit, check what it breaks. Pass the proposed ` +
+        `  - ${MCP_TOOLS.impactAnalysis}: before proposing an edit, check what it breaks. Pass the proposed ` +
         "`change` (e.g. \"field-removed:couponCode\") to get a severity-rated blast radius (breaking/risky/" +
         "compatible) with file/line evidence.\n" +
-        `  • ${MCP_TOOLS.trace} / ${MCP_TOOLS.semanticTrace} — find the producers, consumers, and request/` +
+        `  - ${MCP_TOOLS.trace} / ${MCP_TOOLS.semanticTrace}: find the producers, consumers, and request/` +
         "response/payload schemas connected to a contract.\n" +
-        `  • ${MCP_TOOLS.listContracts} / ${MCP_TOOLS.listDependencies} — survey cross-repo contracts and ` +
+        `  - ${MCP_TOOLS.listContracts} / ${MCP_TOOLS.listDependencies}: survey cross-repo contracts and ` +
         "dependencies before making structural changes.",
     }
   );
@@ -477,10 +477,10 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
         "Trace SEMANTIC_REL edges between ContractSpecs to discover how services are connected " +
         "(which endpoint calls which, which event is published/subscribed, which schema backs a " +
         "request/response/payload). Two modes:\n" +
-        "  • target — natural identifier (e.g. \"http POST /orders\", \"event OrderCreated\", " +
+        "  - target: natural identifier (e.g. \"http POST /orders\", \"event OrderCreated\", " +
         "\"schema CreateOrderRequest\"): multi-hop trace returning the full connected sub-graph " +
-        "(downstream schemas + upstream consumers). PREFERRED — no internal IDs needed.\n" +
-        "  • specId — an internal ContractSpec ID: single-hop trace of direct edges.\n" +
+        "(downstream schemas + upstream consumers). PREFERRED - no internal IDs needed.\n" +
+        "  - specId: an internal ContractSpec ID: single-hop trace of direct edges.\n" +
         "Provide exactly one of `target` or `specId`.",
       inputSchema: {
         target: z
@@ -495,7 +495,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
         direction: z
           .enum(["outgoing", "incoming", "both"])
           .optional()
-          .describe("Direction: outgoing (from→to), incoming (to→from), or both (default)"),
+          .describe("Direction: outgoing (from -> to), incoming (to -> from), or both (default)"),
       },
     },
     async ({ target, specId, maxHops, direction }) => {

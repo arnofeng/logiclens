@@ -2,7 +2,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { repoId } from "../../shared/path.js";
 import { loadConfig, defaultConfig } from "../../config/loadConfig.js";
-import type { LogicLensConfig } from "../../config/schema.js";
+import type { AppConfig } from "../../config/schema.js";
 import type { GraphDB, Stats } from "../../core/graph-model/db.js";
 import { createGraphDB } from "../../core/graph-model/factory.js";
 import { registerBuiltinEmbeddingProviders } from "../../adapters/embeddings/builtinProviders.js";
@@ -63,7 +63,7 @@ export type ImpactResult = {
 };
 
 /**
- * Custom logging interface for LogicLensClient to delegate stdout, stderr,
+ * Custom logging interface for the SDK client to delegate stdout, stderr,
  * warnings, errors, and progress updates.
  */
 export type LogicLensLogger = {
@@ -90,16 +90,18 @@ const defaultLogger: Required<LogicLensLogger> = {
 };
 
 /**
- * Configuration options for creating a LogicLensClient.
+ * Configuration options for creating a client.
  */
 export type LogicLensClientOptions = {
   /** The current working directory / project root path */
   cwd?: string;
-  /** Explicit logiclens configuration object; if omitted, loaded from .logiclens/config.yaml */
-  config?: LogicLensConfig;
+  /** Explicit workspace configuration object; if omitted, loaded from the branded config file. */
+  config?: AppConfig;
   /** Custom logger implementation */
   logger?: LogicLensLogger;
 };
+
+export type ClientOptions = LogicLensClientOptions;
 
 export type LogicLensIndexOptions = IndexOptions & {
   queueSource?: IndexQueueSource;
@@ -107,11 +109,11 @@ export type LogicLensIndexOptions = IndexOptions & {
 };
 
 /**
- * Programmatic Node.js ESM client for LogicLens to perform workspace initialization,
+ * Programmatic Node.js ESM client for the branded graph workspace to perform initialization,
  * indexing, relationship rebuilds, and dependency/impact querying.
  */
 export class LogicLensClient {
-  private config: LogicLensConfig;
+  private config: AppConfig;
   private cwd: string;
   private dbInstance?: GraphDB;
   private dbPromise?: Promise<GraphDB>;
@@ -122,7 +124,7 @@ export class LogicLensClient {
   private watcher?: FileWatcher;
   private indexQueue = new SingleProcessIndexQueue();
 
-  constructor(options: LogicLensClientOptions, config: LogicLensConfig) {
+  constructor(options: ClientOptions, config: AppConfig) {
     this.options = options;
     this.config = config;
     this.cwd = options.cwd ?? process.cwd();
@@ -134,9 +136,9 @@ export class LogicLensClient {
   }
 
   /**
-   * Returns the resolved LogicLensConfig for this client.
+   * Returns the resolved workspace configuration for this client.
    */
-  getConfig(): LogicLensConfig {
+  getConfig(): AppConfig {
     return this.config;
   }
 
@@ -714,15 +716,15 @@ function describeIndexOptions(options: IndexOptions): string {
 }
 
 /**
- * Factory function to create and configure a new LogicLensClient instance.
+ * Factory function to create and configure a new client instance.
  * Automatically loads workspace configuration unless an explicit configuration is provided.
  * 
  * @param options - Client creation options.
- * @returns A promise that resolves to a new LogicLensClient instance.
+ * @returns A promise that resolves to a new client instance.
  */
-export async function createLogicLens(options: LogicLensClientOptions = {}): Promise<LogicLensClient> {
+export async function createClient(options: ClientOptions = {}): Promise<LogicLensClient> {
   const cwd = options.cwd ?? process.cwd();
-  let config: LogicLensConfig;
+  let config: AppConfig;
   if (options.config) {
     config = options.config;
   } else {
@@ -734,3 +736,6 @@ export async function createLogicLens(options: LogicLensClientOptions = {}): Pro
   }
   return new LogicLensClient(options, config);
 }
+
+export const GraphClient = LogicLensClient;
+export const createLogicLens = createClient;

@@ -1,5 +1,5 @@
 import path from "node:path";
-import { createLogicLens } from "../sdk/client.js";
+import { createClient } from "../sdk/client.js";
 import { writeConfig } from "../../config/loadConfig.js";
 import { indexCommand } from "./index.js";
 import type { IndexOptions } from "../../core/indexing/types.js";
@@ -20,7 +20,7 @@ export async function addReposCommand(
   cwd = process.cwd(),
   runIndex: IndexRunner = indexCommand
 ): Promise<void> {
-  const client = await createLogicLens({ cwd });
+  const client = await createClient({ cwd });
   try {
     const result = await client.addRepos(directory, { ...options, index: false });
     await writeConfig(client.getConfig(), cwd);

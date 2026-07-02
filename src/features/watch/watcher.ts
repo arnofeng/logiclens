@@ -2,10 +2,10 @@ import fs from "node:fs";
 import fsPromises from "node:fs/promises";
 import path from "node:path";
 import ignore from "ignore";
-import type { LogicLensClient } from "../../interfaces/sdk/client.js";
+import { GraphClient } from "../../interfaces/sdk/client.js";
 import { shouldWatchRepo } from "./policy.js";
 import { isGeneratedFile } from "../../shared/generatedFile.js";
-import { BRAND } from "../../shared/branding.js";
+import { brandedWorkspaceDirNames } from "../../shared/branding.js";
 import { builtinLanguageForPath } from "../../core/parsing/parserRegistry.js";
 import { parserRegistry } from "../../core/registries/registry.js";
 import { toRepoNode } from "../../core/workspace/repoRegistry.js";
@@ -73,6 +73,7 @@ export class FileMatcher {
   private repoPath: string;
   private excludedDirSegments: Set<string>;
   private excludedDirPaths: Set<string>;
+  private brandedWorkspaceDirs = new Set(brandedWorkspaceDirNames());
 
   constructor(repoPath: string, include: string[], exclude: string[]) {
     this.repoPath = repoPath;
@@ -100,8 +101,8 @@ export class FileMatcher {
     if (
       posixPath === ".git" ||
       posixPath.startsWith(".git/") ||
-      posixPath === BRAND.configDirName ||
-      posixPath.startsWith(`${BRAND.configDirName}/`)
+      this.brandedWorkspaceDirs.has(posixPath) ||
+      [...this.brandedWorkspaceDirs].some((dir) => posixPath.startsWith(`${dir}/`))
     ) {
       return true;
     }
@@ -117,9 +118,9 @@ export class FileMatcher {
     const posixPath = relativePath.split(path.sep).join("/");
     if (
       posixPath.startsWith(".git/") ||
-      posixPath.startsWith(`${BRAND.configDirName}/`) ||
+      [...this.brandedWorkspaceDirs].some((dir) => posixPath.startsWith(`${dir}/`)) ||
       posixPath.includes("/.git/") ||
-      posixPath.includes(`/${BRAND.configDirName}/`)
+      [...this.brandedWorkspaceDirs].some((dir) => posixPath.includes(`/${dir}/`))
     ) {
       return false;
     }
@@ -186,7 +187,7 @@ export function planRecursiveWatchRoots(repoRoots: string[], mode: WatchMode, ma
 }
 
 export class FileWatcher {
-  private client: LogicLensClient;
+  private client: InstanceType<typeof GraphClient>;
   private options: Required<Omit<WatchOptions, "repo">> & { repo?: string };
   private watchers: fs.FSWatcher[] = [];
   private repoIndex?: WatchRepoIndex;
@@ -205,7 +206,7 @@ export class FileWatcher {
   private active = false;
   private installedWatchers = 0;
 
-  constructor(client: LogicLensClient, options: WatchOptions = {}) {
+  constructor(client: InstanceType<typeof GraphClient>, options: WatchOptions = {}) {
     this.client = client;
     const config = client.getConfig().watch;
     const debounceMs = options.debounceMs ?? config.debounceMs;

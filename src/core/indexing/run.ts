@@ -1,5 +1,5 @@
 import type { GraphDB } from "../graph-model/db.js";
-import type { LogicLensConfig } from "../../config/schema.js";
+import type { AppConfig } from "../../config/schema.js";
 import { runIndexQueue } from "./scheduler.js";
 import { planIndexRun } from "./planning.js";
 import { createIndexRunContext } from "./context.js";
@@ -19,7 +19,7 @@ function addCounters(target: IndexCounters, increment: IndexCounters): void {
 
 export async function runIndexing(
   db: GraphDB,
-  config: LogicLensConfig,
+  config: AppConfig,
   options: IndexOptions & { cwd?: string; logger?: IndexLogger }
 ): Promise<IndexResult> {
   const started = Date.now();

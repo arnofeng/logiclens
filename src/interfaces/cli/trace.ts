@@ -1,7 +1,7 @@
-import { createLogicLens } from "../sdk/client.js";
+import { createClient } from "../sdk/client.js";
 
 export async function traceCommand(target: string, cwd = process.cwd()): Promise<void> {
-  const client = await createLogicLens({ cwd });
+  const client = await createClient({ cwd });
   try {
     const result = await client.trace(target);
     if (result.type === "contract") {

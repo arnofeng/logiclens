@@ -5,11 +5,11 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
-  LOGICLENS_INSTRUCTIONS_BLOCK,
-  LOGICLENS_SECTION_START,
-  LOGICLENS_SECTION_END,
+  BRANDED_INSTRUCTIONS_BLOCK,
+  BRANDED_SECTION_START,
+  BRANDED_SECTION_END,
 } from '../instructions-template.js';
-import { BRAND, brandedMcpPermission, brandedMcpToolName } from '../../../shared/branding.js';
+import { allInstallerSectionMarkers, BRAND, brandedMcpPermission, brandedMcpToolName } from '../../../shared/branding.js';
 
 export function getMcpServerConfig(): { type: string; command: string; args: string[] } {
   return {
@@ -19,7 +19,7 @@ export function getMcpServerConfig(): { type: string; command: string; args: str
   };
 }
 
-export function getLogicLensPermissions(): string[] {
+export function getBrandedPermissions(): string[] {
   return [
     'get_stats',
     'get_watch_status',
@@ -123,11 +123,21 @@ export function replaceOrAppendMarkedSection(
 export function upsertInstructionsEntry(file: string): { path: string; action: 'created' | 'updated' | 'unchanged' } {
   const action = replaceOrAppendMarkedSection(
     file,
-    LOGICLENS_INSTRUCTIONS_BLOCK,
-    LOGICLENS_SECTION_START,
-    LOGICLENS_SECTION_END,
+    BRANDED_INSTRUCTIONS_BLOCK,
+    BRANDED_SECTION_START,
+    BRANDED_SECTION_END,
   );
   return { path: file, action: action === 'appended' ? 'updated' : action };
+}
+
+export function removeBrandedMarkedSection(filePath: string): 'removed' | 'not-found' | 'kept' {
+  let sawNotFound = false;
+  for (const marker of allInstallerSectionMarkers()) {
+    const action = removeMarkedSection(filePath, marker.start, marker.end);
+    if (action === 'removed' || action === 'kept') return action;
+    if (action === 'not-found') sawNotFound = true;
+  }
+  return sawNotFound ? 'not-found' : 'kept';
 }
 
 export function removeMarkedSection(

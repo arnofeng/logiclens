@@ -139,6 +139,7 @@ export const configSchema = z.object({
   }).default({ concurrency: 4, summarizeChangedOnly: true, maxFilesPerRun: 5000, batchSize: 0, llmSummaryLevel: "off" })
 });
 
-export type LogicLensConfig = z.infer<typeof configSchema>;
-export type EmbeddingLevel = LogicLensConfig["embedding"]["level"];
-export type LlmSummaryLevel = LogicLensConfig["indexing"]["llmSummaryLevel"];
+export type AppConfig = z.infer<typeof configSchema>;
+export type LogicLensConfig = AppConfig;
+export type EmbeddingLevel = AppConfig["embedding"]["level"];
+export type LlmSummaryLevel = AppConfig["indexing"]["llmSummaryLevel"];

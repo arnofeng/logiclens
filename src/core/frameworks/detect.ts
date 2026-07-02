@@ -4,7 +4,7 @@ import type { RepoNode, ParsedGraphFile, EvidenceNode } from "../parsing/types.j
 import type { DetectedFramework } from "./types.js";
 import type { ContractExtractor } from "../registries/types.js";
 import type { FrameworkDetector } from "./types.js";
-import type { LogicLensConfig } from "../../config/schema.js";
+import type { AppConfig } from "../../config/schema.js";
 import { fileId, evidenceId } from "../../shared/path.js";
 import { confidenceFor } from "../../shared/confidence.js";
 
@@ -510,7 +510,7 @@ export async function detectFrameworks(
 export function isExtractorEnabled(
   extractor: ContractExtractor,
   detectedFrameworks: DetectedFramework[],
-  config: LogicLensConfig
+  config: AppConfig
 ): boolean {
   const includeList = config.frameworks?.include ?? [];
   const excludeList = config.frameworks?.exclude ?? [];

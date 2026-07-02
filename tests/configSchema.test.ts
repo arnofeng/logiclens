@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { configSchema } from "../src/config/schema.js";
+import { BRAND_PATHS } from "../src/shared/branding.js";
 
 describe("config schema - graph provider", () => {
   it("defaults to kuzu provider", () => {
     const result = configSchema.parse({});
     expect(result.graph.provider).toBe("kuzu");
-    expect(result.graph.path).toBe(".logiclens/graph");
+    expect(result.graph.path).toBe(BRAND_PATHS.graph);
   });
 
   it("accepts kuzu provider", () => {
@@ -63,7 +64,7 @@ describe("config schema - graph provider", () => {
     const result = configSchema.parse({});
     expect(result.graph).toEqual({
       provider: "kuzu",
-      path: ".logiclens/graph",
+      path: BRAND_PATHS.graph,
       url: undefined,
       username: undefined,
       password: undefined

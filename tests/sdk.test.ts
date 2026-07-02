@@ -2,31 +2,32 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { createLogicLens } from "../src/index.js";
+import { createClient } from "../src/index.js";
 import { defaultConfig, writeConfig } from "../src/config/loadConfig.js";
 import { initCommand } from "../src/interfaces/cli/init.js";
 import { uninitCommand } from "../src/interfaces/cli/uninit.js";
 import { addRepoCommand } from "../src/interfaces/cli/addRepo.js";
 import { loadConfig } from "../src/config/loadConfig.js";
+import { BRAND, BRAND_PATHS, brandedTempDirPrefix } from "../src/shared/branding.js";
 
 async function makeTempWorkspace(): Promise<string> {
-  return await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-sdk-test-"));
+  return await fs.mkdtemp(path.join(os.tmpdir(), brandedTempDirPrefix("sdk-test")));
 }
 
-describe("LogicLens SDK Client", () => {
+describe("SDK Client", () => {
   it("scaffolds a workspace via the init command", async () => {
     const cwd = await makeTempWorkspace();
     await initCommand(cwd);
 
     // Check files created
-    const configExists = await fs.stat(path.join(cwd, ".logiclens", "config.yaml")).then(() => true).catch(() => false);
+    const configExists = await fs.stat(path.join(cwd, BRAND.configDirName, BRAND.configFileName)).then(() => true).catch(() => false);
     expect(configExists).toBe(true);
   });
 
   it("does not overwrite an existing config when re-running init", async () => {
     const cwd = await makeTempWorkspace();
     await initCommand(cwd);
-    const configFile = path.join(cwd, ".logiclens", "config.yaml");
+    const configFile = path.join(cwd, BRAND.configDirName, BRAND.configFileName);
     await fs.writeFile(configFile, "systemName: custom-system\nrepos: []\n", "utf8");
 
     await initCommand(cwd);
@@ -39,24 +40,23 @@ describe("LogicLens SDK Client", () => {
     await initCommand(cwd);
 
     // Create a mock mcp.pid file
-    const mcpPidPath = path.join(cwd, ".logiclens", "mcp.pid");
+    const mcpPidPath = path.join(cwd, BRAND_PATHS.mcpPid);
     await fs.writeFile(mcpPidPath, JSON.stringify({ pid: 999999, version: "0.1.0", startedAt: Date.now() }), "utf8");
 
     // Check they exist
-    expect(await fs.stat(path.join(cwd, ".logiclens", "config.yaml")).then(() => true).catch(() => false)).toBe(true);
+    expect(await fs.stat(path.join(cwd, BRAND.configDirName, BRAND.configFileName)).then(() => true).catch(() => false)).toBe(true);
     expect(await fs.stat(mcpPidPath).then(() => true).catch(() => false)).toBe(true);
 
     // Call uninit
     await uninitCommand(cwd);
 
-    // Verify .logiclens directory is deleted
-    const logiclensExists = await fs.stat(path.join(cwd, ".logiclens")).then(() => true).catch(() => false);
-    expect(logiclensExists).toBe(false);
+    const workspaceExists = await fs.stat(path.join(cwd, BRAND.configDirName)).then(() => true).catch(() => false);
+    expect(workspaceExists).toBe(false);
   });
 
   it("adds a repo to in-memory config without writing to disk", async () => {
     const cwd = await makeTempWorkspace();
-    const client = await createLogicLens({ cwd });
+    const client = await createClient({ cwd });
 
     const result = await client.addRepo("./my-project", { name: "custom-name" });
     expect(result.name).toBe("custom-name");
@@ -66,7 +66,7 @@ describe("LogicLens SDK Client", () => {
     expect(client.getConfig().repos).toContainEqual({ name: "custom-name", path: "my-project" });
 
     // ...but the SDK must not persist it: config.yaml stays untouched.
-    const configExists = await fs.stat(path.join(cwd, ".logiclens", "config.yaml")).then(() => true).catch(() => false);
+    const configExists = await fs.stat(path.join(cwd, BRAND.configDirName, BRAND.configFileName)).then(() => true).catch(() => false);
     expect(configExists).toBe(false);
 
     await client.close();
@@ -93,7 +93,7 @@ describe("LogicLens SDK Client", () => {
       ]
     }, cwd);
 
-    const client = await createLogicLens({ cwd });
+    const client = await createClient({ cwd });
     await client.ensureProviders();
     
     // Perform indexing

@@ -13,7 +13,7 @@ import {
   type EntityTraceRow,
   type SectionSearchRow
 } from "../../core/graph-model/queries.js";
-import type { LogicLensConfig } from "../../config/schema.js";
+import type { AppConfig } from "../../config/schema.js";
 import { defaultSemanticIndex, type SemanticSearchResult } from "../../core/semantic/semanticIndex.js";
 import { resolveEmbeddingProvider } from "../../core/semantic/embeddings.js";
 import { planQuestion } from "./planner.js";
@@ -58,7 +58,7 @@ function contractTargetsFromQuestion(question: string): { kind: "api"; value: st
   return targets;
 }
 
-export async function retrieveForQuestion(db: GraphDB, question: string, options: { cwd?: string; config?: LogicLensConfig } = {}): Promise<RetrievalResult> {
+export async function retrieveForQuestion(db: GraphDB, question: string, options: { cwd?: string; config?: AppConfig } = {}): Promise<RetrievalResult> {
   const plan = planQuestion(question);
   const rows: CodeSearchRow[] = [];
   const sectionRows: SectionSearchRow[] = [];

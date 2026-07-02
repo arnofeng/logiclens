@@ -1,9 +1,11 @@
-import { BRAND, brandedMcpToolName } from '../../shared/branding.js';
+import { BRAND, brandedInstallerSectionMarkers, brandedMcpToolName } from '../../shared/branding.js';
 
-export const LOGICLENS_SECTION_START = '<!-- LOGICLENS_START -->';
-export const LOGICLENS_SECTION_END = '<!-- LOGICLENS_END -->';
+const sectionMarkers = brandedInstallerSectionMarkers();
 
-export const LOGICLENS_INSTRUCTIONS_BLOCK = `${LOGICLENS_SECTION_START}
+export const BRANDED_SECTION_START = sectionMarkers.start;
+export const BRANDED_SECTION_END = sectionMarkers.end;
+
+export const BRANDED_INSTRUCTIONS_BLOCK = `${BRANDED_SECTION_START}
 ## ${BRAND.displayName}
 
 In workspaces configured with ${BRAND.displayName} (a \`${BRAND.configDirName}/\` directory exists at the workspace root), reach for it BEFORE grep/find or reading files when you need to understand cross-repository dependencies, contract interfaces, trace workflows, or evaluate change impact:
@@ -12,4 +14,4 @@ In workspaces configured with ${BRAND.displayName} (a \`${BRAND.configDirName}/\
 - **Shell** (always works): \`${BRAND.cliName} ask "<question>"\`, \`${BRAND.cliName} impact <symbolOrEntity>\`, and \`${BRAND.cliName} trace <contractOrEntity>\` print the same output.
 
 If there is no \`${BRAND.configDirName}/\` directory, skip ${BRAND.displayName} entirely - initialization is the user's decision.
-${LOGICLENS_SECTION_END}`;
+${BRANDED_SECTION_END}`;

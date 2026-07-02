@@ -25,7 +25,7 @@ import {
   materializedRepoDependencyDedupKey,
   materializedWorkflowOperationDedupKey
 } from "./dedup.js";
-import type { LogicLensConfig } from "../../../config/schema.js";
+import type { AppConfig } from "../../../config/schema.js";
 import { BRAND } from "../../../shared/branding.js";
 import { loadConfig, defaultConfig } from "../../../config/loadConfig.js";
 import { detectFrameworks, isExtractorEnabled } from "../../frameworks/detect.js";
@@ -252,12 +252,12 @@ export function buildRepoDependenciesFromParticipants(participants: ContractPart
  * `buildRepoDependenciesFromParticipants` for API and event contracts.
  *
  * Mapping:
- *   CALLS_ENDPOINT     (consumer→producer) → api dependency (consumer→producer)
- *   PUBLISHES_EVENT    (producer→consumer)  → event dependency (consumer→producer, reversed)
- *   SUBSCRIBES_EVENT   (consumer→producer)  → event dependency (consumer→producer)
- *   USES_SCHEMA        (user→provider)      → shared-contract dependency (user→provider)
+ *   CALLS_ENDPOINT     (consumer -> producer) -> api dependency (consumer -> producer)
+ *   PUBLISHES_EVENT    (producer -> consumer) -> event dependency (consumer -> producer, reversed)
+ *   SUBSCRIBES_EVENT   (consumer -> producer) -> event dependency (consumer -> producer)
+ *   USES_SCHEMA        (user -> provider) -> shared-contract dependency (user -> provider)
  *
- * REQUEST_SCHEMA, RESPONSE_SCHEMA, and EVENT_PAYLOAD are skipped — they
+ * REQUEST_SCHEMA, RESPONSE_SCHEMA, and EVENT_PAYLOAD are skipped - they
  * represent intra-spec associations, not cross-repo dependencies.
  *
  * Same-repo edges are excluded.
@@ -312,7 +312,7 @@ export function materializeDependenciesFromSemanticRelations(
 export async function extractCrossRepoContracts(
   repos: RepoNode[],
   parsedFiles: ParsedGraphFile[],
-  options: { aliasOverrides?: AliasOverride[]; config?: LogicLensConfig } = {}
+  options: { aliasOverrides?: AliasOverride[]; config?: AppConfig } = {}
 ): Promise<CrossRepoExtraction> {
   let config = options.config;
   if (!config) {
@@ -354,7 +354,7 @@ export async function extractCrossRepoContracts(
   // Legacy matcher runs for ALL kinds as fallback.
   const legacyDeps = buildRepoDependenciesFromParticipants(participants);
 
-  // Merge: semantic deps first → legacy deps fill gaps (structural dedup).
+  // Merge: semantic deps first - legacy deps fill gaps (structural dedup).
   const repoDependencies = mergeAndDedupeDeps(semanticDeps, legacyDeps);
 
   const workflowMap = new Map<string, WorkflowNode>();
@@ -451,7 +451,7 @@ function buildExtractContext(
 
 export async function extractContractFactsWithRegistry(
   context: ExtractContext,
-  config?: LogicLensConfig
+  config?: AppConfig
 ): Promise<ExtractedFacts> {
   let resolvedConfig = config;
   if (!resolvedConfig) {
@@ -500,7 +500,7 @@ export async function extractContractFactsWithRegistry(
     }
   }
 
-  // P1-1: postExtract phase — cross-file finalization.
+  // P1-1: postExtract phase - cross-file finalization.
   // Freeze a read-only view for postExtract readers, then let extractors
   // amend by writing into the same builder.
   const mergedForPost = builder.build();

@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { BRAND, BRAND_PATHS, configFilePath } from "../../shared/branding.js";
+import { BRAND, BRAND_PATHS, configFileCandidates, configFilePath } from "../../shared/branding.js";
 
 /**
  * Scaffolds a branded workspace: creates the graph directory and writes a
@@ -10,11 +10,19 @@ import { BRAND, BRAND_PATHS, configFilePath } from "../../shared/branding.js";
  * the SDK never touches the filesystem implicitly.
  */
 export async function initCommand(cwd = process.cwd()): Promise<void> {
+  const configFile = configFilePath(cwd);
+  const existingConfig = await Promise.all(
+    configFileCandidates(cwd).map(async (file) => await fs.stat(file).then(() => file).catch(() => undefined))
+  ).then((files) => files.find(Boolean));
+
+  if (existingConfig && existingConfig !== configFile) {
+    console.log(`Workspace already initialized at ${path.relative(cwd, existingConfig) || existingConfig}`);
+    return;
+  }
+
   await fs.mkdir(path.join(cwd, BRAND_PATHS.graph), { recursive: true });
 
-  const configFile = configFilePath(cwd);
-  const exists = await fs.stat(configFile).then(() => true).catch(() => false);
-  if (!exists) {
+  if (!existingConfig) {
     const template = `# ${BRAND.displayName} Configuration File
 
 systemName: default-system

@@ -36,7 +36,7 @@ class HermesTarget implements AgentTarget {
     const installed = fs.existsSync(hermesHome()) || fs.existsSync(file);
     return {
       installed,
-      alreadyConfigured: hasLogicLensMcpServer(content),
+      alreadyConfigured: hasBrandedMcpServer(content),
       configPath: file,
     };
   }
@@ -62,7 +62,7 @@ class HermesTarget implements AgentTarget {
     }
 
     const before = readText(file);
-    const after = removeLogicLensToolset(removeLogicLensMcpServer(before));
+    const after = removeBrandedToolset(removeBrandedMcpServer(before));
     if (after === before) {
       return { files: [{ path: file, action: 'not-found' }] };
     }
@@ -77,7 +77,7 @@ class HermesTarget implements AgentTarget {
     return [
       `# Add to ${configPath()}`,
       '',
-      renderLogicLensMcpBlock().join('\n'),
+      renderBrandedMcpBlock().join('\n'),
       '',
       'platform_toolsets:',
       '  cli:',
@@ -114,8 +114,8 @@ function writeHermesConfig(): WriteResult['files'][number] {
   const file = configPath();
   const existed = fs.existsSync(file);
   const before = readText(file);
-  const afterMcp = upsertLogicLensMcpServer(before);
-  const after = upsertLogicLensToolset(afterMcp);
+  const afterMcp = upsertBrandedMcpServer(before);
+  const after = upsertBrandedToolset(afterMcp);
 
   if (after === before) {
     return { path: file, action: 'unchanged' };
@@ -223,7 +223,7 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function renderLogicLensMcpChild(): string[] {
+function renderBrandedMcpChild(): string[] {
   return [
     `  ${MCP_SERVER_KEY}:`,
     `    command: ${BRAND.cliName}`,
@@ -235,26 +235,26 @@ function renderLogicLensMcpChild(): string[] {
   ];
 }
 
-function renderLogicLensMcpBlock(): string[] {
-  return ['mcp_servers:', ...renderLogicLensMcpChild()];
+function renderBrandedMcpBlock(): string[] {
+  return ['mcp_servers:', ...renderBrandedMcpChild()];
 }
 
-function hasLogicLensMcpServer(content: string): boolean {
+function hasBrandedMcpServer(content: string): boolean {
   const lines = splitLines(content);
   const parent = topLevelRange(lines, 'mcp_servers');
   return !!parent && MCP_SERVER_KEYS.some((key) => !!childRange(lines, parent, key));
 }
 
-function upsertLogicLensMcpServer(content: string): string {
+function upsertBrandedMcpServer(content: string): string {
   const lines = splitLines(content);
   const parent = topLevelRange(lines, 'mcp_servers');
   const child = parent ? findMcpServerChild(lines, parent) : null;
-  const replacement = renderLogicLensMcpChild();
+  const replacement = renderBrandedMcpChild();
 
   if (!parent) {
     if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
     if (lines.length > 0) lines.push('');
-    lines.push(...renderLogicLensMcpBlock());
+    lines.push(...renderBrandedMcpBlock());
     return joinLines(lines);
   }
 
@@ -269,7 +269,7 @@ function upsertLogicLensMcpServer(content: string): string {
   return joinLines(lines);
 }
 
-function removeLogicLensMcpServer(content: string): string {
+function removeBrandedMcpServer(content: string): string {
   const lines = splitLines(content);
   const parent = topLevelRange(lines, 'mcp_servers');
   if (!parent) return content;
@@ -280,7 +280,7 @@ function removeLogicLensMcpServer(content: string): string {
   return joinLines(lines);
 }
 
-function upsertLogicLensToolset(content: string): string {
+function upsertBrandedToolset(content: string): string {
   const lines = splitLines(content);
   const parent = topLevelRange(lines, 'platform_toolsets');
   const cli = parent ? listChildBlock(lines, parent, 'cli') : null;
@@ -306,7 +306,7 @@ function upsertLogicLensToolset(content: string): string {
   return joinLines(lines);
 }
 
-function removeLogicLensToolset(content: string): string {
+function removeBrandedToolset(content: string): string {
   const lines = splitLines(content);
   const parent = topLevelRange(lines, 'platform_toolsets');
   const cli = parent ? listChildBlock(lines, parent, 'cli') : null;

@@ -5,7 +5,7 @@ import type { ParsedGraphFile, RepoNode } from "../parsing/types.js";
 import { scanRepoFiles, type ScannedFile } from "../workspace/fileScanner.js";
 import { hashText } from "../../shared/hash.js";
 import { fileId } from "../../shared/path.js";
-import type { LogicLensConfig } from "../../config/schema.js";
+import type { AppConfig } from "../../config/schema.js";
 import { runIndexPhase } from "./phases.js";
 
 type ParseProgress = {
@@ -35,7 +35,7 @@ async function knownFileHashes(db: GraphDB, repoId: string): Promise<Map<string,
 export async function scanAndParseRepo(input: {
   db?: GraphDB;
   repo: RepoNode;
-  config: LogicLensConfig;
+  config: AppConfig;
   changedOnly?: boolean;
   maxFiles?: number;
   createProgressBar: (label: string, total: number) => ParseProgress;

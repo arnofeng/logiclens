@@ -1,4 +1,4 @@
-import { createLogicLens } from "../sdk/client.js";
+import { createClient } from "../sdk/client.js";
 import { BRAND } from "../../shared/branding.js";
 
 export type WatchCommandOptions = {
@@ -7,7 +7,7 @@ export type WatchCommandOptions = {
 };
 
 export async function watchCommand(options: WatchCommandOptions, cwd = process.cwd()): Promise<void> {
-  const client = await createLogicLens({
+  const client = await createClient({
     cwd,
     logger: {
       log: (msg) => console.log(msg),

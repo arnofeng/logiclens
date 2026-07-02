@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { loadConfig, defaultConfig, configPath } from "../../config/loadConfig.js";
-import { BRAND, BRAND_PATHS } from "../../shared/branding.js";
+import { BRAND, BRAND_PATHS, brandedConfigDirPaths, configFileCandidates } from "../../shared/branding.js";
 
 function isProcessAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -38,25 +38,27 @@ export async function uninitCommand(cwd = process.cwd()): Promise<void> {
   }
 
   // Stop a running MCP service safely if a lock file exists.
-  const mcpPidPath = path.resolve(cwd, BRAND_PATHS.mcpPid);
-  try {
-    const info = JSON.parse(await fs.readFile(mcpPidPath, "utf8"));
-    const pid = info.pid;
-    if (isProcessAlive(pid)) {
-      console.log(`Stopping running MCP service (PID ${pid})...`);
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {}
-      if (!(await waitForDeath(pid, 3000))) {
-        console.warn(`MCP service (PID ${pid}) did not exit. Forcing shutdown...`);
+  const mcpPidPaths = [...new Set(brandedConfigDirPaths(cwd).map((dir) => path.join(dir, "mcp.pid")))];
+  for (const mcpPidPath of mcpPidPaths) {
+    try {
+      const info = JSON.parse(await fs.readFile(mcpPidPath, "utf8"));
+      const pid = info.pid;
+      if (isProcessAlive(pid)) {
+        console.log(`Stopping running MCP service (PID ${pid})...`);
         try {
-          process.kill(pid, "SIGKILL");
+          process.kill(pid, "SIGTERM");
         } catch {}
-        await waitForDeath(pid, 2000);
+        if (!(await waitForDeath(pid, 3000))) {
+          console.warn(`MCP service (PID ${pid}) did not exit. Forcing shutdown...`);
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {}
+          await waitForDeath(pid, 2000);
+        }
       }
+    } catch {
+      // Lock file missing or invalid: nothing to stop.
     }
-  } catch {
-    // Lock file missing or invalid: nothing to stop.
   }
 
   // Resolve and remove all workspace artifacts.
@@ -65,9 +67,10 @@ export async function uninitCommand(cwd = process.cwd()): Promise<void> {
 
   await fs.rm(graphPath, { recursive: true, force: true });
   await fs.rm(semanticPath, { force: true });
+  await Promise.all(configFileCandidates(cwd).map((file) => fs.rm(file, { force: true })));
+  await Promise.all(mcpPidPaths.map((file) => fs.rm(file, { force: true })));
   await fs.rm(configPath(cwd), { force: true });
-  await fs.rm(mcpPidPath, { force: true });
-  await fs.rm(path.join(cwd, BRAND.configDirName), { recursive: true, force: true });
+  await Promise.all(brandedConfigDirPaths(cwd).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 
   console.log(`Uninitialized ${BRAND.displayName} workspace successfully (removed config, graph DB, and stopped running MCP service).`);
 }

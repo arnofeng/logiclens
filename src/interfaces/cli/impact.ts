@@ -1,4 +1,4 @@
-import { createLogicLens } from "../sdk/client.js";
+import { createClient } from "../sdk/client.js";
 import type { ImpactReport } from "../../core/contracts/impact/types.js";
 
 export type ImpactCommandOptions = {
@@ -11,7 +11,7 @@ export async function impactCommand(
   options: ImpactCommandOptions = {},
   cwd = process.cwd()
 ): Promise<void> {
-  const client = await createLogicLens({ cwd });
+  const client = await createClient({ cwd });
   try {
     // -- Phase 5: Change-based impact analysis --------------------------------
     if (options.change) {
@@ -76,7 +76,7 @@ const VALID_CHANGE_TYPES = new Set([
 function parseChangeOption(raw: string): { changeType: string; detail?: string } | null {
   const colonIdx = raw.indexOf(":");
   if (colonIdx === -1) {
-    // No detail — just the change type
+    // No detail - just the change type
     if (VALID_CHANGE_TYPES.has(raw)) return { changeType: raw };
     return null;
   }
@@ -91,9 +91,9 @@ function parseChangeOption(raw: string): { changeType: string; detail?: string }
 // ---------------------------------------------------------------------------
 
 function printImpactReport(report: ImpactReport): void {
-  const severityIcon = report.overallSeverity === "breaking" ? "🔴"
-    : report.overallSeverity === "risky" ? "🟡"
-    : "🟢";
+  const severityIcon = report.overallSeverity === "breaking" ? "馃敶"
+    : report.overallSeverity === "risky" ? "馃煛"
+    : "馃煝";
 
   console.log(`${severityIcon} Severity: ${report.overallSeverity}`);
   console.log("");
@@ -110,9 +110,9 @@ function printImpactReport(report: ImpactReport): void {
 
   console.log("Direct impacts:");
   for (const imp of report.impacts) {
-    const icon = imp.severity === "breaking" ? "🔴"
-      : imp.severity === "risky" ? "🟡"
-      : "🟢";
+    const icon = imp.severity === "breaking" ? "馃敶"
+      : imp.severity === "risky" ? "馃煛"
+      : "馃煝";
     const lineInfo = imp.line ? `:${imp.line}` : "";
     console.log(`  ${icon} [${imp.severity}] ${imp.repoId} ${imp.symbol} (confidence=${formatConfidence(imp.confidence)})`);
     console.log(`    evidence: ${imp.repoId}/${imp.filePath}${lineInfo} '${imp.evidence}'`);

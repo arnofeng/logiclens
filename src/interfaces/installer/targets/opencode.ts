@@ -12,13 +12,9 @@ import {
 import {
   atomicWriteFileSync,
   jsonDeepEqual,
-  removeMarkedSection,
+  removeBrandedMarkedSection,
   upsertInstructionsEntry,
 } from './shared.js';
-import {
-  LOGICLENS_SECTION_END,
-  LOGICLENS_SECTION_START,
-} from '../instructions-template.js';
 import { BRAND } from '../../../shared/branding.js';
 
 const MCP_SERVER_KEY = BRAND.mcpServerName;
@@ -197,14 +193,14 @@ function cleanupLegacyWindowsState(): WriteResult['files'] {
     if (res.action === 'removed') out.push(res);
   }
   const agents = path.join(dir, 'AGENTS.md');
-  const action = removeMarkedSection(agents, LOGICLENS_SECTION_START, LOGICLENS_SECTION_END);
+  const action = removeBrandedMarkedSection(agents);
   if (action === 'removed') out.push({ path: agents, action });
   return out;
 }
 
 function removeInstructionsEntry(loc: Location): WriteResult['files'][number] {
   const file = instructionsPath(loc);
-  const action = removeMarkedSection(file, LOGICLENS_SECTION_START, LOGICLENS_SECTION_END);
+  const action = removeBrandedMarkedSection(file);
   return { path: file, action };
 }
 

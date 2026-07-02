@@ -11,13 +11,9 @@ import {
 import {
   atomicWriteFileSync,
   getMcpServerConfig,
-  removeMarkedSection,
+  removeBrandedMarkedSection,
   upsertInstructionsEntry,
 } from './shared.js';
-import {
-  LOGICLENS_SECTION_END,
-  LOGICLENS_SECTION_START,
-} from '../instructions-template.js';
 import { buildTomlTable, removeTomlTable, upsertTomlTable } from './toml.js';
 import { BRAND } from '../../../shared/branding.js';
 
@@ -62,7 +58,7 @@ class CodexTarget implements AgentTarget {
     if (loc !== 'global') {
       return {
         files: [],
-        notes: ['Codex CLI has no project-local config — re-run with --location=global to install.'],
+        notes: ['Codex CLI has no project-local config - re-run with --location=global to install.'],
       };
     }
     const files: WriteResult['files'] = [];
@@ -104,9 +100,9 @@ class CodexTarget implements AgentTarget {
 
   printConfig(loc: Location): string {
     if (loc !== 'global') {
-      return '# Codex CLI has no project-local config — use --location=global.\n';
+      return '# Codex CLI has no project-local config - use --location=global.\n';
     }
-    const block = buildLogicLensBlock();
+    const block = buildBrandedBlock();
     return `# Add to ${tomlConfigPath()}\n\n${block}\n`;
   }
 
@@ -116,7 +112,7 @@ class CodexTarget implements AgentTarget {
   }
 }
 
-function buildLogicLensBlock(): string {
+function buildBrandedBlock(): string {
   const mcp = getMcpServerConfig();
   return buildTomlTable(TOML_HEADER, {
     command: mcp.command,
@@ -129,7 +125,7 @@ function writeMcpEntry(): WriteResult['files'][number] {
   const dir = path.dirname(file);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-  const block = buildLogicLensBlock();
+  const block = buildBrandedBlock();
   const existing = fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : '';
   const created = existing.length === 0;
   const { content: nextContent, action } = upsertTomlTable(existing, TOML_HEADER, block);
@@ -143,7 +139,7 @@ function writeMcpEntry(): WriteResult['files'][number] {
 
 function removeInstructionsEntry(): WriteResult['files'][number] {
   const file = instructionsPath();
-  const action = removeMarkedSection(file, LOGICLENS_SECTION_START, LOGICLENS_SECTION_END);
+  const action = removeBrandedMarkedSection(file);
   return { path: file, action };
 }
 

@@ -1,4 +1,4 @@
-import type { LogicLensConfig } from "../../config/schema.js";
+import type { AppConfig } from "../../config/schema.js";
 import type { RepoNode } from "../parsing/types.js";
 import type { IndexLogger, IndexOptions } from "./types.js";
 
@@ -6,13 +6,13 @@ export type IndexWriteMode = NonNullable<IndexOptions["writeMode"]>;
 
 export type IndexRunContext = {
   cwd: string;
-  config: LogicLensConfig;
+  config: AppConfig;
   logger: IndexLogger;
   writeMode: IndexWriteMode;
   llm: {
     apiKey?: string;
     baseUrl?: string;
-    summaryLevel: LogicLensConfig["indexing"]["llmSummaryLevel"];
+    summaryLevel: AppConfig["indexing"]["llmSummaryLevel"];
   };
   embedding: {
     enabled: boolean;
@@ -35,7 +35,7 @@ export type IndexBatchPlan = {
 
 export function createIndexRunContext(input: {
   cwd: string;
-  config: LogicLensConfig;
+  config: AppConfig;
   options: IndexOptions;
   logger: IndexLogger;
   writeMode: IndexWriteMode;

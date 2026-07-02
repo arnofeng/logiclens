@@ -1,4 +1,4 @@
-import type { LlmSummaryLevel, LogicLensConfig } from "../../config/schema.js";
+import type { LlmSummaryLevel, AppConfig } from "../../config/schema.js";
 import type { ParsedDocument, ParsedFile, ParsedGraphFile, RepoNode } from "../parsing/types.js";
 import { summarizeCode } from "../semantic/summarizeCode.js";
 import { summarizeDocumentSection } from "../semantic/summarizeDocument.js";
@@ -134,7 +134,7 @@ function assignFileSummary(parsedFile: ParsedGraphFile, summary: string | undefi
 function buildSummaryTasks(inputs: {
   parsedFiles: ParsedGraphFile[];
   repoResolver: (repoId: string) => RepoNode | undefined;
-  config: LogicLensConfig;
+  config: AppConfig;
   openAiApiKey?: string;
   openAiBaseUrl?: string;
   llmSummaryLevel: LlmSummaryLevel;
@@ -231,7 +231,7 @@ function formatSummaryWarning(failuresByRepo: Map<string, SummaryFailureState>):
 export async function runLlmSummaryPhase(input: {
   parsedFiles: ParsedGraphFile[];
   repos: RepoNode[];
-  config: LogicLensConfig;
+  config: AppConfig;
   openAiApiKey?: string;
   openAiBaseUrl?: string;
   llmSummaryLevel: LlmSummaryLevel;

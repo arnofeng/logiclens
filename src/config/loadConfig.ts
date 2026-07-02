@@ -3,18 +3,30 @@ import path from "node:path";
 import YAML from "yaml";
 import {
   configSchema,
-  type LogicLensConfig,
+  type AppConfig,
   defaultProviderRetry,
   defaultProviderRateLimit,
   defaultInclude,
   defaultExclude
 } from "./schema.js";
-import { BRAND_DEFAULTS, BRAND_PATHS, configFilePath } from "../shared/branding.js";
+import { BRAND_DEFAULTS, BRAND_PATHS, configFileCandidates, configFilePath } from "../shared/branding.js";
 
 export const configPath = (cwd = process.cwd()): string => configFilePath(cwd);
 
-export async function loadConfig(cwd = process.cwd()): Promise<LogicLensConfig> {
-  const file = configPath(cwd);
+export async function resolveConfigPath(cwd = process.cwd()): Promise<string> {
+  for (const file of configFileCandidates(cwd)) {
+    try {
+      await fs.access(file);
+      return file;
+    } catch {
+      // Try the next branded or legacy location.
+    }
+  }
+  return configPath(cwd);
+}
+
+export async function loadConfig(cwd = process.cwd()): Promise<AppConfig> {
+  const file = await resolveConfigPath(cwd);
   const raw = await fs.readFile(file, "utf8");
   return configSchema.parse(YAML.parse(raw));
 }
@@ -23,7 +35,7 @@ export async function loadConfig(cwd = process.cwd()): Promise<LogicLensConfig> 
  * Prunes default configuration options from the given configuration object,
  * leaving only user-defined overrides and essential configuration fields.
  */
-export function pruneConfig(config: LogicLensConfig): any {
+export function pruneConfig(config: AppConfig): any {
   const pruned: any = {};
 
   // Always write systemName so it doesn't get removed when configuration is updated
@@ -198,8 +210,8 @@ function syncDocument(doc: YAML.Document, docMap: YAML.YAMLMap, obj: any) {
   }
 }
 
-export async function writeConfig(config: LogicLensConfig, cwd = process.cwd()): Promise<void> {
-  const file = configPath(cwd);
+export async function writeConfig(config: AppConfig, cwd = process.cwd()): Promise<void> {
+  const file = await resolveConfigPath(cwd);
   await fs.mkdir(path.dirname(file), { recursive: true });
 
   let raw = "";
@@ -220,6 +232,6 @@ export async function writeConfig(config: LogicLensConfig, cwd = process.cwd()):
   await fs.writeFile(file, doc.toString(), "utf8");
 }
 
-export function defaultConfig(): LogicLensConfig {
+export function defaultConfig(): AppConfig {
   return configSchema.parse({});
 }

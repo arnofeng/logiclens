@@ -1,4 +1,4 @@
-import { createLogicLens } from "../sdk/client.js";
+import { createClient } from "../sdk/client.js";
 import type { SemanticTraceGraph } from "../../core/contracts/semanticTrace.js";
 
 export type SpecTraceCommandOptions = {
@@ -15,10 +15,10 @@ export async function specTraceCommand(
 ): Promise<void> {
   // `spec-trace` is single-purpose, so extra positional tokens are simply
   // joined onto the target (e.g. `spec-trace http "POST /orders"`). No mode
-  // detection — both this and `spec-trace "http POST /orders"` are equivalent.
+  // detection - both this and `spec-trace "http POST /orders"` are equivalent.
   const full = [target, ...(rest ?? [])].join(" ").trim();
 
-  const client = await createLogicLens({ cwd });
+  const client = await createClient({ cwd });
   try {
     const graph = await client.semanticTraceGraph(full, {
       maxHops: options.maxHops,
@@ -99,7 +99,7 @@ export function printSemanticTrace(target: string, graph: SemanticTraceGraph): v
       const toNode = graph.targets.find((t) => t.specId === e.toSpecId);
       if (fromNode && toNode) {
         console.log(`- ${fromNode.summary} (${repoOf(fromNode.repoId)})`);
-        console.log(`    ➔ ${relationVerb(e.kind)} ${toNode.summary} (${repoOf(toNode.repoId)})`);
+        console.log(`    -> ${relationVerb(e.kind)} ${toNode.summary} (${repoOf(toNode.repoId)})`);
         console.log(`    via ${e.kind} confidence=${formatConfidence(e.confidence)} reason=${e.reason || "n/a"}`);
       }
     }
@@ -136,7 +136,7 @@ export function printSemanticTrace(target: string, graph: SemanticTraceGraph): v
 
   if (graph.truncated) {
     console.log("");
-    console.log(`(traversal stopped at max hops — more nodes may be reachable; raise --max-hops to expand)`);
+    console.log(`(traversal stopped at max hops - more nodes may be reachable; raise --max-hops to expand)`);
   }
 }
 
@@ -146,7 +146,7 @@ function kindHint(graph: SemanticTraceGraph, specId: string): string {
   for (const e of graph.edges) {
     if (e.fromSpecId === specId || e.toSpecId === specId) kinds.add(e.kind);
   }
-  return kinds.size > 0 ? [...kinds].join(", ") : "—";
+  return kinds.size > 0 ? [...kinds].join(", ") : "-";
 }
 
 function reachingEdges(

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { ChromaClient, type Metadata } from "chromadb";
-import type { EmbeddingLevel, LogicLensConfig } from "../../config/schema.js";
+import type { EmbeddingLevel, AppConfig } from "../../config/schema.js";
 import { BRAND_PATHS } from "../../shared/branding.js";
 import type { ParsedDocument, ParsedFile, ParsedGraphFile, RepoNode } from "../parsing/types.js";
 import { systemId } from "../graph-model/schema.js";
@@ -278,7 +278,7 @@ export class FallbackSemanticIndex implements SemanticIndex {
   }
 }
 
-export function defaultSemanticIndex(cwd = process.cwd(), config?: Pick<LogicLensConfig, "semantic">): SemanticIndex {
+export function defaultSemanticIndex(cwd = process.cwd(), config?: Pick<AppConfig, "semantic">): SemanticIndex {
   const json = new JsonSemanticIndex(path.resolve(cwd, config?.semantic.jsonPath ?? BRAND_PATHS.semanticIndex));
   if (config?.semantic.provider === "chroma") {
     const chroma = new ChromaSemanticIndex({
@@ -396,7 +396,7 @@ function consumeSemanticFallbackEvents(index: SemanticIndex): SemanticIndexFallb
   return [];
 }
 
-export async function indexSemanticText(input: { cwd?: string; repos: RepoNode[]; parsedFiles: ParsedGraphFile[]; embeddingProvider?: EmbeddingProvider; config?: Pick<LogicLensConfig, "semantic" | "embedding">; progress?: ProgressReporter }): Promise<SemanticIndexingResult> {
+export async function indexSemanticText(input: { cwd?: string; repos: RepoNode[]; parsedFiles: ParsedGraphFile[]; embeddingProvider?: EmbeddingProvider; config?: Pick<AppConfig, "semantic" | "embedding">; progress?: ProgressReporter }): Promise<SemanticIndexingResult> {
   const level = input.config?.embedding.level ?? "all";
   const providerName = input.config?.embedding.provider ?? "off";
   if (level === "off" || providerName === "off") return { records: 0, changed: 0, cached: 0, fallbackEvents: [] };

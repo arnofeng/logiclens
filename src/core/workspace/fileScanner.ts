@@ -2,7 +2,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import fg from "fast-glob";
 import ignore from "ignore";
-import type { LogicLensConfig } from "../../config/schema.js";
+import type { AppConfig } from "../../config/schema.js";
 import { builtinLanguageForPath, registerBuiltinParsers } from "../parsing/parserRegistry.js";
 import { parserRegistry } from "../registries/registry.js";
 import { toPosixPath } from "../../shared/path.js";
@@ -19,7 +19,7 @@ function languageForPath(relativePath: string): string | undefined {
   return parserRegistry.resolve({ relativePath })?.language;
 }
 
-export async function scanRepoFiles(repoPath: string, config: LogicLensConfig): Promise<ScannedFile[]> {
+export async function scanRepoFiles(repoPath: string, config: AppConfig): Promise<ScannedFile[]> {
   const ig = ignore();
   ig.add(config.exclude.map((entry) => entry.replace(/^\*\*\//, "")));
   const gitignore = path.join(repoPath, ".gitignore");
@@ -45,7 +45,7 @@ export async function scanRepoFiles(repoPath: string, config: LogicLensConfig): 
     // so they don't pollute contract evidence with scaffolding noise.
     .filter((relativePath) => !isGeneratedFile(relativePath));
 
-  // P1-2: Lazy grammar loading — detect which languages appear in this repo
+  // P1-2: Lazy grammar loading - detect which languages appear in this repo
   // before registering grammars, so we only load what is actually needed.
   // File-level-only parsers (yaml/toml/properties) have no grammar overhead
   // and are always included via registerBuiltinParsers.

@@ -1,4 +1,4 @@
-import { createLogicLens } from "../sdk/client.js";
+import { createClient } from "../sdk/client.js";
 import { ProgressBar } from "../../shared/progress.js";
 
 export type RebuildRelationsOptions = {
@@ -7,7 +7,7 @@ export type RebuildRelationsOptions = {
 };
 
 export async function rebuildRelationsCommand(options: RebuildRelationsOptions, cwd = process.cwd()): Promise<void> {
-  const client = await createLogicLens({
+  const client = await createClient({
     cwd,
     logger: {
       log: console.log,

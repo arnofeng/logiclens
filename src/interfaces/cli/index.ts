@@ -1,11 +1,11 @@
 import { ProgressBar } from "../../shared/progress.js";
-import { createLogicLens } from "../sdk/client.js";
+import { createClient } from "../sdk/client.js";
 import { findBlockedReindexTargets } from "../../core/indexing/run.js";
 import type { IndexOptions } from "../../core/indexing/types.js";
 import { BRAND } from "../../shared/branding.js";
 
 export async function indexCommand(options: IndexOptions, cwd = process.cwd()): Promise<void> {
-  const client = await createLogicLens({
+  const client = await createClient({
     cwd,
     logger: {
       log: (msg) => console.log(msg),

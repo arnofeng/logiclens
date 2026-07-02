@@ -1,4 +1,4 @@
-import type { LogicLensConfig } from "../../config/schema.js";
+import type { AppConfig } from "../../config/schema.js";
 import type { GraphDB } from "../graph-model/db.js";
 import { runIndexPhase } from "./phases.js";
 import type { IndexWriteMode } from "./context.js";
@@ -10,7 +10,7 @@ export type IndexRunPath = "batched-full" | "full-copy-bulk" | "per-repo";
 // scanning, parsing, and graph writes.
 export type IndexPlanningResult = {
   writeMode: IndexWriteMode;
-  repoConfigs: LogicLensConfig["repos"];
+  repoConfigs: AppConfig["repos"];
   initialRepoCount: number;
   batchSize: number;
   shouldUseCopyBulk: boolean;
@@ -23,7 +23,7 @@ async function repoCount(db: GraphDB): Promise<number> {
 
 export async function planIndexRun(input: {
   db: GraphDB;
-  config: LogicLensConfig;
+  config: AppConfig;
   options: IndexOptions;
 }): Promise<IndexPlanningResult> {
   const { db, config, options } = input;

@@ -1,6 +1,6 @@
 import { createBatchId } from "../graph-model/batchWriter.js";
 import type { GraphDB } from "../graph-model/db.js";
-import type { LogicLensConfig } from "../../config/schema.js";
+import type { AppConfig } from "../../config/schema.js";
 import type { ParsedGraphFile, RepoNode } from "../parsing/types.js";
 import { toRepoNode } from "../workspace/repoRegistry.js";
 import type { IndexOptions } from "./types.js";
@@ -75,7 +75,7 @@ function countsByRepo(results: ScanParseRepoResult[]): BatchCounts {
 async function scanParseRepos(input: {
   db?: GraphDB;
   ctx: IndexRunContext;
-  repoConfigs: LogicLensConfig["repos"];
+  repoConfigs: AppConfig["repos"];
   options: IndexOptions;
   changedOnly?: boolean;
 }): Promise<ScanParseRepoResult[]> {
@@ -247,7 +247,7 @@ async function commitFailedRepos(input: {
 export async function runBatchedFullIndex(input: {
   db: GraphDB;
   ctx: IndexRunContext;
-  repoBatches: LogicLensConfig["repos"][];
+  repoBatches: AppConfig["repos"][];
   options: IndexOptions;
   initialRepoCount: number;
 }): Promise<IndexPathResult> {
@@ -353,7 +353,7 @@ export async function runFullCopyBulkIndex(input: {
 export async function runPerRepoIndex(input: {
   db: GraphDB;
   ctx: IndexRunContext;
-  repoConfig: LogicLensConfig["repos"][number];
+  repoConfig: AppConfig["repos"][number];
   options: IndexOptions;
 }): Promise<IndexPathResult> {
   const { db, ctx, repoConfig, options } = input;

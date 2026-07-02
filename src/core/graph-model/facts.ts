@@ -1,7 +1,7 @@
 import path from "node:path";
 import { extractCrossRepoContracts, type AliasOverride, type CrossRepoExtraction } from "../contracts/extraction/crossRepoContracts.js";
 import { resolveCalls, resolveImports } from "../extraction/resolveReferences.js";
-import type { LogicLensConfig } from "../../config/schema.js";
+import type { AppConfig } from "../../config/schema.js";
 import type {
   CallEdge,
   CodeSymbol,
@@ -113,7 +113,7 @@ export async function buildGraphFactsBatch(input: {
   parsedFiles: ParsedGraphFile[];
   semantic: boolean;
   aliasOverrides?: AliasOverride[];
-  config?: LogicLensConfig;
+  config?: AppConfig;
 }): Promise<GraphFactsBatch> {
   const indexedAt = input.indexedAt ?? new Date().toISOString();
   const codeFiles = input.parsedFiles.filter((file): file is ParsedFile => !isParsedDocument(file));

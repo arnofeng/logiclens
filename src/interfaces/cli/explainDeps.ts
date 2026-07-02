@@ -1,4 +1,4 @@
-import { createLogicLens } from "../sdk/client.js";
+import { createClient } from "../sdk/client.js";
 
 export type ExplainDepsOptions = {
   kind?: string;
@@ -10,7 +10,7 @@ export async function explainDepsCommand(
   options: ExplainDepsOptions = {},
   cwd = process.cwd()
 ): Promise<void> {
-  const client = await createLogicLens({ cwd });
+  const client = await createClient({ cwd });
   try {
     const result = await client.explainDeps(sourceRepo, targetRepo);
 
@@ -28,7 +28,7 @@ export async function explainDepsCommand(
     console.log(`Found ${filtered.length} relation(s):\n`);
 
     for (const rel of filtered) {
-      console.log(`  [${rel.kind}] ${rel.fromContractKey} → ${rel.toContractKey}`);
+      console.log(`  [${rel.kind}] ${rel.fromContractKey} -> ${rel.toContractKey}`);
       console.log(`    Reason: ${rel.reason}`);
       console.log(`    Confidence: ${rel.confidence}`);
       console.log(`    From spec: ${rel.fromSpecKind} (${rel.fromSpecId})`);

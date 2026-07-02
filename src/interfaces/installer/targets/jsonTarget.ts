@@ -11,18 +11,14 @@ import {
   TargetId,
 } from './types.js';
 import {
-  getLogicLensPermissions,
+  getBrandedPermissions,
   getMcpServerConfig,
   jsonDeepEqual,
   readJsonFile,
-  removeMarkedSection,
+  removeBrandedMarkedSection,
   writeJsonFile,
   upsertInstructionsEntry,
 } from './shared.js';
-import {
-  LOGICLENS_SECTION_END,
-  LOGICLENS_SECTION_START,
-} from '../instructions-template.js';
 import { BRAND } from '../../../shared/branding.js';
 
 const MCP_SERVER_KEY = BRAND.mcpServerName;
@@ -156,7 +152,7 @@ export class BaseJsonTarget implements AgentTarget {
     // 3. Instructions removal
     if (this.instructionsPathFn) {
       const file = this.instructionsPathFn(loc);
-      const action = removeMarkedSection(file, LOGICLENS_SECTION_START, LOGICLENS_SECTION_END);
+      const action = removeBrandedMarkedSection(file);
       files.push({ path: file, action });
     }
 
@@ -272,7 +268,7 @@ export const claudeTarget = new BaseJsonTarget({
     : path.join(process.cwd(), '.claude'),
   instructionsPathFn: (loc) => path.join(loc === 'global' ? path.join(os.homedir(), '.claude') : path.join(process.cwd(), '.claude'), 'CLAUDE.md'),
   permissionsPathFn: (loc) => path.join(loc === 'global' ? path.join(os.homedir(), '.claude') : path.join(process.cwd(), '.claude'), 'settings.json'),
-  permissionsItems: getLogicLensPermissions(),
+  permissionsItems: getBrandedPermissions(),
 });
 
 // 2. Cursor Target
@@ -321,7 +317,7 @@ function preferredMcpConfigPath(): string {
   return legacyMcpConfigPath();
 }
 
-function resolveLogicLensCommand(): string {
+function resolveBrandedCommand(): string {
   if (process.platform !== 'darwin') return BRAND.cliName;
   try {
     const resolved = execSync(`command -v ${BRAND.cliName} || which ${BRAND.cliName}`, {
@@ -367,7 +363,7 @@ export const antigravityTarget = new BaseJsonTarget({
   configPathFn: () => preferredMcpConfigPath(),
   detectInstallDirFn: () => unifiedConfigDir(),
   buildEntryFn: () => ({
-    command: resolveLogicLensCommand(),
+    command: resolveBrandedCommand(),
     args: ['mcp'],
   }),
   extraInstallFn: () => {
@@ -415,7 +411,7 @@ export const kiroTarget = new BaseJsonTarget({
   },
   notes: [
     'Restart Kiro for MCP changes to take effect.',
-    'Kiro IDE: also enable MCP in Settings (search "MCP" → "Enabled"). Kiro CLI users can skip this step.',
+    'Kiro IDE: also enable MCP in Settings (search "MCP" -> "Enabled"). Kiro CLI users can skip this step.',
   ],
 });
 

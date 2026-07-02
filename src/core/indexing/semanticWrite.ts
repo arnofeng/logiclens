@@ -1,4 +1,4 @@
-import type { LogicLensConfig } from "../../config/schema.js";
+import type { AppConfig } from "../../config/schema.js";
 import { rebuildRepoDependencies } from "../graph-model/rebuildRelations.js";
 import type { GraphDB } from "../graph-model/db.js";
 import type { ParsedGraphFile, RepoNode } from "../parsing/types.js";
@@ -34,7 +34,7 @@ export async function runSemanticWritePhase(input: {
   cwd: string;
   repos: RepoNode[];
   parsedFiles: ParsedGraphFile[];
-  config: LogicLensConfig;
+  config: AppConfig;
   enabled: boolean;
   label: string;
   repoName?: string;

@@ -12,7 +12,7 @@ import type { SemanticTraceGraph } from "../src/core/contracts/semanticTrace.js"
 
 
 // ---------------------------------------------------------------------------
-// Fixtures — mirror real extractor output (canonicalHttpContractKey = "METHOD:/path")
+// Fixtures mirror real extractor output (canonicalHttpContractKey = "METHOD:/path")
 // ---------------------------------------------------------------------------
 
 const ORDERS_KEY = canonicalHttpContractKey({ method: "POST", path: "/orders" }); // "POST:/orders"
@@ -138,15 +138,15 @@ describe("traceSemanticGraph", () => {
   const specs = [producer, consumer, reqSchema];
 
   const relations: SemanticRelationEdge[] = [
-    // consumer → producer (consumer calls the endpoint)
+    // consumer -> producer (consumer calls the endpoint)
     { fromSpecId: consumer.id, toSpecId: producer.id, kind: "CALLS_ENDPOINT", evidenceId: "ev:1", reason: "method+path match", confidence: 0.95 },
-    // producer → request schema
+    // producer -> request schema
     { fromSpecId: producer.id, toSpecId: reqSchema.id, kind: "REQUEST_SCHEMA", evidenceId: "ev:2", reason: "@RequestBody", confidence: 0.9 }
   ];
 
   it("resolves a natural http target and walks both directions", () => {
     const graph = traceSemanticGraph("http POST /orders", specs, relations);
-    // Both producer and consumer share the endpoint key → both are targets.
+    // Both producer and consumer share the endpoint key, so both are targets.
     const targetIds = graph.targets.map((t) => t.specId).sort();
     expect(targetIds).toContain("spec:prod");
 
@@ -168,7 +168,7 @@ describe("traceSemanticGraph", () => {
   });
 
   it("respects direction (schema has only an incoming REQUEST_SCHEMA edge)", () => {
-    // The schema is only ever the target of REQUEST_SCHEMA (producer → schema),
+    // The schema is only ever the target of REQUEST_SCHEMA (producer -> schema),
     // so outgoing from it yields nothing, incoming yields the producer endpoint.
     const outgoing = traceSemanticGraph("schema CreateOrderRequest", specs, relations, { direction: "outgoing" });
     expect(outgoing.edges).toHaveLength(0);
@@ -338,7 +338,7 @@ describe("printSemanticTrace CLI text rendering", () => {
 
     const output = logs.join("\n");
     expect(output).toContain("Connections between targets:");
-    expect(output).toContain("➔ publishes OrderCreated");
+    expect(output).toContain("-> publishes OrderCreated");
     expect(output).toContain("via PUBLISHES_EVENT confidence=0.95 reason=annotated with @Publish");
   });
 
