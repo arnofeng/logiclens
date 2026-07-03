@@ -425,11 +425,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
           const detail = colonIdx === -1 ? undefined : change.slice(colonIdx + 1) || undefined;
 
           if (!VALID_CHANGE_TYPES.has(changeType)) {
-            return {
-              content: [{ type: "text" as const, text: JSON.stringify({
-                error: `Invalid change type: "${changeType}". Valid types: ${[...VALID_CHANGE_TYPES].join(", ")}`
-              }, null, 2) }]
-            };
+            throw new Error(`Invalid change type: "${changeType}". Valid types: ${[...VALID_CHANGE_TYPES].join(", ")}`);
           }
 
           const report = await client.analyzeChangeImpact({
@@ -515,18 +511,10 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
             };
           }
           if (!specId) {
-            return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: JSON.stringify(
-                    { error: "Provide either `target` (natural identifier) or `specId`." },
-                    null,
-                    2
-                  ),
-                },
-              ],
-            };
+            throw new Error(
+              "Provide either `target` (natural identifier) or `specId`. " +
+              "For free-form questions, use the `ask_question` tool instead."
+            );
           }
           const result = await client.semanticTrace(specId, {
             direction: (direction as "outgoing" | "incoming" | "both") ?? "both",
