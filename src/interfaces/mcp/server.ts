@@ -564,7 +564,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
       await logMcpCall("resource", `${BRAND.displayName} Graph DB Schema`, { uri: uri.href });
       const formattedSchema = [
         "# Kuzu Schema Statements",
-        "This is the current graph structure of Logiclens database:",
+        `This is the current graph structure of ${BRAND.displayName} database:`,
         "",
         "```cypher",
         ...schemaStatements,

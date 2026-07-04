@@ -25,7 +25,6 @@
     "build:prod": "npm run clean && tsc -p tsconfig.prod.json",
     "clean": "tsx scripts/clean.ts",
     "dev": "tsx src/cli.ts",
-    "bench:scale": "tsx scripts/benchmark-scale.ts",
     "prepack": "npm run build:prod",
     "test": "tsx scripts/test.ts",
     "typecheck": "tsc --noEmit",

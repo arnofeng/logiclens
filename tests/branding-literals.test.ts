@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = process.cwd();
-const checkedRoots = ["src"];
+const checkedRoots = ["src", "scripts", "bin"];
 const allowedFiles = new Set([
   "src/shared/branding.ts",
   "src/config/schema.ts",
