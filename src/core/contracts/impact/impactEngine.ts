@@ -18,7 +18,8 @@ import { isKnownContractSpecNode } from "../../parsing/types.js";
 import { deserializeSpec } from "../spec.js";
 import {
   CONSUMER_TO_PRODUCER_KINDS,
-  SCHEMA_TO_USE_KINDS
+  SCHEMA_TO_USE_KINDS,
+  SEMANTIC_REL_META
 } from "../semanticRelations.js";
 import {
   type ChangeIntent,
@@ -44,29 +45,42 @@ export type { ImpactAnalysisOptions } from "./types.js";
 // Graph traversal helpers
 // ---------------------------------------------------------------------------
 
-/** Builds a reverse adjacency list (incoming direction). */
-function buildReverseAdjacency(
+/** Builds an adjacency list in the semantic impact propagation direction. */
+function buildImpactAdjacency(
   edges: SemanticRelationEdge[]
-): Map<string, { fromSpecId: string; kind: SemanticRelationKind; reason: string; confidence: number }[]> {
-  const adj = new Map<string, { fromSpecId: string; kind: SemanticRelationKind; reason: string; confidence: number }[]>();
+): Map<string, { impactedSpecId: string; fromSpecId: string; toSpecId: string; kind: SemanticRelationKind; reason: string; confidence: number }[]> {
+  const adj = new Map<string, { impactedSpecId: string; fromSpecId: string; toSpecId: string; kind: SemanticRelationKind; reason: string; confidence: number }[]>();
   for (const e of edges) {
-    const list = adj.get(e.toSpecId);
+    const meta = SEMANTIC_REL_META[e.kind];
+    if (!meta || (meta.category !== "consumer-to-producer" && meta.category !== "schema-to-use")) continue;
+
+    const currentSpecId = meta.direction === "forward" ? e.toSpecId : e.fromSpecId;
+    const impactedSpecId = meta.direction === "forward" ? e.fromSpecId : e.toSpecId;
+    const next = {
+      impactedSpecId,
+      fromSpecId: e.fromSpecId,
+      toSpecId: e.toSpecId,
+      kind: e.kind,
+      reason: e.reason,
+      confidence: e.confidence
+    };
+    const list = adj.get(currentSpecId);
     if (list) {
-      list.push({ fromSpecId: e.fromSpecId, kind: e.kind, reason: e.reason, confidence: e.confidence });
+      list.push(next);
     } else {
-      adj.set(e.toSpecId, [{ fromSpecId: e.fromSpecId, kind: e.kind, reason: e.reason, confidence: e.confidence }]);
+      adj.set(currentSpecId, [next]);
     }
   }
   return adj;
 }
 
 /**
- * Finds all specs that reach `startSpecIds` by following incoming edges
- * up to `maxHops` hops.
+ * Finds all specs impacted by `startSpecIds` by following relation-specific
+ * impact propagation direction up to `maxHops` hops.
  */
-function traverseIncoming(
+function traverseImpactDirection(
   startSpecIds: Set<string>,
-  reverseAdj: Map<string, { fromSpecId: string; kind: SemanticRelationKind; confidence: number }[]>,
+  impactAdj: Map<string, { impactedSpecId: string; kind: SemanticRelationKind; confidence: number }[]>,
   maxHops: number
 ): Map<string, number> {
   const visited = new Map<string, number>();
@@ -76,12 +90,12 @@ function traverseIncoming(
   for (let hop = 1; hop <= maxHops; hop++) {
     const next = new Set<string>();
     for (const id of frontier) {
-      const neighbors = reverseAdj.get(id);
+      const neighbors = impactAdj.get(id);
       if (!neighbors) continue;
       for (const n of neighbors) {
-        if (!visited.has(n.fromSpecId)) {
-          visited.set(n.fromSpecId, hop);
-          next.add(n.fromSpecId);
+        if (!visited.has(n.impactedSpecId)) {
+          visited.set(n.impactedSpecId, hop);
+          next.add(n.impactedSpecId);
         }
       }
     }
@@ -90,6 +104,117 @@ function traverseIncoming(
   }
 
   return visited;
+}
+
+type ImpactPathStep = {
+  impactedSpecId: string;
+  edge: SemanticRelationEdge;
+  hop: number;
+};
+
+function traverseImpactSteps(
+  startSpecIds: Set<string>,
+  specs: ReadableContractSpecNode[],
+  relations: SemanticRelationEdge[],
+  maxHops: number
+): { visited: Map<string, number>; steps: ImpactPathStep[] } {
+  const visited = new Map<string, number>();
+  const steps: ImpactPathStep[] = [];
+  const specMap = new Map(specs.map((s) => [s.id, s]));
+  let frontier = new Set(startSpecIds);
+  for (const id of frontier) visited.set(id, 0);
+
+  for (let hop = 1; hop <= maxHops; hop++) {
+    const next = new Set<string>();
+    for (const currentSpecId of frontier) {
+      for (const edge of relations) {
+        for (const impactedSpecId of getImpactStepSpecIds(edge, currentSpecId, specMap)) {
+          if (visited.has(impactedSpecId) || next.has(impactedSpecId)) continue;
+          next.add(impactedSpecId);
+          steps.push({ impactedSpecId, edge, hop });
+        }
+      }
+    }
+    if (next.size === 0) break;
+    for (const id of next) visited.set(id, hop);
+    frontier = next;
+  }
+
+  return { visited, steps };
+}
+
+function getImpactStepSpecIds(
+  edge: SemanticRelationEdge,
+  currentSpecId: string,
+  specMap: Map<string, ReadableContractSpecNode>
+): string[] {
+  const direct = getImpactedSpecId(edge, currentSpecId);
+  if (direct) return [direct];
+  return getImplementationUpstreamSpecIds(edge, currentSpecId, specMap);
+}
+
+function getImpactedSpecId(edge: SemanticRelationEdge, currentSpecId: string): string | null {
+  const meta = SEMANTIC_REL_META[edge.kind];
+  if (!meta || (meta.category !== "consumer-to-producer" && meta.category !== "schema-to-use")) return null;
+  if (meta.direction === "forward") {
+    return edge.toSpecId === currentSpecId ? edge.fromSpecId : null;
+  }
+  return edge.fromSpecId === currentSpecId ? edge.toSpecId : null;
+}
+
+function getImplementationUpstreamSpecIds(
+  edge: SemanticRelationEdge,
+  currentSpecId: string,
+  specMap: Map<string, ReadableContractSpecNode>
+): string[] {
+  const meta = SEMANTIC_REL_META[edge.kind];
+  if (!meta || meta.category !== "consumer-to-producer" || meta.direction !== "forward") return [];
+  if (edge.fromSpecId !== currentSpecId) return [];
+
+  const localConsumer = specMap.get(currentSpecId);
+  if (!localConsumer) return [];
+
+  const results: string[] = [];
+  for (const candidate of specMap.values()) {
+    if (candidate.id === localConsumer.id) continue;
+    if (candidate.repoId !== localConsumer.repoId || candidate.fileId !== localConsumer.fileId) continue;
+    if (!isLocalProducerBridgeTarget(candidate)) continue;
+    if (!sameActionName(localConsumer, candidate)) continue;
+    results.push(candidate.id);
+  }
+  return results;
+}
+
+function isLocalProducerBridgeTarget(spec: ReadableContractSpecNode): boolean {
+  return spec.specKind === "http-endpoint" || spec.specKind === "event" || spec.specKind === "graphql-operation";
+}
+
+function sameActionName(a: ReadableContractSpecNode, b: ReadableContractSpecNode): boolean {
+  const actionA = actionNameOf(a);
+  const actionB = actionNameOf(b);
+  return !!actionA && !!actionB && actionA === actionB;
+}
+
+function actionNameOf(spec: ReadableContractSpecNode): string | null {
+  if (spec.specKind === "http-endpoint") {
+    const path = spec.pathTemplate || spec.canonicalKey.split(":").slice(1).join(":");
+    return lastPathSegment(path);
+  }
+  if (spec.specKind === "dubbo-method") {
+    return spec.canonicalKey.split("#").pop()?.toLowerCase() || null;
+  }
+  if (spec.specKind === "grpc-method") {
+    return spec.canonicalKey.split("/").pop()?.toLowerCase() || null;
+  }
+  if (spec.specKind === "graphql-operation") {
+    return spec.canonicalKey.split(".").pop()?.toLowerCase() || null;
+  }
+  return null;
+}
+
+function lastPathSegment(path: string): string | null {
+  const segment = path.split("?")[0]?.split("/").filter(Boolean).pop();
+  return segment ? segment.toLowerCase() : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -104,29 +229,23 @@ function collectIncomingEdgesOnPaths(
   const result: { fromSpecId: string; toSpecId: string; kind: SemanticRelationKind; reason: string; confidence: number; hop: number }[] = [];
 
   for (const edge of relations) {
-    const hopFrom = visited.get(edge.fromSpecId);
-    const hopTo = visited.get(edge.toSpecId);
-    if (hopFrom === undefined || hopTo === undefined) continue;
+    const meta = SEMANTIC_REL_META[edge.kind];
+    if (!meta || (meta.category !== "consumer-to-producer" && meta.category !== "schema-to-use")) continue;
 
-    if (hopFrom === hopTo - 1) {
-      // Forward edge: from (predecessor, hop H-1) -> to (successor, hop H)
+    const currentSpecId = meta.direction === "forward" ? edge.toSpecId : edge.fromSpecId;
+    const impactedSpecId = meta.direction === "forward" ? edge.fromSpecId : edge.toSpecId;
+    const hopCurrent = visited.get(currentSpecId);
+    const hopImpacted = visited.get(impactedSpecId);
+    if (hopCurrent === undefined || hopImpacted === undefined) continue;
+
+    if (hopImpacted === hopCurrent + 1) {
       result.push({
         fromSpecId: edge.fromSpecId,
         toSpecId: edge.toSpecId,
         kind: edge.kind,
         reason: edge.reason,
         confidence: edge.confidence,
-        hop: hopTo
-      });
-    } else if (hopTo === hopFrom - 1) {
-      // Backward edge: from (successor, hop H) -> to (predecessor, hop H-1)
-      result.push({
-        fromSpecId: edge.fromSpecId,
-        toSpecId: edge.toSpecId,
-        kind: edge.kind,
-        reason: edge.reason,
-        confidence: edge.confidence,
-        hop: hopFrom
+        hop: hopImpacted
       });
     }
   }
@@ -243,14 +362,14 @@ export function analyzeImpact(
     };
   }
 
-  const targetSpecIds = new Set(targetSpecs.map((s) => s.id));
+  const targetSpecIds = selectImpactRootIds(new Set(targetSpecs.map((s) => s.id)), relations);
+  const impactRootSpecs = targetSpecs.filter((s) => targetSpecIds.has(s.id));
   const specMap = new Map(specs.map((s) => [s.id, s]));
-  const isSchemaChange = targetSpecs[0]?.specKind === "schema";
+  const isSchemaChange = impactRootSpecs[0]?.specKind === "schema";
 
   const transitiveRelations = relations.filter((e) =>
     CONSUMER_TO_PRODUCER_KINDS.has(e.kind) || SCHEMA_TO_USE_KINDS.has(e.kind)
   );
-  const reverseAdj = buildReverseAdjacency(transitiveRelations);
 
   // -- Step 2: Traverse the graph --------------------------------------------
   const impacts: ImpactItem[] = [];
@@ -258,26 +377,26 @@ export function analyzeImpact(
   let inspectedSpecIds = new Set(targetSpecIds);
 
   // For the target specs themselves, produce an "intended change" item
-  for (const ts of targetSpecs) {
+  for (const ts of impactRootSpecs) {
     const targetItem = classifyTargetChange(change, ts);
     if (targetItem) impacts.push(targetItem);
   }
 
-  // Walk incoming edges to find all directly and indirectly affected consumers
-  const visited = traverseIncoming(targetSpecIds, reverseAdj, maxHops);
-  const pathEdges = collectIncomingEdgesOnPaths(visited, transitiveRelations);
+  // Walk relation-specific impact direction to find directly and indirectly affected consumers
+  const { visited, steps: pathSteps } = traverseImpactSteps(targetSpecIds, specs, transitiveRelations, maxHops);
 
-  for (const pe of pathEdges) {
-    const fromSpec = specMap.get(pe.fromSpecId);
-    if (!fromSpec || targetSpecIds.has(pe.fromSpecId)) continue;
-    inspectedSpecIds.add(pe.fromSpecId);
-    inspectedSpecIds.add(pe.toSpecId);
+  for (const step of pathSteps) {
+    const impactedSpec = specMap.get(step.impactedSpecId);
+    if (!impactedSpec || targetSpecIds.has(step.impactedSpecId)) continue;
+    inspectedSpecIds.add(step.impactedSpecId);
+    inspectedSpecIds.add(step.edge.fromSpecId);
+    inspectedSpecIds.add(step.edge.toSpecId);
 
-    const edgeKey = `${pe.fromSpecId}:${pe.toSpecId}:${pe.kind}`;
+    const edgeKey = `${step.impactedSpecId}:${step.edge.kind}`;
     if (seenEdges.has(edgeKey)) continue;
     seenEdges.add(edgeKey);
 
-    const items = classifyImpact(change, fromSpec, pe.kind, pe.reason, pe.confidence, options);
+    const items = classifyImpact(change, impactedSpec, step.edge.kind, step.edge.reason, step.edge.confidence, options);
     impacts.push(...items);
   }
 
@@ -345,6 +464,17 @@ export function analyzeImpact(
   };
 }
 
+function selectImpactRootIds(matchedSpecIds: Set<string>, relations: SemanticRelationEdge[]): Set<string> {
+  const roots = new Set<string>();
+  for (const edge of relations) {
+    if (!matchedSpecIds.has(edge.fromSpecId) || !matchedSpecIds.has(edge.toSpecId)) continue;
+    const meta = SEMANTIC_REL_META[edge.kind];
+    if (!meta || (meta.category !== "consumer-to-producer" && meta.category !== "schema-to-use")) continue;
+    roots.add(meta.direction === "forward" ? edge.toSpecId : edge.fromSpecId);
+  }
+  return roots.size > 0 ? roots : matchedSpecIds;
+}
+
 // ---------------------------------------------------------------------------
 // Impact classification — registry-based dispatch
 // ---------------------------------------------------------------------------
@@ -406,9 +536,20 @@ function classifyImpact(
     }];
   }
   const classifier = IMPACT_CLASSIFIERS[dependentSpec.specKind];
-  return classifier
-    ? classifier(change, dependentSpec, relationKind, reason, confidence, options)
-    : [];
+  if (!classifier) return [];
+  const items = classifier(change, dependentSpec, relationKind, reason, confidence, options);
+  if (items.length > 0) return items;
+  return [{
+    severity: "risky",
+    repoId: dependentSpec.repoId,
+    filePath: dependentSpec.fileId,
+    symbol: dependentSpec.canonicalKey,
+    relationKind,
+    description: `${dependentSpec.specKind} is transitively connected to ${change.target}; no specific ${change.changeType} rule was applied.`,
+    evidence: reason,
+    specId: dependentSpec.id,
+    confidence: Math.min(confidence, dependentSpec.confidence, 0.6)
+  }];
 }
 
 // ---------------------------------------------------------------------------

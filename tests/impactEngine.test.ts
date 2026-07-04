@@ -1098,6 +1098,57 @@ describe("dubbo impact analysis", () => {
   });
 });
 
+describe("analyzeImpact — implementation bridge", () => {
+  it("propagates a downstream dubbo provider change through a same-file HTTP endpoint to HTTP consumers", () => {
+    const provider = makeDubboSpec({
+      id: "spec:dubbo-provider",
+      contractId: "contract:api:com.acme.orderservice#pageQueryPromotionList",
+      repoId: "center-service",
+      fileId: "file:center-service:OrderServiceImpl.java",
+      interfaceName: "com.acme.OrderService",
+      method: "pageQueryPromotionList"
+    });
+    const localConsumer = makeDubboSpec({
+      id: "spec:dubbo-consumer",
+      contractId: "contract:api:com.acme.orderservice#pageQueryPromotionList",
+      repoId: "front-service",
+      fileId: "file:front-service:OrderController.java",
+      interfaceName: "com.acme.OrderService",
+      method: "pageQueryPromotionList"
+    });
+    const localHttp = makeHttpSpec({
+      id: "spec:http",
+      contractId: "contract:api:POST:/orders/pageQueryPromotionList",
+      repoId: "front-service",
+      fileId: "file:front-service:OrderController.java",
+      method: "POST",
+      path: "/orders/pageQueryPromotionList"
+    });
+    const frontend = makeHttpSpec({
+      id: "spec:frontend",
+      contractId: "contract:api:POST:/orders/pageQueryPromotionList",
+      repoId: "web-frontend",
+      fileId: "file:web-frontend:api.ts",
+      method: "POST",
+      path: "/orders/pageQueryPromotionList"
+    });
+    const rels = [
+      makeSemanticRel({ fromSpecId: localConsumer.id, toSpecId: provider.id, kind: "CALLS_ENDPOINT", reason: "dubbo match" }),
+      makeSemanticRel({ fromSpecId: frontend.id, toSpecId: localHttp.id, kind: "CALLS_ENDPOINT", reason: "http match" })
+    ];
+
+    const report = analyzeImpact(
+      { target: "dubbo com.acme.OrderService#pageQueryPromotionList", changeType: "rpc-signature-change" },
+      [provider, localConsumer, localHttp, frontend],
+      rels
+    );
+
+    expect(report.impacts.map((i) => i.repoId)).toContain("front-service");
+    expect(report.impacts.map((i) => i.repoId)).toContain("web-frontend");
+    expect(report.inspectedSpecCount).toBeGreaterThanOrEqual(4);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // CLI option parser (exported from commands/impact.ts)
 // ---------------------------------------------------------------------------

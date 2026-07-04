@@ -65,7 +65,21 @@ program
     specTraceCommand(target, rest, { maxHops: options.maxHops, direction: options.direction as any, json: options.json })
   );
 program.command("ask").argument("<question>").description("Answer a natural-language question from the graph").action((question: string) => askCommand(question));
-program.command("impact").argument("<symbolOrEntity>").option("--change <change>", "Proposed change, e.g. \"field-removed:couponCode\"").description("Run impact analysis for a symbol, entity, or contract change").action((symbolOrEntity: string, options: { change?: string }) => impactCommand(symbolOrEntity, { change: options.change }));
+program.command("impact")
+  .argument("<symbolOrEntity>")
+  .option("--change <change>", "Proposed change, e.g. \"field-removed:couponCode\"")
+  .option("--max-hops <number>", "Max semantic impact hops (default 3)", (value) => Number(value))
+  .option("--legacy", "Show legacy symbol/call graph impact context")
+  .option("--verbose", "Show verbose output, including legacy context when semantic impact matches")
+  .description("Run impact analysis for a symbol, entity, or contract change")
+  .action((symbolOrEntity: string, options: { change?: string; maxHops?: number; legacy?: boolean; verbose?: boolean }) =>
+    impactCommand(symbolOrEntity, {
+      change: options.change,
+      maxHops: options.maxHops,
+      legacy: options.legacy,
+      verbose: options.verbose
+    })
+  );
 program
   .command("quality")
   .argument("[action]", "Action to perform: 'contracts' to audit contract quality, or empty to audit relation quality")

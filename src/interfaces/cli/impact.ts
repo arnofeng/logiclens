@@ -1,9 +1,19 @@
 import { createClient } from "../sdk/client.js";
 import type { ImpactReport } from "../../core/contracts/impact/types.js";
+import type { ImpactResult } from "../sdk/client.js";
+import type {
+  SemanticImpactEdge,
+  SemanticImpactNode,
+  SemanticImpactReport
+} from "../../core/contracts/impact/semanticImpact.js";
+import { BRAND } from "../../shared/branding.js";
 
 export type ImpactCommandOptions = {
   /** Optional change description, e.g. "field-removed:couponCode" */
   change?: string;
+  maxHops?: number;
+  legacy?: boolean;
+  verbose?: boolean;
 };
 
 export async function impactCommand(
@@ -25,37 +35,35 @@ export async function impactCommand(
         target: symbolOrEntity,
         changeType: parsed.changeType,
         detail: parsed.detail,
+        maxHops: options.maxHops,
       });
 
       printImpactReport(report);
       return;
     }
 
+    const semanticImpact = await client.semanticImpact(symbolOrEntity, { maxHops: options.maxHops });
+    if (semanticImpact) {
+      const hasSymbolMatch = isBareTarget(symbolOrEntity)
+        ? await client.hasCodeSymbolMatch(symbolOrEntity)
+        : false;
+      printSemanticImpactReport(semanticImpact, { showSymbolHint: hasSymbolMatch, rawTarget: symbolOrEntity });
+
+      if (options.legacy || options.verbose) {
+        console.log("");
+        console.log("Legacy symbol/call graph context:");
+        printLegacyImpactResult(await client.impact(symbolOrEntity), false);
+      }
+      return;
+    }
+
+    if (isExplicitContractTarget(symbolOrEntity)) {
+      console.log(`No contract spec found for "${symbolOrEntity}".`);
+      return;
+    }
+
     // -- Legacy: Symbol/entity search-based impact ----------------------------
-    const result = await client.impact(symbolOrEntity);
-    console.log(`Potential impact for ${symbolOrEntity}:`);
-    if (result.contractTrace.length > 0) {
-      console.log("");
-      console.log("Contract producers/consumers:");
-      for (const row of result.contractTrace) console.log(`- ${row.role} ${row.repoName}/${row.filePath}:${row.line} ${row.rule} ${row.raw}`);
-    }
-    if (result.entityTrace.length > 0) {
-      console.log("");
-      console.log("Entity graph context:");
-      for (const row of result.entityTrace) console.log(`- ${row.sourceKind} ${row.repoName} ${row.name} ${row.filePath}:${row.line} ${row.role}`);
-    }
-    console.log("");
-    console.log("Matched code:");
-    for (const seed of result.seeds) console.log(`- ${seed.repoName}/${seed.filePath}:${seed.qualifiedName}`);
-    console.log("");
-    console.log("Related call edges:");
-    for (const edge of result.edges) console.log(`- ${edge.fromFile}:${edge.fromName} -> ${edge.toFile}:${edge.toName} (${edge.resolution}, confidence=${edge.confidence})`);
-    console.log("");
-    console.log("Related docs:");
-    for (const section of result.sections) console.log(`- ${section.repoName}/${section.filePath}:${section.heading} (lines ${section.startLine}-${section.endLine})`);
-    console.log("");
-    console.log("Recommended files to inspect:");
-    for (const file of result.recommendedFiles) console.log(`- ${file}`);
+    printLegacyImpactResult(await client.impact(symbolOrEntity), true);
   } finally {
     await client.close();
   }
@@ -89,6 +97,123 @@ function parseChangeOption(raw: string): { changeType: string; detail?: string }
 // ---------------------------------------------------------------------------
 // Report formatting
 // ---------------------------------------------------------------------------
+
+function printLegacyImpactResult(result: ImpactResult, includeHeader: boolean): void {
+  if (includeHeader) console.log(`Potential impact for ${result.symbolOrEntity}:`);
+  if (result.contractTrace.length > 0) {
+    console.log("");
+    console.log("Contract producers/consumers:");
+    for (const row of result.contractTrace) console.log(`- ${row.role} ${row.repoName}/${row.filePath}:${row.line} ${row.rule} ${row.raw}`);
+  }
+  if (result.entityTrace.length > 0) {
+    console.log("");
+    console.log("Entity graph context:");
+    for (const row of result.entityTrace) console.log(`- ${row.sourceKind} ${row.repoName} ${row.name} ${row.filePath}:${row.line} ${row.role}`);
+  }
+  console.log("");
+  console.log("Matched code:");
+  for (const seed of result.seeds) console.log(`- ${seed.repoName}/${seed.filePath}:${seed.qualifiedName}`);
+  console.log("");
+  console.log("Related call edges:");
+  for (const edge of result.edges) console.log(`- ${edge.fromFile}:${edge.fromName} -> ${edge.toFile}:${edge.toName} (${edge.resolution}, confidence=${edge.confidence})`);
+  console.log("");
+  console.log("Related docs:");
+  for (const section of result.sections) console.log(`- ${section.repoName}/${section.filePath}:${section.heading} (lines ${section.startLine}-${section.endLine})`);
+  console.log("");
+  console.log("Recommended files to inspect:");
+  for (const file of result.recommendedFiles) console.log(`- ${file}`);
+}
+
+function printSemanticImpactReport(
+  report: SemanticImpactReport,
+  options: { showSymbolHint: boolean; rawTarget: string }
+): void {
+  if (options.showSymbolHint) {
+    console.log(`Note: Also matched code symbols for "${options.rawTarget}". If you wanted the code symbol call graph, run:`);
+    console.log(`  ${BRAND.cliName} impact ${quoteIfNeeded(options.rawTarget)} --legacy`);
+    console.log("");
+  }
+
+  const title = `Semantic Contract Impact: ${report.target}`;
+  console.log(title);
+  console.log("=".repeat(title.length));
+  console.log(`Impact Radius: ${report.affectedRepos.length} repos affected, ${Math.max(0, report.nodes.length - report.targets.length)} specs impacted (max-hops: ${report.maxHops})`);
+  console.log("");
+
+  if (report.affectedRepos.length > 0) {
+    console.log("Affected Repositories & Services:");
+    for (const repo of report.affectedRepos) console.log(`  - ${repo}`);
+    console.log("");
+  }
+
+  console.log("Transitive Impact Chain:");
+  const children = buildChildren(report);
+  for (const target of report.targets) {
+    printImpactNode(target, children, report, 0);
+  }
+
+  if (report.nodes.length === report.targets.length) {
+    console.log("  No downstream impacted specs found.");
+  }
+
+  if (report.truncated) {
+    console.log("");
+    console.log(`Traversal stopped at max hops. Raise --max-hops to expand.`);
+  }
+
+  if (report.recommendedFiles.length > 0) {
+    console.log("");
+    console.log("Recommended files to inspect:");
+    for (const file of report.recommendedFiles) console.log(`  - ${file}`);
+  }
+}
+
+function buildChildren(report: SemanticImpactReport): Map<string, SemanticImpactNode[]> {
+  const nodesById = new Map(report.nodes.map((n) => [n.specId, n]));
+  const children = new Map<string, SemanticImpactNode[]>();
+  for (const node of report.nodes) {
+    if (!node.viaSpecId) continue;
+    const parent = nodesById.get(node.viaSpecId);
+    if (!parent || parent.hop !== node.hop - 1) continue;
+    const list = children.get(parent.specId);
+    if (list) list.push(node); else children.set(parent.specId, [node]);
+  }
+  for (const list of children.values()) {
+    list.sort((a, b) => a.hop - b.hop || repoOf(a.repoId).localeCompare(repoOf(b.repoId)) || a.summary.localeCompare(b.summary));
+  }
+  return children;
+}
+
+function printImpactNode(
+  node: SemanticImpactNode,
+  children: Map<string, SemanticImpactNode[]>,
+  report: SemanticImpactReport,
+  depth: number
+): void {
+  const indent = "  ".repeat(depth + 1);
+  console.log(`${indent}[Hop ${node.hop}] ${node.summary} (${repoOf(node.repoId)})`);
+  if (node.filePath) console.log(`${indent}  file: ${node.filePath}`);
+
+  for (const child of children.get(node.specId) ?? []) {
+    const edge = edgeToChild(report, child);
+    console.log("");
+    if (edge) {
+      console.log(`${indent}  -> [${edge.kind}] confidence=${formatConfidence(edge.confidence)}`);
+    } else if (child.relationKind) {
+      console.log(`${indent}  -> [${child.relationKind}] confidence=${formatConfidence(child.confidence)}`);
+    }
+    printImpactNode(child, children, report, depth + 1);
+    if (child.reason) console.log(`${"  ".repeat(depth + 2)}  reason: ${child.reason}`);
+  }
+}
+
+function edgeToChild(report: SemanticImpactReport, child: SemanticImpactNode): SemanticImpactEdge | undefined {
+  return report.edges.find((e) =>
+    e.hop === child.hop &&
+    e.kind === child.relationKind &&
+    (e.fromSpecId === child.specId || e.toSpecId === child.specId)
+  );
+}
 
 function printImpactReport(report: ImpactReport): void {
   const severityIcon = report.overallSeverity === "breaking" ? "馃敶"
@@ -129,4 +254,25 @@ function printImpactReport(report: ImpactReport): void {
 
 function formatConfidence(confidence: number): string {
   return Number.isFinite(confidence) ? confidence.toFixed(2) : "n/a";
+}
+
+function isBareTarget(target: string): boolean {
+  return !isExplicitContractTarget(target);
+}
+
+function isExplicitContractTarget(target: string): boolean {
+  const trimmed = target.trim();
+  const first = trimmed.split(/[\s:]/)[0]?.toLowerCase();
+  return !!first && (
+    ["http", "api", "event", "schema", "dto", "grpc", "dubbo", "graphql", "package", "config"].includes(first) ||
+    ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"].includes(first.toUpperCase())
+  );
+}
+
+function repoOf(repoId: string): string {
+  return repoId.replace(/^repo:/, "");
+}
+
+function quoteIfNeeded(value: string): string {
+  return /\s/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
 }

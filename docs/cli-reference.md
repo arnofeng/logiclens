@@ -331,15 +331,33 @@ Perform change impact analysis on a specified symbol or entity.
 ```bash
 logiclens impact UserService
 logiclens impact /api/order/:id
+logiclens impact "schema CreateOrderRequest"
+logiclens impact "http POST /orders" --max-hops 5
+logiclens impact "schema CreateOrderRequest" --change field-removed:couponCode
+logiclens impact Order --legacy
 ```
 
 **Parameters**:
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `<symbolOrEntity>` | Yes | Symbol or entity name |
+| `<symbolOrEntity>` | Yes | Symbol, entity, or natural contract target |
 
-**Output**: Contract producers/consumers, entity graph context, matching code, related call edges, related documents, recommended files to review.
+**Options**:
+
+| Option | Description |
+|--------|-------------|
+| `--change <change>` | Structured contract change, e.g. `field-removed:couponCode`, `endpoint-removed`, or `event-payload-change` |
+| `--max-hops <number>` | Maximum semantic impact propagation depth (default: `3`) |
+| `--legacy` | Show legacy symbol/call graph context even when a semantic contract match is found |
+| `--verbose` | Show verbose output, including legacy context for semantic matches |
+
+When the target resolves to a `ContractSpec`, `impact` follows the semantic
+contract graph in the impact-propagation direction and prints affected
+repositories, transitive impact chains, and recommended files. If no contract
+spec is found for a bare symbol, it falls back to the legacy symbol/call graph
+impact output. Explicit contract targets such as `schema Order` or
+`http POST /orders` do not fall back silently when no contract spec exists.
 
 ---
 

@@ -12,6 +12,7 @@ import {
   listUnresolvedEvidence,
   traceContract,
   traceEntity,
+  hasCodeSymbolMatch,
   type DependencyRow,
   type ContractSummaryRow,
   type ContractTraceRow,
@@ -19,6 +20,7 @@ import {
   type UnresolvedEvidenceRow,
   type CodeSearchRow
 } from "../../core/graph-model/queries.js";
+import type { SemanticImpactReport } from "../../core/contracts/impact/semanticImpact.js";
 import { retrieveForQuestion, type RetrievalResult } from "../../features/ask/retrieve.js";
 import { answerQuestion } from "../../features/ask/answer.js";
 import { rebuildRepoDependencies } from "../../core/graph-model/rebuildRelations.js";
@@ -54,6 +56,7 @@ export type TraceResult = {
  */
 export type ImpactResult = {
   symbolOrEntity: string;
+  semanticImpact?: SemanticImpactReport;
   contractTrace: ContractTraceRow[];
   entityTrace: EntityTraceRow[];
   seeds: any[];
@@ -402,6 +405,7 @@ export class AppClient {
    */
   async impact(target: string): Promise<ImpactResult> {
     const db = await this.getDb();
+    const semanticImpact = await this.semanticImpact(target);
     const contractKinds = new Set(["package", "api", "event", "dto", "schema", "enum", "config"]);
     const [kind, ...rest] = target.split(":");
     const value = rest.join(":");
@@ -435,6 +439,7 @@ export class AppClient {
 
     return {
       symbolOrEntity: target,
+      semanticImpact: semanticImpact ?? undefined,
       contractTrace,
       entityTrace,
       seeds,
@@ -458,6 +463,7 @@ export class AppClient {
     target: string;
     changeType: string;
     detail?: string;
+    maxHops?: number;
   }): Promise<import("../../core/contracts/impact/types.js").ImpactReport> {
     const db = await this.getDb();
     const { analyzeImpactFromDB } = await import("../../core/contracts/impact/impactEngine.js");
@@ -492,9 +498,23 @@ export class AppClient {
         detail: changeIntent.detail,
       },
       db,
-      { readFile }
+      { readFile, maxHops: changeIntent.maxHops }
     );
     return report;
+  }
+
+  async semanticImpact(
+    target: string,
+    options?: { maxHops?: number }
+  ): Promise<SemanticImpactReport | null> {
+    const db = await this.getDb();
+    const { analyzeSemanticImpactFromDB } = await import("../../core/contracts/impact/semanticImpact.js");
+    return analyzeSemanticImpactFromDB(target, db, { maxHops: options?.maxHops });
+  }
+
+  async hasCodeSymbolMatch(target: string): Promise<boolean> {
+    const db = await this.getDb();
+    return hasCodeSymbolMatch(db, target);
   }
 
   /**

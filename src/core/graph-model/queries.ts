@@ -181,6 +181,18 @@ export async function findImpact(db: GraphDB, term: string): Promise<CodeSearchR
   );
 }
 
+export async function hasCodeSymbolMatch(db: GraphDB, term: string): Promise<boolean> {
+  const rows = await db.query<{ found: boolean }>(
+    `MATCH (:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(c:Code)
+     WHERE (c.name = $term OR c.qualifiedName = $term)
+       AND (f.active IS NULL OR f.active = true) AND (c.active IS NULL OR c.active = true)
+     RETURN true AS found
+     LIMIT 1;`,
+    { term }
+  );
+  return rows.length > 0;
+}
+
 export async function findContractSourceSymbols(db: GraphDB, contractIds: string[]): Promise<CodeSearchRow[]> {
   if (contractIds.length === 0) return [];
   return db.query<CodeSearchRow>(
