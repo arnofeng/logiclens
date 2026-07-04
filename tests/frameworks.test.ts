@@ -22,7 +22,7 @@ function mockRepoNode(name: string, repoPath: string): RepoNode {
 
 describe("framework detection", () => {
   it("detects package.json and axios dependency", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-frameworks-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-frameworks-"));
     const repo = mockRepoNode("test-js", dir);
     
     // No package.json initially
@@ -45,7 +45,7 @@ describe("framework detection", () => {
   });
 
   it("detects pom.xml and spring-mvc dependency", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-frameworks-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-frameworks-"));
     const repo = mockRepoNode("test-java", dir);
 
     await fs.writeFile(
@@ -67,7 +67,7 @@ describe("framework detection", () => {
   });
 
   it("detects build.gradle and spring-mvc dependency", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-frameworks-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-frameworks-"));
     const repo = mockRepoNode("test-gradle", dir);
 
     await fs.writeFile(
@@ -84,7 +84,7 @@ describe("framework detection", () => {
   });
 
   it("detects go.mod and gin dependency", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-frameworks-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-frameworks-"));
     const repo = mockRepoNode("test-go", dir);
 
     await fs.writeFile(
@@ -101,7 +101,7 @@ describe("framework detection", () => {
   });
 
   it("detects fastapi in requirements.txt", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-frameworks-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-frameworks-"));
     const repo = mockRepoNode("test-py", dir);
 
     await fs.writeFile(
@@ -117,7 +117,7 @@ describe("framework detection", () => {
   });
 
   it("detects generic Python and Go frameworks from parsed files", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-frameworks-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-frameworks-"));
     const repo = mockRepoNode("test-source-langs", dir);
 
     const detected = await detectFrameworks(repo, [

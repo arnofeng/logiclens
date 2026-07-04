@@ -73,7 +73,7 @@ describe("parser", () => {
   });
 
   it("extracts language facts for Java annotations", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-java-facts-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-java-facts-"));
     const sourcePath = path.join(dir, "OrderController.java");
     await fs.writeFile(sourcePath, `package com.example.api;
  
@@ -110,7 +110,7 @@ describe("parser", () => {
   });
  
   it("extracts language facts for TypeScript decorators and literals", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-ts-facts-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-ts-facts-"));
     const sourcePath = path.join(dir, "controller.ts");
     await fs.writeFile(sourcePath, `@Controller({ path: "/orders", version: ["v1", "v2"], count: 123, enabled: true })
  export class OrderController {
@@ -160,7 +160,7 @@ describe("parser", () => {
   });
 
   it("extracts various import and export bindings via AST", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-import-ast-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-import-ast-"));
     const sourcePath = path.join(dir, "imports.ts");
     await fs.writeFile(sourcePath, `
 import { foo, bar as baz } from "mod-a";
@@ -236,7 +236,7 @@ export * as nsExport from "mod-h";
   });
 
   it("extracts structured receiver and argsCount details for JS/TS, Python, Java, and Go calls", async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-call-ast-"));
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "test-call-ast-"));
     try {
       const repo = repoId("call-ast-test");
       

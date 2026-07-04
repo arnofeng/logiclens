@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { configSchema } from "../src/config/schema.js";
+import { BRAND_PATHS } from "../src/shared/branding.js";
 import type { ParsedGraphFile, RepoNode } from "../src/core/parsing/types.js";
 
 const openAiMock = vi.hoisted(() => {
@@ -98,7 +99,7 @@ describe("embedding batching", () => {
     const provider = new OpenAIEmbeddingProvider("test-embedding", "key");
     embeddingProviderRegistry.register(provider);
 
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-embedding-batch-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-embedding-batch-"));
     const repo: RepoNode = {
       id: "repo:test",
       name: "test",
@@ -145,7 +146,7 @@ describe("embedding batching", () => {
 
     expect(openAiMock.create).toHaveBeenCalledTimes(3);
     expect(openAiMock.create.mock.calls.map(([call]) => (call.input as string[]).length)).toEqual([2, 2, 1]);
-    const indexPath = path.join(cwd, ".logiclens", "semantic-index.json");
+    const indexPath = path.join(cwd, BRAND_PATHS.semanticIndex);
     const records = JSON.parse(await fs.readFile(indexPath, "utf8")) as { nodeId: string; embedding?: number[] }[];
     expect(records).toHaveLength(5);
     expect(records.every((record) => Array.isArray(record.embedding))).toBe(true);
@@ -161,7 +162,7 @@ describe("embedding batching", () => {
     const { OpenAIEmbeddingProvider } = await import("../src/adapters/embeddings/openaiEmbeddingProvider.js");
     const { indexSemanticText } = await import("../src/core/semantic/semanticIndex.js");
 
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-embedding-missing-cache-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-embedding-missing-cache-"));
     const repo: RepoNode = {
       id: "repo:test",
       name: "test",
@@ -191,7 +192,7 @@ describe("embedding batching", () => {
     const configNoKey = configSchema.parse({ embedding: { provider: "no-key", level: "file", batchSize: 2, concurrency: 1 } });
     await indexSemanticText({ cwd, repos: [repo], parsedFiles, config: configNoKey });
     expect(openAiMock.create).not.toHaveBeenCalled();
-    const indexPath = path.join(cwd, ".logiclens", "semantic-index.json");
+    const indexPath = path.join(cwd, BRAND_PATHS.semanticIndex);
     const recordsWithoutEmbeddings = JSON.parse(await fs.readFile(indexPath, "utf8")) as { embedding?: number[] }[];
     expect(recordsWithoutEmbeddings.every((record) => record.embedding === undefined)).toBe(true);
 
@@ -214,7 +215,7 @@ describe("embedding batching", () => {
     const provider = new OpenAIEmbeddingProvider("test-embedding", "key", undefined, "openai-docs");
     embeddingProviderRegistry.register(provider);
 
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-embedding-docs-level-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-embedding-docs-level-"));
     const repo: RepoNode = {
       id: "repo:test",
       name: "test",
@@ -290,7 +291,7 @@ describe("embedding batching", () => {
 
     await indexSemanticText({ cwd, repos: [repo], parsedFiles, config });
 
-    const indexPath = path.join(cwd, ".logiclens", "semantic-index.json");
+    const indexPath = path.join(cwd, BRAND_PATHS.semanticIndex);
     const records = JSON.parse(await fs.readFile(indexPath, "utf8")) as { nodeId: string; nodeKind: string }[];
 
     const kinds = records.map((record) => record.nodeKind);

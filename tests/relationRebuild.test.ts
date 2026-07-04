@@ -62,7 +62,7 @@ async function dependencyRows(db: KuzuGraphDB): Promise<{ fromRepo: string; toRe
 
 describe("relation rebuild", () => {
   it("fills cross-repo dependencies after repos are indexed in separate batches", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-rebuild-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-rebuild-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("rebuild-test");
@@ -105,7 +105,7 @@ describe("relation rebuild", () => {
   }, 20000);
 
   it("rebuilds only dependencies touching the targeted repo and keeps unrelated edges", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-targeted-rebuild-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-targeted-rebuild-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("targeted-rebuild-test");
@@ -147,7 +147,7 @@ describe("relation rebuild", () => {
   }, 20000);
 
   it("clears targeted dependencies when the target repo has no active contract participants", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-empty-target-rebuild-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-empty-target-rebuild-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("empty-target-rebuild-test");
@@ -179,7 +179,7 @@ describe("relation rebuild", () => {
   }, 20000);
 
   it("loads only target contracts for targeted rebuild helpers", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-targeted-helper-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-targeted-helper-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("targeted-helper-test");

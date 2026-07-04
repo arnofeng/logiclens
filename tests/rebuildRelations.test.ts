@@ -115,7 +115,7 @@ function makeSpec(contractId: string, repoId: string, key: string): {
 
 describe("addSemanticRelationsBatch", () => {
   it("no-ops on empty array", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-batch-empty-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-batch-empty-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("batch-empty-test");
@@ -130,7 +130,7 @@ describe("addSemanticRelationsBatch", () => {
   }, 15000);
 
   it("writes a single SEMANTIC_REL edge with all properties preserved", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-batch-single-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-batch-single-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("batch-single-test");
@@ -177,7 +177,7 @@ describe("addSemanticRelationsBatch", () => {
   }, 15000);
 
   it("writes a batch of edges in a single call", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-batch-many-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-batch-many-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("batch-many-test");
@@ -214,7 +214,7 @@ describe("addSemanticRelationsBatch", () => {
   }, 15000);
 
   it("defaults batchId to empty string and active to true when not provided", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-batch-defaults-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-batch-defaults-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("batch-defaults-test");
@@ -245,7 +245,7 @@ describe("addSemanticRelationsBatch", () => {
   }, 15000);
 
   it("idempotently merges on (kind, evidenceId) key when re-written", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-batch-merge-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-batch-merge-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("batch-merge-test");
@@ -364,7 +364,7 @@ async function semanticRelRows(
 
 describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
   it("resolves cross-repo CALLS_ENDPOINT between HTTP consumer and producer in different repos", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-scoped-http-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-scoped-http-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("scoped-http-test");
@@ -463,7 +463,7 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
   }, 20000);
 
   it("resolves cross-repo PUBLISHES_EVENT + SUBSCRIBES_EVENT between event publisher and subscriber", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-scoped-event-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-scoped-event-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("scoped-event-test");
@@ -550,7 +550,7 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
   }, 20000);
 
   it("only persists edges that involve at least one target repo in scoped mode", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-scoped-filter-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-scoped-filter-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("scoped-filter-test");
@@ -640,7 +640,7 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
   }, 20000);
 
   it("full rebuild (no targetRepoIds) resolves edges across all repos", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-full-rebuild-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-full-rebuild-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("full-rebuild-test");
@@ -697,7 +697,7 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
   }, 20000);
 
   it("does not produce intra-repo (same repo) edges", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-intrarepo-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-intrarepo-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("intrarepo-test");

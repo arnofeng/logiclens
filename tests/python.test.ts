@@ -10,7 +10,7 @@ import type { ExtractedRelation } from "../src/core/contracts/extraction/crossRe
 
 describe("Python support", () => {
   it("parses Python files and extracts facts/symbols/calls", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-py-test-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-py-test-"));
     const sourcePath = path.join(dir, "main.py");
     await fs.writeFile(
       sourcePath,

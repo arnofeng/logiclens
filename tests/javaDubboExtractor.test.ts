@@ -9,7 +9,7 @@ import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { repoId } from "../src/shared/path.js";
 
 async function extract(source: string): Promise<ExtractorFactBundle> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-java-dubbo-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-java-dubbo-"));
   const rel = "src/main/java/com/acme/order/OrderDubbo.java";
   const abs = path.join(dir, rel);
   await fs.mkdir(path.dirname(abs), { recursive: true });

@@ -8,7 +8,7 @@ import type { FileNode, RepoNode } from "../src/core/parsing/types.js";
 const tempDirs: string[] = [];
 
 async function tempGraph(): Promise<{ dir: string; db: KuzuGraphDB }> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-graph-journal-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-graph-journal-"));
   tempDirs.push(dir);
   const db = await KuzuGraphDB.open(path.join(dir, "graph"));
   await db.initSchema("journal-test");

@@ -10,7 +10,7 @@ import type { ExtractedRelation } from "../src/core/contracts/extraction/crossRe
 
 describe("Go support", () => {
   it("parses Go files and extracts structures/methods/imports/calls", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-go-test-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-go-test-"));
     const sourcePath = path.join(dir, "main.go");
     await fs.writeFile(
       sourcePath,

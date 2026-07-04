@@ -8,7 +8,7 @@ import { repoId } from "../src/shared/path.js";
 
 describe("Env Config Extractor", () => {
   it("extracts config references via process.env and config.get using AST", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-config-test-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-config-test-"));
     const sourcePath = path.join(dir, "config.ts");
     await fs.writeFile(
       sourcePath,

@@ -7,7 +7,7 @@ import { defaultConfig, loadConfig, writeConfig } from "../src/config/loadConfig
 import type { IndexOptions } from "../src/core/indexing/types.js";
 
 async function makeWorkspace(): Promise<string> {
-  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-add-repos-"));
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-add-repos-"));
   await writeConfig(defaultConfig(), cwd);
   return cwd;
 }

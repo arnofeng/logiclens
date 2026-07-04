@@ -32,7 +32,7 @@ function repoFor(name: string, repoPath: string): RepoNode {
 
 describe("scan/parse phase", () => {
   it("returns a shared scan/parse result structure for full indexing", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-scan-parse-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-scan-parse-"));
     await fs.mkdir(path.join(cwd, "src"), { recursive: true });
     await fs.writeFile(path.join(cwd, "src", "index.ts"), "export function hello() { return 'hi'; }\n", "utf8");
 
@@ -50,7 +50,7 @@ describe("scan/parse phase", () => {
   });
 
   it("skips unchanged files before parse when changedOnly is enabled", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-scan-parse-skip-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-scan-parse-skip-"));
     await fs.mkdir(path.join(cwd, "src"), { recursive: true });
     const source = "export const answer = 42;\n";
     await fs.writeFile(path.join(cwd, "src", "index.ts"), source, "utf8");
@@ -86,7 +86,7 @@ describe("scan/parse phase", () => {
       }
     });
 
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-scan-parse-fail-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-scan-parse-fail-"));
     await fs.writeFile(path.join(cwd, "bad.boom"), "boom\n", "utf8");
     const repo = repoFor("scan-parse-fail", cwd);
 

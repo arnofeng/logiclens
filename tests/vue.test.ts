@@ -9,7 +9,7 @@ import { repoId } from "../src/shared/path.js";
 
 describe("vue parser", () => {
   it("extracts JS/TS symbols, imports, and calls from Vue SFC files", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-vue-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-vue-"));
     
     // 1. Vue file with JS
     const jsVuePath = path.join(dir, "App.vue");
@@ -120,7 +120,7 @@ function increment() {
   });
 
   it("handles Vue files larger than 32 KB without throwing Invalid argument", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-vue-large-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-vue-large-"));
     const largeVuePath = path.join(dir, "LargeFile.vue");
     
     // Construct a Vue file larger than 32 KB (e.g. 40 KB)

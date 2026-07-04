@@ -6,6 +6,7 @@ import { configSchema } from "../src/config/schema.js";
 import { extractHeuristicEntities } from "../src/core/semantic/extractEntities.js";
 import { buildSemanticRecords, FallbackSemanticIndex, indexSemanticText, JsonSemanticIndex, type SemanticIndex, type SemanticRecord } from "../src/core/semantic/semanticIndex.js";
 import { NullEmbeddingProvider } from "../src/core/semantic/embeddings.js";
+import { BRAND_DEFAULTS } from "../src/shared/branding.js";
 import type { EmbeddingProvider } from "../src/core/registries/types.js";
 import type { CodeSymbol, ParsedGraphFile, RepoNode } from "../src/core/parsing/types.js";
 
@@ -48,7 +49,7 @@ describe("semantic heuristics", () => {
         chroma: {
           mode: "remote",
           url: "https://chroma.example.com",
-          collection: "logiclens",
+          collection: BRAND_DEFAULTS.chromaCollection,
           authToken: "token"
         }
       }
@@ -96,7 +97,7 @@ describe("semantic heuristics", () => {
   });
 
   it("serializes concurrent JSON semantic index upserts with atomic writes", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-semantic-atomic-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-semantic-atomic-"));
     const indexPath = path.join(dir, "semantic.json");
     const index = new JsonSemanticIndex(indexPath);
     const record = (nodeId: string): SemanticRecord => ({
@@ -131,7 +132,7 @@ describe("semantic heuristics", () => {
         throw new Error("primary search unavailable");
       }
     };
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-semantic-fallback-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-semantic-fallback-"));
     const fallback = new JsonSemanticIndex(path.join(cwd, "semantic.json"));
     const index = new FallbackSemanticIndex(primary, fallback, cwd);
     const record: SemanticRecord = {
@@ -241,7 +242,7 @@ describe("semantic heuristics", () => {
   });
 
   it("reports semantic indexing progress for node-level embeddings", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-semantic-progress-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-semantic-progress-"));
     const repo: RepoNode = {
       id: "repo:test",
       name: "test",

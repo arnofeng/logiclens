@@ -54,7 +54,7 @@ describe("graph facts batch", () => {
   });
 
   it("treats workspace package manifests as packages owned by the outer repo", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-monorepo-facts-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-monorepo-facts-"));
     const monorepoPath = path.join(dir, "saas-fe-react-mall-common");
     const consumerPath = path.join(dir, "saas-fe-react-mall");
     await fs.mkdir(path.join(monorepoPath, "packages", "ec-browse-not-buy"), { recursive: true });
@@ -127,7 +127,7 @@ describe("graph facts batch", () => {
   });
 
   it("normalizes Java imports to package contracts and owns Java source packages", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-java-packages-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-java-packages-"));
     const repo: RepoNode = { id: repoId("java-service"), name: "java-service", path: cwd, remoteUrl: "", branch: "", commitSha: "", language: "java", indexedAt: "now" };
     const javaFileId = fileId(repo.id, "service/src/main/java/com/example/orders/OrderService.java");
     const parsed: ParsedFile = {
@@ -180,7 +180,7 @@ describe("graph facts batch", () => {
   });
 
   it("extracts Spring MVC mappings as API producers", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-spring-api-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-spring-api-"));
     const repo: RepoNode = { id: repoId("his-backend"), name: "his-backend", path: cwd, remoteUrl: "", branch: "", commitSha: "", language: "java", indexedAt: "now" };
     const relativePath = "ruoyi-admin/src/main/java/com/ruoyi/web/controller/smart/SmartBackorderController.java";
     const absolutePath = path.join(cwd, relativePath);
@@ -225,7 +225,7 @@ public class SmartBackorderController {
   });
 
   it("keeps Spring MVC postExtract prefixes scoped to their owning class", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-spring-post-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-spring-post-"));
     const repo: RepoNode = { id: repoId("his-backend"), name: "his-backend", path: cwd, remoteUrl: "", branch: "", commitSha: "", language: "java", indexedAt: "now" };
     const relativePath = "src/main/java/com/example/Controllers.java";
     const absolutePath = path.join(cwd, relativePath);
@@ -255,7 +255,7 @@ class UserController {
   });
 
   it("extracts config contracts from file-level config files", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-config-file-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-config-file-"));
     await fs.writeFile(path.join(cwd, "application.yml"), "server:\n  port: 8080\nspring:\n  application:\n    name: demo\n", "utf8");
     const repo: RepoNode = { id: repoId("config-repo"), name: "config-repo", path: cwd, remoteUrl: "", branch: "", commitSha: "", language: "yaml", indexedAt: "now" };
     const parsed: ParsedFile = {
@@ -285,7 +285,7 @@ class UserController {
   });
 
   it("extracts request object URLs as API consumers", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-request-object-api-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-request-object-api-"));
     const backend: RepoNode = { id: repoId("his-backend"), name: "his-backend", path: cwd, remoteUrl: "", branch: "", commitSha: "", language: "java", indexedAt: "now" };
     const frontend: RepoNode = { id: repoId("his-fontend"), name: "his-fontend", path: cwd, remoteUrl: "", branch: "", commitSha: "", language: "javascript", indexedAt: "now" };
     const backendRelativePath = "src/main/java/com/ruoyi/web/controller/smart/SmartBackorderController.java";
@@ -362,7 +362,7 @@ class UserController {
       active: true
     });
 
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-csv-stage-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-csv-stage-"));
     const staged = await stageGraphFactsAsCsv(facts, dir);
     expect(staged.files.File).toBeTruthy();
     expect(staged.files.Evidence).toBeTruthy();

@@ -27,7 +27,7 @@ describe("graph", () => {
   }
 
   it("clears repo indexed artifacts through the graph layer", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-clear-repo-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-clear-repo-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("clear-repo-test");
@@ -115,7 +115,7 @@ describe("graph", () => {
   });
 
   it("stores parsed files and resolves call edges", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("test");
@@ -298,7 +298,7 @@ describe("graph", () => {
   }, 20000);
 
   it("counts package owners as producers in contract summaries", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-monorepo-graph-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-monorepo-graph-"));
     const monorepoPath = path.join(dir, "common");
     const consumerPath = path.join(dir, "consumer");
     await fs.mkdir(path.join(monorepoPath, "packages", "widget"), { recursive: true });

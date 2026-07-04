@@ -8,12 +8,13 @@ import { createClient } from "../src/index.js";
 import { defaultConfig, writeConfig } from "../src/config/loadConfig.js";
 import { buildFreshnessMetadata, buildFreshnessWarning } from "../src/interfaces/mcp/server.js";
 import { SingleProcessIndexQueue } from "../src/core/indexing/scheduler.js";
+import { BRAND, BRAND_PATHS } from "../src/shared/branding.js";
 
 async function makeTempWorkspace(): Promise<string> {
-  return await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-watch-test-"));
+  return await fs.mkdtemp(path.join(os.tmpdir(), "test-watch-test-"));
 }
 
-describe("LogicLens File Watcher Subsystem", () => {
+describe(`${BRAND.displayName} File Watcher Subsystem`, () => {
   describe("Watch Policy", () => {
     const originalEnv = process.env;
 
@@ -32,11 +33,12 @@ describe("LogicLens File Watcher Subsystem", () => {
       expect(res.allowed).toBe(true);
     });
 
-    it("disallows when LOGICLENS_NO_WATCH=1 is set", () => {
-      process.env.LOGICLENS_NO_WATCH = "1";
+    it(`disallows when ${BRAND.envPrefix}NO_WATCH=1 is set`, () => {
+      const noWatchEnv = `${BRAND.envPrefix}NO_WATCH`;
+      process.env[noWatchEnv] = "1";
       const res = shouldWatchRepo("/home/user/project");
       expect(res.allowed).toBe(false);
-      expect(res.reason).toContain("LOGICLENS_NO_WATCH");
+      expect(res.reason).toContain(noWatchEnv);
     });
 
     it("allows normal Linux /mnt/* mount paths when not running under WSL", () => {
@@ -67,8 +69,8 @@ describe("LogicLens File Watcher Subsystem", () => {
       }
     });
 
-    it("allows WSL /mnt/* mount paths if LOGICLENS_FORCE_WATCH=1 is set", () => {
-      process.env.LOGICLENS_FORCE_WATCH = "1";
+    it(`allows WSL /mnt/* mount paths if ${BRAND.envPrefix}FORCE_WATCH=1 is set`, () => {
+      process.env[`${BRAND.envPrefix}FORCE_WATCH`] = "1";
       const originalPlatform = process.platform;
       Object.defineProperty(process, "platform", { value: "linux", configurable: true });
 
@@ -115,9 +117,9 @@ describe("LogicLens File Watcher Subsystem", () => {
       // Skips unsupported parser file (e.g. random binary)
       expect(matcher.match("assets/logo.png")).toBe(false);
 
-      // Skips .git and .logiclens internal folders
+      // Skips .git and branded internal folders
       expect(matcher.match(".git/config")).toBe(false);
-      expect(matcher.match(".logiclens/graph/data.mdb")).toBe(false);
+      expect(matcher.match(`${BRAND_PATHS.graph}/data.mdb`)).toBe(false);
     });
 
     it("prunes ignored directories using directory semantics", async () => {
@@ -128,7 +130,7 @@ describe("LogicLens File Watcher Subsystem", () => {
       expect(matcher.isDirExcluded("node_modules")).toBe(true);
       expect(matcher.isDirExcluded("dist")).toBe(true);
       expect(matcher.isDirExcluded(".git")).toBe(true);
-      expect(matcher.isDirExcluded(".logiclens")).toBe(true);
+      expect(matcher.isDirExcluded(BRAND.configDirName)).toBe(true);
       expect(matcher.isDirExcluded("src")).toBe(false);
     });
   });
@@ -166,15 +168,16 @@ describe("LogicLens File Watcher Subsystem", () => {
       await client.close();
     });
 
-    it("uses explicit/configured debounce instead of LOGICLENS_WATCH_DEBOUNCE_MS", async () => {
+    it(`uses explicit/configured debounce instead of ${BRAND.envPrefix}WATCH_DEBOUNCE_MS`, async () => {
       const cwd = await makeTempWorkspace();
       const repoDir = path.join(cwd, "my-repo");
       await fs.mkdir(repoDir);
       await fs.writeFile(path.join(repoDir, "hello.ts"), "console.log('hello');");
       await writeConfig({ ...defaultConfig(), repos: [{ name: "my-repo", path: "./my-repo" }], watch: { ...defaultConfig().watch, debounceMs: 1234 } }, cwd);
 
-      const originalDebounce = process.env.LOGICLENS_WATCH_DEBOUNCE_MS;
-      process.env.LOGICLENS_WATCH_DEBOUNCE_MS = "9999";
+      const debounceEnv = `${BRAND.envPrefix}WATCH_DEBOUNCE_MS`;
+      const originalDebounce = process.env[debounceEnv];
+      process.env[debounceEnv] = "9999";
       try {
         const client = await createClient({ cwd });
         const watcher = new FileWatcher(client);
@@ -184,8 +187,8 @@ describe("LogicLens File Watcher Subsystem", () => {
         expect((explicit as any).options.debounceMs).toBe(4321);
         await client.close();
       } finally {
-        if (originalDebounce === undefined) delete process.env.LOGICLENS_WATCH_DEBOUNCE_MS;
-        else process.env.LOGICLENS_WATCH_DEBOUNCE_MS = originalDebounce;
+        if (originalDebounce === undefined) delete process.env[debounceEnv];
+        else process.env[debounceEnv] = originalDebounce;
       }
     });
 
@@ -378,7 +381,7 @@ describe("LogicLens File Watcher Subsystem", () => {
         catchUpError: new Error("catch-up failed")
       });
 
-      expect(warning).toContain("[WARNING] LogicLens startup catch-up indexing failed: catch-up failed");
+      expect(warning).toContain(`[WARNING] ${BRAND.displayName} startup catch-up indexing failed: catch-up failed`);
       expect(warning).toContain("service-a/src/OrderService.ts");
       expect(warning).not.toContain("\u26a0");
     });

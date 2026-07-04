@@ -3,6 +3,7 @@ import { planQuestion } from "../src/features/ask/planner.js";
 import { retrieveForQuestion } from "../src/features/ask/retrieve.js";
 import { scoreCallResolution } from "../src/core/extraction/resolveReferences.js";
 import { chunk } from "../src/shared/chunk.js";
+import { BRAND } from "../src/shared/branding.js";
 
 describe("rag helpers", () => {
   it("detects workflow questions", () => {
@@ -65,7 +66,7 @@ describe("rag helpers", () => {
     const retrieval = await retrieveForQuestion(db as never, "Who calls /smart/backorder?", {
       config: {
         embedding: { level: "off", model: "test", apiKey: "", baseUrl: "" },
-        semantic: { provider: "json", jsonPath: ".logiclens/test-semantic-index.json" }
+        semantic: { provider: "json", jsonPath: `${BRAND.configDirName}/test-semantic-index.json` }
       } as never
     });
 
@@ -83,7 +84,7 @@ describe("rag helpers", () => {
     const retrieval = await retrieveForQuestion(db as never, "anything?", {
       config: {
         embedding: { level: "file", provider: "does-not-exist" },
-        semantic: { provider: "json", jsonPath: ".logiclens/test-missing-provider-index.json" }
+        semantic: { provider: "json", jsonPath: `${BRAND.configDirName}/test-missing-provider-index.json` }
       } as never
     });
 

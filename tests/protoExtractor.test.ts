@@ -10,7 +10,7 @@ import type { ExtractorFactBundle } from "../src/core/contracts/extraction/cross
 import type { GrpcMethodSpec, SchemaSpec } from "../src/core/contracts/spec.js";
 
 async function extract(source: string): Promise<ExtractorFactBundle> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-proto-extractor-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-proto-extractor-"));
   const rel = "protos/order.proto";
   const abs = path.join(dir, rel);
   await fs.mkdir(path.dirname(abs), { recursive: true });

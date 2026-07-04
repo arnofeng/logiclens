@@ -7,7 +7,7 @@ import { jsHttpClientExtractor } from "../src/core/contracts/extraction/builtin/
 import { repoId } from "../src/shared/path.js";
 
 async function extractFromSource(source: string, language: "typescript" | "javascript" = "typescript") {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-jshttp-test-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-jshttp-test-"));
   const ext = language === "typescript" ? "ts" : "js";
   const sourcePath = path.join(dir, `client.${ext}`);
   await fs.writeFile(sourcePath, source, "utf8");

@@ -12,7 +12,7 @@ function isRepoContractRelation(r: ExtractedRelation): r is ExtractedRelation & 
 }
 
 async function extractFromSource(source: string) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-spring-test-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-spring-test-"));
   const relativePath = "src/main/java/com/example/TestController.java";
   const absolutePath = path.join(dir, relativePath);
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });

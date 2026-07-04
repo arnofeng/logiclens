@@ -7,7 +7,7 @@ import { repoId } from "../src/shared/path.js";
 
 describe("Docstring Extraction", () => {
   it("extracts and cleans comments/docstrings for TypeScript", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-docstring-ts-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-docstring-ts-"));
     const sourcePath = path.join(dir, "Test.ts");
     await fs.writeFile(
       sourcePath,
@@ -52,7 +52,7 @@ export const myFunc = () => {};
   });
 
   it("extracts and cleans comments/docstrings for Java", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-docstring-java-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-docstring-java-"));
     const sourcePath = path.join(dir, "Test.java");
     await fs.writeFile(
       sourcePath,
@@ -89,7 +89,7 @@ public class TestJava {
   });
 
   it("extracts and cleans comments/docstrings for Go", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-docstring-go-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-docstring-go-"));
     const sourcePath = path.join(dir, "main.go");
     await fs.writeFile(
       sourcePath,
@@ -125,7 +125,7 @@ func run() {}
   });
 
   it("extracts and cleans comments/docstrings for Python", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-docstring-py-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-docstring-py-"));
     const sourcePath = path.join(dir, "main.py");
     await fs.writeFile(
       sourcePath,
@@ -172,7 +172,7 @@ def another():
   });
 
   it("extracts Python raw docstrings without prefixes or quotes", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-docstring-py-raw-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-docstring-py-raw-"));
     const sourcePath = path.join(dir, "main.py");
     await fs.writeFile(
       sourcePath,

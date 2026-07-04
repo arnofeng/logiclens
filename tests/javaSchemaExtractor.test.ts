@@ -9,7 +9,7 @@ import type { ExtractorFactBundle } from "../src/core/contracts/extraction/cross
 import type { SchemaSpec } from "../src/core/contracts/spec.js";
 
 async function extract(source: string): Promise<ExtractorFactBundle> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-java-schema-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-java-schema-"));
   const rel = "src/main/java/com/example/Model.java";
   const abs = path.join(dir, rel);
   await fs.mkdir(path.dirname(abs), { recursive: true });

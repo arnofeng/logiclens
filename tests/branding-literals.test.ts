@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { BRAND } from "../src/shared/branding.js";
 
 const root = process.cwd();
 const checkedRoots = ["src", "scripts", "bin"];
@@ -10,7 +11,15 @@ const allowedFiles = new Set([
   "src/index.ts",
   "src/interfaces/sdk/client.ts"
 ]);
-const blockedPattern = new RegExp(["Logic", "Lens"].join("") + "|logiclens|LOGICLENS");
+const blockedPattern = new RegExp([
+  BRAND.displayName,
+  BRAND.cliName,
+  BRAND.envPrefix
+].map(escapeRegExp).join("|"));
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 function collectFiles(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {

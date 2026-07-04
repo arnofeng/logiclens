@@ -9,7 +9,7 @@ import { builtinLanguageForPath, parseSourceFile } from "../src/core/parsing/par
 import { repoId } from "../src/shared/path.js";
 
 async function extract(source: string): Promise<ExtractorFactBundle> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-dubbo-xml-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-dubbo-xml-"));
   const rel = "src/main/resources/dubbo.xml";
   const abs = path.join(dir, rel);
   await fs.mkdir(path.dirname(abs), { recursive: true });
@@ -39,7 +39,7 @@ describe("Dubbo XML extractor", () => {
   });
 
   it("does not retain source for unrelated XML files", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-plain-xml-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-plain-xml-"));
     const rel = "pom.xml";
     const abs = path.join(dir, rel);
     await fs.writeFile(abs, `<project><modelVersion>4.0.0</modelVersion></project>`, "utf8");
@@ -56,7 +56,7 @@ describe("Dubbo XML extractor", () => {
   });
 
   it("retains source for Dubbo XML files so the extractor can inspect them", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-dubbo-source-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-dubbo-source-"));
     const rel = "src/main/resources/dubbo.xml";
     const abs = path.join(dir, rel);
     await fs.mkdir(path.dirname(abs), { recursive: true });

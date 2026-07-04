@@ -25,7 +25,7 @@ describe("file scanner", () => {
   });
 
   it("includes Python and Go source files by default", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-scanner-langs-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-scanner-langs-"));
     await fs.writeFile(path.join(cwd, "main.py"), "print('hello')\n", "utf8");
     await fs.writeFile(path.join(cwd, "main.go"), "package main\n", "utf8");
 
@@ -37,7 +37,7 @@ describe("file scanner", () => {
   });
 
   it("includes file-level config files by default", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-scanner-config-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-scanner-config-"));
     await fs.writeFile(path.join(cwd, "application.yml"), "server:\n  port: 8080\n", "utf8");
     await fs.writeFile(path.join(cwd, "Cargo.toml"), "[package]\nname = \"demo\"\n", "utf8");
     await fs.writeFile(path.join(cwd, "app.properties"), "spring.application.name=demo\n", "utf8");
@@ -70,7 +70,7 @@ describe("file scanner", () => {
       }
     });
 
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-scanner-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-scanner-"));
     await fs.mkdir(path.join(cwd, "src"), { recursive: true });
     await fs.writeFile(path.join(cwd, "src", "index.d.ts"), "export interface User {}\n", "utf8");
 
@@ -81,7 +81,7 @@ describe("file scanner", () => {
   });
 
   it("excludes auto-generated files from the scan result", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-scanner-gen-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-scanner-gen-"));
     await fs.mkdir(path.join(cwd, "src"), { recursive: true });
     // real source files that should be indexed
     await fs.writeFile(path.join(cwd, "src", "main.go"), "package main\n", "utf8");

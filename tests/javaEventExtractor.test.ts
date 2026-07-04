@@ -8,7 +8,7 @@ import { repoId } from "../src/shared/path.js";
 import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
 
 async function extract(source: string): Promise<ExtractorFactBundle> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-java-event-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-java-event-"));
   const rel = "src/main/java/com/example/Events.java";
   const abs = path.join(dir, rel);
   await fs.mkdir(path.dirname(abs), { recursive: true });

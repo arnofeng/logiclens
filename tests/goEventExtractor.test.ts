@@ -8,7 +8,7 @@ import { repoId } from "../src/shared/path.js";
 import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
 
 async function extract(source: string): Promise<ExtractorFactBundle> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-go-event-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-go-event-"));
   const rel = "main.go";
   const abs = path.join(dir, rel);
   await fs.writeFile(abs, source, "utf8");

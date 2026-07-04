@@ -216,7 +216,7 @@ describe("resolveReferences", () => {
   });
 
   it("uses TypeScript compiler API when source files are available", async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-ts-compiler-"));
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "test-ts-compiler-"));
     try {
       const repo = repoId("service-a");
       const srcDir = path.join(tmpDir, "src");
@@ -248,7 +248,7 @@ describe("resolveReferences", () => {
   });
 
   it("uses Java package/import/class and method signature signals", async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-java-resolve-"));
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "test-java-resolve-"));
     try {
       const repo = repoId("service-java");
       const ordersDir = path.join(tmpDir, "src", "main", "java", "com", "example", "orders");
@@ -299,7 +299,7 @@ describe("resolveReferences", () => {
   });
 
   it("uses Python module imports for exact module-level function calls", async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-python-resolve-"));
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "test-python-resolve-"));
     try {
       const repo = repoId("service-python");
       const pkgDir = path.join(tmpDir, "orders");
@@ -333,7 +333,7 @@ describe("resolveReferences", () => {
   });
 
   it("resolves various Python AST import types (multi-imports, aliased imports, relative imports, wildcard)", async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-python-ast-resolve-"));
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "test-python-ast-resolve-"));
     try {
       const repo = repoId("service-python-ast");
       const pkgDir = path.join(tmpDir, "app");
@@ -381,7 +381,7 @@ describe("resolveReferences", () => {
   });
 
   it("uses Go import packages for exact package-level function calls", async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-go-resolve-"));
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "test-go-resolve-"));
     try {
       const repo = repoId("service-go");
       const appDir = path.join(tmpDir, "cmd", "app");
@@ -417,7 +417,7 @@ describe("resolveReferences", () => {
   });
 
   it("resolves Java variables using AST with block-scoped shadowing, multi-declarations, and comment safety", async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-java-variables-"));
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "test-java-variables-"));
     try {
       const repo = repoId("java-variables-test");
       const srcDir = path.join(tmpDir, "src", "main", "java", "com", "example");

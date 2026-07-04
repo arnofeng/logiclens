@@ -14,7 +14,7 @@ import type { ExtractorFactBundle } from "../src/core/contracts/extraction/cross
 
 
 async function extractEvents(source: string): Promise<ExtractorFactBundle> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-event-unit-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-event-unit-"));
   const sourcePath = path.join(dir, "main.ts");
   await fs.writeFile(sourcePath, source, "utf8");
   const repo = { id: repoId("event-unit"), name: "event-unit", path: dir, remoteUrl: "", branch: "", commitSha: "", language: "typescript", indexedAt: "now" } as any;
@@ -26,7 +26,7 @@ async function extractEvents(source: string): Promise<ExtractorFactBundle> {
 
 describe("Event Extractor", () => {
   it("extracts event publisher and subscriber contracts using AST", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-event-test-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-event-test-"));
     const sourcePath = path.join(dir, "main.ts");
     await fs.writeFile(
       sourcePath,
@@ -283,7 +283,7 @@ describe("Event Extractor EventSpec production", () => {
 
 describe("Event Spec multi-language pipeline", () => {
   it("extracts event specs from Python, Go and Java via buildGraphFactsBatch", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-event-multilang-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-event-multilang-"));
     try {
       const repo = { id: repoId("event-multilang"), name: "event-multilang", path: dir, remoteUrl: "", branch: "main", commitSha: "abc", language: "python", indexedAt: "now" } as any;
 
@@ -315,7 +315,7 @@ describe("Event Spec multi-language pipeline", () => {
 
 describe("Event Spec end-to-end (2-B)", () => {
   it("indexes an event publish/subscribe repo and lands EventSpec nodes in the graph", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-event-e2e-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-event-e2e-"));
     try {
       const repo = { id: repoId("event-e2e"), name: "event-e2e", path: dir, remoteUrl: "", branch: "main", commitSha: "abc", language: "typescript", indexedAt: "now" } as any;
 

@@ -6,7 +6,7 @@ import { discoverGitRepos } from "../src/core/workspace/repoDiscovery.js";
 
 describe("repo discovery", () => {
   it("discovers only first-level Git repositories in stable name order", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-discovery-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-discovery-"));
     await fs.mkdir(path.join(dir, "z-service", ".git"), { recursive: true });
     await fs.mkdir(path.join(dir, "a-service", ".git"), { recursive: true });
     await fs.mkdir(path.join(dir, "plain-dir"), { recursive: true });

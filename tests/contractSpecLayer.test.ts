@@ -305,7 +305,7 @@ describe("extractor pipeline plumbing", () => {
 
 describe("graph schema and GC for ContractSpec", () => {
   it("initializes schema with ContractSpec, HAS_SPEC, SEMANTIC_REL tables", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-spec-schema-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-spec-schema-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("spec-test");
@@ -329,7 +329,7 @@ describe("graph schema and GC for ContractSpec", () => {
   });
 
   it("cascades GC to deactivate ContractSpec and SEMANTIC_REL when file becomes stale", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-spec-gc-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-spec-gc-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("gc-test");

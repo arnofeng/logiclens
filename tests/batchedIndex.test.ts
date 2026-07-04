@@ -23,7 +23,7 @@ function configFor(repos: string[], batchSize = 0): AppConfig {
 }
 
 async function withDb<T>(fn: (db: KuzuGraphDB, cwd: string) => Promise<T>): Promise<T> {
-  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-batched-index-"));
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-batched-index-"));
   const db = await KuzuGraphDB.open(path.join(cwd, "graph"));
   try {
     await db.initSchema("batched-index-test");

@@ -9,7 +9,7 @@ import type { ExtractorFactBundle } from "../src/core/contracts/extraction/cross
 import type { GrpcMethodSpec } from "../src/core/contracts/spec.js";
 
 async function extract(serverSource: string, clientSource: string): Promise<ExtractorFactBundle> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-go-grpc-extractor-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-go-grpc-extractor-"));
   
   const serverRel = "server/order_server.go";
   const serverAbs = path.join(dir, serverRel);

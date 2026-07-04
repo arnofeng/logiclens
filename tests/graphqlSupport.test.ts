@@ -14,7 +14,7 @@ import type { ContractSpecNode } from "../src/core/parsing/types.js";
 import type { SpecRoleMap } from "../src/core/contracts/matching/types.js";
 
 async function extract(source: string): Promise<ExtractorFactBundle> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-graphql-sdl-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-graphql-sdl-"));
   const rel = "schema.graphql";
   const abs = path.join(dir, rel);
   await fs.mkdir(path.dirname(abs), { recursive: true });
@@ -27,7 +27,7 @@ async function extract(source: string): Promise<ExtractorFactBundle> {
 }
 
 async function extractClient(source: string, filename: string, language: string): Promise<ExtractorFactBundle> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-graphql-client-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-graphql-client-"));
   const abs = path.join(dir, filename);
   await fs.mkdir(path.dirname(abs), { recursive: true });
   await fs.writeFile(abs, source, "utf8");

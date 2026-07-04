@@ -17,7 +17,7 @@ async function extractOne(
   source: string,
   extractor: { extract(context: any): Promise<ExtractorFactBundle> }
 ): Promise<ExtractorFactBundle> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-grpc-multilang-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-grpc-multilang-"));
   const abs = path.join(dir, relPath);
   await fs.mkdir(path.dirname(abs), { recursive: true });
   await fs.writeFile(abs, source, "utf8");

@@ -6,10 +6,11 @@ import { KuzuGraphDB } from "../src/core/graph-model/db.js";
 import { auditContractQuality } from "../src/features/quality/qualityRules.js";
 import { traceContract } from "../src/core/graph-model/queries.js";
 import { retrieveForQuestion } from "../src/features/ask/retrieve.js";
+import { BRAND } from "../src/shared/branding.js";
 
 describe("Quality Closed-Loop Test Suite", () => {
   it("runs end-to-end contract quality audits, tracing, and retrieval", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-quality-closed-loop-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-quality-closed-loop-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("closed-loop-test");
@@ -113,7 +114,7 @@ describe("Quality Closed-Loop Test Suite", () => {
       const retrieval = await retrieveForQuestion(db, "Who calls /smart/backorder?", {
         config: {
           embedding: { level: "off", model: "test", apiKey: "", baseUrl: "" },
-          semantic: { provider: "json", jsonPath: ".logiclens/test-semantic-index.json" }
+          semantic: { provider: "json", jsonPath: `${BRAND.configDirName}/test-semantic-index.json` }
         } as any
       });
       expect(retrieval.contracts.some(c => c.key === "/smart/backorder")).toBe(true);

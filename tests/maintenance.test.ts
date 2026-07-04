@@ -14,7 +14,7 @@ import { repoId } from "../src/shared/path.js";
 
 describe("maintenance lifecycle", () => {
   it("marks missing files stale and excludes stale graph facts from default queries", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-maintenance-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-maintenance-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("maintenance-test");
@@ -61,7 +61,7 @@ describe("maintenance lifecycle", () => {
   }, 20000);
 
   it("rejects false-positive evidence from contract traces", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-quality-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-quality-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("quality-test");
@@ -90,7 +90,7 @@ describe("maintenance lifecycle", () => {
   }, 20000);
 
   it("marks renamed files stale and exposes only the replacement path", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-rename-lifecycle-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-rename-lifecycle-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("rename-lifecycle-test");
@@ -121,7 +121,7 @@ describe("maintenance lifecycle", () => {
   }, 20000);
 
   it("updates moved repo metadata and repeated indexing does not duplicate public graph facts", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-repeat-lifecycle-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-repeat-lifecycle-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("repeat-lifecycle-test");
@@ -152,7 +152,7 @@ describe("maintenance lifecycle", () => {
   }, 20000);
 
   it("keeps stale lifecycle semantics after bulk upsert writes", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-bulk-upsert-maintenance-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-bulk-upsert-maintenance-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("bulk-upsert-maintenance-test");

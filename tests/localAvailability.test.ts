@@ -14,7 +14,7 @@ describe("local availability", () => {
   it("indexes, queries, and answers cross-repo graph data without OPENAI_API_KEY", async () => {
     const originalKey = process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-local-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-local-"));
     try {
       const db = await KuzuGraphDB.open(path.join(dir, "graph"));
       try {

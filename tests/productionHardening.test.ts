@@ -5,14 +5,15 @@ import { describe, expect, it } from "vitest";
 import { defaultConfig, writeConfig, loadConfig } from "../src/config/loadConfig.js";
 import { KuzuGraphDB } from "../src/core/graph-model/db.js";
 import { appVersion } from "../src/shared/version.js";
+import { BRAND, configFilePath } from "../src/shared/branding.js";
 
 describe("production hardening", () => {
-  it("uses a package-backed LogicLens version", () => {
+  it(`uses a package-backed ${BRAND.displayName} version`, () => {
     expect(appVersion).toMatch(/^\d+\.\d+\.\d+/);
   });
 
   it("does not expose an MCP escape hatch for raw graph queries", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-config-hardening-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-config-hardening-"));
     await writeConfig(defaultConfig(), cwd);
     const config = await loadConfig(cwd);
     const legacyRawQueryFlag = ["allowUnsafe", "Cypher"].join("");
@@ -20,12 +21,12 @@ describe("production hardening", () => {
   });
 
   it("preserves systemName in config even if it has the default value", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-config-hardening-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-config-hardening-"));
     const config = defaultConfig();
     expect(config.systemName).toBe("default-system");
     await writeConfig(config, cwd);
     
-    const rawYaml = await fs.readFile(path.join(cwd, ".logiclens", "config.yaml"), "utf8");
+    const rawYaml = await fs.readFile(configFilePath(cwd), "utf8");
     expect(rawYaml).toContain("systemName: default-system");
     
     const loaded = await loadConfig(cwd);
@@ -33,7 +34,7 @@ describe("production hardening", () => {
   });
 
   it("marks graph connections closed and rejects later queries", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-db-close-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-db-close-"));
     const db = await KuzuGraphDB.open(path.join(cwd, "graph"));
     await db.initSchema("close-test");
     await db.close();

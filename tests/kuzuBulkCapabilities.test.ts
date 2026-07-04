@@ -11,7 +11,7 @@ async function writeCsv(filePath: string, rows: string[][]): Promise<void> {
 
 describe("kuzu bulk import capabilities", () => {
   it("copies nodes and relations from csv files using current Kuzu syntax", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-kuzu-copy-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-kuzu-copy-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.query("CREATE NODE TABLE Person(id STRING, name STRING, active BOOL, note STRING, PRIMARY KEY(id));");
@@ -40,7 +40,7 @@ describe("kuzu bulk import capabilities", () => {
   });
 
   it("supports LOAD FROM with MERGE for upsert-style imports", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-kuzu-load-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-kuzu-load-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.query("CREATE NODE TABLE Person(id STRING, name STRING, PRIMARY KEY(id));");
@@ -58,7 +58,7 @@ describe("kuzu bulk import capabilities", () => {
   });
 
   it("supports LOAD FROM with MERGE for relation upserts", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-kuzu-rel-load-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-kuzu-rel-load-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.query("CREATE NODE TABLE Person(id STRING, name STRING, PRIMARY KEY(id));");

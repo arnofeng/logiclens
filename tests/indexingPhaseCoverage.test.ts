@@ -109,7 +109,7 @@ describe("indexing phase coverage", () => {
   });
 
   it("records failed index state when full copy bulk graph write fails", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-full-bulk-fail-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-full-bulk-fail-"));
     try {
       const config = configSchema.parse({
         repos: [{ name: "empty-service", path: dir }],

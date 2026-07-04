@@ -66,23 +66,23 @@ describe("kuzu bulk graph writer", () => {
     const repos = [repoA, repoB];
     const facts = await buildGraphFactsBatch({ batchId: "batch:equivalence", indexedAt: "indexed", repos, parsedFiles: parsed, semantic: true });
 
-    const merge = await withDb("logiclens-writer-merge-", async (db) => {
+    const merge = await withDb("test-writer-merge-", async (db) => {
       for (const repo of repos) await db.upsertRepo(repo);
       await writeGraphFactsWithMerge(db, facts);
       await rebuildRepoDependencies(db, { batchId: "batch:deps" });
       return captureGraphView(db);
     });
-    const bulkCopy = await withDb("logiclens-writer-bulk-", async (db, dir) => {
+    const bulkCopy = await withDb("test-writer-bulk-", async (db, dir) => {
       await writeGraphFactsWithKuzuBulk(db, facts, { stagingRoot: path.join(dir, "staging") });
       await rebuildRepoDependencies(db, { batchId: "batch:deps" });
       return captureGraphView(db);
     });
-    const appendCopy = await withDb("logiclens-writer-append-", async (db, dir) => {
+    const appendCopy = await withDb("test-writer-append-", async (db, dir) => {
       await writeGraphFactsWithKuzuAppendCopy(db, facts, { stagingRoot: path.join(dir, "staging") });
       await rebuildRepoDependencies(db, { batchId: "batch:deps" });
       return captureGraphView(db);
     });
-    const bulkUpsert = await withDb("logiclens-writer-upsert-", async (db, dir) => {
+    const bulkUpsert = await withDb("test-writer-upsert-", async (db, dir) => {
       await writeGraphFactsWithKuzuBulkUpsert(db, facts, { stagingRoot: path.join(dir, "staging") });
       await rebuildRepoDependencies(db, { batchId: "batch:deps" });
       return captureGraphView(db);
@@ -101,7 +101,7 @@ describe("kuzu bulk graph writer", () => {
   }, 30000);
 
   it("imports a fixture graph into an empty database using csv copy", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-bulk-writer-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-bulk-writer-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("bulk-test");
@@ -136,7 +136,7 @@ describe("kuzu bulk graph writer", () => {
   }, 20000);
 
   it("upserts a fixture graph without duplicating nodes or relations", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-bulk-upsert-writer-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-bulk-upsert-writer-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("bulk-upsert-test");
@@ -171,7 +171,7 @@ describe("kuzu bulk graph writer", () => {
   }, 20000);
 
   it("appends a new repository to an existing graph using copy for relations", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-bulk-append-writer-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-bulk-append-writer-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("bulk-append-test");
