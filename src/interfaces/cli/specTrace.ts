@@ -1,5 +1,6 @@
 import { createClient } from "../sdk/client.js";
-import type { SemanticTraceGraph } from "../../core/contracts/semanticTrace.js";
+import type { SemanticTraceEdge, SemanticTraceGraph, SemanticTraceNode } from "../../core/contracts/semanticTrace.js";
+import { BRAND } from "../../shared/branding.js";
 
 export type SpecTraceCommandOptions = {
   maxHops?: number;
@@ -74,70 +75,43 @@ export function printSemanticTrace(target: string, graph: SemanticTraceGraph): v
     return;
   }
 
-  console.log(`Semantic trace for ${target}:`);
+  console.log(`Semantic Trace: ${target}`);
   console.log("");
 
-  // Target(s)
+  console.log("Target Specs:");
   for (const t of graph.targets) {
-    console.log(`Target: ${t.summary}`);
-    console.log(`  ${repoOf(t.repoId)} ${fileOf(t.fileId)}${t.framework ? ` [${t.framework}]` : ""}`);
+    console.log(`  [${roleLabel(graph, t)}] ${repoOf(t.repoId)} ${fileOf(t.fileId)}${t.framework ? ` [${t.framework}]` : ""}`);
+    console.log(`      ${t.summary}`);
   }
 
   const targetIds = new Set(graph.targets.map((t) => t.specId));
-  const targetEdges = graph.edges.filter(
-    (e) => targetIds.has(e.fromSpecId) && targetIds.has(e.toSpecId)
-  );
+  const discovered = graph.nodes.filter((n) => !targetIds.has(n.specId));
 
-  const downstream = graph.nodes.filter((n) => n.role === "downstream");
-  const upstream = graph.nodes.filter((n) => n.role === "upstream");
-
-  if (targetEdges.length > 0) {
+  if (discovered.length > 0) {
     console.log("");
-    console.log("Connections between targets:");
-    for (const e of targetEdges) {
-      const fromNode = graph.targets.find((t) => t.specId === e.fromSpecId);
-      const toNode = graph.targets.find((t) => t.specId === e.toSpecId);
-      if (fromNode && toNode) {
-        console.log(`- ${fromNode.summary} (${repoOf(fromNode.repoId)})`);
-        console.log(`    -> ${relationVerb(e.kind)} ${toNode.summary} (${repoOf(toNode.repoId)})`);
-        console.log(`    via ${e.kind} confidence=${formatConfidence(e.confidence)} reason=${e.reason || "n/a"}`);
-      }
+    console.log("Discovered Specs:");
+    for (const n of discovered) {
+      console.log(`  [${roleLabel(graph, n)}] ${repoOf(n.repoId)} ${fileOf(n.fileId)}${n.framework ? ` [${n.framework}]` : ""}`);
+      console.log(`      ${n.summary}`);
     }
   }
 
-  if (downstream.length > 0) {
-    console.log("");
-    console.log("Downstream (schemas / payloads it uses):");
-    for (const n of downstream) {
-      console.log(`- [hop ${n.hop}] ${n.summary}  (${kindHint(graph, n.specId)})`);
-      for (const e of reachingEdges(graph, n.specId, "downstream")) {
-        console.log(`    via ${e.kind} confidence=${formatConfidence(e.confidence)} reason=${e.reason || "n/a"}`);
-      }
-      console.log(`    ${repoOf(n.repoId)} ${fileOf(n.fileId)}`);
-    }
-  }
-
-  if (upstream.length > 0) {
-    console.log("");
-    console.log("Upstream (consumers / callers):");
-    for (const n of upstream) {
-      console.log(`- [hop ${n.hop}] ${n.summary}  (${kindHint(graph, n.specId)})`);
-      for (const e of reachingEdges(graph, n.specId, "upstream")) {
-        console.log(`    via ${e.kind} confidence=${formatConfidence(e.confidence)} reason=${e.reason || "n/a"}`);
-      }
-      console.log(`    ${repoOf(n.repoId)} ${fileOf(n.fileId)}`);
-    }
-  }
-
-  if (downstream.length === 0 && upstream.length === 0 && targetEdges.length === 0) {
-    console.log("");
-    console.log("No connected specs found (no semantic relations from this contract).");
+  console.log("");
+  console.log("Relation Paths:");
+  const pathRoots = relationRoots(graph);
+  if (pathRoots.length === 0) console.log("  No relation paths found.");
+  for (const root of pathRoots) {
+    printRelationRoot(graph, root);
   }
 
   if (graph.truncated) {
     console.log("");
     console.log(`(traversal stopped at max hops - more nodes may be reachable; raise --max-hops to expand)`);
   }
+
+  console.log("");
+  console.log("Need change impact assessment?");
+  console.log(`  ${BRAND.cliName} impact ${quoteIfNeeded(target)}`);
 }
 
 /** Returns a hint of the relation kind(s) that connect a node into the trace. */
@@ -149,27 +123,127 @@ function kindHint(graph: SemanticTraceGraph, specId: string): string {
   return kinds.size > 0 ? [...kinds].join(", ") : "-";
 }
 
-function reachingEdges(
-  graph: SemanticTraceGraph,
-  specId: string,
-  role: "downstream" | "upstream"
-): SemanticTraceGraph["edges"] {
-  if (role === "downstream") {
-    return graph.edges.filter((e) => e.direction === "outgoing" && e.toSpecId === specId);
+function relationRoots(graph: SemanticTraceGraph): SemanticTraceNode[] {
+  const targetIds = new Set(graph.targets.map((t) => t.specId));
+  const preferred = graph.targets.filter((t) =>
+    graph.edges.some((e) => e.toSpecId === t.specId && e.kind === "CALLS_ENDPOINT") ||
+    graph.edges.some((e) => e.fromSpecId === t.specId && e.kind === "INTERNAL_CALL")
+  );
+  const roots = preferred.length > 0 ? preferred : graph.targets;
+  return roots.filter((r, index) => roots.findIndex((x) => x.specId === r.specId) === index && targetIds.has(r.specId));
+}
+
+function printRelationRoot(graph: SemanticTraceGraph, root: SemanticTraceNode): void {
+  console.log(`  [Target] ${root.summary} (${repoOf(root.repoId)})`);
+  console.log(`    file: ${fileOf(root.fileId)}`);
+
+  const incoming = graph.edges
+    .filter((e) => e.toSpecId === root.specId)
+    .sort(byEdgeKindThenRepo(graph));
+  for (const edge of incoming) {
+    const from = nodeById(graph, edge.fromSpecId);
+    if (!from) continue;
+    console.log("");
+    console.log(`    <- [${edgeLabel(edge)}]`);
+    console.log(`       ${from.summary} (${repoOf(from.repoId)})`);
+    console.log(`       file: ${fileOf(from.fileId)}`);
+    console.log(`       reason: ${edge.reason || "n/a"}`);
+    const incomingSeen = new Set<string>([root.specId, from.specId]);
+    printIncoming(graph, from, 1, incomingSeen);
   }
-  return graph.edges.filter((e) => e.direction === "incoming" && e.fromSpecId === specId);
+
+  const seen = new Set<string>([root.specId]);
+  printOutgoing(graph, root, 1, seen);
+}
+
+function printIncoming(
+  graph: SemanticTraceGraph,
+  node: SemanticTraceNode,
+  depth: number,
+  seen: Set<string>
+): void {
+  const incoming = graph.edges
+    .filter((e) => e.toSpecId === node.specId)
+    .sort(byEdgeKindThenRepo(graph));
+  for (const edge of incoming) {
+    const from = nodeById(graph, edge.fromSpecId);
+    if (!from || seen.has(from.specId)) continue;
+    const indent = "  ".repeat(depth + 2);
+    console.log("");
+    console.log(`${indent}<- [${edgeLabel(edge)}]`);
+    console.log(`${indent}   ${from.summary} (${repoOf(from.repoId)})`);
+    console.log(`${indent}   file: ${fileOf(from.fileId)}`);
+    console.log(`${indent}   reason: ${edge.reason || "n/a"}`);
+    seen.add(from.specId);
+    printIncoming(graph, from, depth + 1, seen);
+  }
+}
+
+function printOutgoing(
+  graph: SemanticTraceGraph,
+  node: SemanticTraceNode,
+  depth: number,
+  seen: Set<string>
+): void {
+  const outgoing = graph.edges
+    .filter((e) => e.fromSpecId === node.specId)
+    .sort(byEdgeKindThenRepo(graph));
+  for (const edge of outgoing) {
+    const to = nodeById(graph, edge.toSpecId);
+    if (!to || seen.has(to.specId)) continue;
+    const indent = "  ".repeat(depth + 2);
+    console.log("");
+    console.log(`${indent}-> [${edgeLabel(edge)}]`);
+    console.log(`${indent}   ${to.summary} (${repoOf(to.repoId)})`);
+    console.log(`${indent}   file: ${fileOf(to.fileId)}`);
+    console.log(`${indent}   reason: ${edge.reason || "n/a"}`);
+    seen.add(to.specId);
+    printOutgoing(graph, to, depth + 1, seen);
+  }
+}
+
+function byEdgeKindThenRepo(graph: SemanticTraceGraph): (a: SemanticTraceEdge, b: SemanticTraceEdge) => number {
+  return (a, b) => {
+    const ak = `${a.kind}:${repoOf(nodeById(graph, a.fromSpecId)?.repoId ?? "")}:${repoOf(nodeById(graph, a.toSpecId)?.repoId ?? "")}`;
+    const bk = `${b.kind}:${repoOf(nodeById(graph, b.fromSpecId)?.repoId ?? "")}:${repoOf(nodeById(graph, b.toSpecId)?.repoId ?? "")}`;
+    return ak.localeCompare(bk);
+  };
+}
+
+function edgeLabel(edge: SemanticTraceEdge): string {
+  const materialization = edge.materialization ?? "materialized";
+  return `${edge.kind} ${materialization} confidence=${formatConfidence(edge.confidence)}`;
+}
+
+function roleLabel(graph: SemanticTraceGraph, node: SemanticTraceNode): string {
+  if (graph.edges.some((e) => e.toSpecId === node.specId && e.kind === "INTERNAL_CALL")) return "internal-reference inferred";
+  if (graph.edges.some((e) => e.fromSpecId === node.specId && e.kind === "CALLS_ENDPOINT")) return "consumer";
+  if (graph.edges.some((e) => e.toSpecId === node.specId && e.kind === "CALLS_ENDPOINT")) {
+    if (node.specKind === "dubbo-method" || node.specKind === "grpc-method") return "provider";
+    return "producer";
+  }
+  return node.role;
+}
+
+function nodeById(graph: SemanticTraceGraph, specId: string): SemanticTraceNode | undefined {
+  return graph.nodes.find((n) => n.specId === specId);
 }
 
 function formatConfidence(confidence: number): string {
   return Number.isFinite(confidence) ? confidence.toFixed(2) : "n/a";
 }
 
-function repoOf(repoId: string): string {
-  return repoId.replace(/^repo:/, "");
+function repoOf(repoId?: string): string {
+  return (repoId ?? "").replace(/^repo:/, "");
 }
 
 function fileOf(fileId: string): string {
   // fileId: "file:repoName:relative/path"
   const parts = fileId.split(":");
+  if (parts[0] === "file" && parts[1] === "repo") return parts.slice(3).join(":");
   return parts.slice(2).join(":") || fileId;
+}
+
+function quoteIfNeeded(value: string): string {
+  return /\s/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
 }

@@ -17,8 +17,7 @@
 import type {
   ContractSpecNode,
   ReadableContractSpecNode,
-  SemanticRelationEdge,
-  SemanticRelationKind
+  SemanticRelationEdge
 } from "../parsing/types.js";
 import { isKnownContractSpecNode } from "../parsing/types.js";
 import { deserializeSpec } from "./spec.js";
@@ -39,6 +38,10 @@ import {
   type SemanticRelRow,
   type SpecRow
 } from "./specRows.js";
+import {
+  inferInternalCallEdges,
+  type TraceRelationKind
+} from "./inferredBridge.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -68,12 +71,24 @@ export type SemanticTraceNode = {
 export type SemanticTraceEdge = {
   fromSpecId: string;
   toSpecId: string;
-  kind: SemanticRelationKind;
+  kind: TraceRelationKind;
+  materialization?: "materialized" | "inferred";
+  sourceEdgeKind?: SemanticRelationEdge["kind"];
   reason: string;
   confidence: number;
   /** Distance in hops of the deeper endpoint of this edge from a target. */
   hop: number;
   direction: "outgoing" | "incoming";
+};
+
+type TraversableTraceEdge = {
+  fromSpecId: string;
+  toSpecId: string;
+  kind: TraceRelationKind;
+  materialization: "materialized" | "inferred";
+  sourceEdgeKind?: SemanticRelationEdge["kind"];
+  reason: string;
+  confidence: number;
 };
 
 export type SemanticTraceGraph = {
@@ -248,10 +263,22 @@ export function traceSemanticGraph(
   const specMap = new Map(specs.map((s) => [s.id, s]));
   const targetIds = new Set(targetSpecs.map((s) => s.id));
 
+  const traceEdges: TraversableTraceEdge[] = [
+    ...relations.map((e) => ({
+      fromSpecId: e.fromSpecId,
+      toSpecId: e.toSpecId,
+      kind: e.kind,
+      materialization: "materialized" as const,
+      reason: e.reason,
+      confidence: e.confidence
+    })),
+    ...inferInternalCallEdges(specs, relations)
+  ];
+
   // Adjacency lists keyed by specId.
-  const outAdj = new Map<string, SemanticRelationEdge[]>();
-  const inAdj = new Map<string, SemanticRelationEdge[]>();
-  for (const e of relations) {
+  const outAdj = new Map<string, TraversableTraceEdge[]>();
+  const inAdj = new Map<string, TraversableTraceEdge[]>();
+  for (const e of traceEdges) {
     const outList = outAdj.get(e.fromSpecId);
     if (outList) outList.push(e); else outAdj.set(e.fromSpecId, [e]);
     const inList = inAdj.get(e.toSpecId);
@@ -281,13 +308,15 @@ export function traceSemanticGraph(
         if (!neighbors) continue;
         for (const e of neighbors) {
           const otherId = dir === "outgoing" ? e.toSpecId : e.fromSpecId;
-          const edgeKey = `${e.fromSpecId}->${e.toSpecId}:${e.kind}`;
+          const edgeKey = `${e.fromSpecId}->${e.toSpecId}:${e.kind}:${e.materialization}`;
           if (!seenEdges.has(edgeKey)) {
             seenEdges.add(edgeKey);
             edges.push({
               fromSpecId: e.fromSpecId,
               toSpecId: e.toSpecId,
               kind: e.kind,
+              materialization: e.materialization,
+              sourceEdgeKind: e.sourceEdgeKind,
               reason: e.reason,
               confidence: e.confidence,
               hop,

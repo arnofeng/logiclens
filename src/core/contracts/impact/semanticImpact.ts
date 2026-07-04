@@ -10,6 +10,11 @@ import { findTargetSpecs } from "./impactEngine.js";
 import { normalizeSemanticTarget } from "../targetNormalization.js";
 import { summarizeSpec } from "../semanticTrace.js";
 import {
+  getImpactPropagationSpecId,
+  implementationBridgeStepsFromEdge,
+  type TraceRelationKind
+} from "../inferredBridge.js";
+import {
   SEMANTIC_REL_RETURN,
   SPEC_RETURN,
   rowToReadableContractSpec,
@@ -28,7 +33,9 @@ export type SemanticImpactNode = {
   hop: number;
   summary: string;
   confidence: number;
-  relationKind?: SemanticRelationKind;
+  relationKind?: TraceRelationKind;
+  materialization?: "materialized" | "inferred";
+  sourceEdgeKind?: SemanticRelationKind;
   reason?: string;
   viaSpecId?: string;
 };
@@ -36,7 +43,9 @@ export type SemanticImpactNode = {
 export type SemanticImpactEdge = {
   fromSpecId: string;
   toSpecId: string;
-  kind: SemanticRelationKind;
+  kind: TraceRelationKind;
+  materialization: "materialized" | "inferred";
+  sourceEdgeKind?: SemanticRelationKind;
   reason: string;
   confidence: number;
   hop: number;
@@ -61,18 +70,16 @@ export type SemanticImpactOptions = {
 type ImpactStep = {
   impactedSpecId: string;
   edge: SemanticRelationEdge;
+  kind: TraceRelationKind;
+  materialization: "materialized" | "inferred";
+  sourceEdgeKind?: SemanticRelationKind;
+  reason: string;
+  confidence: number;
   viaSpecId?: string;
 };
 
 export function getImpactedSpecId(edge: SemanticRelationEdge, currentSpecId: string): string | null {
-  const meta = SEMANTIC_REL_META[edge.kind];
-  if (!meta) return null;
-  if (meta.category !== "consumer-to-producer" && meta.category !== "schema-to-use") return null;
-
-  if (meta.direction === "forward") {
-    return edge.toSpecId === currentSpecId ? edge.fromSpecId : null;
-  }
-  return edge.fromSpecId === currentSpecId ? edge.toSpecId : null;
+  return getImpactPropagationSpecId(edge, currentSpecId);
 }
 
 export function traceImpactPropagation(
@@ -112,9 +119,11 @@ export function traceImpactPropagation(
           pathEdges.push({
             fromSpecId: edge.fromSpecId,
             toSpecId: edge.toSpecId,
-            kind: edge.kind,
-            reason: edge.reason,
-            confidence: edge.confidence,
+            kind: step.kind,
+            materialization: step.materialization,
+            sourceEdgeKind: step.sourceEdgeKind,
+            reason: step.reason,
+            confidence: step.confidence,
             hop
           });
         }
@@ -157,86 +166,27 @@ function impactStepsFromEdge(
   specMap: Map<string, ReadableContractSpecNode>
 ): ImpactStep[] {
   const direct = getImpactedSpecId(edge, currentSpecId);
-  if (direct) return [{ impactedSpecId: direct, edge }];
-
-  return [
-    ...getImplementationUpstreamSpecIds(edge, currentSpecId, specMap),
-    ...getImplementationDownstreamSpecIds(edge, currentSpecId, specMap)
-  ].map((impactedSpecId) => ({ impactedSpecId, edge, viaSpecId: currentSpecId }));
-}
-
-function getImplementationUpstreamSpecIds(
-  edge: SemanticRelationEdge,
-  currentSpecId: string,
-  specMap: Map<string, ReadableContractSpecNode>
-): string[] {
-  const meta = SEMANTIC_REL_META[edge.kind];
-  if (!meta || meta.category !== "consumer-to-producer" || meta.direction !== "forward") return [];
-  if (edge.fromSpecId !== currentSpecId) return [];
-
-  const localConsumer = specMap.get(currentSpecId);
-  if (!localConsumer) return [];
-
-  const results: string[] = [];
-  for (const candidate of specMap.values()) {
-    if (candidate.id === localConsumer.id) continue;
-    if (candidate.repoId !== localConsumer.repoId || candidate.fileId !== localConsumer.fileId) continue;
-    if (!isLocalProducerBridgeTarget(candidate)) continue;
-    if (!sameActionName(localConsumer, candidate)) continue;
-    results.push(candidate.id);
+  if (direct) {
+    return [{
+      impactedSpecId: direct,
+      edge,
+      kind: edge.kind,
+      materialization: "materialized",
+      reason: edge.reason,
+      confidence: edge.confidence
+    }];
   }
-  return results;
-}
 
-function getImplementationDownstreamSpecIds(
-  edge: SemanticRelationEdge,
-  currentSpecId: string,
-  specMap: Map<string, ReadableContractSpecNode>
-): string[] {
-  const meta = SEMANTIC_REL_META[edge.kind];
-  if (!meta || meta.category !== "consumer-to-producer" || meta.direction !== "forward") return [];
-
-  const current = specMap.get(currentSpecId);
-  const localConsumer = specMap.get(edge.fromSpecId);
-  if (!current || !localConsumer) return [];
-  if (current.id === localConsumer.id) return [];
-  if (!isLocalProducerBridgeTarget(current)) return [];
-  if (current.repoId !== localConsumer.repoId || current.fileId !== localConsumer.fileId) return [];
-  if (!sameActionName(current, localConsumer)) return [];
-
-  return [edge.toSpecId];
-}
-
-function isLocalProducerBridgeTarget(spec: ReadableContractSpecNode): boolean {
-  return spec.specKind === "http-endpoint" || spec.specKind === "event" || spec.specKind === "graphql-operation";
-}
-
-function sameActionName(a: ReadableContractSpecNode, b: ReadableContractSpecNode): boolean {
-  const actionA = actionNameOf(a);
-  const actionB = actionNameOf(b);
-  return !!actionA && !!actionB && actionA === actionB;
-}
-
-function actionNameOf(spec: ReadableContractSpecNode): string | null {
-  if (spec.specKind === "http-endpoint") {
-    const path = spec.pathTemplate || spec.canonicalKey.split(":").slice(1).join(":");
-    return lastPathSegment(path);
-  }
-  if (spec.specKind === "dubbo-method") {
-    return spec.canonicalKey.split("#").pop()?.toLowerCase() || null;
-  }
-  if (spec.specKind === "grpc-method") {
-    return spec.canonicalKey.split("/").pop()?.toLowerCase() || null;
-  }
-  if (spec.specKind === "graphql-operation") {
-    return spec.canonicalKey.split(".").pop()?.toLowerCase() || null;
-  }
-  return null;
-}
-
-function lastPathSegment(path: string): string | null {
-  const segment = path.split("?")[0]?.split("/").filter(Boolean).pop();
-  return segment ? segment.toLowerCase() : null;
+  return implementationBridgeStepsFromEdge(edge, currentSpecId, specMap).map((step) => ({
+    impactedSpecId: step.specId,
+    edge,
+    kind: step.kind,
+    materialization: step.materialization,
+    sourceEdgeKind: step.sourceEdgeKind,
+    reason: step.reason,
+    confidence: step.confidence,
+    viaSpecId: currentSpecId
+  }));
 }
 
 export function analyzeSemanticImpact(
@@ -275,8 +225,10 @@ export function analyzeSemanticImpact(
       hop,
       summary: summarizeSpec(spec),
       confidence: spec.confidence,
-      relationKind: step?.edge.kind,
-      reason: step?.edge.reason,
+      relationKind: step?.kind,
+      materialization: step?.materialization,
+      sourceEdgeKind: step?.sourceEdgeKind,
+      reason: step?.reason,
       viaSpecId: step?.viaSpecId ?? (step ? otherSpecId(step.edge, specId) : undefined)
     });
   }

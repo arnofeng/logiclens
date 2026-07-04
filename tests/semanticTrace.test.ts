@@ -337,9 +337,133 @@ describe("printSemanticTrace CLI text rendering", () => {
     }
 
     const output = logs.join("\n");
-    expect(output).toContain("Connections between targets:");
-    expect(output).toContain("-> publishes OrderCreated");
-    expect(output).toContain("via PUBLISHES_EVENT confidence=0.95 reason=annotated with @Publish");
+    expect(output).toContain("Target Specs:");
+    expect(output).toContain("Relation Paths:");
+    expect(output).toContain("-> [PUBLISHES_EVENT materialized confidence=0.95]");
+    expect(output).toContain("reason: annotated with @Publish");
+    expect(output).toContain("Need change impact assessment?");
+  });
+
+  it("renders recursive incoming paths and stable provider labels", () => {
+    const graph: SemanticTraceGraph = {
+      target: "dubbo com.acme.OrderService#createOrder",
+      targets: [
+        {
+          specId: "spec:provider",
+          contractId: "contract:api:orderservice#createorder",
+          specKind: "dubbo-method",
+          canonicalKey: "com.acme.orderservice#createOrder",
+          repoId: "repo:center-service",
+          fileId: "file:center-service:OrderService.java",
+          confidence: 0.9,
+          hop: 0,
+          role: "target",
+          summary: "com.acme.OrderService#createOrder"
+        }
+      ],
+      nodes: [
+        {
+          specId: "spec:provider",
+          contractId: "contract:api:orderservice#createorder",
+          specKind: "dubbo-method",
+          canonicalKey: "com.acme.orderservice#createOrder",
+          repoId: "repo:center-service",
+          fileId: "file:center-service:OrderService.java",
+          confidence: 0.9,
+          hop: 0,
+          role: "target",
+          summary: "com.acme.OrderService#createOrder"
+        },
+        {
+          specId: "spec:reference",
+          contractId: "contract:api:orderservice#createorder",
+          specKind: "dubbo-method",
+          canonicalKey: "com.acme.orderservice#createOrder",
+          repoId: "repo:front-service",
+          fileId: "file:front-service:OrderController.java",
+          confidence: 0.9,
+          hop: 1,
+          role: "upstream",
+          summary: "com.acme.OrderService#createOrder"
+        },
+        {
+          specId: "spec:http",
+          contractId: "contract:api:POST:/orders",
+          specKind: "http-endpoint",
+          canonicalKey: "POST:/orders",
+          repoId: "repo:front-service",
+          fileId: "file:front-service:OrderController.java",
+          confidence: 0.9,
+          hop: 2,
+          role: "upstream",
+          summary: "POST /orders"
+        },
+        {
+          specId: "spec:web",
+          contractId: "contract:api:POST:/orders",
+          specKind: "http-endpoint",
+          canonicalKey: "POST:/orders",
+          repoId: "repo:web-app",
+          fileId: "file:web-app:orders.ts",
+          confidence: 0.9,
+          hop: 3,
+          role: "upstream",
+          summary: "POST /orders"
+        }
+      ],
+      edges: [
+        {
+          fromSpecId: "spec:reference",
+          toSpecId: "spec:provider",
+          kind: "CALLS_ENDPOINT",
+          materialization: "materialized",
+          reason: "Dubbo method match",
+          confidence: 0.9,
+          hop: 1,
+          direction: "incoming"
+        },
+        {
+          fromSpecId: "spec:http",
+          toSpecId: "spec:reference",
+          kind: "INTERNAL_CALL",
+          materialization: "inferred",
+          sourceEdgeKind: "CALLS_ENDPOINT",
+          reason: "same file and same action name",
+          confidence: 0.75,
+          hop: 2,
+          direction: "incoming"
+        },
+        {
+          fromSpecId: "spec:web",
+          toSpecId: "spec:http",
+          kind: "CALLS_ENDPOINT",
+          materialization: "materialized",
+          reason: "HTTP method match",
+          confidence: 0.95,
+          hop: 3,
+          direction: "incoming"
+        }
+      ],
+      truncated: false
+    };
+
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (msg?: any) => {
+      logs.push(msg === undefined ? "" : String(msg));
+    };
+
+    try {
+      printSemanticTrace("dubbo com.acme.OrderService#createOrder", graph);
+    } finally {
+      console.log = originalLog;
+    }
+
+    const output = logs.join("\n");
+    expect(output).toContain("[provider] center-service OrderService.java");
+    expect(output).toContain("<- [CALLS_ENDPOINT materialized confidence=0.90]");
+    expect(output).toContain("<- [INTERNAL_CALL inferred confidence=0.75]");
+    expect(output).toContain("POST /orders (web-app)");
   });
 
   it("relationVerb maps all kinds properly", () => {

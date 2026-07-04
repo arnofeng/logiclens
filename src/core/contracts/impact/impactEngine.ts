@@ -36,6 +36,10 @@ import { assessGrpcMethodChange, classifyGrpcMethodTargetChange } from "./rules/
 import { assessDubboMethodChange, classifyDubboMethodTargetChange } from "./rules/dubboImpactRules.js";
 import { assessGraphqlOperationChange, classifyGraphqlOperationTargetChange } from "./rules/graphqlImpactRules.js";
 import { normalizeSemanticTarget } from "../targetNormalization.js";
+import {
+  getImpactPropagationSpecId,
+  getImplementationUpstreamBridgeSteps
+} from "../inferredBridge.js";
 
 // Re-export for backward compatibility (tests and external consumers)
 export { findFieldReferences } from "./fieldSearch.js";
@@ -150,71 +154,11 @@ function getImpactStepSpecIds(
 ): string[] {
   const direct = getImpactedSpecId(edge, currentSpecId);
   if (direct) return [direct];
-  return getImplementationUpstreamSpecIds(edge, currentSpecId, specMap);
+  return getImplementationUpstreamBridgeSteps(edge, currentSpecId, specMap).map((step) => step.specId);
 }
 
 function getImpactedSpecId(edge: SemanticRelationEdge, currentSpecId: string): string | null {
-  const meta = SEMANTIC_REL_META[edge.kind];
-  if (!meta || (meta.category !== "consumer-to-producer" && meta.category !== "schema-to-use")) return null;
-  if (meta.direction === "forward") {
-    return edge.toSpecId === currentSpecId ? edge.fromSpecId : null;
-  }
-  return edge.fromSpecId === currentSpecId ? edge.toSpecId : null;
-}
-
-function getImplementationUpstreamSpecIds(
-  edge: SemanticRelationEdge,
-  currentSpecId: string,
-  specMap: Map<string, ReadableContractSpecNode>
-): string[] {
-  const meta = SEMANTIC_REL_META[edge.kind];
-  if (!meta || meta.category !== "consumer-to-producer" || meta.direction !== "forward") return [];
-  if (edge.fromSpecId !== currentSpecId) return [];
-
-  const localConsumer = specMap.get(currentSpecId);
-  if (!localConsumer) return [];
-
-  const results: string[] = [];
-  for (const candidate of specMap.values()) {
-    if (candidate.id === localConsumer.id) continue;
-    if (candidate.repoId !== localConsumer.repoId || candidate.fileId !== localConsumer.fileId) continue;
-    if (!isLocalProducerBridgeTarget(candidate)) continue;
-    if (!sameActionName(localConsumer, candidate)) continue;
-    results.push(candidate.id);
-  }
-  return results;
-}
-
-function isLocalProducerBridgeTarget(spec: ReadableContractSpecNode): boolean {
-  return spec.specKind === "http-endpoint" || spec.specKind === "event" || spec.specKind === "graphql-operation";
-}
-
-function sameActionName(a: ReadableContractSpecNode, b: ReadableContractSpecNode): boolean {
-  const actionA = actionNameOf(a);
-  const actionB = actionNameOf(b);
-  return !!actionA && !!actionB && actionA === actionB;
-}
-
-function actionNameOf(spec: ReadableContractSpecNode): string | null {
-  if (spec.specKind === "http-endpoint") {
-    const path = spec.pathTemplate || spec.canonicalKey.split(":").slice(1).join(":");
-    return lastPathSegment(path);
-  }
-  if (spec.specKind === "dubbo-method") {
-    return spec.canonicalKey.split("#").pop()?.toLowerCase() || null;
-  }
-  if (spec.specKind === "grpc-method") {
-    return spec.canonicalKey.split("/").pop()?.toLowerCase() || null;
-  }
-  if (spec.specKind === "graphql-operation") {
-    return spec.canonicalKey.split(".").pop()?.toLowerCase() || null;
-  }
-  return null;
-}
-
-function lastPathSegment(path: string): string | null {
-  const segment = path.split("?")[0]?.split("/").filter(Boolean).pop();
-  return segment ? segment.toLowerCase() : null;
+  return getImpactPropagationSpecId(edge, currentSpecId);
 }
 
 // ---------------------------------------------------------------------------

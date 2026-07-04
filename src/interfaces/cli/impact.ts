@@ -138,6 +138,7 @@ function printSemanticImpactReport(
   console.log(title);
   console.log("=".repeat(title.length));
   console.log(`Impact Radius: ${report.affectedRepos.length} repos affected, ${Math.max(0, report.nodes.length - report.targets.length)} specs impacted (max-hops: ${report.maxHops})`);
+  console.log("Risk: unknown; provide --change for severity");
   console.log("");
 
   if (report.affectedRepos.length > 0) {
@@ -166,6 +167,10 @@ function printSemanticImpactReport(
     console.log("Recommended files to inspect:");
     for (const file of report.recommendedFiles) console.log(`  - ${file}`);
   }
+
+  console.log("");
+  console.log("Need raw relation evidence?");
+  console.log(`  ${BRAND.cliName} spec-trace ${quoteIfNeeded(report.target)}`);
 }
 
 function buildChildren(report: SemanticImpactReport): Map<string, SemanticImpactNode[]> {
@@ -198,9 +203,11 @@ function printImpactNode(
     const edge = edgeToChild(report, child);
     console.log("");
     if (edge) {
-      console.log(`${indent}  -> [${edge.kind}] confidence=${formatConfidence(edge.confidence)}`);
+      const materialization = edge.materialization === "inferred" ? " inferred" : "";
+      console.log(`${indent}  -> [${edge.kind}${materialization}] confidence=${formatConfidence(edge.confidence)}`);
     } else if (child.relationKind) {
-      console.log(`${indent}  -> [${child.relationKind}] confidence=${formatConfidence(child.confidence)}`);
+      const materialization = child.materialization === "inferred" ? " inferred" : "";
+      console.log(`${indent}  -> [${child.relationKind}${materialization}] confidence=${formatConfidence(child.confidence)}`);
     }
     printImpactNode(child, children, report, depth + 1);
     if (child.reason) console.log(`${"  ".repeat(depth + 2)}  reason: ${child.reason}`);
