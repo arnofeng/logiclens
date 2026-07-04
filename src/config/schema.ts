@@ -140,6 +140,5 @@ export const configSchema = z.object({
 });
 
 export type AppConfig = z.infer<typeof configSchema>;
-export type LogicLensConfig = AppConfig;
 export type EmbeddingLevel = AppConfig["embedding"]["level"];
 export type LlmSummaryLevel = AppConfig["indexing"]["llmSummaryLevel"];

@@ -5,7 +5,7 @@ import { schemaStatements } from "../../core/graph-model/schema.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { PendingFile, WatchStatus } from "../../features/watch/watcher.js";
-import { logicLensVersion } from "../../shared/version.js";
+import { appVersion } from "../../shared/version.js";
 import { BRAND, BRAND_DEFAULTS, BRAND_PATHS, brandedMcpToolName, configFilePath } from "../../shared/branding.js";
 import { z } from "zod";
 
@@ -181,7 +181,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   await fs.mkdir(path.dirname(mcpPidPath), { recursive: true });
   await fs.writeFile(
     mcpPidPath,
-    JSON.stringify({ pid: process.pid, version: logicLensVersion, startedAt: Date.now() }, null, 2),
+    JSON.stringify({ pid: process.pid, version: appVersion, startedAt: Date.now() }, null, 2),
     "utf8"
   );
 
@@ -223,7 +223,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   const server = new McpServer(
     {
       name: BRAND_DEFAULTS.mcpProcessName,
-      version: logicLensVersion,
+      version: appVersion,
     },
     {
       instructions:
@@ -678,7 +678,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  const startMessage = `[${new Date().toISOString()}] [MCP Server] Started ${BRAND_DEFAULTS.mcpProcessName} version ${logicLensVersion}\n`;
+  const startMessage = `[${new Date().toISOString()}] [MCP Server] Started ${BRAND_DEFAULTS.mcpProcessName} version ${appVersion}\n`;
   process.stderr.write(startMessage);
   if (client.getConfig().mcp.logCalls) {
     try {

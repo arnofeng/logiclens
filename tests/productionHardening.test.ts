@@ -4,11 +4,11 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { defaultConfig, writeConfig, loadConfig } from "../src/config/loadConfig.js";
 import { KuzuGraphDB } from "../src/core/graph-model/db.js";
-import { logicLensVersion } from "../src/shared/version.js";
+import { appVersion } from "../src/shared/version.js";
 
 describe("production hardening", () => {
   it("uses a package-backed LogicLens version", () => {
-    expect(logicLensVersion).toMatch(/^\d+\.\d+\.\d+/);
+    expect(appVersion).toMatch(/^\d+\.\d+\.\d+/);
   });
 
   it("does not expose an MCP escape hatch for raw graph queries", async () => {

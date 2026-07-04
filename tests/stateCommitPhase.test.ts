@@ -3,7 +3,7 @@ import type { GraphDB } from "../src/core/graph-model/db.js";
 import type { RepoNode } from "../src/core/parsing/types.js";
 import { runIndexStateCommitPhase } from "../src/core/indexing/stateCommit.js";
 import { runSemanticWritePhase, runStaleMarkPhase } from "../src/core/indexing/semanticWrite.js";
-import type { LogicLensConfig } from "../src/config/schema.js";
+import type { AppConfig } from "../src/config/schema.js";
 
 const repo: RepoNode = {
   id: "repo:service-a",
@@ -100,7 +100,7 @@ describe("semantic write and stale mark phases", () => {
       cwd: process.cwd(),
       repos: [repo],
       parsedFiles: [],
-      config: {} as LogicLensConfig,
+      config: {} as AppConfig,
       enabled: false,
       label: repo.name,
       repoName: repo.name,

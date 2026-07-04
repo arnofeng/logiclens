@@ -229,9 +229,9 @@ logiclens install
 LogicLens 提供 Node.js SDK，用于构建自动化系统与 AI 工具链。
 
 ```ts
-import { createLogicLens } from "logiclens";
+import { createClient } from "logiclens";
 
-const client = await createLogicLens({ cwd: process.cwd() });
+const client = await createClient({ cwd: process.cwd() });
 
 try {
   // addRepo 只更新该 client 的内存态配置(不落盘)。

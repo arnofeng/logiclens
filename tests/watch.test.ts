@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { shouldWatchRepo, shouldEnableWatcher, __resetWslCacheForTests } from "../src/features/watch/policy.js";
 import { FileMatcher, FileWatcher, WatchRepoIndex, planRecursiveWatchRoots } from "../src/features/watch/watcher.js";
-import { createLogicLens } from "../src/index.js";
+import { createClient } from "../src/index.js";
 import { defaultConfig, writeConfig } from "../src/config/loadConfig.js";
 import { buildFreshnessMetadata, buildFreshnessWarning } from "../src/interfaces/mcp/server.js";
 import { SingleProcessIndexQueue } from "../src/core/indexing/scheduler.js";
@@ -148,7 +148,7 @@ describe("LogicLens File Watcher Subsystem", () => {
         cwd
       );
 
-      const client = await createLogicLens({ cwd });
+      const client = await createClient({ cwd });
       const started = await client.watch({ debounceMs: 1000 });
       expect(started).toBe(true);
       expect(client.isWatching()).toBe(true);
@@ -176,7 +176,7 @@ describe("LogicLens File Watcher Subsystem", () => {
       const originalDebounce = process.env.LOGICLENS_WATCH_DEBOUNCE_MS;
       process.env.LOGICLENS_WATCH_DEBOUNCE_MS = "9999";
       try {
-        const client = await createLogicLens({ cwd });
+        const client = await createClient({ cwd });
         const watcher = new FileWatcher(client);
         expect((watcher as any).options.debounceMs).toBe(1234);
 
@@ -240,7 +240,7 @@ describe("LogicLens File Watcher Subsystem", () => {
         cwd
       );
 
-      const client = await createLogicLens({ cwd });
+      const client = await createClient({ cwd });
       const started = await client.watch({ repo: "missing-repo" });
       expect(started).toBe(false);
       expect(client.isWatching()).toBe(false);
@@ -261,7 +261,7 @@ describe("LogicLens File Watcher Subsystem", () => {
         cwd
       );
 
-      const client = await createLogicLens({ cwd });
+      const client = await createClient({ cwd });
       
       // Mock index to throw error
       let failCount = 0;
@@ -301,7 +301,7 @@ describe("LogicLens File Watcher Subsystem", () => {
       await fs.writeFile(path.join(repoDir, "hello.ts"), "console.log('hello');");
       await writeConfig({ ...defaultConfig(), repos: [{ name: "my-repo", path: "./my-repo" }] }, cwd);
 
-      const client = await createLogicLens({ cwd });
+      const client = await createClient({ cwd });
       const watcher = new FileWatcher(client, { debounceMs: 1000 });
       expect(await watcher.start()).toBe(true);
 
@@ -323,7 +323,7 @@ describe("LogicLens File Watcher Subsystem", () => {
       const originalPlatform = process.platform;
       Object.defineProperty(process, "platform", { value: "linux", configurable: true });
       try {
-        const client = await createLogicLens({ cwd });
+        const client = await createClient({ cwd });
         const started = await client.watch({ maxLinuxDirs: 1 });
         expect(started).toBe(true);
         const status = client.getWatchStatus();

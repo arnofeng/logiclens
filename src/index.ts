@@ -1,10 +1,9 @@
 import {
   createClient,
-  createLogicLens,
   GraphClient,
-  LogicLensClient,
+  AppClient,
   type ClientOptions,
-  type LogicLensClientOptions,
+  type AppClientOptions,
   type TraceResult,
   type ImpactResult
 } from "./interfaces/sdk/client.js";
@@ -29,13 +28,20 @@ import type {
   ParsedSourceFacts
 } from "./core/parsing/facts.js";
 import type { CallRef, CodeSymbol, ImportRef, ParsedFile } from "./core/parsing/types.js";
-import type { AppConfig, LogicLensConfig } from "./config/schema.js";
+import type { AppConfig } from "./config/schema.js";
 
 export {
   createClient,
-  createLogicLens,
+  /**
+   * @deprecated Use createClient instead.
+   */
+  createClient as createLogicLens,
   GraphClient,
-  LogicLensClient,
+  /**
+   * @deprecated Use AppClient instead.
+   */
+  AppClient as LogicLensClient,
+  AppClient,
   canonicalContractKey,
   createContractId,
   createEvidenceId,
@@ -45,8 +51,15 @@ export {
 export type {
   ClientOptions,
   AppConfig,
-  LogicLensConfig,
-  LogicLensClientOptions,
+  /**
+   * @deprecated Use AppConfig instead.
+   */
+  AppConfig as LogicLensConfig,
+  AppClientOptions,
+  /**
+   * @deprecated Use AppClientOptions instead.
+   */
+  AppClientOptions as LogicLensClientOptions,
   LanguageParser,
   ParseInput,
   ExtractContext,

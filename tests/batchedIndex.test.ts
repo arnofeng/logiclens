@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { runIndexing } from "../src/core/indexing/run.js";
 import { defaultConfig } from "../src/config/loadConfig.js";
-import type { LogicLensConfig } from "../src/config/schema.js";
+import type { AppConfig } from "../src/config/schema.js";
 import { KuzuGraphDB } from "../src/core/graph-model/db.js";
 import { listContracts, listDependencies } from "../src/core/graph-model/queries.js";
 import { embeddingProviderRegistry } from "../src/core/registries/registry.js";
@@ -13,7 +13,7 @@ function fixturePath(name: string): string {
   return path.resolve("tests/fixtures", name).replace(/\\/g, "/");
 }
 
-function configFor(repos: string[], batchSize = 0): LogicLensConfig {
+function configFor(repos: string[], batchSize = 0): AppConfig {
   const base = defaultConfig();
   return {
     ...base,

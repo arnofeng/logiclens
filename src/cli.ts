@@ -21,13 +21,13 @@ import { frameworksCommand } from "./interfaces/cli/frameworks.js";
 import { watchCommand } from "./interfaces/cli/watch.js";
 import { installCommand } from "./interfaces/cli/install.js";
 import { uninstallCommand } from "./interfaces/cli/uninstall.js";
-import { logicLensVersion } from "./shared/version.js";
+import { appVersion } from "./shared/version.js";
 import { BRAND } from "./shared/branding.js";
 
 const program = new Command();
 const configDisplayPath = `${BRAND.configDirName}/${BRAND.configFileName}`;
 
-program.name(BRAND.cliName).description(`${BRAND.displayName} cross-repository semantic dependency graph CLI`).version(logicLensVersion);
+program.name(BRAND.cliName).description(`${BRAND.displayName} cross-repository semantic dependency graph CLI`).version(appVersion);
 
 program.command("init").description(`Create ${BRAND.configDirName} config and graph directories`).action(() => initCommand());
 program.command("uninit").description(`Remove ${BRAND.configDirName} config, graph, and semantic-index, and stop running MCP server`).action(() => uninitCommand());

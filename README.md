@@ -229,9 +229,9 @@ You can use the interactive installer to automatically register the LogicLens MC
 LogicLens provides a Node.js SDK for building automation systems and AI toolchains.
 
 ```ts
-import { createLogicLens } from "logiclens";
+import { createClient } from "logiclens";
 
-const client = await createLogicLens({ cwd: process.cwd() });
+const client = await createClient({ cwd: process.cwd() });
 
 try {
   // addRepo updates this client's in-memory config only (not persisted to disk).

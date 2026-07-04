@@ -66,7 +66,7 @@ export type ImpactResult = {
  * Custom logging interface for the SDK client to delegate stdout, stderr,
  * warnings, errors, and progress updates.
  */
-export type LogicLensLogger = {
+export type AppLogger = {
   log: (message: string) => void;
   warn: (message: string) => void;
   error: (...args: any[]) => void;
@@ -74,7 +74,7 @@ export type LogicLensLogger = {
   createProgressBar?: (label: string, total: number) => any;
 };
 
-const defaultLogger: Required<LogicLensLogger> = {
+const defaultLogger: Required<AppLogger> = {
   log: () => {},
   warn: () => {},
   error: () => {},
@@ -92,18 +92,18 @@ const defaultLogger: Required<LogicLensLogger> = {
 /**
  * Configuration options for creating a client.
  */
-export type LogicLensClientOptions = {
+export type AppClientOptions = {
   /** The current working directory / project root path */
   cwd?: string;
   /** Explicit workspace configuration object; if omitted, loaded from the branded config file. */
   config?: AppConfig;
   /** Custom logger implementation */
-  logger?: LogicLensLogger;
+  logger?: AppLogger;
 };
 
-export type ClientOptions = LogicLensClientOptions;
+export type ClientOptions = AppClientOptions;
 
-export type LogicLensIndexOptions = IndexOptions & {
+export type AppIndexOptions = IndexOptions & {
   queueSource?: IndexQueueSource;
   queueLabel?: string;
 };
@@ -112,15 +112,15 @@ export type LogicLensIndexOptions = IndexOptions & {
  * Programmatic Node.js ESM client for the branded graph workspace to perform initialization,
  * indexing, relationship rebuilds, and dependency/impact querying.
  */
-export class LogicLensClient {
+export class AppClient {
   private config: AppConfig;
   private cwd: string;
   private dbInstance?: GraphDB;
   private dbPromise?: Promise<GraphDB>;
   private closed = false;
   private providersRegistered = false;
-  private options: LogicLensClientOptions;
-  private logger: Required<LogicLensLogger>;
+  private options: AppClientOptions;
+  private logger: Required<AppLogger>;
   private watcher?: FileWatcher;
   private indexQueue = new SingleProcessIndexQueue();
 
@@ -264,7 +264,7 @@ export class LogicLensClient {
    * @param options - Indexing options such as target repo, maximum files, and incremental mode.
    * @returns A promise that resolves to the index result.
    */
-  async index(options?: LogicLensIndexOptions): Promise<IndexResult> {
+  async index(options?: AppIndexOptions): Promise<IndexResult> {
     const { queueSource = "manual", queueLabel, ...indexOptions } = options ?? {};
     return this.indexQueue.enqueue({
       source: queueSource,
@@ -722,7 +722,7 @@ function describeIndexOptions(options: IndexOptions): string {
  * @param options - Client creation options.
  * @returns A promise that resolves to a new client instance.
  */
-export async function createClient(options: ClientOptions = {}): Promise<LogicLensClient> {
+export async function createClient(options: ClientOptions = {}): Promise<AppClient> {
   const cwd = options.cwd ?? process.cwd();
   let config: AppConfig;
   if (options.config) {
@@ -734,8 +734,7 @@ export async function createClient(options: ClientOptions = {}): Promise<LogicLe
       config = defaultConfig();
     }
   }
-  return new LogicLensClient(options, config);
+  return new AppClient(options, config);
 }
 
-export const GraphClient = LogicLensClient;
-export const createLogicLens = createClient;
+export const GraphClient = AppClient;
