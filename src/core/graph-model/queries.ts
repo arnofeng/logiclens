@@ -289,7 +289,7 @@ export async function listDependencies(
     `MATCH (from:Repo)-[d:DEPENDS_ON]->(to:Repo), (c:Contract), (e:Evidence)
      ${whereClause}
      RETURN from.name AS fromRepo, to.name AS toRepo, d.dependencyType AS dependencyType, c.kind AS contractKind, c.key AS contractKey, e.filePath AS filePath, e.line AS line, e.raw AS raw, e.rule AS rule, e.confidence AS confidence
-     ORDER BY from.name, to.name, d.dependencyType, c.kind, c.key, e.filePath, e.line
+     ORDER BY CASE WHEN d.dependencyType IN ['package', 'import', 'api'] THEN 0 ELSE 1 END, from.name, to.name, d.dependencyType, c.kind, c.key, e.filePath, e.line
      LIMIT ${limit};`,
     Object.keys(params).length > 0 ? params : undefined
   );
