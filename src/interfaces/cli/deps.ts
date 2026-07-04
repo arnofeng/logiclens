@@ -1,10 +1,7 @@
+import type { DependencyQueryOptions } from "../../core/graph-model/queries.js";
 import { createClient } from "../sdk/client.js";
 
-export type DepsCommandOptions = {
-  strength?: "strong" | "weak";
-  type?: string;
-  limit?: number;
-};
+export type DepsCommandOptions = DependencyQueryOptions;
 
 export function getDependencyStrength(type: string): "Strong" | "Weak" {
   switch (type) {
@@ -20,6 +17,14 @@ export function getDependencyStrength(type: string): "Strong" | "Weak" {
 }
 
 export async function depsCommand(options: DepsCommandOptions = {}, cwd = process.cwd()): Promise<void> {
+  // Validate parameter constraints (SDK also enforces, but fail-fast at CLI level)
+  if (options.direction && !options.repo) {
+    throw new Error("--direction requires --repo");
+  }
+  if (options.target && !options.repo) {
+    throw new Error("--target requires --repo");
+  }
+
   const client = await createClient({ cwd });
   try {
     const rows = await client.dependencies(options);

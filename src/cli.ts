@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { writeErrorLog } from "./shared/logger.js";
 import { addRepoCommand } from "./interfaces/cli/addRepo.js";
 import { addReposCommand } from "./interfaces/cli/addRepos.js";
 import { askCommand } from "./interfaces/cli/ask.js";
 import { contractsCommand } from "./interfaces/cli/contracts.js";
-import { depsCommand } from "./interfaces/cli/deps.js";
+import { depsCommand, type DepsCommandOptions } from "./interfaces/cli/deps.js";
 import { explainDepsCommand } from "./interfaces/cli/explainDeps.js";
 import { impactCommand } from "./interfaces/cli/impact.js";
 import { indexCommand } from "./interfaces/cli/index.js";
@@ -40,8 +40,14 @@ program
   .option("--strength <strong|weak>", "Filter dependencies by strength: strong or weak")
   .option("--type <type>", "Filter dependencies by type: package, import, api, event, shared-contract")
   .option("--limit <number>", "Maximum dependencies to list", (value) => Number(value))
+  .option("--repo <name>", "Filter dependencies involving a specific repository")
+  .option("--target <name>", "Filter dependencies targeting a specific repository")
+  .addOption(
+    new Option("--direction <outgoing|incoming>", "Direction: outgoing (repo as consumer) or incoming (repo as producer)")
+      .choices(["outgoing", "incoming"])
+  )
   .description("List structured cross-repo dependencies")
-  .action((options: { strength?: "strong" | "weak"; type?: string; limit?: number }) => depsCommand(options));
+  .action((options: DepsCommandOptions) => depsCommand(options));
 program
   .command("explain-deps")
   .argument("<sourceRepo>")

@@ -352,11 +352,14 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
         strength: z.enum(["strong", "weak"]).optional().describe("Filter dependencies by strength (strong: package/import/api, weak: event/shared-contract)"),
         type: z.string().optional().describe("Filter by dependency type (package, import, api, event, shared-contract)"),
         limit: z.number().optional().describe("Maximum number of dependencies to retrieve"),
+        repo: z.string().optional().describe("Filter dependencies involving a specific repository"),
+        target: z.string().optional().describe("Filter dependencies targeting a specific repository (requires repo)"),
+        direction: z.enum(["outgoing", "incoming"]).optional().describe("Direction: outgoing (repo as consumer) or incoming (repo as producer)"),
       },
     },
-    async ({ strength, type, limit }) => {
-      return wrapWithFreshness(MCP_TOOLS.listDependencies, { strength, type, limit }, async () => {
-        const deps = await client.dependencies({ strength, type, limit });
+    async ({ strength, type, limit, repo, target, direction }) => {
+      return wrapWithFreshness(MCP_TOOLS.listDependencies, { strength, type, limit, repo, target, direction }, async () => {
+        const deps = await client.dependencies({ strength, type, limit, repo, target, direction });
         return {
           content: [{ type: "text" as const, text: JSON.stringify(deps, null, 2) }],
         };

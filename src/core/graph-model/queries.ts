@@ -1,8 +1,18 @@
 import type { GraphDB, ContractSummaryRow } from "./db.js";
 export type { ContractSummaryRow } from "./db.js";
+import { repoId } from "../../shared/path.js";
 import { confidenceBand, type ConfidenceBand } from "../../shared/confidence.js";
 import { canonicalContractKey } from "../contracts/extraction/crossRepoContracts.js";
 import type { ContractKind, ContractRole } from "../parsing/types.js";
+
+export interface DependencyQueryOptions {
+  limit?: number;
+  strength?: "strong" | "weak";
+  type?: string;
+  repo?: string;
+  target?: string;
+  direction?: "outgoing" | "incoming";
+}
 
 export type CodeSearchRow = {
   repoName: string;
@@ -217,11 +227,12 @@ export async function listCode(db: GraphDB, limit = 50): Promise<CodeSearchRow[]
 
 export async function listDependencies(
   db: GraphDB,
-  limitOrOptions?: number | { limit?: number; type?: string; strength?: "strong" | "weak" }
+  limitOrOptions?: number | DependencyQueryOptions
 ): Promise<DependencyRow[]> {
-  const options = typeof limitOrOptions === "number" ? { limit: limitOrOptions } : (limitOrOptions ?? {});
-  const limit = options.limit ?? 100;
-  
+  const options: DependencyQueryOptions =
+    typeof limitOrOptions === "number" ? { limit: limitOrOptions } : (limitOrOptions ?? {});
+  const limit = options.limit ?? 20;
+
   const conditions = [
     "d.sourceContractId = c.id",
     "d.evidenceId = e.id",
@@ -243,12 +254,42 @@ export async function listDependencies(
     }
   }
 
+  // --repo / --target / --direction filtering
+  if (options.repo && options.target) {
+    const repoIdVal = repoId(options.repo);
+    const targetIdVal = repoId(options.target);
+    if (options.direction === "outgoing") {
+      conditions.push("from.id = $repoId");
+      conditions.push("to.id = $targetId");
+    } else if (options.direction === "incoming") {
+      conditions.push("from.id = $targetId");
+      conditions.push("to.id = $repoId");
+    } else {
+      conditions.push(
+        "((from.id = $repoId AND to.id = $targetId) OR (from.id = $targetId AND to.id = $repoId))"
+      );
+    }
+    params.repoId = repoIdVal;
+    params.targetId = targetIdVal;
+  } else if (options.repo) {
+    const repoIdVal = repoId(options.repo);
+    params.repoId = repoIdVal;
+    if (options.direction === "outgoing") {
+      conditions.push("from.id = $repoId");
+    } else if (options.direction === "incoming") {
+      conditions.push("to.id = $repoId");
+    } else {
+      conditions.push("(from.id = $repoId OR to.id = $repoId)");
+    }
+  }
+
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
   const rows = await db.query<Omit<DependencyRow, "resolution">>(
     `MATCH (from:Repo)-[d:DEPENDS_ON]->(to:Repo), (c:Contract), (e:Evidence)
      ${whereClause}
      RETURN from.name AS fromRepo, to.name AS toRepo, d.dependencyType AS dependencyType, c.kind AS contractKind, c.key AS contractKey, e.filePath AS filePath, e.line AS line, e.raw AS raw, e.rule AS rule, e.confidence AS confidence
+     ORDER BY from.name, to.name, d.dependencyType, c.kind, c.key, e.filePath, e.line
      LIMIT ${limit};`,
     Object.keys(params).length > 0 ? params : undefined
   );

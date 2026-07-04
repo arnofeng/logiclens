@@ -13,6 +13,7 @@ import {
   traceContract,
   traceEntity,
   hasCodeSymbolMatch,
+  type DependencyQueryOptions,
   type DependencyRow,
   type ContractSummaryRow,
   type ContractTraceRow,
@@ -330,12 +331,21 @@ export class AppClient {
 
   /**
    * Lists the repository-level and contract dependencies registered in the graph.
-   * 
+   *
    * @param options - Query parameters.
    * @param options.limit - The maximum number of rows to retrieve.
+   * @param options.repo - Filter dependencies involving a specific repository.
+   * @param options.target - Filter dependencies targeting a specific repository (requires repo).
+   * @param options.direction - Direction: outgoing (repo as consumer) or incoming (repo as producer).
    * @returns An array of dependency rows.
    */
-  async dependencies(options?: { limit?: number; strength?: "strong" | "weak"; type?: string }): Promise<DependencyRow[]> {
+  async dependencies(options?: DependencyQueryOptions): Promise<DependencyRow[]> {
+    if (options?.direction && !options?.repo) {
+      throw new Error("direction requires repo");
+    }
+    if (options?.target && !options?.repo) {
+      throw new Error("target requires repo");
+    }
     const db = await this.getDb();
     return listDependencies(db, options);
   }

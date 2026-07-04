@@ -205,6 +205,21 @@ List structured cross-repository dependencies.
 logiclens deps
 logiclens deps --strength strong
 logiclens deps --type api --limit 20
+
+# All dependencies involving order-service (outgoing + incoming)
+logiclens deps --repo order-service
+
+# What does order-service depend on?
+logiclens deps --repo order-service --direction outgoing
+
+# What depends on order-service?
+logiclens deps --repo order-service --direction incoming
+
+# Does order-service directly depend on payment-service?
+logiclens deps --repo order-service --target payment-service --direction outgoing
+
+# Combine with existing filters
+logiclens deps --repo order-service --target payment-service --direction outgoing --strength strong --type api
 ```
 
 **Options**:
@@ -214,6 +229,13 @@ logiclens deps --type api --limit 20
 | `--strength <strong\|weak>` | Filter by dependency strength |
 | `--type <type>` | Filter by dependency type. Options: `package`, `import`, `api`, `event`, `shared-contract` |
 | `--limit <number>` | Maximum number of results to return |
+| `--repo <name>` | Filter dependencies involving a specific repository |
+| `--target <name>` | Filter dependencies targeting a specific repository (requires `--repo`) |
+| `--direction <outgoing\|incoming>` | Direction: `outgoing` (repo as consumer) or `incoming` (repo as producer). Requires `--repo` |
+
+> [!NOTE]
+> `--direction` and `--target` both require `--repo`. If `--repo` is not specified, the command will error out.
+> A non-existent repository name returns empty results rather than an error, consistent with `explain-deps` behavior.
 
 ---
 
