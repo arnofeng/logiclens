@@ -4,7 +4,6 @@ import {
   AppClient,
   type ClientOptions,
   type AppClientOptions,
-  type TraceResult,
   type ImpactResult
 } from "./interfaces/sdk/client.js";
 
@@ -29,6 +28,7 @@ import type {
 } from "./core/parsing/facts.js";
 import type { CallRef, CodeSymbol, ImportRef, ParsedFile } from "./core/parsing/types.js";
 import type { AppConfig } from "./config/schema.js";
+import type { SemanticTraceGraph } from "./core/contracts/semanticTrace.js";
 
 export {
   createClient,
@@ -67,8 +67,8 @@ export type {
   DependencyRow,
   ContractSummaryRow,
   RetrievalResult,
-  TraceResult,
   ImpactResult,
+  SemanticTraceGraph,
   ParsedFile,
   ParsedSourceFacts,
   AnnotationArgument,

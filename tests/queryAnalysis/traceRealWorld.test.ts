@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Real-world spec-trace scenario tests
+// Real-world trace scenario tests
 //
 // These tests model the actual patterns found in the his-backend / his-fontend
 // repos — Spring MVC controllers with @RequestMapping base paths + method-level

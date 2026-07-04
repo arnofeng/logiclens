@@ -39,18 +39,6 @@ import { shouldEnableWatcher } from "../../features/watch/policy.js";
 import { SingleProcessIndexQueue, type IndexQueueSource, type IndexQueueStatusSnapshot } from "../../core/indexing/scheduler.js";
 
 /**
- * Represents the result of a trace command, which can be either a contract trace
- * or an entity trace.
- */
-export type TraceResult = {
-  type: "contract";
-  rows: ContractTraceRow[];
-} | {
-  type: "entity";
-  rows: EntityTraceRow[];
-};
-
-/**
  * Represents the result of an impact analysis, including contract traces,
  * entity traces, matched code seeds, call edges, related document sections,
  * and a list of recommended files to inspect.
@@ -383,30 +371,6 @@ export class AppClient {
   }
 
   /**
-   * Traces a specific contract (e.g., "api:/v1/users") or entity, finding all producers,
-   * consumers, and related references across the workspace.
-   * 
-   * @param target - The trace target string, e.g., "api:grpc:UserService" or "user_service".
-   * @returns The trace result containing rows of either a contract trace or entity trace.
-   */
-  async trace(target: string): Promise<TraceResult> {
-    const db = await this.getDb();
-    const contractKinds = new Set(["package", "api", "event", "dto", "schema", "enum", "config"]);
-    
-    const [kind, ...rest] = target.split(":");
-    const value = rest.join(":");
-    const isContract = contractKinds.has(kind) && value;
-    
-    if (isContract) {
-      const rows = await traceContract(db, kind as any, value);
-      return { type: "contract", rows };
-    } else {
-      const rows = await traceEntity(db, target);
-      return { type: "entity", rows };
-    }
-  }
-
-  /**
    * Analyzes the potential downstream impact of modifying a code symbol or contract.
    * Walks the call graph, identifies documented doc sections, and recommends files to check.
    * 
@@ -673,18 +637,19 @@ export class AppClient {
   /**
    * Multi-hop semantic trace keyed by a natural contract identifier.
    *
-   * Unlike {@link semanticTrace} (single-hop, requires an internal spec ID),
-   * this resolves a human-readable target such as "http POST /orders",
+   * Resolves a human-readable target such as "http POST /orders",
    * "event OrderCreated", or "schema CreateOrderRequest" to its ContractSpec
    * node(s) and walks SEMANTIC_REL edges transitively (default 3 hops) in both
    * directions, returning the full connected sub-graph (consumers, request /
    * response / payload schemas, etc.).
    *
+   * For single-hop by internal spec ID, use {@link semanticTrace}.
+   *
    * @param target   Natural-key identifier or `kind:key` form.
    * @param options.maxHops   Max hops per direction (default 3).
    * @param options.direction "outgoing", "incoming", or "both" (default).
    */
-  async semanticTraceGraph(
+  async trace(
     target: string,
     options?: { maxHops?: number; direction?: "outgoing" | "incoming" | "both" }
   ): Promise<import("../../core/contracts/semanticTrace.js").SemanticTraceGraph> {

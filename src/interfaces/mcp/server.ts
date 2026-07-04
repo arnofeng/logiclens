@@ -19,7 +19,6 @@ const MCP_TOOLS = {
   trace: brandedMcpToolName("trace"),
   impactAnalysis: brandedMcpToolName("impact_analysis"),
   askQuestion: brandedMcpToolName("ask_question"),
-  semanticTrace: brandedMcpToolName("semantic_trace")
 } as const;
 const MCP_RESOURCE_URIS = {
   config: `${BRAND.mcpServerName}://config`,
@@ -236,7 +235,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
         `  - ${MCP_TOOLS.impactAnalysis}: before proposing an edit, check what it breaks. Pass the proposed ` +
         "`change` (e.g. \"field-removed:couponCode\") to get a severity-rated blast radius (breaking/risky/" +
         "compatible) with file/line evidence.\n" +
-        `  - ${MCP_TOOLS.trace} / ${MCP_TOOLS.semanticTrace}: find the producers, consumers, and request/` +
+        `  - ${MCP_TOOLS.trace}: multi-hop semantic trace — find the producers, consumers, and request/` +
         "response/payload schemas connected to a contract.\n" +
         `  - ${MCP_TOOLS.listContracts} / ${MCP_TOOLS.listDependencies}: survey cross-repo contracts and ` +
         "dependencies before making structural changes.",
@@ -387,24 +386,6 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   );
 
   server.registerTool(
-    MCP_TOOLS.trace,
-    {
-      description: "Trace a specific contract (e.g. kind:value) or entity to find all producers, consumers, and references",
-      inputSchema: {
-        target: z.string().describe("The contract or entity to trace (e.g. 'event:OrderCreatedEvent' or 'Order')"),
-      },
-    },
-    async ({ target }) => {
-      return wrapWithFreshness(MCP_TOOLS.trace, { target }, async () => {
-        const traceResult = await client.trace(target);
-        return {
-          content: [{ type: "text" as const, text: JSON.stringify(traceResult, null, 2) }],
-        };
-      });
-    }
-  );
-
-  server.registerTool(
     MCP_TOOLS.impactAnalysis,
     {
       description: "Before editing an API, event, schema, or cross-repo symbol, check what your change will break. Evaluates the downstream blast radius of changing a code symbol or contract and rates each impact (breaking/risky/compatible) with file/line evidence. Pass `change` in '<changeType>:<detail>' format (e.g. 'field-removed:couponCode') for structured, severity-rated analysis; omit it for a broad symbol/entity impact survey.",
@@ -468,9 +449,9 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
     }
   );
 
-  // Phase 4.1: Semantic trace over SEMANTIC_REL edges (single-hop)
+  // Phase 4.1: Semantic trace over SEMANTIC_REL edges
   server.registerTool(
-    MCP_TOOLS.semanticTrace,
+    MCP_TOOLS.trace,
     {
       description:
         "Trace SEMANTIC_REL edges between ContractSpecs to discover how services are connected " +
@@ -499,11 +480,11 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
     },
     async ({ target, specId, maxHops, direction }) => {
       return wrapWithFreshness(
-        MCP_TOOLS.semanticTrace,
+        MCP_TOOLS.trace,
         { target, specId, maxHops, direction },
         async () => {
           if (target) {
-            const graph = await client.semanticTraceGraph(target, {
+            const graph = await client.trace(target, {
               maxHops,
               direction: (direction as "outgoing" | "incoming" | "both") ?? "both",
             });
@@ -670,7 +651,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
             role: "user",
             content: {
               type: "text",
-              text: `Identify all cross-repository workflows and actions involving the domain entity '${entity}'. Use '${MCP_TOOLS.trace}' to find contract/evidence mentions, and construct a detailed sequential description showing how services consume and produce events/APIs related to this entity.`,
+              text: `Identify all cross-repository workflows and actions involving the domain entity '${entity}'. First use '${MCP_TOOLS.askQuestion}' or '${MCP_TOOLS.impactAnalysis}' with the entity name to discover relevant contracts, events, and APIs. Then use '${MCP_TOOLS.trace}' with specific contract identifiers (e.g. "event OrderCreated", "http POST /orders") to trace the full semantic dependency chain. Construct a detailed sequential description showing how services consume and produce events/APIs related to this entity.`,
             },
           },
         ],

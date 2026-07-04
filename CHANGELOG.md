@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Merged `trace` and `spec-trace` into a single `trace` command**: The old single-hop reference-level `trace` command (L4, `kind:value` input) has been removed. The multi-hop semantic `spec-trace` command (L7, natural-language input, SEMANTIC_REL traversal) is now the new `trace`. The MCP tool `logiclens_semantic_trace` has been merged into `logiclens_trace`.
+- **Removed `TraceResult` type** from the SDK public API. Use the new `SemanticTraceGraph` return type from `client.trace()`.
+
 ## [0.1.1-beta.14] - 2026-07-01
 
 ### Added

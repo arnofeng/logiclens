@@ -172,8 +172,8 @@ logiclens contracts --kind api
 ### 💥 Semantic Contract Trace
 
 ```bash
-logiclens spec-trace "http GET /api/order/:id"
-logiclens spec-trace "event OrderCreatedEvent"
+logiclens trace "http GET /api/order/:id"
+logiclens trace "event OrderCreatedEvent"
 ```
 
 ### 🔎 Impact Analysis
@@ -205,7 +205,7 @@ You can use the interactive installer to automatically register the LogicLens MC
 | `logiclens_get_watch_status` | Get file watcher and startup catch-up indexing status |
 | `logiclens_list_dependencies` | List cross-repository dependencies with evidence (filterable by strength/type) |
 | `logiclens_list_contracts` | List identified contracts with producer/consumer/shared counts (filterable by kind) |
-| `logiclens_trace` | Trace a specific contract or entity, finding all producers, consumers, and references |
+| `logiclens_trace` | Multi-hop semantic trace — find the producers, consumers, and request/response/payload schemas connected to a contract |
 | `logiclens_impact_analysis` | Evaluate downstream impact scope when modifying code symbols or contracts |
 | `logiclens_ask_question` | RAG-based Q&A, retrieving structured context from code symbols, documentation, contracts, dependencies, etc. |
 
@@ -242,7 +242,7 @@ try {
   const stats = await client.stats();
   const dependencies = await client.dependencies({ strength: "strong", limit: 20 });
   const contracts = await client.contracts({ kind: "api", limit: 20 });
-  const trace = await client.trace("api:/api/order/:id");
+  const trace = await client.trace("http GET /api/order/:id");
   const impact = await client.impact("OrderCreatedEvent");
 
   console.log({ stats, dependencies, contracts, trace, impact });
@@ -264,7 +264,7 @@ try {
 | `client.dependencies(options)` | List cross-repository dependencies. |
 | `client.unresolvedEvidence(options)` | List extraction points that cannot be reduced to stable contract keys. |
 | `client.contracts(options)` | List identified contracts. |
-| `client.trace(target)` | Trace a contract or entity. |
+| `client.trace(target)` | Multi-hop semantic trace of a contract spec. |
 | `client.impact(target)` | Analyze downstream impact scope. |
 | `client.retrieve(question)` | Return structured retrieval context without generating an answer. |
 | `client.ask(question)` | Generate an answer based on retrieval context. |

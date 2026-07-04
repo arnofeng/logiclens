@@ -121,12 +121,10 @@ describe("SDK Client", () => {
     const contracts = await client.contracts();
     expect(contracts.length).toBeGreaterThan(0);
     
-    // Test trace()
-    const traceResult = await client.trace("api:/api/order/:id");
-    expect(traceResult.type).toBe("contract");
-    if (traceResult.type === "contract") {
-      expect(traceResult.rows.length).toBeGreaterThan(0);
-    }
+    // Test trace() — multi-hop semantic trace
+    const traceGraph = await client.trace("http GET /api/order/:id");
+    expect(traceGraph.targets.length).toBeGreaterThan(0);
+    expect(traceGraph.nodes.length).toBeGreaterThan(0);
     
     // Test impact()
     const impactResult = await client.impact("OrderCreatedEvent");

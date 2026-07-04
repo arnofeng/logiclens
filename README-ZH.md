@@ -172,8 +172,8 @@ logiclens contracts --kind api
 ### 💥 契约语义追踪
 
 ```bash
-logiclens spec-trace "http GET /api/order/:id"
-logiclens spec-trace "event OrderCreatedEvent"
+logiclens trace "http GET /api/order/:id"
+logiclens trace "event OrderCreatedEvent"
 ```
 
 ### 🔎 影响分析
@@ -205,7 +205,7 @@ logiclens install
 | `logiclens_get_watch_status` | 获取文件监听器和启动追赶索引的状态 |
 | `logiclens_list_dependencies` | 列出跨仓库依赖及其证据（支持按 strength/type 过滤） |
 | `logiclens_list_contracts` | 列出已识别的契约及其生产者/消费者/共享计数（支持按 kind 过滤） |
-| `logiclens_trace` | 追踪特定契约或实体，找到所有生产者、消费者和引用 |
+| `logiclens_trace` | 多跳语义追踪 — 查找契约关联的生产者、消费者和请求/响应/负载 schema |
 | `logiclens_impact_analysis` | 评估修改代码符号或契约的下游影响范围 |
 | `logiclens_ask_question` | 基于 RAG 的问答，检索代码符号、文档、契约、依赖等结构化上下文 |
 
@@ -242,7 +242,7 @@ try {
   const stats = await client.stats();
   const dependencies = await client.dependencies({ strength: "strong", limit: 20 });
   const contracts = await client.contracts({ kind: "api", limit: 20 });
-  const trace = await client.trace("api:/api/order/:id");
+  const trace = await client.trace("http GET /api/order/:id");
   const impact = await client.impact("OrderCreatedEvent");
 
   console.log({ stats, dependencies, contracts, trace, impact });
@@ -264,7 +264,7 @@ try {
 | `client.dependencies(options)` | 列出跨仓库依赖。 |
 | `client.unresolvedEvidence(options)` | 列出无法规约为稳定契约 key 的提取点。 |
 | `client.contracts(options)` | 列出识别到的契约。 |
-| `client.trace(target)` | 追踪契约或实体。 |
+| `client.trace(target)` | 契约的多跳语义追踪。 |
 | `client.impact(target)` | 分析下游影响面。 |
 | `client.retrieve(question)` | 返回结构化检索上下文，不生成答案。 |
 | `client.ask(question)` | 基于检索上下文生成答案。 |

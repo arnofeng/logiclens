@@ -170,7 +170,7 @@ function printSemanticImpactReport(
 
   console.log("");
   console.log("Need raw relation evidence?");
-  console.log(`  ${BRAND.cliName} spec-trace ${quoteIfNeeded(report.target)}`);
+  console.log(`  ${BRAND.cliName} trace ${quoteIfNeeded(report.target)}`);
 }
 
 function buildChildren(report: SemanticImpactReport): Map<string, SemanticImpactNode[]> {

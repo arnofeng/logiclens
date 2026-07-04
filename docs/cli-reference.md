@@ -40,8 +40,7 @@ logiclens <command> --help
 | [`stats`](#logiclens-stats) | Print graph statistics |
 | [`deps`](#logiclens-deps) | List cross-repository dependencies |
 | [`contracts`](#logiclens-contracts) | List contracts with producer/consumer counts |
-| [`trace`](#logiclens-trace-contractorentity) | Trace a contract or entity (reference level) |
-| [`spec-trace`](#logiclens-spec-trace-target) | Multi-hop semantic trace of a contract spec |
+| [`trace`](#logiclens-trace-target) | Multi-hop semantic trace of a contract spec |
 | [`ask`](#logiclens-ask-question) | Natural language Q&A |
 | [`impact`](#logiclens-impact-symbolorentity) | Change impact analysis |
 | [`quality`](#logiclens-quality-action) | Audit and govern relation/contract quality |
@@ -258,68 +257,50 @@ logiclens contracts --kind event --limit 10
 
 ---
 
-### `logiclens trace <contractOrEntity>`
-
-Trace the full chain of a specified contract or entity at the **reference level** —
-across producers, consumers, and references.
-
-```bash
-logiclens trace api:/api/order/:id
-logiclens trace event:OrderCreatedEvent
-logiclens trace UserService
-```
-
-**Parameters**:
-
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `<contractOrEntity>` | Yes | Contract identifier (format: `kind:value`) or entity name |
-
-> For multi-hop **semantic** tracing (request/response/payload schemas and consumers
-> connected via `SEMANTIC_REL` edges), use [`spec-trace`](#logiclens-spec-trace-target).
-
----
-
-### `logiclens spec-trace <target>`
+### `logiclens trace <target>`
 
 Resolve a natural contract identifier to its `ContractSpec` and walk `SEMANTIC_REL`
 edges **multi-hop in both directions**, returning the connected sub-graph: downstream
 request/response/payload schemas and upstream consumers. No internal spec IDs required.
 
 ```bash
-logiclens spec-trace "http POST /orders"
-logiclens spec-trace "api GET /users/:id"
-logiclens spec-trace "event OrderCreated"
-logiclens spec-trace "schema CreateOrderRequest"
-logiclens spec-trace "grpc OrderService/CreateOrder"
-logiclens spec-trace "grpc acme.order.v1.OrderService/CreateOrder"
-logiclens spec-trace "dubbo com.acme.OrderService#createOrder"
-logiclens spec-trace "graphql Query.user"
-logiclens spec-trace "graphql Mutation.createOrder"
-logiclens spec-trace "graphql Subscription.orderCreated"
-logiclens spec-trace http "POST /orders"            # extra tokens are joined too
-logiclens spec-trace "http POST /orders" --json     # structured output
-logiclens spec-trace "http POST /orders" --max-hops 5
-logiclens spec-trace "http POST /orders" --direction incoming   # consumers only
+logiclens trace "http POST /orders"
+logiclens trace "api GET /users/:id"
+logiclens trace "event OrderCreated"
+logiclens trace "schema CreateOrderRequest"
+logiclens trace "grpc OrderService/CreateOrder"
+logiclens trace "grpc acme.order.v1.OrderService/CreateOrder"
+logiclens trace "dubbo com.acme.OrderService#createOrder"
+logiclens trace "graphql Query.user"
+logiclens trace "graphql Mutation.createOrder"
+logiclens trace "graphql Subscription.orderCreated"
+logiclens trace http "POST /orders"            # extra tokens are joined too
+logiclens trace "http POST /orders" --json     # structured output
+logiclens trace "http POST /orders" --max-hops 5
+logiclens trace "http POST /orders" --direction incoming   # consumers only
 ```
 
 Example output:
 
 ```text
-Semantic trace for http POST /orders:
+Semantic Trace: http POST /orders
 
-Target: POST /orders  request=CreateOrderRequest  response=CreateOrderResponse
-  order-service src/.../OrderController.java [spring-mvc]
+Target Specs:
+  [producer] order-service src/main/java/.../OrderController.java [spring-mvc]
+      POST /orders  request=CreateOrderRequest  response=CreateOrderResponse
 
-Downstream (schemas / payloads it uses):
-- [hop 1] CreateOrderRequest (3 fields)  (REQUEST_SCHEMA)
-    via REQUEST_SCHEMA confidence=0.90 reason=@RequestBody type CreateOrderRequest
-    order-service src/.../CreateOrderRequest.java
+Discovered Specs:
+  [upstream] web-app src/api/order.ts
+      POST /orders  request=OrderInput  response=OrderResult
 
-Upstream (consumers / callers):
-- [hop 1] POST /orders  (CALLS_ENDPOINT)
-    via CALLS_ENDPOINT confidence=0.95 reason=Exact method+path match: POST /orders
-    web-app src/api/order.ts
+Relation Paths:
+  [Target] POST /orders  request=CreateOrderRequest  response=CreateOrderResponse (order-service)
+    file: src/main/java/.../OrderController.java
+
+    <- [CALLS_ENDPOINT materialized] confidence=0.95
+       POST /orders  request=OrderInput  response=OrderResult (web-app)
+       file: src/api/order.ts
+       reason: Exact method+path match: POST /orders
 ```
 
 **Parameters**:
@@ -327,7 +308,7 @@ Upstream (consumers / callers):
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `<target>` | Yes | Natural contract identifier: a contract kind (`http`, `api`, `event`, `schema`, `dto`, `grpc`, `dubbo`, `graphql`, `package`, `config`) plus its key, e.g. `"http POST /orders"` or `"graphql Query.user"` |
-| `[rest...]` | No | Extra tokens, joined onto `target` — so `spec-trace http "POST /orders"` is equivalent to `spec-trace "http POST /orders"` |
+| `[rest...]` | No | Extra tokens, joined onto `target` — so `trace http "POST /orders"` is equivalent to `trace "http POST /orders"` |
 
 > RPC service/method names and GraphQL fields are matched case-sensitively. Use
 > the same casing as the source definition, e.g. `OrderService/CreateOrder` and
@@ -341,7 +322,7 @@ Upstream (consumers / callers):
 | `--direction <direction>` | `outgoing`, `incoming`, or `both` (default) |
 | `--json` | Emit the structured trace graph as JSON |
 
-> The same capability is exposed to agents via the MCP tool `logiclens_semantic_trace`
+> The same capability is exposed to agents via the MCP tool `logiclens_trace`
 > using its `target` parameter (e.g. `{ "target": "http POST /orders" }` or `{ "target": "grpc OrderService/CreateOrder" }`).
 
 ---

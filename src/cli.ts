@@ -15,7 +15,6 @@ import { qualityCommand } from "./interfaces/cli/quality.js";
 import { rebuildRelationsCommand } from "./interfaces/cli/rebuildRelations.js";
 import { statsCommand } from "./interfaces/cli/stats.js";
 import { traceCommand } from "./interfaces/cli/trace.js";
-import { specTraceCommand } from "./interfaces/cli/specTrace.js";
 import { mcpCommand } from "./interfaces/cli/mcp.js";
 import { frameworksCommand } from "./interfaces/cli/frameworks.js";
 import { watchCommand } from "./interfaces/cli/watch.js";
@@ -58,17 +57,16 @@ program
     explainDepsCommand(sourceRepo, targetRepo, options)
   );
 program.command("contracts").option("--kind <kind>", "Filter by contract kind: package, api, event, dto, schema, enum, or config").option("--limit <number>", "Maximum contracts to list", (value) => Number(value)).description("List contracts and producer/consumer counts").action((options: { kind?: string; limit?: number }) => contractsCommand(options));
-program.command("trace").argument("<contractOrEntity>").description("Trace contract kind:value or entity name").action((target: string) => traceCommand(target));
 program
-  .command("spec-trace")
+  .command("trace")
   .argument("<target>", "Contract identifier, e.g. \"http POST /orders\", \"event OrderCreated\", \"schema CreateOrderRequest\"")
-  .argument("[rest...]", "Extra tokens joined onto target, so `spec-trace http \"POST /orders\"` also works")
+  .argument("[rest...]", "Extra tokens joined onto target, so `trace http \"POST /orders\"` also works")
   .option("--max-hops <number>", "Max hops per direction (default 3)", (value) => Number(value))
   .option("--direction <direction>", "Trace direction: outgoing, incoming, or both (default)")
   .option("--json", "Output the structured trace graph as JSON")
   .description("Multi-hop semantic trace of a contract spec across repos")
   .action((target: string, rest: string[], options: { maxHops?: number; direction?: string; json?: boolean }) =>
-    specTraceCommand(target, rest, { maxHops: options.maxHops, direction: options.direction as any, json: options.json })
+    traceCommand(target, rest, { maxHops: options.maxHops, direction: options.direction as any, json: options.json })
   );
 program.command("ask").argument("<question>").description("Answer a natural-language question from the graph").action((question: string) => askCommand(question));
 program.command("impact")

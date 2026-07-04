@@ -7,7 +7,7 @@ import {
 import { canonicalHttpContractKey } from "../src/core/contracts/apiPath.js";
 import { serializeSpec } from "../src/core/contracts/spec.js";
 import type { ContractSpecNode, ReadableContractSpecNode, SemanticRelationEdge } from "../src/core/parsing/types.js";
-import { printSemanticTrace, relationVerb } from "../src/interfaces/cli/specTrace.js";
+import { printSemanticTrace, relationVerb } from "../src/interfaces/cli/trace.js";
 import type { SemanticTraceGraph } from "../src/core/contracts/semanticTrace.js";
 
 
