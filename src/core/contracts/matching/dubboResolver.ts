@@ -18,7 +18,7 @@ export function resolveDubboRelations(
   for (const spec of contractSpecs) {
     if (spec.specKind !== "dubbo-method") continue;
     const role = specRoles.get(`${spec.contractId}:${spec.repoId}`) ?? "shared";
-    if (role === "producer") producersRaw.push(spec);
+    if (role === "producer" || role === "owner") producersRaw.push(spec);
     if (role === "consumer") consumers.push(spec);
     if (role === "shared") {
       producersRaw.push(spec);

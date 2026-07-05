@@ -89,6 +89,11 @@ describe("canonicalHttpContractKey", () => {
   it("trims and uppercases method", () => {
     expect(canonicalHttpContractKey({ method: " get ", path: "/api/orders" })).toBe("GET:/api/orders");
   });
+
+  it("normalizes relative paths to the same key as absolute paths", () => {
+    expect(canonicalHttpContractKey({ method: "GET", path: "api/orders" })).toBe("GET:/api/orders");
+    expect(canonicalHttpContractKey({ method: "GET", path: "api/orders" })).toBe(canonicalHttpContractKey({ method: "GET", path: "/api/orders" }));
+  });
 });
 
 describe("canonicalGrpcContractKey", () => {

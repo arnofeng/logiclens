@@ -199,6 +199,39 @@ describe("Schema Resolver", () => {
     expect(reqEdges).toHaveLength(1);
   });
 
+  it("does not silently choose between ambiguous case-insensitive schema collisions", () => {
+    const httpSpec = makeHttpSpec({
+      id: "spec:h1", contractId: "c:h1", repoId: "repo-a",
+      requestBodyType: "orderdto"
+    });
+    const upperSchema = makeSchemaSpec({
+      id: "spec:s1", contractId: "c:s1", name: "OrderDTO", repoId: "repo-shared-a"
+    });
+    const lowerSchema = makeSchemaSpec({
+      id: "spec:s2", contractId: "c:s2", name: "orderdto", repoId: "repo-shared-b"
+    });
+
+    const edges = resolveSchemaRelations([httpSpec, upperSchema, lowerSchema], new Map(), []);
+    expect(edges.filter((e) => e.kind === "REQUEST_SCHEMA")).toHaveLength(1);
+    expect(edges[0]!.toSpecId).toBe(lowerSchema.id);
+  });
+
+  it("skips schema lookup when same-cased candidates remain ambiguous", () => {
+    const httpSpec = makeHttpSpec({
+      id: "spec:h1", contractId: "c:h1", repoId: "repo-a",
+      requestBodyType: "OrderDTO"
+    });
+    const schemaA = makeSchemaSpec({
+      id: "spec:s1", contractId: "c:s1", name: "OrderDTO", repoId: "repo-shared-a"
+    });
+    const schemaB = makeSchemaSpec({
+      id: "spec:s2", contractId: "c:s2", name: "OrderDTO", repoId: "repo-shared-b"
+    });
+
+    const edges = resolveSchemaRelations([httpSpec, schemaA, schemaB], new Map(), []);
+    expect(edges.filter((e) => e.kind === "REQUEST_SCHEMA")).toHaveLength(0);
+  });
+
   it("does NOT create edges when schema not found", () => {
     const httpSpec = makeHttpSpec({
       id: "spec:h1", contractId: "c:h1", repoId: "repo-a",

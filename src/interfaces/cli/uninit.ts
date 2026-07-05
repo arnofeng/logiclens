@@ -3,6 +3,15 @@ import path from "node:path";
 import { loadConfig, defaultConfig, configPath } from "../../config/loadConfig.js";
 import { BRAND, BRAND_PATHS, brandedConfigDirPaths, configFileCandidates } from "../../shared/branding.js";
 
+const PID_FILE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+type McpPidFile = {
+  pid?: unknown;
+  cwd?: unknown;
+  startedAt?: unknown;
+  version?: unknown;
+};
+
 function isProcessAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
@@ -20,6 +29,42 @@ async function waitForDeath(pid: number, timeoutMs: number): Promise<boolean> {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return !isProcessAlive(pid);
+}
+
+function isPathInside(parent: string, child: string): boolean {
+  const relative = path.relative(parent, child);
+  return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function safeResolveManagedPath(cwd: string, candidate: string, label: string): string {
+  if (!candidate || candidate.trim() === "") throw new Error(`Refusing to remove empty ${label} path.`);
+  if (candidate.includes("\0")) throw new Error(`Refusing to remove invalid ${label} path.`);
+
+  const workspace = path.resolve(cwd);
+  const resolved = path.resolve(workspace, candidate);
+  const root = path.parse(resolved).root;
+  if (resolved === root) throw new Error(`Refusing to remove filesystem root for ${label}: ${resolved}`);
+  if (!isPathInside(workspace, resolved)) throw new Error(`Refusing to remove ${label} outside workspace: ${resolved}`);
+
+  const relative = path.relative(workspace, resolved).replace(/\\/g, "/");
+  const allowedPrefixes = [
+    BRAND.configDirName,
+    BRAND_PATHS.graph,
+    BRAND_PATHS.semanticIndex,
+    ".codegraph"
+  ].map((value) => value.replace(/\\/g, "/").replace(/\/$/, ""));
+
+  const allowed = allowedPrefixes.some((prefix) => relative === prefix || relative.startsWith(`${prefix}/`));
+  if (!allowed) throw new Error(`Refusing to remove unmanaged ${label} path: ${resolved}`);
+  return resolved;
+}
+
+function validPidInfo(info: McpPidFile, cwd: string): { pid: number } | undefined {
+  const pid = Number(info.pid);
+  if (!Number.isInteger(pid) || pid <= 0) return undefined;
+  if (typeof info.cwd !== "string" || path.resolve(info.cwd) !== path.resolve(cwd)) return undefined;
+  if (typeof info.startedAt !== "number" || Date.now() - info.startedAt > PID_FILE_MAX_AGE_MS) return undefined;
+  return { pid };
 }
 
 /**
@@ -41,8 +86,13 @@ export async function uninitCommand(cwd = process.cwd()): Promise<void> {
   const mcpPidPaths = [...new Set(brandedConfigDirPaths(cwd).map((dir) => path.join(dir, "mcp.pid")))];
   for (const mcpPidPath of mcpPidPaths) {
     try {
-      const info = JSON.parse(await fs.readFile(mcpPidPath, "utf8"));
-      const pid = info.pid;
+      const info = JSON.parse(await fs.readFile(mcpPidPath, "utf8")) as McpPidFile;
+      const valid = validPidInfo(info, cwd);
+      if (!valid) {
+        console.warn(`Ignoring stale or untrusted MCP pid file: ${mcpPidPath}`);
+        continue;
+      }
+      const { pid } = valid;
       if (isProcessAlive(pid)) {
         console.log(`Stopping running MCP service (PID ${pid})...`);
         try {
@@ -62,8 +112,8 @@ export async function uninitCommand(cwd = process.cwd()): Promise<void> {
   }
 
   // Resolve and remove all workspace artifacts.
-  const graphPath = path.resolve(cwd, config.graph.path);
-  const semanticPath = path.resolve(cwd, config.semantic.jsonPath);
+  const graphPath = safeResolveManagedPath(cwd, config.graph.path, "graph");
+  const semanticPath = safeResolveManagedPath(cwd, config.semantic.jsonPath, "semantic index");
 
   await fs.rm(graphPath, { recursive: true, force: true });
   await fs.rm(semanticPath, { force: true });

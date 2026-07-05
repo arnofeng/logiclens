@@ -257,6 +257,31 @@ describe("GraphQL Resolver", () => {
     });
   });
 
+  it("treats owner specs as producers", () => {
+    const owner = makeGraphqlSpec({
+      id: "spec-owner",
+      contractId: "contract-owner",
+      repoId: "repo-prod",
+      operationType: "query",
+      field: "user"
+    });
+    const consumer = makeGraphqlSpec({
+      id: "spec-cons",
+      contractId: "contract-cons",
+      repoId: "repo-cons",
+      operationType: "query",
+      field: "user"
+    });
+
+    const edges = resolveGraphqlRelations([owner, consumer], makeRoleMap([owner, consumer], {
+      "spec-owner": "owner",
+      "spec-cons": "consumer"
+    }));
+
+    expect(edges).toHaveLength(1);
+    expect(edges[0]).toMatchObject({ fromSpecId: consumer.id, toSpecId: owner.id });
+  });
+
   it("does not match within the same repository", () => {
     const producer = makeGraphqlSpec({
       id: "spec-prod",

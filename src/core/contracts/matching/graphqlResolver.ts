@@ -16,7 +16,7 @@ export function resolveGraphqlRelations(
     if (spec.specKind !== "graphql-operation") continue;
 
     const role = specRoles.get(`${spec.contractId}:${spec.repoId}`) ?? "shared";
-    if (role === "producer") {
+    if (role === "producer" || role === "owner") {
       producers.push(spec);
     }
     if (role === "consumer") {

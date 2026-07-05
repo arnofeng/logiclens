@@ -93,7 +93,7 @@ function decodeJournalRow(row: {
   };
 }
 
-const managedKuzuHandles: Array<{ db?: kuzu.Database; conn?: kuzu.Connection }> = [];
+const managedKuzuHandles = new Map<string, { db: kuzu.Database; conn: kuzu.Connection }>();
 
 // Kuzu reserves `maxDBSize` bytes of virtual address space via mmap up front.
 // Passing 0 selects Kuzu's default of 8 TiB (2^43), which some constrained
@@ -116,15 +116,21 @@ export class KuzuGraphDB implements GraphDB {
   private db?: kuzu.Database;
   private conn?: kuzu.Connection;
   private closed = false;
+  private managedKey?: string;
 
-  private constructor(db: kuzu.Database, conn: kuzu.Connection) {
+  private constructor(db: kuzu.Database, conn: kuzu.Connection, managedKey?: string) {
     this.db = db;
     this.conn = conn;
+    this.managedKey = managedKey;
   }
 
   static async open(graphPath: string): Promise<KuzuGraphDB> {
     const resolved = path.resolve(graphPath);
     const dbPath = path.extname(resolved) ? resolved : path.join(resolved, "kuzu.db");
+    if (shouldUseManagedKuzuClose()) {
+      const managed = managedKuzuHandles.get(dbPath);
+      if (managed) return new KuzuGraphDB(managed.db, managed.conn, dbPath);
+    }
     await fs.mkdir(path.dirname(dbPath), { recursive: true });
     // Lower checkpoint threshold (default 16 MB) so dirty WAL pages are
     // flushed more frequently during bulk writes.  Without this, LOAD FROM
@@ -142,6 +148,10 @@ export class KuzuGraphDB implements GraphDB {
     const conn = new kuzu.Connection(db);
     await db.init();
     await conn.init();
+    if (shouldUseManagedKuzuClose()) {
+      managedKuzuHandles.set(dbPath, { db, conn });
+      return new KuzuGraphDB(db, conn, dbPath);
+    }
     return new KuzuGraphDB(db, conn);
   }
 
@@ -288,7 +298,7 @@ export class KuzuGraphDB implements GraphDB {
 
   async addRepoDependency(edge: RepoDependencyEdge): Promise<void> {
     await this.query(
-      "MATCH (a:Repo {id: $fromRepoId}), (b:Repo {id: $toRepoId}) MERGE (a)-[r:DEPENDS_ON {dependencyType: $dependencyType, sourceContractId: $sourceContractId, targetContractId: $targetContractId, evidenceId: $evidenceId, raw: $raw}]->(b) SET r.confidence = $confidence, r.batchId = $batchId, r.active = $active;",
+      "MATCH (a:Repo {id: $fromRepoId}), (b:Repo {id: $toRepoId}) MERGE (a)-[r:DEPENDS_ON {dependencyType: $dependencyType, sourceContractId: $sourceContractId, targetContractId: $targetContractId, evidenceId: $evidenceId}]->(b) SET r.raw = $raw, r.confidence = $confidence, r.batchId = $batchId, r.active = $active;",
       { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, GraphValue>
     );
   }
@@ -313,8 +323,8 @@ export class KuzuGraphDB implements GraphDB {
       await this.query(
         "UNWIND $batch AS edge " +
         "MATCH (a:Repo {id: edge.fromRepoId}), (b:Repo {id: edge.toRepoId}) " +
-        "MERGE (a)-[r:DEPENDS_ON {dependencyType: edge.dependencyType, sourceContractId: edge.sourceContractId, targetContractId: edge.targetContractId, evidenceId: edge.evidenceId, raw: edge.raw}]->(b) " +
-        "SET r.confidence = edge.confidence, r.batchId = edge.batchId, r.active = edge.active;",
+        "MERGE (a)-[r:DEPENDS_ON {dependencyType: edge.dependencyType, sourceContractId: edge.sourceContractId, targetContractId: edge.targetContractId, evidenceId: edge.evidenceId}]->(b) " +
+        "SET r.raw = edge.raw, r.confidence = edge.confidence, r.batchId = edge.batchId, r.active = edge.active;",
         { batch: params as unknown as GraphValue }
       );
     }
@@ -414,7 +424,7 @@ export class KuzuGraphDB implements GraphDB {
   }
 
   async addImport(edge: ImportEdge): Promise<void> {
-    await this.query("MATCH (a:File {id: $fromFileId}), (b:File {id: $toFileId}) MERGE (a)-[r:IMPORTS {module: $module, raw: $raw}]->(b) SET r.batchId = $batchId, r.active = $active;", { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, GraphValue>);
+    await this.query("MATCH (a:File {id: $fromFileId}), (b:File {id: $toFileId}) MERGE (a)-[r:IMPORTS {module: $module}]->(b) SET r.raw = $raw, r.batchId = $batchId, r.active = $active;", { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, GraphValue>);
   }
 
   async addCall(edge: CallEdge): Promise<void> {
@@ -766,7 +776,11 @@ export class KuzuGraphDB implements GraphDB {
     this.closed = true;
 
     if (shouldUseManagedKuzuClose()) {
-      managedKuzuHandles.push({ db: this.db, conn: this.conn });
+      if (this.managedKey && this.db && this.conn) {
+        managedKuzuHandles.set(this.managedKey, { db: this.db, conn: this.conn });
+      }
+      this.conn = undefined;
+      this.db = undefined;
       return;
     }
 

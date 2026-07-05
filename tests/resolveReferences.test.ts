@@ -92,6 +92,27 @@ describe("resolveReferences", () => {
     })]);
   });
 
+  it("bounds call raw text while preserving a hash suffix for identity", () => {
+    const repo = repoId("service-a");
+    const file = parsedFile(repo, "src/orders.ts");
+    const caller = symbol(repo, "src/orders.ts", "function", "submitOrder", 1, 10);
+    const callee = symbol(repo, "src/orders.ts", "function", "validateOrder", 12, 16);
+    const longRaw = `validateOrder(${Array.from({ length: 700 }, (_, index) => `arg${index}`).join(", ")})`;
+    file.symbols = [caller, callee];
+    file.calls = [{
+      callerSymbolId: caller.id,
+      calleeName: "validateOrder",
+      raw: longRaw,
+      fileId: file.fileId,
+      line: 4
+    }];
+
+    const edges = resolveCalls([file]);
+    expect(edges).toHaveLength(1);
+    expect(edges[0]!.raw.length).toBeLessThan(longRaw.length);
+    expect(edges[0]!.raw).toMatch(/\.\.\.#[a-f0-9]{12}$/);
+  });
+
   it("uses relative import evidence for probable cross-file calls", () => {
     const repo = repoId("service-a");
     const appFile = parsedFile(repo, "src/app.ts", [{

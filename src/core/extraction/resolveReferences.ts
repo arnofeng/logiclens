@@ -3,8 +3,9 @@ import { createRequire } from "node:module";
 import type { CallEdge, CodeSymbol, ImportEdge, ParsedFile } from "../parsing/types.js";
 import { fileId } from "../../shared/path.js";
 import { confidenceBand, scoreCallResolution } from "../../shared/confidence.js";
+import { hashText } from "../../shared/hash.js";
 import Parser from "tree-sitter";
-import { getLanguageGrammar } from "../parsing/treeSitter.js";
+import { getCachedParser, getLanguageGrammar, parseTreeSitterSource } from "../parsing/treeSitter.js";
 import { javaQueries } from "../parsing/languages/java.js";
 
 export { scoreCallResolution } from "../../shared/confidence.js";
@@ -12,6 +13,18 @@ export { scoreCallResolution } from "../../shared/confidence.js";
 type TypeScriptApi = typeof import("typescript");
 
 const require = createRequire(import.meta.url);
+const MAX_CALL_RAW_LENGTH = 512;
+
+function warnReferenceResolution(message: string, error?: unknown): void {
+  const detail = error instanceof Error ? error.message : error ? String(error) : "";
+  process.emitWarning(detail ? `${message}: ${detail}` : message, { code: "REFERENCE_RESOLUTION" });
+}
+
+function boundedRaw(raw: string): string {
+  const normalized = raw.replace(/\s+/g, " ").trim();
+  if (normalized.length <= MAX_CALL_RAW_LENGTH) return normalized;
+  return `${normalized.slice(0, MAX_CALL_RAW_LENGTH)}...#${hashText(normalized).slice(0, 12)}`;
+}
 
 export function resolveImports(parsedFiles: ParsedFile[]): ImportEdge[] {
   const byRepoPath = new Map(parsedFiles.map((file) => [`${file.repoId}:${file.path}`, file.fileId]));
@@ -55,16 +68,17 @@ export function resolveCalls(parsedFiles: ParsedFile[]): CallEdge[] {
 
   const edges: CallEdge[] = [];
   const seen = new Set<string>();
-  for (const file of parsedFiles) {
+    for (const file of parsedFiles) {
     for (const call of file.calls) {
       if (!call.callerSymbolId) continue;
-      const keyForCall = callKey(file.fileId, call.line, call.raw);
+      const raw = boundedRaw(call.raw);
+      const keyForCall = callKey(file.fileId, call.line, raw);
       const compilerTarget = compilerTargets.get(keyForCall) ?? javaStaticTargets.get(keyForCall) ?? pythonStaticTargets.get(keyForCall) ?? goStaticTargets.get(keyForCall);
       if (compilerTarget && compilerTarget.id !== call.callerSymbolId) {
-        const key = `${call.callerSymbolId}->${compilerTarget.id}:${call.raw}`;
+        const key = `${call.callerSymbolId}->${compilerTarget.id}:${raw}`;
         if (!seen.has(key)) {
           seen.add(key);
-          edges.push({ fromCodeId: call.callerSymbolId, toCodeId: compilerTarget.id, confidence: 0.95, resolution: "exact", raw: call.raw });
+          edges.push({ fromCodeId: call.callerSymbolId, toCodeId: compilerTarget.id, confidence: 0.95, resolution: "exact", raw });
         }
         continue;
       }
@@ -93,10 +107,10 @@ export function resolveCalls(parsedFiles: ParsedFile[]): CallEdge[] {
         })
         .sort((a, b) => b.score - a.score || Number(b.imported) - Number(a.imported) || Number(b.candidate.fileId === file.fileId) - Number(a.candidate.fileId === file.fileId))[0];
       if (best && best.score >= 0.4) {
-        const key = `${call.callerSymbolId}->${best.candidate.id}:${call.raw}`;
+        const key = `${call.callerSymbolId}->${best.candidate.id}:${raw}`;
         if (!seen.has(key)) {
           seen.add(key);
-          edges.push({ fromCodeId: call.callerSymbolId, toCodeId: best.candidate.id, confidence: best.score, resolution: confidenceBand(best.score), raw: call.raw });
+          edges.push({ fromCodeId: call.callerSymbolId, toCodeId: best.candidate.id, confidence: best.score, resolution: confidenceBand(best.score), raw });
         }
       }
     }
@@ -122,7 +136,7 @@ function buildPythonModuleTargets(parsedFiles: ParsedFile[]): Map<string, CodeSy
       const targetFile = receiver ? imports.modules.get(receiver) : undefined;
       const directTarget = !receiver ? imports.symbols.get(functionName) : undefined;
       const target = directTarget ?? (targetFile ? findTopLevelSymbol(targetFile, functionName) : undefined);
-      if (target) targets.set(callKey(file.fileId, call.line, call.raw), target);
+      if (target) targets.set(callKey(file.fileId, call.line, boundedRaw(call.raw)), target);
     }
   }
   return targets;
@@ -180,7 +194,7 @@ function buildGoPackageTargets(parsedFiles: ParsedFile[]): Map<string, CodeSymbo
       const files = receiver ? importPackages.get(receiver) : currentPackageFiles;
       if (!files) continue;
       const target = uniqueSymbols(files.flatMap((targetFile) => targetFile.symbols.filter((symbol) => symbol.kind === "function" && symbol.name === functionName))).at(0);
-      if (target) targets.set(callKey(file.fileId, call.line, call.raw), target);
+      if (target) targets.set(callKey(file.fileId, call.line, boundedRaw(call.raw)), target);
     }
   }
   return targets;
@@ -240,7 +254,7 @@ function buildJavaStaticTargets(parsedFiles: ParsedFile[]): Map<string, CodeSymb
       const constructorType = call.raw.trim().startsWith("new ") ? call.calleeName : undefined;
       if (constructorType) {
         const classSymbol = classesByQualifiedName.get(resolveJavaTypeName(constructorType, importIndex, packageName, classesByQualifiedName));
-        if (classSymbol) targets.set(callKey(file.fileId, call.line, call.raw), classSymbol);
+        if (classSymbol) targets.set(callKey(file.fileId, call.line, boundedRaw(call.raw)), classSymbol);
         continue;
       }
 
@@ -258,7 +272,7 @@ function buildJavaStaticTargets(parsedFiles: ParsedFile[]): Map<string, CodeSymb
       const candidates = methodsByOwnerAndName.get(`${ownerName}:${methodName}`) ?? [];
       const byArity = candidates.filter((candidate) => javaSignatureArity(candidate.signature) === (call.argsCount ?? 0));
       const target = (byArity.length === 1 ? byArity : candidates).at(0);
-      if (target) targets.set(callKey(file.fileId, call.line, call.raw), target);
+      if (target) targets.set(callKey(file.fileId, call.line, boundedRaw(call.raw)), target);
     }
   }
   return targets;
@@ -304,10 +318,8 @@ function javaVariableTypes(
   };
 
   try {
-    const grammar = getLanguageGrammar("java");
-    const parser = new Parser();
-    parser.setLanguage(grammar);
-    const tree = parser.parse((index) => index < source.length ? source.slice(index, index + 8192) : null);
+    const parser = getCachedParser("java");
+    const tree = parseTreeSitterSource(parser, source);
 
     const query = getJavaVariablesQuery();
     const matches = query.matches(tree.rootNode);
@@ -335,7 +347,7 @@ function javaVariableTypes(
       }
     }
   } catch (e) {
-    // ignore
+    warnReferenceResolution(`Java variable type extraction failed for ${file.path}`, e);
   }
 
   return types;
@@ -432,14 +444,15 @@ function buildTypeScriptCompilerTargets(parsedFiles: ParsedFile[]): Map<string, 
           const symbol = checker.getSymbolAtLocation(expression);
           const resolvedSymbol = symbol && (symbol.flags & ts.SymbolFlags.Alias) ? checker.getAliasedSymbol(symbol) : symbol;
           const target = resolvedSymbol ? symbolFromDeclaration(ts, sourceFiles, resolvedSymbol.valueDeclaration ?? resolvedSymbol.declarations?.[0]) : undefined;
-          if (target) targets.set(callKey(parsed.fileId, lineOf(ts, sourceFile, node), node.getText(sourceFile)), target);
+          if (target) targets.set(callKey(parsed.fileId, lineOf(ts, sourceFile, node), boundedRaw(node.getText(sourceFile))), target);
         }
         ts.forEachChild(node, visit);
       };
       visit(sourceFile);
     }
     return targets;
-  } catch {
+  } catch (error) {
+    warnReferenceResolution("TypeScript compiler target extraction failed", error);
     return new Map();
   }
 }
@@ -471,7 +484,7 @@ function lineOf(ts: TypeScriptApi, sourceFile: any, node: any): number {
 }
 
 function callKey(fileIdValue: string, line: number, raw: string): string {
-  return `${fileIdValue}:${line}:${raw.replace(/\s+/g, " ").trim()}`;
+  return `${fileIdValue}:${line}:${raw}`;
 }
 
 function buildImportedAliasTargets(

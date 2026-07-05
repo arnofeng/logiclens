@@ -79,6 +79,18 @@ describe("Dubbo Resolver", () => {
     });
   });
 
+  it("treats owner specs as producers", () => {
+    const owner = makeDubboSpec({ id: "spec-owner", contractId: "c-owner", repoId: "repo-provider", interfaceName: "com.acme.api.OrderService", method: "createOrder" });
+    const consumer = makeDubboSpec({ id: "spec-c", contractId: "c-c", repoId: "repo-consumer", interfaceName: "com.acme.api.OrderService", method: "createOrder" });
+    const edges = resolveDubboRelations([owner, consumer], makeRoleMap([owner, consumer], {
+      "spec-owner": "owner",
+      "spec-c": "consumer"
+    }));
+
+    expect(edges).toHaveLength(1);
+    expect(edges[0]).toMatchObject({ fromSpecId: consumer.id, toSpecId: owner.id });
+  });
+
   it("skips same-repo pairs", () => {
     const producer = makeDubboSpec({ id: "spec-p", contractId: "c-p", repoId: "repo-a", interfaceName: "com.acme.OrderService", method: "createOrder" });
     const consumer = makeDubboSpec({ id: "spec-c", contractId: "c-c", repoId: "repo-a", interfaceName: "com.acme.OrderService", method: "createOrder" });

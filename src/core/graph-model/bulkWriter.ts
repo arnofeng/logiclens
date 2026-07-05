@@ -131,7 +131,7 @@ const NODE_UPSERT_SPECS: NodeUpsertSpec[] = [
 ];
 
 const RELATION_UPSERT_SPECS: RelationUpsertSpec[] = [
-  { table: "IMPORTS", from: "File", to: "File", aliases: ["fromId", "toId", "module", "raw", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["module", "raw"], setProperties: ["batchId", "active"] },
+  { table: "IMPORTS", from: "File", to: "File", aliases: ["fromId", "toId", "module", "raw", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["module"], setProperties: ["raw", "batchId", "active"] },
   { table: "CALLS", from: "Code", to: "Code", aliases: ["fromId", "toId", "confidence", "resolution", "raw", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["raw"], setProperties: ["confidence", "resolution", "batchId", "active"] },
   { table: "DESCRIBES", from: "Section", to: "Repo", aliases: ["fromId", "toId"], fromAlias: "fromId", toAlias: "toId" },
   { table: "DOCUMENTS", from: "Section", to: "Code", aliases: ["fromId", "toId", "confidence"], fromAlias: "fromId", toAlias: "toId", setProperties: ["confidence"] },
@@ -144,7 +144,7 @@ const RELATION_UPSERT_SPECS: RelationUpsertSpec[] = [
   { table: "PARTICIPATES_IN", from: "Repo", to: "Operation", aliases: ["fromId", "toId", "role", "evidenceId", "confidence", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["role", "evidenceId"], setProperties: ["confidence", "batchId", "active"] },
   { table: "WORKFLOW_STEP", from: "Workflow", to: "Operation", aliases: ["fromId", "toId", "step", "evidenceId", "confidence", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["step", "evidenceId"], setProperties: ["confidence", "batchId", "active"] },
   { table: "USES_PACKAGE", from: "Repo", to: "Contract", aliases: ["fromId", "toId", "packageName", "evidenceId", "raw", "confidence", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["packageName", "evidenceId", "raw"], setProperties: ["confidence", "batchId", "active"] },
-  { table: "DEPENDS_ON", from: "Repo", to: "Repo", aliases: ["fromId", "toId", "dependencyType", "sourceContractId", "targetContractId", "evidenceId", "raw", "confidence", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["dependencyType", "sourceContractId", "targetContractId", "evidenceId", "raw"], setProperties: ["confidence", "batchId", "active"] },
+  { table: "DEPENDS_ON", from: "Repo", to: "Repo", aliases: ["fromId", "toId", "dependencyType", "sourceContractId", "targetContractId", "evidenceId", "raw", "confidence", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["dependencyType", "sourceContractId", "targetContractId", "evidenceId"], setProperties: ["raw", "confidence", "batchId", "active"] },
   { table: "HAS_SPEC", from: "Contract", to: "ContractSpec", aliases: ["fromId", "toId", "evidenceId", "confidence", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["evidenceId"], setProperties: ["confidence", "batchId", "active"] },
   { table: "SEMANTIC_REL", from: "ContractSpec", to: "ContractSpec", aliases: ["fromId", "toId", "kind", "evidenceId", "reason", "confidence", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["kind", "evidenceId"], setProperties: ["reason", "confidence", "batchId", "active"] }
 ];
@@ -177,10 +177,6 @@ function propertyMap(properties: string[] | undefined): string {
   return ` {${properties.map((property) => `${property}: ${property}`).join(", ")}}`;
 }
 
-function uniqueProperties(...groups: Array<string[] | undefined>): string[] {
-  return [...new Set(groups.flatMap((group) => group ?? []))];
-}
-
 async function upsertNodeTable(db: GraphDB, filePath: string, spec: NodeUpsertSpec): Promise<void> {
   await db.query(
     `LOAD FROM "${toKuzuPath(filePath)}" (PARALLEL=false) WITH ${withColumns(spec.aliases)} ` +
@@ -191,16 +187,11 @@ async function upsertNodeTable(db: GraphDB, filePath: string, spec: NodeUpsertSp
 
 async function upsertRelationTable(db: GraphDB, filePath: string, spec: RelationUpsertSpec): Promise<void> {
   const matchProperties = propertyMap(spec.mergeProperties);
-  const createProperties = propertyMap(uniqueProperties(spec.mergeProperties, spec.setProperties));
   await db.query(
     `LOAD FROM "${toKuzuPath(filePath)}" (PARALLEL=false) WITH ${withColumns(spec.aliases)} ` +
     `MATCH (a:${spec.from} {id: ${spec.fromAlias}}), (b:${spec.to} {id: ${spec.toAlias}}) ` +
-    `MATCH (a)-[r:${spec.table}${matchProperties}]->(b) DELETE r;`
-  );
-  await db.query(
-    `LOAD FROM "${toKuzuPath(filePath)}" (PARALLEL=false) WITH ${withColumns(spec.aliases)} ` +
-    `MATCH (a:${spec.from} {id: ${spec.fromAlias}}), (b:${spec.to} {id: ${spec.toAlias}}) ` +
-    `CREATE (a)-[:${spec.table}${createProperties}]->(b);`
+    `MERGE (a)-[r:${spec.table}${matchProperties}]->(b)` +
+    `${setClause("r", spec.setProperties)};`
   );
 }
 

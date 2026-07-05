@@ -97,14 +97,13 @@ function buildSpecRoleMap(
 // ---------------------------------------------------------------------------
 
 function deduplicateEdges(edges: SemanticRelationEdge[]): SemanticRelationEdge[] {
-  const seen = new Set<string>();
-  const result: SemanticRelationEdge[] = [];
+  const byLogicalEdge = new Map<string, SemanticRelationEdge>();
   for (const edge of edges) {
-    const key = `${edge.fromSpecId}:${edge.toSpecId}:${edge.kind}:${edge.evidenceId}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      result.push(edge);
+    const key = `${edge.fromSpecId}:${edge.toSpecId}:${edge.kind}`;
+    const existing = byLogicalEdge.get(key);
+    if (!existing || edge.confidence > existing.confidence) {
+      byLogicalEdge.set(key, edge);
     }
   }
-  return result;
+  return [...byLogicalEdge.values()];
 }

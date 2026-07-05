@@ -180,7 +180,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   await fs.mkdir(path.dirname(mcpPidPath), { recursive: true });
   await fs.writeFile(
     mcpPidPath,
-    JSON.stringify({ pid: process.pid, version: appVersion, startedAt: Date.now() }, null, 2),
+    JSON.stringify({ pid: process.pid, cwd: path.resolve(cwd), version: appVersion, startedAt: Date.now() }, null, 2),
     "utf8"
   );
 

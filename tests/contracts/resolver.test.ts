@@ -192,6 +192,30 @@ describe("Resolver Integration", () => {
     expect(callEdges).toHaveLength(1);
   });
 
+  it("deduplicates semantic edges by logical relation and keeps the highest confidence evidence", () => {
+    const high: SemanticRelationEdge = {
+      fromSpecId: "spec:a",
+      toSpecId: "schema-ref:Target",
+      kind: "REQUEST_SCHEMA",
+      evidenceId: "ev:high",
+      reason: "high",
+      confidence: 0.9
+    };
+    const source = makeHttpSpec({ id: "spec:a", contractId: "c:a", repoId: "repo-a", method: "POST", path: "/source", requestBodyType: "Target" });
+    const target = makeSchemaSpec({ id: "spec:b", contractId: "c:b", repoId: "repo-a", name: "Target" });
+
+    const edges = resolveSemanticRelations({
+      contractSpecs: [source, target],
+      repoContracts: [],
+      existingSemanticRelations: [high]
+    });
+
+    expect(edges.filter((edge) => edge.kind === "REQUEST_SCHEMA")).toEqual([{
+      ...high,
+      toSpecId: target.id
+    }]);
+  });
+
   it("handles empty specs gracefully", () => {
     const edges = resolveSemanticRelations({
       contractSpecs: [],

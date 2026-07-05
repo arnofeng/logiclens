@@ -17,19 +17,9 @@ export function joinApiPaths(basePath: string, routePath: string): string {
 
 export function canonicalHttpContractKey(input: { method?: string; path: string }): string {
   const trimmed = input.path.trim();
-  let normalizedPath: string;
-  if (trimmed.startsWith("/") || /^https?:\/\//i.test(trimmed)) {
-    normalizedPath = normalizeApiPath(trimmed).toLowerCase();
-  } else {
-    normalizedPath = trimmed
-      .replace(/\?.*$/, "")
-      .replace(/\/+/g, "/")
-      .replace(/\/:([A-Za-z_][A-Za-z0-9_]*)/g, "/{$1}")
-      .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, "{$1}")
-      .replace(/\$\{[^}]+\}/g, "{param}")
-      .replace(/\/$/, "")
-      .toLowerCase();
-  }
+  const normalizedPath = /^[A-Za-z][A-Za-z0-9+.-]*:/.test(trimmed) && !/^https?:\/\//i.test(trimmed)
+    ? trimmed.replace(/\?.*$/, "").replace(/\/+/g, "/").replace(/\/$/, "").toLowerCase()
+    : normalizeApiPath(trimmed).toLowerCase();
   if (input.method) return `${input.method.trim().toUpperCase()}:${normalizedPath}`;
   return normalizedPath;
 }

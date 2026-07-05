@@ -160,9 +160,17 @@ export class AppClient {
       username: this.config.graph.username,
       password: this.config.graph.password
     });
-    await db.initSchema(this.config.systemName);
-    this.dbInstance = db;
-    return db;
+    try {
+      await db.initSchema(this.config.systemName);
+      this.dbInstance = db;
+      return db;
+    } catch (error) {
+      try {
+        await db.close();
+      } catch {}
+      this.dbInstance = undefined;
+      throw error;
+    }
   }
 
   /**

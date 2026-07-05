@@ -8,10 +8,21 @@ export function getLanguageGrammar(language: string): any {
   return def.loadGrammar();
 }
 
+const parserCache = new Map<string, Parser>();
+
+export function getCachedParser(language: string): Parser {
+  let parser = parserCache.get(language);
+  if (!parser) {
+    parser = new Parser();
+    const grammar = getLanguageGrammar(language);
+    parser.setLanguage(grammar as never);
+    parserCache.set(language, parser);
+  }
+  return parser;
+}
+
 export function parseWithTreeSitter(source: string, language: SourceLanguage): Parser.Tree {
-  const parser = new Parser();
-  const grammar = getLanguageGrammar(language);
-  parser.setLanguage(grammar as never);
+  const parser = getCachedParser(language);
   return parseTreeSitterSource(parser, source);
 }
 

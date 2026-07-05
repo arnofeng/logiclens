@@ -30,7 +30,7 @@ export function resolveGrpcRelations(
     if (spec.specKind !== "grpc-method") continue;
 
     const role = specRoles.get(`${spec.contractId}:${spec.repoId}`) ?? "shared";
-    if (role === "producer") {
+    if (role === "producer" || role === "owner") {
       producersRaw.push(spec);
     }
     if (role === "consumer") {

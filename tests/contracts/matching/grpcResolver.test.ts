@@ -77,6 +77,31 @@ describe("gRPC Resolver", () => {
     expect(edges[0]!.confidence).toBe(0.9); // client package unspecified -> 0.9
   });
 
+  it("treats owner specs as producers", () => {
+    const owner = makeGrpcSpec({
+      id: "spec-owner",
+      contractId: "contract-owner",
+      repoId: "repo-server",
+      service: "OrderService",
+      method: "CreateOrder"
+    });
+    const consumer = makeGrpcSpec({
+      id: "spec-consumer",
+      contractId: "contract-consumer",
+      repoId: "repo-client",
+      service: "OrderService",
+      method: "CreateOrder"
+    });
+
+    const edges = resolveGrpcRelations([owner, consumer], makeRoleMap([owner, consumer], {
+      "spec-owner": "owner",
+      "spec-consumer": "consumer"
+    }));
+
+    expect(edges).toHaveLength(1);
+    expect(edges[0]).toMatchObject({ fromSpecId: consumer.id, toSpecId: owner.id });
+  });
+
   it("matches identical packages with exact-grpc-match confidence", () => {
     const producer = makeGrpcSpec({
       id: "spec-producer",

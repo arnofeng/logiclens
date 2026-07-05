@@ -156,4 +156,39 @@ export default {
 
     await fs.rm(dir, { recursive: true, force: true });
   });
+
+  it("continues extracting script content when Vue SFC reports parse errors", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-vue-errors-"));
+    const vuePath = path.join(dir, "Broken.vue");
+    await fs.writeFile(vuePath, `<template><div></template>
+<script>
+export default {
+  methods: {
+    recover() {
+      console.log('still indexed');
+    }
+  }
+}
+</script>
+`, "utf8");
+    const warnings: string[] = [];
+    const onWarning = (warning: Error) => warnings.push(warning.message);
+    process.on("warning", onWarning);
+
+    try {
+      const parsed = (await parseSourceFile({
+        repoId: repoId("vue-repo"),
+        absolutePath: vuePath,
+        relativePath: "src/Broken.vue",
+        language: "vue"
+      })) as any;
+
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(parsed.symbols.map((s: any) => s.name)).toContain("recover");
+      expect(warnings.some((message) => message.includes("Vue SFC parser reported"))).toBe(true);
+    } finally {
+      process.off("warning", onWarning);
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
 });

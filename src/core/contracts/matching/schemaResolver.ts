@@ -9,19 +9,37 @@ import type { HttpEndpointSpec, EventSpec, SchemaSpec, GrpcMethodSpec, GraphQLOp
 // ---------------------------------------------------------------------------
 
 /**
- * Builds a case-insensitive lookup from schema name to ContractSpec ID.
+ * Builds a case-insensitive lookup from schema name to ContractSpec candidates.
  * Scans all schema-kind specs in the batch.
  */
-function buildSchemaIndex(specs: ContractSpecNode[]): Map<string, string> {
-  const index = new Map<string, string>();
+function buildSchemaIndex(specs: ContractSpecNode[]): Map<string, ContractSpecNode[]> {
+  const index = new Map<string, ContractSpecNode[]>();
   for (const spec of specs) {
     if (spec.specKind !== "schema") continue;
     const parsed = safeJsonParse<SchemaSpec>(spec.specJson);
     if (parsed?.name) {
-      index.set(parsed.name.toLowerCase(), spec.id);
+      const key = parsed.name.toLowerCase();
+      const list = index.get(key) ?? [];
+      list.push(spec);
+      index.set(key, list);
     }
   }
   return index;
+}
+
+function lookupSchemaId(
+  schemaIndex: Map<string, ContractSpecNode[]>,
+  name: string,
+  fromSpec?: ContractSpecNode
+): string | undefined {
+  const candidates = schemaIndex.get(name.toLowerCase()) ?? [];
+  if (candidates.length === 0) return undefined;
+
+  const exactName = candidates.filter((spec) => safeJsonParse<SchemaSpec>(spec.specJson)?.name === name);
+  const pool = exactName.length > 0 ? exactName : candidates;
+  const sameRepo = fromSpec ? pool.filter((spec) => spec.repoId === fromSpec.repoId) : [];
+  const selectedPool = sameRepo.length > 0 ? sameRepo : pool;
+  return selectedPool.length === 1 ? selectedPool[0]!.id : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -30,7 +48,7 @@ function buildSchemaIndex(specs: ContractSpecNode[]): Map<string, string> {
 
 function resolveHttpSchemaRelations(
   allSpecs: ContractSpecNode[],
-  schemaIndex: Map<string, string>
+  schemaIndex: Map<string, ContractSpecNode[]>
 ): SemanticRelationEdge[] {
   const edges: SemanticRelationEdge[] = [];
   const seen = new Set<string>();
@@ -42,7 +60,7 @@ function resolveHttpSchemaRelations(
 
     // REQUEST_SCHEMA
     if (httpSpec.requestBodyType) {
-      const schemaId = schemaIndex.get(httpSpec.requestBodyType.toLowerCase());
+      const schemaId = lookupSchemaId(schemaIndex, httpSpec.requestBodyType, spec);
       if (schemaId) {
         const key = `${spec.id}:${schemaId}:REQUEST_SCHEMA`;
         if (!seen.has(key)) {
@@ -61,7 +79,7 @@ function resolveHttpSchemaRelations(
 
     // RESPONSE_SCHEMA
     if (httpSpec.responseBodyType) {
-      const schemaId = schemaIndex.get(httpSpec.responseBodyType.toLowerCase());
+      const schemaId = lookupSchemaId(schemaIndex, httpSpec.responseBodyType, spec);
       if (schemaId) {
         const key = `${spec.id}:${schemaId}:RESPONSE_SCHEMA`;
         if (!seen.has(key)) {
@@ -88,7 +106,7 @@ function resolveHttpSchemaRelations(
 
 function resolveGrpcSchemaRelations(
   allSpecs: ContractSpecNode[],
-  schemaIndex: Map<string, string>
+  schemaIndex: Map<string, ContractSpecNode[]>
 ): SemanticRelationEdge[] {
   const edges: SemanticRelationEdge[] = [];
   const seen = new Set<string>();
@@ -103,7 +121,7 @@ function resolveGrpcSchemaRelations(
       const lookupKey = grpcSpec.package && !grpcSpec.requestType.includes(".")
         ? `${grpcSpec.package}.${grpcSpec.requestType}`
         : grpcSpec.requestType;
-      const schemaId = schemaIndex.get(lookupKey.toLowerCase());
+      const schemaId = lookupSchemaId(schemaIndex, lookupKey, spec);
       if (schemaId) {
         const key = `${spec.id}:${schemaId}:REQUEST_SCHEMA`;
         if (!seen.has(key)) {
@@ -125,7 +143,7 @@ function resolveGrpcSchemaRelations(
       const lookupKey = grpcSpec.package && !grpcSpec.responseType.includes(".")
         ? `${grpcSpec.package}.${grpcSpec.responseType}`
         : grpcSpec.responseType;
-      const schemaId = schemaIndex.get(lookupKey.toLowerCase());
+      const schemaId = lookupSchemaId(schemaIndex, lookupKey, spec);
       if (schemaId) {
         const key = `${spec.id}:${schemaId}:RESPONSE_SCHEMA`;
         if (!seen.has(key)) {
@@ -148,7 +166,7 @@ function resolveGrpcSchemaRelations(
 
 function resolveGraphqlSchemaRelations(
   allSpecs: ContractSpecNode[],
-  schemaIndex: Map<string, string>
+  schemaIndex: Map<string, ContractSpecNode[]>
 ): SemanticRelationEdge[] {
   const edges: SemanticRelationEdge[] = [];
   const seen = new Set<string>();
@@ -160,7 +178,7 @@ function resolveGraphqlSchemaRelations(
 
     // REQUEST_SCHEMA
     if (gqlSpec.requestType) {
-      const schemaId = schemaIndex.get(gqlSpec.requestType.toLowerCase());
+      const schemaId = lookupSchemaId(schemaIndex, gqlSpec.requestType, spec);
       if (schemaId) {
         const key = `${spec.id}:${schemaId}:REQUEST_SCHEMA`;
         if (!seen.has(key)) {
@@ -179,7 +197,7 @@ function resolveGraphqlSchemaRelations(
 
     // RESPONSE_SCHEMA
     if (gqlSpec.responseType) {
-      const schemaId = schemaIndex.get(gqlSpec.responseType.toLowerCase());
+      const schemaId = lookupSchemaId(schemaIndex, gqlSpec.responseType, spec);
       if (schemaId) {
         const key = `${spec.id}:${schemaId}:RESPONSE_SCHEMA`;
         if (!seen.has(key)) {
@@ -206,7 +224,7 @@ function resolveGraphqlSchemaRelations(
 
 function resolveEventPayloadRelations(
   allSpecs: ContractSpecNode[],
-  schemaIndex: Map<string, string>
+  schemaIndex: Map<string, ContractSpecNode[]>
 ): SemanticRelationEdge[] {
   const edges: SemanticRelationEdge[] = [];
   const seen = new Set<string>();
@@ -216,7 +234,7 @@ function resolveEventPayloadRelations(
     const eventSpec = safeJsonParse<EventSpec>(spec.specJson);
     if (!eventSpec?.payloadType) continue;
 
-    const schemaId = schemaIndex.get(eventSpec.payloadType.toLowerCase());
+    const schemaId = lookupSchemaId(schemaIndex, eventSpec.payloadType, spec);
     if (!schemaId) continue;
 
     const key = `${spec.id}:${schemaId}:EVENT_PAYLOAD`;
@@ -259,7 +277,7 @@ const PENDING_SCHEMA_REF_KINDS = new Set<SemanticRelationKind>([
 function resolvePendingSchemaRefs(
   contractSpecs: ContractSpecNode[],
   existingRelations: SemanticRelationEdge[],
-  schemaIndex: Map<string, string>
+  schemaIndex: Map<string, ContractSpecNode[]>
 ): SemanticRelationEdge[] {
   const edges: SemanticRelationEdge[] = [];
   const seen = new Set<string>();
@@ -287,8 +305,9 @@ function resolvePendingSchemaRefs(
     if (!resolvedFromSpecId) continue;
 
     // Resolve toSpecId: strip `schema-ref:` prefix, look up schema name
-    const baseTypeName = rel.toSpecId.slice("schema-ref:".length).toLowerCase();
-    const resolvedToSpecId = schemaIndex.get(baseTypeName);
+    const baseTypeName = rel.toSpecId.slice("schema-ref:".length);
+    const fromSpec = contractSpecs.find((spec) => spec.id === resolvedFromSpecId);
+    const resolvedToSpecId = lookupSchemaId(schemaIndex, baseTypeName, fromSpec);
     if (!resolvedToSpecId) continue;
 
     // Skip self-references

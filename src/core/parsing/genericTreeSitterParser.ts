@@ -1,7 +1,7 @@
 import Parser from "tree-sitter";
 import type { LanguageParser, ParseInput } from "../registries/types.js";
 import type { ParsedFile, LanguageExtractorConfig } from "./types.js";
-import { parseTreeSitterSource } from "./treeSitter.js";
+import { getCachedParser, parseTreeSitterSource } from "./treeSitter.js";
 import { getLanguageDefinition } from "./languages/registry.js";
 import { extractSymbolsFromTreeSitter } from "../extraction/extractSymbols.js";
 import { extractImportsFromTreeSitter } from "../extraction/extractImports.js";
@@ -37,8 +37,7 @@ export class GenericTreeSitterParser implements LanguageParser {
   }
 
   async parse(input: ParseInput): Promise<ParsedFile> {
-    const parser = new Parser();
-    parser.setLanguage(this.config.grammar);
+    const parser = getCachedParser(this.config.language);
     const tree = parseTreeSitterSource(parser, input.source);
 
     const symbolsQuery = this.getQuery("symbols");

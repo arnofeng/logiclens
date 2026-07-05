@@ -43,18 +43,38 @@ export function extractAndPadVueScripts(source: string): { scriptSource: string;
   let isTypeScript = false;
   const scriptRanges: Array<{ start: number; end: number }> = [];
 
-  const parsed = parseSFC(source);
-  const descriptor = parsed.descriptor;
+  try {
+    const parsed = parseSFC(source);
+    if (parsed.errors.length > 0) {
+      process.emitWarning(
+        `Vue SFC parser reported ${parsed.errors.length} error(s); script extraction will continue where possible.`,
+        { code: "VUE_SFC_PARSE" }
+      );
+    }
+    const descriptor = parsed.descriptor;
 
-  const blocks = [descriptor.script, descriptor.scriptSetup].filter(Boolean);
+    const blocks = [descriptor.script, descriptor.scriptSetup].filter(Boolean);
 
-  for (const block of blocks) {
-    if (block) {
-      const lang = (block.attrs.lang || "").toString().toLowerCase().trim();
-      if (lang === "ts" || lang === "tsx" || lang === "typescript") {
-        isTypeScript = true;
+    for (const block of blocks) {
+      if (block) {
+        const lang = (block.attrs.lang || "").toString().toLowerCase().trim();
+        if (lang === "ts" || lang === "tsx" || lang === "typescript") {
+          isTypeScript = true;
+        }
+        scriptRanges.push({ start: block.loc.start.offset, end: block.loc.end.offset });
       }
-      scriptRanges.push({ start: block.loc.start.offset, end: block.loc.end.offset });
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.emitWarning(`Vue SFC parser failed; falling back to raw script-block extraction: ${message}`, { code: "VUE_SFC_PARSE" });
+    const scriptPattern = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
+    for (const match of source.matchAll(scriptPattern)) {
+      const attrs = match[1] ?? "";
+      if (/\blang\s*=\s*["']?(ts|tsx|typescript)["']?/i.test(attrs)) isTypeScript = true;
+      const full = match[0] ?? "";
+      const content = match[2] ?? "";
+      const start = (match.index ?? 0) + full.indexOf(content);
+      scriptRanges.push({ start, end: start + content.length });
     }
   }
 

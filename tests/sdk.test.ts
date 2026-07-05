@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createClient } from "../src/index.js";
 import { defaultConfig, writeConfig } from "../src/config/loadConfig.js";
 import { initCommand } from "../src/interfaces/cli/init.js";
@@ -41,7 +41,7 @@ describe("SDK Client", () => {
 
     // Create a mock mcp.pid file
     const mcpPidPath = path.join(cwd, BRAND_PATHS.mcpPid);
-    await fs.writeFile(mcpPidPath, JSON.stringify({ pid: 999999, version: "0.1.0", startedAt: Date.now() }), "utf8");
+    await fs.writeFile(mcpPidPath, JSON.stringify({ pid: 999999, cwd, version: "0.1.0", startedAt: Date.now() }), "utf8");
 
     // Check they exist
     expect(await fs.stat(path.join(cwd, BRAND.configDirName, BRAND.configFileName)).then(() => true).catch(() => false)).toBe(true);
@@ -52,6 +52,29 @@ describe("SDK Client", () => {
 
     const workspaceExists = await fs.stat(path.join(cwd, BRAND.configDirName)).then(() => true).catch(() => false);
     expect(workspaceExists).toBe(false);
+  });
+
+  it("refuses to uninitialize configured graph paths outside the workspace", async () => {
+    const cwd = await makeTempWorkspace();
+    await writeConfig({
+      ...defaultConfig(),
+      graph: { ...defaultConfig().graph, path: path.parse(cwd).root }
+    }, cwd);
+
+    await expect(uninitCommand(cwd)).rejects.toThrow(/Refusing to remove filesystem root/);
+  });
+
+  it("ignores stale or untrusted MCP pid files", async () => {
+    const cwd = await makeTempWorkspace();
+    await initCommand(cwd);
+    const mcpPidPath = path.join(cwd, BRAND_PATHS.mcpPid);
+    await fs.writeFile(mcpPidPath, JSON.stringify({ pid: process.pid, cwd: path.join(cwd, "other"), startedAt: Date.now() }), "utf8");
+    const killSpy = vi.spyOn(process, "kill");
+
+    await uninitCommand(cwd);
+
+    expect(killSpy).not.toHaveBeenCalled();
+    killSpy.mockRestore();
   });
 
   it("adds a repo to in-memory config without writing to disk", async () => {
