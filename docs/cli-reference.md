@@ -243,9 +243,24 @@ logiclens deps --repo order-service --target payment-service --direction outgoin
 List all contracts with their producer/consumer counts.
 
 ```bash
+# All contracts
 logiclens contracts
+
+# Filter by contract kind
 logiclens contracts --kind api
 logiclens contracts --kind event --limit 10
+
+# What contracts does order-service participate in?
+logiclens contracts --repo order-service
+
+# What does order-service produce?
+logiclens contracts --repo order-service --direction outgoing
+
+# What does order-service consume?
+logiclens contracts --repo order-service --direction incoming
+
+# Combine filters
+logiclens contracts --repo order-service --kind api --direction incoming
 ```
 
 **Options**:
@@ -254,6 +269,11 @@ logiclens contracts --kind event --limit 10
 |--------|-------------|
 | `--kind <kind>` | Filter by contract kind. Options: `package`, `api`, `event`, `dto`, `schema`, `enum`, `config` |
 | `--limit <number>` | Maximum number of results to return |
+| `--repo <name>` | Filter contracts involving a specific repository |
+| `--direction <outgoing\|incoming>` | Direction: `outgoing` (repo as producer) or `incoming` (repo as consumer). Requires `--repo` |
+
+> [!NOTE]
+> `--direction` requires `--repo`. Producer/consumer/shared counts are always global — `--repo` only scopes which contracts are listed, not the aggregate counts.
 
 ---
 

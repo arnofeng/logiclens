@@ -296,8 +296,22 @@ export async function listDependencies(
   return rows.map((row) => ({ ...row, resolution: confidenceBand(row.confidence) }));
 }
 
-export async function listContracts(db: GraphDB, options: { limit?: number; kind?: ContractKind } = {}): Promise<ContractSummaryRow[]> {
-  return db.listContracts(options);
+export async function listContracts(db: GraphDB, options: { limit?: number; kind?: ContractKind; repo?: string; direction?: "outgoing" | "incoming" } = {}): Promise<ContractSummaryRow[]> {
+  if (options.direction && !options.repo) {
+    throw new Error("direction requires repo");
+  }
+  if (options.direction && options.direction !== "outgoing" && options.direction !== "incoming") {
+    throw new Error(`Unsupported direction "${options.direction}". Expected one of: outgoing, incoming`);
+  }
+  const dbOptions: { limit?: number; kind?: ContractKind; repo?: string; direction?: "outgoing" | "incoming" } = {
+    limit: options.limit,
+    kind: options.kind,
+    direction: options.direction,
+  };
+  if (options.repo) {
+    dbOptions.repo = repoId(options.repo);
+  }
+  return db.listContracts(dbOptions);
 }
 
 async function traceContractRole(db: GraphDB, contractIds: string[], rel: string, role: ContractRole): Promise<ContractTraceRow[]> {

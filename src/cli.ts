@@ -56,7 +56,7 @@ program
   .action((sourceRepo: string, targetRepo: string, options: { kind?: string }) =>
     explainDepsCommand(sourceRepo, targetRepo, options)
   );
-program.command("contracts").option("--kind <kind>", "Filter by contract kind: package, api, event, dto, schema, enum, or config").option("--limit <number>", "Maximum contracts to list", (value) => Number(value)).description("List contracts and producer/consumer counts").action((options: { kind?: string; limit?: number }) => contractsCommand(options));
+program.command("contracts").option("--kind <kind>", "Filter by contract kind: package, api, event, dto, schema, enum, or config").option("--limit <number>", "Maximum contracts to list", (value) => Number(value)).option("--repo <name>", "Filter contracts involving a specific repository").addOption(new Option("--direction <outgoing|incoming>", "Direction: outgoing (repo as producer) or incoming (repo as consumer)").choices(["outgoing", "incoming"])).description("List contracts and producer/consumer counts").action((options: { kind?: string; limit?: number; repo?: string; direction?: string }) => contractsCommand(options));
 program
   .command("trace")
   .argument("<target>", "Contract identifier, e.g. \"http POST /orders\", \"event OrderCreated\", \"schema CreateOrderRequest\"")

@@ -355,9 +355,17 @@ export class AppClient {
    * @param options.limit - The maximum number of rows to retrieve.
    * @returns An array of contract summary rows.
    */
-  async contracts(options?: { kind?: string; limit?: number }): Promise<ContractSummaryRow[]> {
+  async contracts(options?: { kind?: string; limit?: number; repo?: string; direction?: string }): Promise<ContractSummaryRow[]> {
+    if (options?.direction && !options?.repo) {
+      throw new Error("direction requires repo");
+    }
+    const directions = new Set(["outgoing", "incoming"]);
+    if (options?.direction && !directions.has(options.direction)) {
+      throw new Error(`Unsupported direction "${options.direction}". Expected one of: outgoing, incoming`);
+    }
+
     const db = await this.getDb();
-    
+
     const contractKinds = new Set(["package", "api", "event", "dto", "schema", "enum", "config"]);
     let parsedKind: any = undefined;
     if (options?.kind) {
@@ -366,8 +374,13 @@ export class AppClient {
       }
       parsedKind = options.kind;
     }
-    
-    return listContracts(db, { kind: parsedKind, limit: options?.limit });
+
+    return listContracts(db, {
+      kind: parsedKind,
+      limit: options?.limit,
+      repo: options?.repo,
+      direction: options?.direction as "outgoing" | "incoming" | undefined,
+    });
   }
 
   /**

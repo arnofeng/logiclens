@@ -683,12 +683,42 @@ export class KuzuGraphDB implements GraphDB {
     );
   }
 
-  async listContracts(options: { limit?: number; kind?: ContractKind } = {}): Promise<ContractSummaryRow[]> {
+  async listContracts(options: { limit?: number; kind?: ContractKind; repo?: string; direction?: "outgoing" | "incoming" } = {}): Promise<ContractSummaryRow[]> {
     const limit = options.limit ?? 100;
-    const kindFilter = options.kind ? "WHERE c.kind = $kind" : "";
+    const conditions: string[] = [];
+    const params: Record<string, GraphValue> = {};
+
+    if (options.kind) {
+      conditions.push("c.kind = $kind");
+      params.kind = options.kind;
+    }
+
+    if (options.repo) {
+      params.repoId = options.repo;
+      if (options.direction === "outgoing") {
+        conditions.push(
+          "(EXISTS { MATCH (r:Repo)-[p:PRODUCES]->(c) WHERE r.id = $repoId AND (p.active IS NULL OR p.active = true) }" +
+          " OR EXISTS { MATCH (r:Repo)-[o:OWNS_PACKAGE]->(c) WHERE r.id = $repoId AND (o.active IS NULL OR o.active = true) })"
+        );
+      } else if (options.direction === "incoming") {
+        conditions.push(
+          "EXISTS { MATCH (r:Repo)-[u:CONSUMES]->(c) WHERE r.id = $repoId AND (u.active IS NULL OR u.active = true) }"
+        );
+      } else {
+        conditions.push(
+          "(EXISTS { MATCH (r:Repo)-[p:PRODUCES]->(c) WHERE r.id = $repoId AND (p.active IS NULL OR p.active = true) }" +
+          " OR EXISTS { MATCH (r:Repo)-[o:OWNS_PACKAGE]->(c) WHERE r.id = $repoId AND (o.active IS NULL OR o.active = true) }" +
+          " OR EXISTS { MATCH (r:Repo)-[u:CONSUMES]->(c) WHERE r.id = $repoId AND (u.active IS NULL OR u.active = true) }" +
+          " OR EXISTS { MATCH (r:Repo)-[s:SHARES_CONTRACT]->(c) WHERE r.id = $repoId AND (s.active IS NULL OR s.active = true) })"
+        );
+      }
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
     return this.query<ContractSummaryRow>(
       `MATCH (c:Contract)
-       ${kindFilter}
+       ${whereClause}
        RETURN c.kind AS kind, c.key AS key, c.name AS name,
          COUNT { MATCH (:Repo)-[p:PRODUCES]->(c) WHERE p.active IS NULL OR p.active = true }
          + COUNT { MATCH (:Repo)-[o:OWNS_PACKAGE]->(c) WHERE o.active IS NULL OR o.active = true } AS producers,
@@ -696,7 +726,7 @@ export class KuzuGraphDB implements GraphDB {
          COUNT { MATCH (:Repo)-[s:SHARES_CONTRACT]->(c) WHERE s.active IS NULL OR s.active = true } AS shared
        ORDER BY c.kind, c.key
        LIMIT ${limit};`,
-      options.kind ? { kind: options.kind } : undefined
+      Object.keys(params).length > 0 ? params : undefined
     );
   }
 

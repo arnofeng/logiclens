@@ -373,11 +373,13 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
       inputSchema: {
         kind: z.string().optional().describe("Filter by contract kind (package, api, event, dto, schema, enum, config)"),
         limit: z.number().optional().describe("Maximum number of contracts to retrieve"),
+        repo: z.string().optional().describe("Filter contracts involving a specific repository name"),
+        direction: z.enum(["outgoing", "incoming"]).optional().describe("Direction: outgoing (repo as producer) or incoming (repo as consumer). Requires repo."),
       },
     },
-    async ({ kind, limit }) => {
-      return wrapWithFreshness(MCP_TOOLS.listContracts, { kind, limit }, async () => {
-        const contracts = await client.contracts({ kind, limit });
+    async ({ kind, limit, repo, direction }) => {
+      return wrapWithFreshness(MCP_TOOLS.listContracts, { kind, limit, repo, direction }, async () => {
+        const contracts = await client.contracts({ kind, limit, repo, direction });
         return {
           content: [{ type: "text" as const, text: JSON.stringify(contracts, null, 2) }],
         };

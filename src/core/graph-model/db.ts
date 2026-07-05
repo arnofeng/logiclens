@@ -137,7 +137,7 @@ export interface GraphDB {
   /** Upserts an alias override entry pointing an alias to a target repository. */
   upsertAliasOverride(input: { alias: string; targetRepoId: string; reason: string }): Promise<void>;
   /** Returns contract summaries with producer/consumer/shared counts. */
-  listContracts(options?: { limit?: number; kind?: ContractKind }): Promise<ContractSummaryRow[]>;
+  listContracts(options?: { limit?: number; kind?: ContractKind; repo?: string; direction?: "outgoing" | "incoming" }): Promise<ContractSummaryRow[]>;
   query<T = Record<string, GraphValue>>(cypher: string, params?: Record<string, GraphValue>): Promise<T[]>;
   stats(): Promise<Stats>;
   close(): Promise<void>;
