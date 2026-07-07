@@ -285,8 +285,8 @@ export async function writeGraphFactsWithKuzuBulk(db: GraphDB, facts: GraphFacts
     }
     try {
       await fs.rm(staging.dir, { recursive: true, force: true });
-    } catch {
-      // Ignore staging directory deletion error to avoid blocking the index process
+    } catch (e) {
+      console.warn(`[WARNING] Failed to clean up CSV staging directory '${staging.dir}':`, e);
     }
   } catch (error) {
     throw error;
@@ -366,8 +366,8 @@ export async function writeGraphFactsWithKuzuAppendCopy(db: GraphDB, facts: Grap
     }
     try {
       await fs.rm(staging.dir, { recursive: true, force: true });
-    } catch {
-      // Ignore staging directory deletion error to avoid blocking the index process
+    } catch (e) {
+      console.warn(`[WARNING] Failed to clean up CSV staging directory '${staging.dir}':`, e);
     }
   } catch (error) {
     throw error;
@@ -462,8 +462,8 @@ export async function writeGraphFactsWithKuzuBulkUpsert(db: GraphDB, facts: Grap
     }
     try {
       await fs.rm(staging.dir, { recursive: true, force: true });
-    } catch {
-      // Ignore staging directory deletion error to avoid blocking the index process
+    } catch (e) {
+      console.warn(`[WARNING] Failed to clean up CSV staging directory '${staging.dir}':`, e);
     }
   } catch (error) {
     throw error;

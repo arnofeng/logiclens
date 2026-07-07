@@ -69,6 +69,8 @@ export function extractImportsFromTreeSitter(
             moduleName = normalizePythonImportModule(filePath || "", dotCount, suffix);
           }
 
+          if (!moduleName) continue;
+
           const bindings: ImportBinding[] = [];
           let afterImport = false;
           for (let i = 0; i < importNode.childCount; i++) {

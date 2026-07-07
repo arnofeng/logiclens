@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import type { CrossRepoExtraction } from "../contracts/extraction/crossRepoContracts.js";
 import type { ParsedGraphFile, RepoNode } from "../parsing/types.js";
 import type { GraphDB } from "./db.js";
@@ -11,7 +12,7 @@ export type GraphFactsBatch = {
 };
 
 export function createBatchId(prefix = "batch"): string {
-  return `${prefix}:${new Date().toISOString()}:${Math.random().toString(36).slice(2, 10)}`;
+  return `${prefix}:${crypto.randomUUID()}`;
 }
 
 export async function writeGraphFactsBatch(db: GraphDB, batch: GraphFactsBatch, options: UpsertParsedFilesOptions): Promise<void> {

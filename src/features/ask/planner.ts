@@ -2,7 +2,7 @@ export type QuestionKind = "impact" | "workflow" | "symbol" | "dependency" | "de
 
 export function planQuestion(question: string): { kind: QuestionKind; terms: string[] } {
   const lowered = question.toLowerCase();
-  const kind: QuestionKind = /impact|influence|who[\s_]*uses|ref/.test(lowered)
+  const kind: QuestionKind = /impact|influence|who[\s_]*uses|\bref\b/.test(lowered)
     ? "impact"
     : /flow|workflow|chain|create/.test(lowered)
       ? "workflow"

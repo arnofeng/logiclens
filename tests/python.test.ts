@@ -95,4 +95,28 @@ def main():
 
     await fs.rm(dir, { recursive: true, force: true });
   });
+
+  it("handles relative imports that might resolve to empty module name", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-py-empty-"));
+    const sourcePath = path.join(dir, "main.py");
+    await fs.writeFile(
+      sourcePath,
+      `from . import helper
+from .. import other_helper
+`,
+      "utf8"
+    );
+
+    const parsed = await parseSourceFile({
+      repoId: repoId("py-empty-test"),
+      absolutePath: sourcePath,
+      relativePath: "main.py",
+      language: "python"
+    });
+
+    // The relative imports should be skipped because they would resolve to empty module names at root main.py
+    expect(parsed.imports).toEqual([]);
+
+    await fs.rm(dir, { recursive: true, force: true });
+  });
 });

@@ -32,8 +32,17 @@ export function resolveEmbeddingProvider(
   return provider;
 }
 
+let hasWarnedDimensionMismatch = false;
+
 export function cosineSimilarity(a: EmbeddingVector, b: EmbeddingVector): number {
-  if (a.length === 0 || b.length === 0 || a.length !== b.length) return 0;
+  if (a.length === 0 || b.length === 0) return 0;
+  if (a.length !== b.length) {
+    if (!hasWarnedDimensionMismatch) {
+      console.warn(`[WARNING] Cosine similarity dimension mismatch: vector A has length ${a.length} but vector B has length ${b.length}. returning 0 similarity. This may be due to mixed embedding models.`);
+      hasWarnedDimensionMismatch = true;
+    }
+    return 0;
+  }
   let dot = 0;
   let normA = 0;
   let normB = 0;

@@ -97,6 +97,9 @@ export function evaluateGoldenCorpus(
       && participants.falseNegative.length === 0
       && dependencies.falseNegative.length === 0
       && absentViolations.length === 0
+      && contracts.falsePositive.length === 0
+      && participants.falsePositive.length === 0
+      && dependencies.falsePositive.length === 0
   };
 }
 

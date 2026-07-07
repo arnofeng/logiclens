@@ -303,16 +303,20 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
             }
           }
         }
-        response.content.push({
-          type: "text",
-          text: `${BRAND.displayName} freshness metadata:\n${JSON.stringify(buildFreshnessMetadata({
-            pending,
-            watcherActive: client.isWatching(),
-            degradedReason,
-            catchUp: catchUpState,
-            indexQueue: client.getIndexQueueStatus()
-          }), null, 2)}`
+        const metadata = buildFreshnessMetadata({
+          pending,
+          watcherActive: client.isWatching(),
+          degradedReason,
+          catchUp: catchUpState,
+          indexQueue: client.getIndexQueueStatus()
         });
+
+        if (metadata.stale) {
+          response.content.push({
+            type: "text",
+            text: `${BRAND.displayName} freshness metadata:\n${JSON.stringify(metadata, null, 2)}`
+          });
+        }
       }
       return response;
     } catch (error) {

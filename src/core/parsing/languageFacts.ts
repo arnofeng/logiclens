@@ -20,7 +20,10 @@ function ownerKindForDecorator(symbol: CodeSymbol): DecoratorFact["ownerKind"] {
   return "property";
 }
 
-function parseASTValue(node: Parser.SyntaxNode): any {
+function parseASTValue(node: Parser.SyntaxNode, depth = 0): any {
+  if (depth > 100) {
+    return node.text;
+  }
   const type = node.type;
 
   // String literals
@@ -57,7 +60,7 @@ function parseASTValue(node: Parser.SyntaxNode): any {
       if (child.type === "[" || child.type === "]" || child.type === "{" || child.type === "}" || child.type === ",") {
         continue;
       }
-      arr.push(parseASTValue(child));
+      arr.push(parseASTValue(child, depth + 1));
     }
     return arr;
   }
@@ -72,7 +75,7 @@ function parseASTValue(node: Parser.SyntaxNode): any {
         const valNode = child.childForFieldName("value") || child.child(2);
         if (keyNode && valNode) {
           const key = stripLiteralQuotes(keyNode.text);
-          obj[key] = parseASTValue(valNode);
+          obj[key] = parseASTValue(valNode, depth + 1);
         }
       } else if (child.type === "shorthand_property_identifier" || child.type === "shorthand_property_identifier_pattern") {
         obj[child.text] = child.text;
@@ -87,7 +90,7 @@ function parseASTValue(node: Parser.SyntaxNode): any {
     const valNode = node.childForFieldName("right") || node.child(2);
     if (keyNode && valNode) {
       const key = stripLiteralQuotes(keyNode.text);
-      return { [key]: parseASTValue(valNode) };
+      return { [key]: parseASTValue(valNode, depth + 1) };
     }
   }
 
@@ -97,7 +100,7 @@ function parseASTValue(node: Parser.SyntaxNode): any {
     const valNode = node.childForFieldName("value") || node.child(2);
     if (keyNode && valNode) {
       const key = keyNode.text;
-      return { [key]: parseASTValue(valNode) };
+      return { [key]: parseASTValue(valNode, depth + 1) };
     }
   }
 
@@ -566,9 +569,13 @@ export function extractLanguageFacts(input: { parsedFile: ParsedFile; source: st
 }
 
 function walkTree(node: Parser.SyntaxNode, visit: (n: Parser.SyntaxNode) => void) {
-  visit(node);
-  for (let i = 0; i < node.childCount; i++) {
-    walkTree(node.child(i)!, visit);
+  const stack: Parser.SyntaxNode[] = [node];
+  while (stack.length > 0) {
+    const curr = stack.pop()!;
+    visit(curr);
+    for (let i = curr.childCount - 1; i >= 0; i--) {
+      stack.push(curr.child(i)!);
+    }
   }
 }
 

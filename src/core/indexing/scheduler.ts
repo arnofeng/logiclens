@@ -26,6 +26,7 @@ export type IndexQueueJobSnapshot = {
   startedAt?: string;
   finishedAt?: string;
   error?: string;
+  stuck?: boolean;
 };
 
 export type IndexQueueStatusSnapshot = {
@@ -49,6 +50,11 @@ export class SingleProcessIndexQueue {
   private lastCompletedJob?: IndexQueueJobSnapshot;
   private lastFailedJob?: IndexQueueJobSnapshot;
   private tail: Promise<void> = Promise.resolve();
+  private timeoutMs: number;
+
+  constructor(options?: { timeoutMs?: number }) {
+    this.timeoutMs = options?.timeoutMs ?? 300000; // 5 minutes default
+  }
 
   enqueue<T>(input: { source: IndexQueueSource; label: string; run: () => Promise<T> }): Promise<T> {
     const job: EnqueuedIndexJob = {
@@ -73,9 +79,20 @@ export class SingleProcessIndexQueue {
   }
 
   getStatus(): IndexQueueStatusSnapshot {
+    let runningJobSnapshot: IndexQueueJobSnapshot | undefined;
+    if (this.runningJob) {
+      runningJobSnapshot = { ...this.runningJob };
+      if (runningJobSnapshot.startedAt) {
+        const elapsed = Date.now() - new Date(runningJobSnapshot.startedAt).getTime();
+        if (elapsed > this.timeoutMs) {
+          runningJobSnapshot.stuck = true;
+        }
+      }
+    }
+
     return {
       running: Boolean(this.runningJob),
-      runningJob: this.runningJob ? { ...this.runningJob } : undefined,
+      runningJob: runningJobSnapshot,
       pendingJobs: this.pending.map((job) => ({ ...job })),
       completedJobs: this.completedJobs,
       failedJobs: this.failedJobs,
@@ -89,7 +106,12 @@ export class SingleProcessIndexQueue {
     job.status = "running";
     job.startedAt = new Date().toISOString();
     this.runningJob = job;
+    let timer: NodeJS.Timeout | undefined;
     try {
+      timer = setTimeout(() => {
+        job.stuck = true;
+        console.warn(`[WARNING] Job '${job.id}' (${job.label}) has been running for longer than ${this.timeoutMs}ms and may be stuck.`);
+      }, this.timeoutMs);
       const result = await run();
       job.status = "succeeded";
       job.finishedAt = new Date().toISOString();
@@ -104,6 +126,7 @@ export class SingleProcessIndexQueue {
       this.lastFailedJob = { ...job };
       throw error;
     } finally {
+      if (timer) clearTimeout(timer);
       if (this.runningJob === job) this.runningJob = undefined;
     }
   }

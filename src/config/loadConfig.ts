@@ -3,13 +3,9 @@ import path from "node:path";
 import YAML from "yaml";
 import {
   configSchema,
-  type AppConfig,
-  defaultProviderRetry,
-  defaultProviderRateLimit,
-  defaultInclude,
-  defaultExclude
+  type AppConfig
 } from "./schema.js";
-import { BRAND_DEFAULTS, BRAND_PATHS, configFileCandidates, configFilePath } from "../shared/branding.js";
+import { configFileCandidates, configFilePath } from "../shared/branding.js";
 
 export const configPath = (cwd = process.cwd()): string => configFilePath(cwd);
 
@@ -25,157 +21,105 @@ export async function resolveConfigPath(cwd = process.cwd()): Promise<string> {
   return configPath(cwd);
 }
 
+function resolveEnvVars(value: any): any {
+  if (value === null || value === undefined) return value;
+  if (typeof value === "string") {
+    return value.replace(/\$\{([A-Za-z0-9_]+)\}/g, (_, name) => process.env[name] ?? "");
+  }
+  if (Array.isArray(value)) {
+    return value.map(resolveEnvVars);
+  }
+  if (typeof value === "object") {
+    const result: any = {};
+    for (const [k, v] of Object.entries(value)) {
+      result[k] = resolveEnvVars(v);
+    }
+    return result;
+  }
+  return value;
+}
+
 export async function loadConfig(cwd = process.cwd()): Promise<AppConfig> {
   const file = await resolveConfigPath(cwd);
   const raw = await fs.readFile(file, "utf8");
-  return configSchema.parse(YAML.parse(raw));
+  const parsed = YAML.parse(raw);
+
+  // Plaintext API key warnings
+  if (parsed?.llm?.apiKey && typeof parsed.llm.apiKey === "string" && !parsed.llm.apiKey.startsWith("${") && parsed.llm.apiKey !== "") {
+    console.warn(`[WARNING] Storing plaintext API keys in configuration is not recommended. Please consider using environment variables or references like '\${OPENAI_API_KEY}' for better security.`);
+  }
+  if (parsed?.embedding?.apiKey && typeof parsed.embedding.apiKey === "string" && !parsed.embedding.apiKey.startsWith("${") && parsed.embedding.apiKey !== "") {
+    console.warn(`[WARNING] Storing plaintext API keys in configuration is not recommended. Please consider using environment variables or references like '\${OPENAI_API_KEY}' for better security.`);
+  }
+
+  const resolved = resolveEnvVars(parsed);
+  return configSchema.parse(resolved);
 }
 
-/**
- * Prunes default configuration options from the given configuration object,
- * leaving only user-defined overrides and essential configuration fields.
- */
+function pruneObject(obj: any, defaultObj: any): any {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj !== "object") {
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    return obj;
+  }
+  const result: any = {};
+  for (const [key, value] of Object.entries(obj)) {
+    // Some fields we always preserve
+    if (key === "systemName" || key === "repos") {
+      result[key] = value;
+      continue;
+    }
+    const defaultValue = defaultObj?.[key];
+    if (value && typeof value === "object") {
+      if (Array.isArray(value)) {
+        if (defaultValue !== undefined && Array.isArray(defaultValue)) {
+          if (JSON.stringify(value) !== JSON.stringify(defaultValue)) {
+            result[key] = value;
+          }
+        } else {
+          result[key] = value;
+        }
+      } else {
+        const prunedChild = pruneObject(value, defaultValue);
+        if (prunedChild !== undefined && Object.keys(prunedChild).length > 0) {
+          result[key] = prunedChild;
+        }
+      }
+    } else {
+      if (value !== defaultValue) {
+        result[key] = value;
+      }
+    }
+  }
+  return result;
+}
+
 export function pruneConfig(config: AppConfig): any {
-  const pruned: any = {};
+  const defaultVal = configSchema.parse({});
+  return pruneObject(config, defaultVal);
+}
 
-  // Always write systemName so it doesn't get removed when configuration is updated
-  pruned.systemName = config.systemName;
-
-  // Always write repos (even if empty, to allow clearing repos)
-  pruned.repos = config.repos;
-
-  // Only include frameworks if they have custom overrides
-  if (config.frameworks && (config.frameworks.include.length > 0 || config.frameworks.exclude.length > 0)) {
-    pruned.frameworks = config.frameworks;
-  }
-
-  // Only include files if they differ from the default list
-  if (config.include && JSON.stringify(config.include) !== JSON.stringify(defaultInclude)) {
-    pruned.include = config.include;
-  }
-  if (config.exclude && JSON.stringify(config.exclude) !== JSON.stringify(defaultExclude)) {
-    pruned.exclude = config.exclude;
-  }
-
-  // Graph: only include path if it is different from default, or provider if it's different from kuzu
-  if (config.graph) {
-    const graphPruned: any = {};
-    if (config.graph.provider !== "kuzu") graphPruned.provider = config.graph.provider;
-    if (config.graph.path !== BRAND_PATHS.graph) graphPruned.path = config.graph.path;
-    if (Object.keys(graphPruned).length > 0) {
-      pruned.graph = graphPruned;
+function hasEnvVarRef(node: any): boolean {
+  if (node === null || node === undefined) return false;
+  if (typeof node === "string" && node.includes("${")) return true;
+  if (YAML.isScalar(node) && typeof node.value === "string" && node.value.includes("${")) return true;
+  if (YAML.isMap(node)) {
+    if (node.items) {
+      for (const item of node.items) {
+        if (YAML.isPair(item) && hasEnvVarRef(item.value)) return true;
+      }
     }
   }
-
-  // LLM: prune retry, budget, rateLimit if they are default
-  if (config.llm) {
-    const llmPruned: any = {};
-    if (config.llm.provider !== "openai") llmPruned.provider = config.llm.provider;
-    if (config.llm.apiKey !== undefined) llmPruned.apiKey = config.llm.apiKey;
-    if (config.llm.baseUrl !== undefined) llmPruned.baseUrl = config.llm.baseUrl;
-    if (config.llm.model !== "gpt-4.1-mini") llmPruned.model = config.llm.model;
-    if (config.llm.maxSourceCharsPerNode !== 6000) llmPruned.maxSourceCharsPerNode = config.llm.maxSourceCharsPerNode;
-    
-    // Check if retry is non-default
-    if (config.llm.retry && JSON.stringify(config.llm.retry) !== JSON.stringify(defaultProviderRetry)) {
-      llmPruned.retry = config.llm.retry;
-    }
-    // Check if budget is non-default
-    if (config.llm.budget && Object.keys(config.llm.budget).length > 0) {
-      llmPruned.budget = config.llm.budget;
-    }
-    // Check if rateLimit is non-default
-    if (config.llm.rateLimit && JSON.stringify(config.llm.rateLimit) !== JSON.stringify(defaultProviderRateLimit)) {
-      llmPruned.rateLimit = config.llm.rateLimit;
-    }
-
-    if (Object.keys(llmPruned).length > 0) {
-      pruned.llm = llmPruned;
+  if (YAML.isSeq(node)) {
+    if (node.items) {
+      for (const item of node.items) {
+        if (hasEnvVarRef(item)) return true;
+      }
     }
   }
-
-  // Embedding
-  if (config.embedding) {
-    const embPruned: any = {};
-    if (config.embedding.provider !== "off") embPruned.provider = config.embedding.provider;
-    if (config.embedding.apiKey !== undefined) embPruned.apiKey = config.embedding.apiKey;
-    if (config.embedding.baseUrl !== undefined) embPruned.baseUrl = config.embedding.baseUrl;
-    if (config.embedding.model !== undefined) embPruned.model = config.embedding.model;
-    if (config.embedding.level !== "off") embPruned.level = config.embedding.level;
-    if (config.embedding.batchSize !== 64) embPruned.batchSize = config.embedding.batchSize;
-    if (config.embedding.concurrency !== 2) embPruned.concurrency = config.embedding.concurrency;
-
-    if (config.embedding.retry && JSON.stringify(config.embedding.retry) !== JSON.stringify(defaultProviderRetry)) {
-      embPruned.retry = config.embedding.retry;
-    }
-    if (config.embedding.budget && Object.keys(config.embedding.budget).length > 0) {
-      embPruned.budget = config.embedding.budget;
-    }
-    if (config.embedding.rateLimit && JSON.stringify(config.embedding.rateLimit) !== JSON.stringify(defaultProviderRateLimit)) {
-      embPruned.rateLimit = config.embedding.rateLimit;
-    }
-
-    if (Object.keys(embPruned).length > 0) {
-      pruned.embedding = embPruned;
-    }
-  }
-
-  // Semantic
-  if (config.semantic) {
-    const semPruned: any = {};
-    if (config.semantic.provider !== "json") semPruned.provider = config.semantic.provider;
-    if (config.semantic.jsonPath !== BRAND_PATHS.semanticIndex) semPruned.jsonPath = config.semantic.jsonPath;
-    
-    // Chroma
-    if (config.semantic.chroma && JSON.stringify(config.semantic.chroma) !== JSON.stringify({ mode: "local", url: "http://localhost:8000", collection: BRAND_DEFAULTS.chromaCollection })) {
-      semPruned.chroma = config.semantic.chroma;
-    }
-
-    if (Object.keys(semPruned).length > 0) {
-      pruned.semantic = semPruned;
-    }
-  }
-
-  // MCP
-  if (config.mcp) {
-    const mcpPruned: any = {};
-    if (config.mcp.logCalls !== false) mcpPruned.logCalls = config.mcp.logCalls;
-    if (Object.keys(mcpPruned).length > 0) {
-      pruned.mcp = mcpPruned;
-    }
-  }
-
-  // Watch
-  if (config.watch) {
-    const watchPruned: any = {};
-    if (config.watch.enabled !== true) watchPruned.enabled = config.watch.enabled;
-    if (config.watch.mode !== "auto") watchPruned.mode = config.watch.mode;
-    if (config.watch.debounceMs !== 2000) watchPruned.debounceMs = config.watch.debounceMs;
-    if (config.watch.maxRoots !== 256) watchPruned.maxRoots = config.watch.maxRoots;
-    if (config.watch.maxLinuxDirs !== 20000) watchPruned.maxLinuxDirs = config.watch.maxLinuxDirs;
-    if (config.watch.syncConcurrency !== 1) watchPruned.syncConcurrency = config.watch.syncConcurrency;
-    if (config.watch.catchUp !== "background") watchPruned.catchUp = config.watch.catchUp;
-
-    if (Object.keys(watchPruned).length > 0) {
-      pruned.watch = watchPruned;
-    }
-  }
-
-  // Indexing
-  if (config.indexing) {
-    const idxPruned: any = {};
-    if (config.indexing.concurrency !== 4) idxPruned.concurrency = config.indexing.concurrency;
-    if (config.indexing.summarizeChangedOnly !== true) idxPruned.summarizeChangedOnly = config.indexing.summarizeChangedOnly;
-    if (config.indexing.maxFilesPerRun !== 5000) idxPruned.maxFilesPerRun = config.indexing.maxFilesPerRun;
-    if (config.indexing.batchSize !== 0) idxPruned.batchSize = config.indexing.batchSize;
-    if (config.indexing.llmSummaryLevel !== "off") idxPruned.llmSummaryLevel = config.indexing.llmSummaryLevel;
-
-    if (Object.keys(idxPruned).length > 0) {
-      pruned.indexing = idxPruned;
-    }
-  }
-
-  return pruned;
+  return false;
 }
 
 function syncDocument(doc: YAML.Document, docMap: YAML.YAMLMap, obj: any) {
@@ -200,13 +144,31 @@ function syncDocument(doc: YAML.Document, docMap: YAML.YAMLMap, obj: any) {
         docMap.set(key, value);
       }
     } else {
-      docMap.set(key, value);
+      const existing = docMap.get(key);
+      let keepExisting = false;
+      if (typeof existing === "string" && existing.includes("${")) {
+        const resolvedExisting = resolveEnvVars(existing);
+        if (resolvedExisting === value) {
+          keepExisting = true;
+        }
+      } else if (YAML.isScalar(existing) && typeof existing.value === "string" && existing.value.includes("${")) {
+        const resolvedExisting = resolveEnvVars(existing.value);
+        if (resolvedExisting === value) {
+          keepExisting = true;
+        }
+      }
+      if (!keepExisting) {
+        docMap.set(key, value);
+      }
     }
     docKeys.delete(key);
   }
 
   for (const key of docKeys) {
-    docMap.delete(key);
+    const existing = docMap.get(key);
+    if (!hasEnvVarRef(existing)) {
+      docMap.delete(key);
+    }
   }
 }
 

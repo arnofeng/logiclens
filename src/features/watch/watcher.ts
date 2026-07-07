@@ -148,8 +148,16 @@ export class WatchRepoIndex {
     const split = resolved.map((item) => item.split(path.sep).filter(Boolean));
     const first = split[0] ?? [];
     const parts: string[] = [];
+    const isCaseInsensitive = process.platform === "win32" || process.platform === "darwin";
     for (let i = 0; i < first.length; i++) {
-      if (split.every((segments) => segments[i]?.toLowerCase() === first[i]?.toLowerCase())) {
+      const match = split.every((segments) => {
+        const seg = segments[i];
+        if (seg === undefined) return false;
+        return isCaseInsensitive
+          ? seg.toLowerCase() === first[i]!.toLowerCase()
+          : seg === first[i]!;
+      });
+      if (match) {
         parts.push(first[i]!);
       } else {
         break;

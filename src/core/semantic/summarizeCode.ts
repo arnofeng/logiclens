@@ -70,7 +70,9 @@ export async function summarizeCode(symbol: CodeSymbol, context: { repoName: str
     fn: (signal) => client.chat.completions.create({
       model: context.model,
       messages: [{ role: "user", content: prompt }],
-      temperature: 0
+      temperature: 0,
+      response_format: { type: "json_object" },
+      max_tokens: 2000
     }, { signal })
   });
   const text = response.choices[0]?.message?.content ?? "";
