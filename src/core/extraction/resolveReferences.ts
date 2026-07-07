@@ -20,6 +20,14 @@ function warnReferenceResolution(message: string, error?: unknown): void {
   process.emitWarning(detail ? `${message}: ${detail}` : message, { code: "REFERENCE_RESOLUTION" });
 }
 
+function shouldWriteReferenceTrace(): boolean {
+  return process.env.NODE_ENV !== "test" && !process.env.VITEST;
+}
+
+function writeReferenceTrace(message: string): void {
+  if (shouldWriteReferenceTrace()) process.stderr.write(`${message}\n`);
+}
+
 function boundedRaw(raw: string): string {
   const normalized = raw.replace(/\s+/g, " ").trim();
   if (normalized.length <= MAX_CALL_RAW_LENGTH) return normalized;
@@ -44,6 +52,9 @@ export function resolveImports(parsedFiles: ParsedFile[]): ImportEdge[] {
 }
 
 export function resolveCalls(parsedFiles: ParsedFile[]): CallEdge[] {
+  const started = Date.now();
+  const callCount = parsedFiles.reduce((count, file) => count + file.calls.length, 0);
+  writeReferenceTrace(`Resolve calls prepare start: files=${parsedFiles.length} calls=${callCount}`);
   const symbols = parsedFiles.flatMap((file) => file.symbols);
   const byName = new Map<string, CodeSymbol[]>();
   for (const symbol of symbols) {
@@ -59,13 +70,39 @@ export function resolveCalls(parsedFiles: ParsedFile[]): CallEdge[] {
     acc.set(edge.fromFileId, list);
     return acc;
   }, new Map<string, string[]>());
-  const reExportTargets = buildReExportTargets(parsedFiles, importsByFile, byName);
-  const importedAliasTargets = buildImportedAliasTargets(parsedFiles, importsByFile, byName, reExportTargets);
-  const compilerTargets = buildTypeScriptCompilerTargets(parsedFiles);
-  const javaStaticTargets = buildJavaStaticTargets(parsedFiles);
-  const pythonStaticTargets = buildPythonModuleTargets(parsedFiles);
-  const goStaticTargets = buildGoPackageTargets(parsedFiles);
 
+  let stepStarted = Date.now();
+  writeReferenceTrace(`Resolve calls re-exports start: symbols=${symbols.length}`);
+  const reExportTargets = buildReExportTargets(parsedFiles, importsByFile, byName);
+  writeReferenceTrace(`Resolve calls re-exports complete: targets=${reExportTargets.size} duration=${Date.now() - stepStarted}ms`);
+
+  stepStarted = Date.now();
+  writeReferenceTrace("Resolve calls imported aliases start");
+  const importedAliasTargets = buildImportedAliasTargets(parsedFiles, importsByFile, byName, reExportTargets);
+  writeReferenceTrace(`Resolve calls imported aliases complete: targets=${importedAliasTargets.size} duration=${Date.now() - stepStarted}ms`);
+
+  stepStarted = Date.now();
+  writeReferenceTrace("Resolve calls TypeScript compiler targets start");
+  const compilerTargets = buildTypeScriptCompilerTargets(parsedFiles);
+  writeReferenceTrace(`Resolve calls TypeScript compiler targets complete: targets=${compilerTargets.size} duration=${Date.now() - stepStarted}ms`);
+
+  stepStarted = Date.now();
+  writeReferenceTrace("Resolve calls Java static targets start");
+  const javaStaticTargets = buildJavaStaticTargets(parsedFiles);
+  writeReferenceTrace(`Resolve calls Java static targets complete: targets=${javaStaticTargets.size} duration=${Date.now() - stepStarted}ms`);
+
+  stepStarted = Date.now();
+  writeReferenceTrace("Resolve calls Python module targets start");
+  const pythonStaticTargets = buildPythonModuleTargets(parsedFiles);
+  writeReferenceTrace(`Resolve calls Python module targets complete: targets=${pythonStaticTargets.size} duration=${Date.now() - stepStarted}ms`);
+
+  stepStarted = Date.now();
+  writeReferenceTrace("Resolve calls Go package targets start");
+  const goStaticTargets = buildGoPackageTargets(parsedFiles);
+  writeReferenceTrace(`Resolve calls Go package targets complete: targets=${goStaticTargets.size} duration=${Date.now() - stepStarted}ms`);
+
+  stepStarted = Date.now();
+  writeReferenceTrace("Resolve calls edge matching start");
   const edges: CallEdge[] = [];
   const seen = new Set<string>();
     for (const file of parsedFiles) {
@@ -115,6 +152,7 @@ export function resolveCalls(parsedFiles: ParsedFile[]): CallEdge[] {
       }
     }
   }
+  writeReferenceTrace(`Resolve calls edge matching complete: edges=${edges.length} duration=${Date.now() - stepStarted}ms total=${Date.now() - started}ms`);
   return edges;
 }
 

@@ -106,6 +106,14 @@ function uniqueByKey<T>(items: T[], keyFor: (item: T) => string): T[] {
   return [...new Map(items.map((item) => [keyFor(item), item])).values()];
 }
 
+function shouldWriteFactTrace(): boolean {
+  return process.env.NODE_ENV !== "test" && !process.env.VITEST;
+}
+
+function writeFactTrace(message: string): void {
+  if (shouldWriteFactTrace()) process.stderr.write(`${message}\n`);
+}
+
 export async function buildGraphFactsBatch(input: {
   batchId: string;
   indexedAt?: string;
@@ -127,6 +135,8 @@ export async function buildGraphFactsBatch(input: {
   const sectionDocumentsCode: SectionDocumentsCodeEdge[] = [];
   const sectionReferencesFile: SectionReferencesFileEdge[] = [];
 
+  const baseFactsStarted = Date.now();
+  writeFactTrace(`Facts base start: files=${input.parsedFiles.length} codeFiles=${codeFiles.length}`);
   for (const file of input.parsedFiles) {
     files.push({ id: file.fileId, repoId: file.repoId, path: file.path, language: file.language, hash: file.hash, loc: file.loc, batchId: input.batchId, indexedAt, active: true });
     contains.push({ fromId: file.repoId, toId: file.fileId });
@@ -155,10 +165,20 @@ export async function buildGraphFactsBatch(input: {
       }
     }
   }
+  writeFactTrace(`Facts base complete: files=${files.length} code=${code.length} sections=${sections.length} entities=${entities.length} duration=${Date.now() - baseFactsStarted}ms`);
 
+  const importsStarted = Date.now();
+  writeFactTrace(`Facts resolve imports start: codeFiles=${codeFiles.length}`);
   const imports = resolveImports(codeFiles).map((edge) => ({ ...edge, batchId: input.batchId, active: true }));
+  writeFactTrace(`Facts resolve imports complete: imports=${imports.length} duration=${Date.now() - importsStarted}ms`);
+
+  const callsStarted = Date.now();
+  writeFactTrace(`Facts resolve calls start: codeFiles=${codeFiles.length}`);
   const calls = resolveCalls(codeFiles).map((edge) => ({ ...edge, batchId: input.batchId, active: true }));
+  writeFactTrace(`Facts resolve calls complete: calls=${calls.length} duration=${Date.now() - callsStarted}ms`);
+
   const repoIds = new Set(input.parsedFiles.map((file) => file.repoId));
+  writeFactTrace(`Facts cross-repo extraction start: repos=${input.repos.filter((repo) => repoIds.has(repo.id)).length} files=${input.parsedFiles.length}`);
   const crossRepo = await extractCrossRepoContracts(input.repos.filter((repo) => repoIds.has(repo.id)), input.parsedFiles, { aliasOverrides: input.aliasOverrides ?? [], config: input.config });
 
   for (const edge of crossRepo.contractEntities) {

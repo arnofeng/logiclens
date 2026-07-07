@@ -40,6 +40,14 @@ import { ExtractionBuilder } from "./extractionBuilder.js";
 import type { FactCollector } from "./factCollector.js";
 import type { ExtractedFacts } from "./contracts.js";
 
+function shouldWriteExtractionTrace(): boolean {
+  return process.env.NODE_ENV !== "test" && !process.env.VITEST;
+}
+
+function writeExtractionTrace(message: string): void {
+  if (shouldWriteExtractionTrace()) process.stderr.write(`${message}\n`);
+}
+
 // -- Deprecated type aliases for backward test compatibility -------------------
 
 /** @deprecated Use ExtractedFacts instead. */
@@ -463,11 +471,17 @@ export async function extractContractFactsWithRegistry(
   }
 
   // Pre-detect frameworks for all repos in the context
+  const frameworkDetectionStarted = Date.now();
+  writeExtractionTrace(`Framework detection start: repos=${context.repos.length} files=${context.parsedFiles.length}`);
   const detectedFrameworksMap = new Map<string, DetectedFramework[]>();
   await Promise.all(context.repos.map(async (repo) => {
+    const repoStarted = Date.now();
+    writeExtractionTrace(`Framework detection repo start: ${repo.name}`);
     const dfs = await detectFrameworks(repo, context.parsedFiles);
     detectedFrameworksMap.set(repo.id, dfs);
+    writeExtractionTrace(`Framework detection repo ${repo.name}: frameworks=${dfs.length} duration=${Date.now() - repoStarted}ms`);
   }));
+  writeExtractionTrace(`Framework detection complete: ${Date.now() - frameworkDetectionStarted}ms`);
 
   const builder = new ExtractionBuilder();
   const postExtractContexts = new Map<string, { repos: RepoNode[]; parsedFiles: ParsedGraphFile[] }>();
@@ -494,10 +508,9 @@ export async function extractContractFactsWithRegistry(
         : []
     });
 
+    writeExtractionTrace(`Extractor start ${extractor.name}: repos=${enabledRepos.length} files=${postExtractContexts.get(extractor.name)?.parsedFiles.length ?? 0}`);
     await extractor.extract(filteredContext, builder);
-    if (process.env.NODE_ENV !== "test" && !process.env.VITEST) {
-      process.stderr.write(`Extractor ${extractor.name}: ${Date.now() - started}ms\n`);
-    }
+    writeExtractionTrace(`Extractor ${extractor.name}: ${Date.now() - started}ms`);
   }
 
   // P1-1: postExtract phase - cross-file finalization.
@@ -513,7 +526,10 @@ export async function extractContractFactsWithRegistry(
       repos: filteredContext.repos,
       parsedFiles: filteredContext.parsedFiles
     };
+    const started = Date.now();
+    writeExtractionTrace(`PostExtract start ${extractor.name}: repos=${filteredContext.repos.length} files=${filteredContext.parsedFiles.length}`);
     await extractor.postExtract(postCtx, builder);
+    writeExtractionTrace(`PostExtract ${extractor.name}: ${Date.now() - started}ms`);
   }
 
   return builder.build();
