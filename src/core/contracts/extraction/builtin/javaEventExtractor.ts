@@ -5,7 +5,7 @@ import type { ParsedFile } from "../../../parsing/types.js";
 import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import {
-  isParsedCodeFile,
+  parsedCodeFiles,
   pushEventContract, } from "./shared.js";
 import { findContainingSymbol, namedChildren, parseSourceAst, walkSourceAst } from "./sourceAstUtils.js";
 import { inferBrokerFromImports, type EventBroker } from "../../event.js";
@@ -19,7 +19,7 @@ const LISTENER_ANNOTATIONS: Record<string, { broker: EventBroker; topicArgs: str
   RabbitListener: { broker: "rabbitmq", topicArgs: ["queues"] }
 };
 
-// Producer template methods â†’ topic is the first string literal argument.
+// Producer template methods â†?topic is the first string literal argument.
 // `broker` is set only when the method name is broker-specific; `send` is
 // ambiguous (kafkaTemplate / streamBridge / amqpTemplate all expose it) so it
 // defers to the receiver name or the file's imported broker instead.
@@ -71,7 +71,7 @@ export const javaEventExtractor = compatExtractor({
   languages: ["java"],
   frameworks: ["java:spring-kafka", "java:spring-amqp"],
   extract(context, collector: FactCollector) {
-    for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
+    for (const file of parsedCodeFiles(context.parsedFiles)) {
       if (file.language !== "java") continue;
 
       // Consumer side: annotation-driven, unambiguous.
@@ -111,7 +111,7 @@ export const javaEventExtractor = compatExtractor({
 
         const methodBroker = PRODUCER_METHODS[call.method];
         // A kafka receiver name overrides everything; then a broker-specific
-        // method name (convertAndSend â†’ rabbitmq); otherwise trust the import.
+        // method name (convertAndSend â†?rabbitmq); otherwise trust the import.
         const broker = call.object?.toLowerCase().includes("kafka") ? "kafka" : (methodBroker ?? importBroker);
         const symbol = findContainingSymbol(file.symbols, node);
         pushEventContract({

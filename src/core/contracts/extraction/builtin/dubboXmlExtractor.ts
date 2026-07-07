@@ -4,7 +4,7 @@ import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import { codeId } from "../../../../shared/path.js";
 import { hashText } from "../../../../shared/hash.js";
-import { isParsedCodeFile, pushDubboContract } from "./shared.js";
+import { parsedCodeFiles, pushDubboContract } from "./shared.js";
 import { parseDubboXmlConfig } from "./dubboXmlConfig.js";
 
 function makeXmlSymbol(file: ParsedFile, raw: string, offset: number, name: string): CodeSymbol {
@@ -30,7 +30,7 @@ export const dubboXmlExtractor = compatExtractor({
   name: "builtin:dubbo-xml",
   languages: ["xml"],
   extract(context, collector: FactCollector) {
-    for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
+    for (const file of parsedCodeFiles(context.parsedFiles)) {
       if (file.language !== "xml") continue;
       const source = file.source;
       if (!source) continue;

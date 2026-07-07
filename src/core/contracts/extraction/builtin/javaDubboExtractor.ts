@@ -5,7 +5,7 @@ import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import { codeId } from "../../../../shared/path.js";
 import { hashText } from "../../../../shared/hash.js";
-import { isParsedCodeFile, javaPackageFromPath, pushDubboContract } from "./shared.js";
+import { parsedCodeFiles, javaPackageFromPath, pushDubboContract } from "./shared.js";
 import { namedChildren, parseSourceAst, walkSourceAst } from "./sourceAstUtils.js";
 
 type JavaImportMap = Map<string, string>;
@@ -164,7 +164,7 @@ export const javaDubboExtractor = compatExtractor({
   name: "builtin:java-dubbo",
   languages: ["java"],
   extract(context, collector: FactCollector) {
-    for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
+    for (const file of parsedCodeFiles(context.parsedFiles)) {
       if (file.language !== "java") continue;
       const ast = parseSourceAst(file, "java");
       if (!ast) continue;

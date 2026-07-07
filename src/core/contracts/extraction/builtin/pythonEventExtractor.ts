@@ -4,7 +4,7 @@ import type { ParsedFile } from "../../../parsing/types.js";
 import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import {
-  isParsedCodeFile,
+  parsedCodeFiles,
   pushEventContract, } from "./shared.js";
 import {
   attributeParts,
@@ -86,7 +86,7 @@ export const pythonEventExtractor = compatExtractor({
   languages: ["python"],
   frameworks: ["python:kafka", "python:pika", "python:redis", "python:celery"],
   extract(context, collector: FactCollector) {
-    for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
+    for (const file of parsedCodeFiles(context.parsedFiles)) {
       if (file.language !== "python") continue;
 
       const importBroker = inferBrokerFromImports(file.imports);

@@ -9,7 +9,7 @@ import {
   classifySharedContract,
   contract,
   evidence,
-  isParsedCodeFile,
+  parsedCodeFiles,
   pushContractEvidence,
   pushContractSpec,
   toBusinessEntityName, } from "./shared.js";
@@ -21,13 +21,13 @@ import {
 import { entityId } from "../../../../shared/path.js";
 
 /**
- * Java Schema Extractor â€” extracts field-level schema information from POJO /
+ * Java Schema Extractor â€?extracts field-level schema information from POJO /
  * DTO class declarations.
  *
  * Handles:
  *  - Plain field declarations (`private String name`)
  *  - Generic wrappers: `Optional<T>`, `List<T>`, `Map<K,V>`, `ResponseEntity<T>`
- *  - Lombok `@Data` / `@Getter` / `@Setter` annotated classes (fields only â€”
+ *  - Lombok `@Data` / `@Getter` / `@Setter` annotated classes (fields only â€?
  *    no setter/getter expansion needed)
  *  - Inheritance: records the parent class name but does NOT expand parent
  *    fields (keeps the schema graph simple; parent schemas get their own node)
@@ -42,7 +42,7 @@ export const javaSchemaExtractor = compatExtractor({
   languages: ["java"],
   extract(context, collector: FactCollector) {
 
-    for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
+    for (const file of parsedCodeFiles(context.parsedFiles)) {
       if (file.language !== "java") continue;
 
       const ast = parseSourceAst(file, "java");

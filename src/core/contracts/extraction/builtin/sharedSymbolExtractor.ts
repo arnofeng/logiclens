@@ -6,7 +6,7 @@ import {
   classifySharedContract,
   contract,
   evidence,
-  isParsedCodeFile,
+  parsedCodeFiles,
   pushContractEvidence,
   toBusinessEntityName, } from "./shared.js";
 
@@ -20,7 +20,7 @@ const LANGUAGES_WITH_SCHEMA_EXTRACTOR = new Set(["typescript", "tsx", "java", "p
 export const sharedSymbolExtractor = compatExtractor({
   name: "builtin:shared-symbol",
   extract(context, collector: FactCollector) {
-    for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
+    for (const file of parsedCodeFiles(context.parsedFiles)) {
       for (const symbol of file.symbols) {
         const sharedKind = classifySharedContract(symbol.name, symbol.kind);
         if (!sharedKind) continue;

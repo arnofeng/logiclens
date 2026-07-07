@@ -5,7 +5,7 @@ import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import {
   evidence,
-  isParsedCodeFile,
+  parsedCodeFiles,
   pushApiContractFromPath,
   sourceLine, } from "./shared.js";
 import {
@@ -92,7 +92,7 @@ export const pythonExtractor = compatExtractor({
   languages: ["python"],
   frameworks: ["python:generic", "python:fastapi"],
   extract(context, collector: FactCollector) {
-    for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
+    for (const file of parsedCodeFiles(context.parsedFiles)) {
       if (file.language !== "python") continue;
       const ast = parseSourceAst(file, "python");
       const seenStringOffsets = new Set<number>();

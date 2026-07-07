@@ -4,7 +4,7 @@ import type { ContractRole } from "../../../parsing/types.js";
 import type { FactCollector } from "../factCollector.js";
 import {
   evidence,
-  isParsedCodeFile,
+  parsedCodeFiles,
   pushEventContract, } from "./shared.js";
 import {
   parseJsAst,
@@ -19,8 +19,8 @@ const EVENT_METHODS = new Set(["publish", "emit", "send", "subscribe", "on", "co
 const CONSUMER_METHODS = new Set(["subscribe", "on", "consume"]);
 // Generic method names that also have countless non-event meanings
 // (`res.send`, `process.on`, `el.emit`). These only count as events when an
-// independent signal â€” a recognized broker receiver or a messaging-library
-// import â€” confirms it, so they are import-gated below.
+// independent signal â€?a recognized broker receiver or a messaging-library
+// import â€?confirms it, so they are import-gated below.
 const GENERIC_METHODS = new Set(["send", "on", "emit"]);
 
 // Framework column mirrors the broker; left unset (not the literal "unknown")
@@ -32,7 +32,7 @@ function eventFramework(broker: EventBroker): string | undefined {
 export const eventExtractor = compatExtractor({
   name: "builtin:event",
   extract(context, collector: FactCollector) {
-    for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
+    for (const file of parsedCodeFiles(context.parsedFiles)) {
       if (!(file.language === "typescript" || file.language === "tsx" || file.language === "javascript" || file.language === "jsx" || file.language === "vue")) continue;
 
       const ast = parseJsAst(file);

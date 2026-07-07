@@ -5,7 +5,7 @@ import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import {
   evidence,
-  isParsedCodeFile,
+  parsedCodeFiles,
   pushApiContractFromPath,
   sourceLine, } from "./shared.js";
 import {
@@ -189,7 +189,7 @@ export const jsHttpClientExtractor = compatExtractor({
   languages: ["javascript", "typescript"],
   frameworks: ["js:axios", "js:generic-fetch"],
   extract(context, collector: FactCollector) {
-    for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
+    for (const file of parsedCodeFiles(context.parsedFiles)) {
       if (!(file.language === "typescript" || file.language === "tsx" || file.language === "javascript" || file.language === "jsx")) continue;
       const ast = parseJsAst(file);
       if (!ast) continue;

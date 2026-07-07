@@ -1,6 +1,6 @@
 import { compatExtractor } from "./compat.js";
 import type { FactCollector } from "../factCollector.js";
-import { isParsedCodeFile, contract, evidence, pushContractEvidence, pushContractSpec, pushGraphqlContract } from "./shared.js";
+import { parsedCodeFiles, contract, evidence, pushContractEvidence, pushContractSpec, pushGraphqlContract } from "./shared.js";
 import { parseGraphQLSchema, formatGraphQLType, getBaseTypeName, getLineFromLoc } from "./graphqlSchema.js";
 import { isObjectType, isInputObjectType, isNonNullType } from "graphql";
 import { normalizeName } from "../../../../shared/path.js";
@@ -9,7 +9,7 @@ export const graphqlSdlExtractor = compatExtractor({
   name: "builtin:graphql-sdl",
   languages: ["graphql"],
   extract(context, collector: FactCollector) {
-    for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
+    for (const file of parsedCodeFiles(context.parsedFiles)) {
       if (file.language !== "graphql") continue;
       if (!file.source) continue;
 

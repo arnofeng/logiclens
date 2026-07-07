@@ -329,8 +329,7 @@ const javaFallbackDetector: FrameworkDetector = {
   name: "builtin:java-fallback-detector",
   async detect(repo, parsedFiles) {
     const results: DetectedFramework[] = [];
-    const repoParsedFiles = parsedFiles.filter((f) => f.repoId === repo.id);
-    const hasJava = repoParsedFiles.some((f) => f.language === "java");
+    const hasJava = parsedFiles.some((f) => f.language === "java");
     if (hasJava) {
       const javaEvidence = createFrameworkEvidence({
         repoId: repo.id,
@@ -356,8 +355,7 @@ const jsFallbackDetector: FrameworkDetector = {
   name: "builtin:js-fallback-detector",
   async detect(repo, parsedFiles) {
     const results: DetectedFramework[] = [];
-    const repoParsedFiles = parsedFiles.filter((f) => f.repoId === repo.id);
-    const hasJsTs = repoParsedFiles.some((f) => f.language === "javascript" || f.language === "typescript" || f.language === "vue");
+    const hasJsTs = parsedFiles.some((f) => f.language === "javascript" || f.language === "typescript" || f.language === "vue");
     if (hasJsTs) {
       const jsTsEvidence = createFrameworkEvidence({
         repoId: repo.id,
@@ -383,8 +381,7 @@ const springMvcFallbackDetector: FrameworkDetector = {
   name: "builtin:spring-mvc-fallback-detector",
   async detect(repo, parsedFiles) {
     const results: DetectedFramework[] = [];
-    const repoParsedFiles = parsedFiles.filter((f) => f.repoId === repo.id);
-    const hasSpringMvc = repoParsedFiles.some((f) => {
+    const hasSpringMvc = parsedFiles.some((f) => {
       if (f.language !== "java") return false;
       const hasSpringAnnotation = f.facts?.annotations?.some((ann) =>
         ["RequestMapping", "GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "PatchMapping", "RestController", "Controller"].includes(ann.name)
@@ -401,7 +398,7 @@ const springMvcFallbackDetector: FrameworkDetector = {
     });
 
     if (hasSpringMvc) {
-      const sourceFile = repoParsedFiles.find((f) => {
+      const sourceFile = parsedFiles.find((f) => {
         if (f.language !== "java") return false;
         return f.facts?.annotations?.some((ann) =>
           ["RequestMapping", "GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "PatchMapping", "RestController", "Controller"].includes(ann.name)
@@ -434,7 +431,7 @@ const springMvcFallbackDetector: FrameworkDetector = {
 const pythonFallbackDetector: FrameworkDetector = {
   name: "builtin:python-fallback-detector",
   async detect(repo, parsedFiles) {
-    const hasPython = parsedFiles.some((f) => f.repoId === repo.id && f.language === "python");
+    const hasPython = parsedFiles.some((f) => f.language === "python");
     if (!hasPython) return [];
     const pythonEvidence = createFrameworkEvidence({
       repoId: repo.id,
@@ -457,7 +454,7 @@ const pythonFallbackDetector: FrameworkDetector = {
 const goFallbackDetector: FrameworkDetector = {
   name: "builtin:go-fallback-detector",
   async detect(repo, parsedFiles) {
-    const hasGo = parsedFiles.some((f) => f.repoId === repo.id && f.language === "go");
+    const hasGo = parsedFiles.some((f) => f.language === "go");
     if (!hasGo) return [];
     const goEvidence = createFrameworkEvidence({
       repoId: repo.id,
@@ -496,9 +493,12 @@ export async function detectFrameworks(
   parsedFiles: ParsedGraphFile[] = []
 ): Promise<DetectedFramework[]> {
   const results: DetectedFramework[] = [];
+  const repoParsedFiles = parsedFiles.every((file) => file.repoId === repo.id)
+    ? parsedFiles
+    : parsedFiles.filter((file) => file.repoId === repo.id);
   for (const detector of builtinFrameworkDetectors) {
     try {
-      const dfs = await detector.detect(repo, parsedFiles);
+      const dfs = await detector.detect(repo, repoParsedFiles);
       results.push(...dfs);
     } catch {
       // Ignore detector failures

@@ -4,7 +4,7 @@ import { confidenceFor } from "../../../../shared/confidence.js";
 import {
   contract,
   evidence,
-  isParsedCodeFile,
+  parsedCodeFiles,
   javaPackageFromPath,
   pushContractEvidence, } from "./shared.js";
 
@@ -12,7 +12,7 @@ import {
  * Extracts Java package contracts from Java file paths.
  *
  * For each Java file, infers the package name from `facts.packageName` or
- * by parsing the file path (e.g. `src/main/java/com/example/Foo.java` â†’ `com.example`).
+ * by parsing the file path (e.g. `src/main/java/com/example/Foo.java` â†?`com.example`).
  *
  * Import-to-package extraction is handled by the separate `importPackageExtractor`.
  */
@@ -21,7 +21,7 @@ export const javaPackageExtractor = compatExtractor({
   languages: ["java"],
   async extract(context, collector: FactCollector) {
 
-    for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
+    for (const file of parsedCodeFiles(context.parsedFiles)) {
       if (file.language !== "java") continue;
       const packageName = file.facts?.packageName ?? javaPackageFromPath(file.path);
       if (packageName) {

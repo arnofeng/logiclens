@@ -9,7 +9,7 @@ import type { FactCollector } from "../factCollector.js";
 import {
   contract,
   evidence,
-  isParsedCodeFile,
+  parsedCodeFiles,
   pushContractEvidence,
   sourceLine, } from "./shared.js";
 
@@ -125,7 +125,7 @@ export const envConfigExtractor = compatExtractor({
     repoResolver: true
   },
   async extract(context, collector: FactCollector) {
-    for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
+    for (const file of parsedCodeFiles(context.parsedFiles)) {
       if (FILE_CONFIG_LANGUAGES.has(file.language)) {
         const repo = context.repoResolver?.(file.repoId);
         if (!repo) continue;

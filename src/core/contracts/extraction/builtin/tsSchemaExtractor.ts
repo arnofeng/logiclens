@@ -9,7 +9,7 @@ import {
   classifySharedContract,
   contract,
   evidence,
-  isParsedCodeFile,
+  parsedCodeFiles,
   pushContractEvidence,
   pushContractSpec,
   toBusinessEntityName, } from "./shared.js";
@@ -56,7 +56,7 @@ export const tsSchemaExtractor = compatExtractor({
   languages: ["typescript", "tsx", "javascript", "jsx"],
   extract(context, collector: FactCollector) {
 
-    for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
+    for (const file of parsedCodeFiles(context.parsedFiles)) {
       if (file.language !== "typescript" && file.language !== "tsx") continue;
 
       const ast = parseSourceAst(file, file.language as "typescript" | "tsx");
@@ -163,7 +163,7 @@ function findDeclarationNode(
     if (found) return;
     if (node.type !== "interface_declaration" && node.type !== "type_alias_declaration") return;
     // In tree-sitter-typescript, interface_declaration uses field "name"
-    // but type_alias_declaration does NOT â€” the type_identifier is just a named child.
+    // but type_alias_declaration does NOT â€?the type_identifier is just a named child.
     let nameNode = node.childForFieldName("name");
     if (!nameNode) {
       nameNode = node.namedChildren.find(
@@ -233,9 +233,9 @@ function extractTypeAliasFields(node: Parser.SyntaxNode): SchemaFieldSpec[] {
 
 /**
  * Recursively extracts fields from a type node.  Handles:
- * - object_type â†’ direct properties
- * - intersection_type â†’ merge properties from each branch
- * - generic_type (utility) â†’ only when the first arg is an object_type
+ * - object_type â†?direct properties
+ * - intersection_type â†?merge properties from each branch
+ * - generic_type (utility) â†?only when the first arg is an object_type
  */
 function extractFieldsFromTypeNode(node: Parser.SyntaxNode): SchemaFieldSpec[] {
   if (node.type === "object_type") {
@@ -304,8 +304,8 @@ function parsePropertySignature(node: Parser.SyntaxNode): SchemaFieldSpec | unde
   const innerType = typeAnnotation ? typeAnnotation.namedChild(0) : null;
   const rawType = innerType ? typeText(innerType) : "any";
 
-  // Normalize the type first â€” the normalization function handles nullable
-  // unwrapping (e.g. "string | null" â†’ "string?").
+  // Normalize the type first â€?the normalization function handles nullable
+  // unwrapping (e.g. "string | null" â†?"string?").
   const normalized = normalizePrimitiveType("typescript", rawType);
 
   // Detect whether the result signals nullability (trailing "?").
@@ -341,7 +341,7 @@ function typeText(node: Parser.SyntaxNode): string {
 
 /**
  * Extracts the base type reference from a TS utility type wrapping.
- * e.g. `Omit<Order, 'id'>` â†’ `Order`, `Partial<OrderDTO>` â†’ `OrderDTO`.
+ * e.g. `Omit<Order, 'id'>` â†?`Order`, `Partial<OrderDTO>` â†?`OrderDTO`.
  * Returns `undefined` when the RHS is not a recognised utility type.
  */
 function extractBaseTypeFromUtilityType(node: Parser.SyntaxNode): string | undefined {

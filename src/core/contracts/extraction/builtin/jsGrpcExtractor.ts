@@ -5,7 +5,7 @@ import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import { codeId } from "../../../../shared/path.js";
 import { hashText } from "../../../../shared/hash.js";
-import { isParsedCodeFile, pushGrpcContract } from "./shared.js";
+import { parsedCodeFiles, pushGrpcContract } from "./shared.js";
 import { callArguments, namedChildren, parseJsAst, staticPropertyPath, walkAst } from "./jsAstUtils.js";
 import type { GrpcStreaming } from "../../spec.js";
 
@@ -129,7 +129,7 @@ export const jsGrpcExtractor = compatExtractor({
   name: "builtin:js-grpc",
   languages: ["javascript", "typescript"],
   extract(context, collector: FactCollector) {
-    for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
+    for (const file of parsedCodeFiles(context.parsedFiles)) {
       if (!(file.language === "typescript" || file.language === "tsx" || file.language === "javascript" || file.language === "jsx")) continue;
       if (!shouldScanFile(file)) continue;
       const ast = parseJsAst(file);

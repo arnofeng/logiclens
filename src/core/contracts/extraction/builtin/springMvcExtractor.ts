@@ -5,7 +5,7 @@ import type { AnnotationFact } from "../../../parsing/facts.js";
 import type { ParsedFile } from "../../../parsing/types.js";
 import type { FactCollector } from "../factCollector.js";
 import {
-  isParsedCodeFile,
+  parsedCodeFiles,
   pushApiContractFromPath, } from "./shared.js";
 import { findContainingSymbol, parseSourceAst, walkSourceAst } from "./sourceAstUtils.js";
 import type Parser from "tree-sitter";
@@ -127,7 +127,7 @@ function extractParameterTypeName(param: Parser.SyntaxNode): string | undefined 
     if (!child) continue;
     if (child.type === "type_identifier") return child.text;
     if (child.type === "generic_type") {
-      // ResponseEntity<CreateOrderDTO> â†’ resolve the first type argument
+      // ResponseEntity<CreateOrderDTO> â†?resolve the first type argument
       const typeArgs = child.childForFieldName("type_arguments");
       if (typeArgs) {
         const first = typeArgs.namedChild(0);
@@ -151,7 +151,7 @@ function extractResponseTypeName(returnType: Parser.SyntaxNode): string | undefi
   if (returnType.type === "type_identifier") {
     return returnType.text;
   }
-  // Generic type: ResponseEntity<OrderResponse> â†’ extract first type argument
+  // Generic type: ResponseEntity<OrderResponse> â†?extract first type argument
   if (returnType.type === "generic_type") {
     const baseName = returnType.childForFieldName("name");
     const baseTypeName = baseName?.text;
@@ -181,7 +181,7 @@ export const springMvcExtractor = compatExtractor({
   languages: ["java"],
   frameworks: ["java:spring-mvc"],
   extract(context, collector: FactCollector) {
-    for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
+    for (const file of parsedCodeFiles(context.parsedFiles)) {
       if (file.language !== "java") continue;
       const mappingsByOwner = springMappingsFromFacts(file);
       const bodyTypesBySymbol = extractBodyTypes(file);
@@ -242,7 +242,7 @@ export const springMvcExtractor = compatExtractor({
   },
 
   /**
-   * P1-1 â€“ postExtract: Cross-file Controller prefix finalization.
+   * P1-1 â€?postExtract: Cross-file Controller prefix finalization.
    *
    * The per-file extract() phase handles same-file prefix+method merging.
    * This hook handles the edge case where a base @RequestMapping is on a
@@ -279,7 +279,7 @@ export const springMvcExtractor = compatExtractor({
       context.mergedFacts.contracts.filter((c) => c.kind === "api").map((c) => c.key)
     );
 
-    for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
+    for (const file of parsedCodeFiles(context.parsedFiles)) {
       if (file.language !== "java") continue;
       const filePrefixes = prefixesByFile.get(file.fileId);
       if (!filePrefixes) continue;
@@ -305,7 +305,7 @@ export const springMvcExtractor = compatExtractor({
               const httpMethod = annotationFact ? springHttpMethod(annotationFact) : undefined;
               const combined = joinApiPaths(prefix, mapping.path);
               // alreadyEmitted stores canonical keys (e.g. "get:/smart/customeractivity/list"),
-              // so we must compare against the same canonical form â€” the raw path would
+              // so we must compare against the same canonical form â€?the raw path would
               // never match a method-prefixed key.
               const combinedKey = canonicalHttpContractKey({ method: httpMethod, path: combined });
               if (alreadyEmitted.has(combinedKey)) continue; // already correct

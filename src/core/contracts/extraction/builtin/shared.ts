@@ -90,6 +90,12 @@ export function isParsedCodeFile(file: ParsedGraphFile): file is ParsedFile {
   return file.language !== "markdown";
 }
 
+export function* parsedCodeFiles(files: Iterable<ParsedGraphFile>): Generator<ParsedFile> {
+  for (const file of files) {
+    if (isParsedCodeFile(file)) yield file;
+  }
+}
+
 export function canonicalContractKey(kind: ContractKind, value: string, method?: string): string {
   const trimmed = value.trim();
   if (kind === "api") {

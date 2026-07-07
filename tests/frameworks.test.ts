@@ -130,6 +130,19 @@ describe("framework detection", () => {
     expect(detected.every((f) => f.evidence.every((e) => e.confidence === f.confidence))).toBe(true);
   });
 
+  it("scopes fallback framework detection to the target repo", async () => {
+    const dirA = await fs.mkdtemp(path.join(os.tmpdir(), "test-frameworks-a-"));
+    const dirB = await fs.mkdtemp(path.join(os.tmpdir(), "test-frameworks-b-"));
+    const repoA = mockRepoNode("repo-a", dirA);
+    const repoB = mockRepoNode("repo-b", dirB);
+
+    const detected = await detectFrameworks(repoA, [
+      { repoId: repoB.id, fileId: "py", path: "main.py", language: "python", hash: "h1", loc: 1, imports: [], symbols: [], calls: [] } as any
+    ]);
+
+    expect(detected).toEqual([]);
+  });
+
   it("enables Python and Go extractors for generic parsed source repos", () => {
     const config = defaultConfig();
     const pythonExtractor = {

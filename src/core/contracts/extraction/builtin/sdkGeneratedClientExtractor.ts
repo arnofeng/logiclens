@@ -4,7 +4,7 @@ import type { CodeSymbol, ParsedFile } from "../../../parsing/types.js";
 import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import {
-  isParsedCodeFile,
+  parsedCodeFiles,
   pushApiContractFromPath, } from "./shared.js";
 import {
   callArguments,
@@ -181,9 +181,12 @@ export const sdkGeneratedClientExtractor = compatExtractor({
   languages: ["javascript", "typescript"],
   frameworks: ["js:package-json"],
   extract(context, collector: FactCollector) {
-    const codeFiles = context.parsedFiles.filter(isParsedCodeFile).filter((file): file is ParsedFile =>
-      file.language === "typescript" || file.language === "tsx" || file.language === "javascript" || file.language === "jsx"
-    );
+    const codeFiles: ParsedFile[] = [];
+    for (const file of parsedCodeFiles(context.parsedFiles)) {
+      if (file.language === "typescript" || file.language === "tsx" || file.language === "javascript" || file.language === "jsx") {
+        codeFiles.push(file);
+      }
+    }
     const bridges = bridgeLookup(codeFiles);
 
     for (const file of codeFiles) {

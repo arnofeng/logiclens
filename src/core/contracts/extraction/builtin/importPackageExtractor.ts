@@ -5,7 +5,7 @@ import {
   buildOwnership,
   contract,
   evidence,
-  isParsedCodeFile,
+  parsedCodeFiles,
   packageContractKeyForImport,
   pushContractEvidence,
   pushResolvedPackageOwner,
@@ -21,7 +21,7 @@ import {
  *   3. For Java files, uses `packageContractKeyForImport` to strip the class suffix
  *      from the import specifier (yielding just the package path).
  *
- * This extractor has no `languages` or `frameworks` restriction â€” it runs for all repos.
+ * This extractor has no `languages` or `frameworks` restriction â€?it runs for all repos.
  */
 export const importPackageExtractor = compatExtractor({
   name: "builtin:import-package",
@@ -32,7 +32,7 @@ export const importPackageExtractor = compatExtractor({
     const manifests = (await Promise.all(context.repos.map(readRepoPackageManifests))).flat();
     const identities = buildOwnership(context.repos, manifests, context.aliasOverrides);
 
-    for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
+    for (const file of parsedCodeFiles(context.parsedFiles)) {
       for (const importRef of file.imports) {
         if (importRef.module.startsWith(".")) continue;
         const packageName = packageContractKeyForImport(file, importRef);

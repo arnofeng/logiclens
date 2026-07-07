@@ -39,6 +39,7 @@ import { SEMANTIC_REL_META } from "../semanticRelations.js";
 import { ExtractionBuilder } from "./extractionBuilder.js";
 import type { FactCollector } from "./factCollector.js";
 import type { ExtractedFacts } from "./contracts.js";
+import { buildExtractionFileIndex, filesForRepoId, filesForRepoIds } from "./fileIndex.js";
 
 function shouldWriteExtractionTrace(): boolean {
   return process.env.NODE_ENV !== "test" && !process.env.VITEST;
@@ -411,13 +412,14 @@ function buildExtractContext(
   extractor: ContractExtractor,
   baseContext: ExtractContext,
   enabledRepoIds: Set<string>,
-  enabledRepos: RepoNode[]
+  enabledRepos: RepoNode[],
+  parsedFiles: ParsedGraphFile[]
 ): ExtractContext {
   const needs = extractor.needs ?? {};
   const context: ExtractContext = {
     repos: enabledRepos,
     parsedFiles: needs.parsedFiles !== false
-      ? baseContext.parsedFiles.filter((file) => enabledRepoIds.has(file.repoId))
+      ? parsedFiles
       : [],
     repoResolver: needs.repoResolver && baseContext.repoResolver
       ? (repoId: string) => {
@@ -471,13 +473,14 @@ export async function extractContractFactsWithRegistry(
   }
 
   // Pre-detect frameworks for all repos in the context
+  const fileIndex = buildExtractionFileIndex(context.parsedFiles);
   const frameworkDetectionStarted = Date.now();
   writeExtractionTrace(`Framework detection start: repos=${context.repos.length} files=${context.parsedFiles.length}`);
   const detectedFrameworksMap = new Map<string, DetectedFramework[]>();
   await Promise.all(context.repos.map(async (repo) => {
     const repoStarted = Date.now();
     writeExtractionTrace(`Framework detection repo start: ${repo.name}`);
-    const dfs = await detectFrameworks(repo, context.parsedFiles);
+    const dfs = await detectFrameworks(repo, filesForRepoId(fileIndex, repo.id));
     detectedFrameworksMap.set(repo.id, dfs);
     writeExtractionTrace(`Framework detection repo ${repo.name}: frameworks=${dfs.length} duration=${Date.now() - repoStarted}ms`);
   }));
@@ -485,6 +488,8 @@ export async function extractContractFactsWithRegistry(
 
   const builder = new ExtractionBuilder();
   const postExtractContexts = new Map<string, { repos: RepoNode[]; parsedFiles: ParsedGraphFile[] }>();
+  const extractorFilesCache = new Map<string, ParsedGraphFile[]>();
+  const extractorTimings: Array<{ name: string; durationMs: number; files: number; repos: number }> = [];
   for (const extractor of builtinContractExtractors) {
     const started = Date.now();
 
@@ -499,19 +504,37 @@ export async function extractContractFactsWithRegistry(
     }
 
     const enabledRepoIds = new Set(enabledRepos.map((r) => r.id));
-    const filteredContext = buildExtractContext(extractor, context, enabledRepoIds, enabledRepos);
+    const cacheKey = extractor.needs?.parsedFiles === false
+      ? "none"
+      : [...enabledRepoIds].sort().join("\0");
+    const extractorFiles = extractorFilesCache.get(cacheKey) ?? (
+      extractor.needs?.parsedFiles === false ? [] : filesForRepoIds(fileIndex, enabledRepoIds)
+    );
+    extractorFilesCache.set(cacheKey, extractorFiles);
+    const filteredContext = buildExtractContext(extractor, context, enabledRepoIds, enabledRepos, extractorFiles);
 
     postExtractContexts.set(extractor.name, {
       repos: enabledRepos,
       parsedFiles: extractor.needs?.parsedFiles !== false
-        ? context.parsedFiles.filter((file) => enabledRepoIds.has(file.repoId))
+        ? extractorFiles
         : []
     });
 
     writeExtractionTrace(`Extractor start ${extractor.name}: repos=${enabledRepos.length} files=${postExtractContexts.get(extractor.name)?.parsedFiles.length ?? 0}`);
     await extractor.extract(filteredContext, builder);
-    writeExtractionTrace(`Extractor ${extractor.name}: ${Date.now() - started}ms`);
+    const durationMs = Date.now() - started;
+    extractorTimings.push({ name: extractor.name, durationMs, files: extractorFiles.length, repos: enabledRepos.length });
+    writeExtractionTrace(`Extractor ${extractor.name}: ${durationMs}ms`);
   }
+  const totalExtractorMs = extractorTimings.reduce((sum, timing) => sum + timing.durationMs, 0);
+  const slowestExtractor = extractorTimings.reduce<typeof extractorTimings[number] | undefined>(
+    (slowest, timing) => !slowest || timing.durationMs > slowest.durationMs ? timing : slowest,
+    undefined
+  );
+  writeExtractionTrace(
+    `Extractor summary: enabled=${extractorTimings.length} total=${totalExtractorMs}ms` +
+    (slowestExtractor ? ` slowest=${slowestExtractor.name}:${slowestExtractor.durationMs}ms files=${slowestExtractor.files} repos=${slowestExtractor.repos}` : "")
+  );
 
   // P1-1: postExtract phase - cross-file finalization.
   // Freeze a read-only view for postExtract readers, then let extractors

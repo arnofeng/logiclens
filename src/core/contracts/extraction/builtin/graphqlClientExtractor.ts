@@ -1,6 +1,6 @@
 import { compatExtractor } from "./compat.js";
 import type { FactCollector } from "../factCollector.js";
-import { isParsedCodeFile, pushGraphqlContract } from "./shared.js";
+import { parsedCodeFiles, pushGraphqlContract } from "./shared.js";
 import { extractClientOperations, findGqlTemplateOccurrences } from "./graphqlSchema.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 
@@ -8,7 +8,7 @@ export const graphqlClientExtractor = compatExtractor({
   name: "builtin:graphql-client",
   languages: ["javascript", "typescript", "jsx", "tsx", "vue", "graphql"],
   extract(context, collector: FactCollector) {
-    for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
+    for (const file of parsedCodeFiles(context.parsedFiles)) {
       if (!file.source) continue;
 
       if (file.language === "graphql") {

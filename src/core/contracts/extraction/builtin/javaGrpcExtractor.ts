@@ -5,7 +5,7 @@ import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import { codeId } from "../../../../shared/path.js";
 import { hashText } from "../../../../shared/hash.js";
-import { isParsedCodeFile, pushGrpcContract } from "./shared.js";
+import { parsedCodeFiles, pushGrpcContract } from "./shared.js";
 import { namedChildren, parseSourceAst, walkSourceAst } from "./sourceAstUtils.js";
 import type { GrpcStreaming } from "../../spec.js";
 
@@ -89,7 +89,7 @@ function isGrpcServerMethod(methodNode: Parser.SyntaxNode): boolean {
 /**
  * Best-effort streaming detection for an ImplBase server method. Client-/bidi-
  * streaming methods return a `StreamObserver<Request>`, whereas unary/server-
- * streaming methods return void â€” the latter two are indistinguishable from the
+ * streaming methods return void â€?the latter two are indistinguishable from the
  * Java signature alone (the proto extractor remains the source of truth).
  */
 function javaServerStreaming(methodNode: Parser.SyntaxNode): GrpcStreaming {
@@ -123,7 +123,7 @@ export const javaGrpcExtractor = compatExtractor({
   name: "builtin:java-grpc",
   languages: ["java"],
   extract(context, collector: FactCollector) {
-    for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
+    for (const file of parsedCodeFiles(context.parsedFiles)) {
       if (file.language !== "java") continue;
       const ast = parseSourceAst(file, "java");
       if (!ast) continue;

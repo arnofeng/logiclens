@@ -5,7 +5,7 @@ import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import {
   evidence,
-  isParsedCodeFile,
+  parsedCodeFiles,
   pushApiContractFromPath,
   pushEventContract,
   sourceLine, } from "./shared.js";
@@ -127,7 +127,7 @@ function extractGoEvents(
   walkSourceAst(root, (node) => {
     // NATS subject-as-string calls. `Subscribe`/`Publish` are generic method
     // names, so only attribute them to NATS when the file actually imports
-    // NATS â€” otherwise a kafka-only file's `reader.Subscribe(...)` would be
+    // NATS â€?otherwise a kafka-only file's `reader.Subscribe(...)` would be
     // mislabelled as a nats event.
     const call = importBroker === "nats" ? selectorCall(node) : undefined;
     if (call?.method) {
@@ -203,7 +203,7 @@ export const goExtractor = compatExtractor({
   languages: ["go"],
   frameworks: ["go:generic", "go:gin", "go:mod"],
   extract(context, collector: FactCollector) {
-    for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
+    for (const file of parsedCodeFiles(context.parsedFiles)) {
       if (file.language !== "go") continue;
       const ast = parseSourceAst(file, "go");
       if (!ast) continue;

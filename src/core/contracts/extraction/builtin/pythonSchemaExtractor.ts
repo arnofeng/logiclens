@@ -9,7 +9,7 @@ import {
   classifySharedContract,
   contract,
   evidence,
-  isParsedCodeFile,
+  parsedCodeFiles,
   pushContractEvidence,
   pushContractSpec,
   toBusinessEntityName, } from "./shared.js";
@@ -22,7 +22,7 @@ import {
 import { entityId } from "../../../../shared/path.js";
 
 /**
- * Python Schema Extractor â€” extracts field-level schema information from:
+ * Python Schema Extractor â€?extracts field-level schema information from:
  *  - @dataclass decorated classes
  *  - TypedDict subclasses
  *  - NamedTuple subclasses
@@ -43,7 +43,7 @@ export const pythonSchemaExtractor = compatExtractor({
   languages: ["python"],
   extract(context, collector: FactCollector) {
 
-    for (const file of context.parsedFiles.filter(isParsedCodeFile)) {
+    for (const file of parsedCodeFiles(context.parsedFiles)) {
       if (file.language !== "python") continue;
 
       for (const symbol of file.symbols) {
@@ -119,7 +119,7 @@ export const pythonSchemaExtractor = compatExtractor({
         // For each user-defined base class, emit a USES_SCHEMA placeholder so
         // impact analysis can traverse from the derived class to its parent.
         // The schema-marker bases (TypedDict/NamedTuple) and `object` are
-        // excluded â€” they are mechanism markers, not data-bearing schemas.
+        // excluded â€?they are mechanism markers, not data-bearing schemas.
         // The placeholder is resolved by schemaResolver once the full batch is
         // available (mirrors the Java `extends` / TS utility-type handling).
         for (const base of extractBaseClasses(classNode)) {
@@ -263,7 +263,7 @@ function parseFieldAssignment(node: Parser.SyntaxNode): SchemaFieldSpec | undefi
   const name = nameNode.text;
 
   // tree-sitter-python wraps the type annotation in a "type" field.
-  // e.g. `sku: str` â†’ assignment(identifier "sku", type(identifier "str"))
+  // e.g. `sku: str` â†?assignment(identifier "sku", type(identifier "str"))
   const typeWrapper = node.childForFieldName("type");
   const innerTypeNode = typeWrapper ? typeWrapper.namedChild(0) : undefined;
   const rawType = innerTypeNode ? pythonTypeText(innerTypeNode) : "Any";
