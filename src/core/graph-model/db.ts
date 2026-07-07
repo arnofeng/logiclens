@@ -82,12 +82,17 @@ export type ContractSummaryRow = {
 };
 
 export interface GraphDB {
+  beginTransaction?(): Promise<void>;
+  commitTransaction?(): Promise<void>;
+  rollbackTransaction?(): Promise<void>;
   initSchema(systemName?: string): Promise<void>;
   upsertRepo(repo: RepoNode): Promise<void>;
   updateRepoSummary(repoId: string, summary: string): Promise<void>;
   updateSystemSummary(summary: string): Promise<void>;
   upsertFile(file: FileNode): Promise<void>;
+  upsertFilesBatch(files: FileNode[]): Promise<void>;
   upsertCode(code: CodeSymbol): Promise<void>;
+  upsertCodeBatch(code: CodeSymbol[]): Promise<void>;
   upsertSection(section: DocSection): Promise<void>;
   upsertEntity(entity: EntityNode): Promise<void>;
   upsertOperation(operation: OperationNode): Promise<void>;
@@ -109,7 +114,9 @@ export interface GraphDB {
   addRepoEvidence(repoId: string, evidenceId: string): Promise<void>;
   addContains(fromId: string, toId: string): Promise<void>;
   addImport(edge: ImportEdge): Promise<void>;
+  addImportsBatch(edges: ImportEdge[]): Promise<void>;
   addCall(edge: CallEdge): Promise<void>;
+  addCallsBatch(edges: CallEdge[]): Promise<void>;
   addMention(codeId: string, entityId: string, confidence: number): Promise<void>;
   addSectionMention(sectionId: string, entityId: string, confidence: number): Promise<void>;
   addSectionDescribesRepo(sectionId: string, repoId: string): Promise<void>;
@@ -142,4 +149,51 @@ export interface GraphDB {
   stats(): Promise<Stats>;
   close(): Promise<void>;
 }
+
+export async function withTransaction<T>(db: GraphDB, fn: () => Promise<T>): Promise<T> {
+  if (db.beginTransaction) {
+    await db.beginTransaction();
+  }
+  try {
+    const result = await fn();
+    if (db.commitTransaction) {
+      await db.commitTransaction();
+    }
+    return result;
+  } catch (error) {
+    if (db.rollbackTransaction) {
+      try {
+        await db.rollbackTransaction();
+      } catch (rollbackError) {
+        // Ignore rollback error to avoid masking original error
+      }
+    }
+    throw error;
+  }
+}
+
+export const ALL_EVIDENCE_REL_TYPES = [
+  "OWNS_PACKAGE",
+  "PRODUCES",
+  "CONSUMES",
+  "SHARES_CONTRACT",
+  "CONTRACT_MENTIONS",
+  "PARTICIPATES_IN",
+  "WORKFLOW_STEP",
+  "USES_PACKAGE",
+  "DEPENDS_ON",
+  "HAS_SPEC"
+];
+
+export const REJECT_EVIDENCE_REL_TYPES = [
+  "OWNS_PACKAGE",
+  "PRODUCES",
+  "CONSUMES",
+  "SHARES_CONTRACT",
+  "CONTRACT_MENTIONS",
+  "PARTICIPATES_IN",
+  "WORKFLOW_STEP",
+  "USES_PACKAGE",
+  "DEPENDS_ON"
+];
 

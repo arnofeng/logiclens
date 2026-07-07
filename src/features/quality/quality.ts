@@ -40,8 +40,8 @@ export async function auditRelationQuality(db: GraphDB, options: { minConfidence
        RETURN e.id AS evidenceId, r.name AS repoName, c.kind AS contractKind, c.key AS contractKey,
               '${role}' AS role, edge.confidence AS confidence, e.filePath AS filePath,
               e.line AS line, e.rule AS rule, e.raw AS raw
-       LIMIT ${limit};`,
-      { minConfidence }
+       LIMIT $limit;`,
+      { minConfidence, limit }
     ));
   }
   const producerRows = await db.query<{ contractKind: string; contractKey: string; repoName: string }>(

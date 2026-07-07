@@ -5,7 +5,7 @@ import type {
 } from "../../parsing/types.js";
 import { isKnownContractSpecNode } from "../../parsing/types.js";
 import type { GraphDB } from "../../graph-model/db.js";
-import { SEMANTIC_REL_META } from "../semanticRelations.js";
+import { SEMANTIC_REL_META, selectImpactRootIds } from "../semanticRelations.js";
 import { findTargetSpecs } from "./impactEngine.js";
 import { normalizeSemanticTarget } from "../targetNormalization.js";
 import { summarizeSpec } from "../semanticTrace.js";
@@ -103,10 +103,52 @@ export function traceImpactPropagation(
 
   for (const id of frontier) visited.set(id, 0);
 
+  // Index relations by direct specId and by consumer fileKey to avoid O(E) scan
+  const relationsBySpecId = new Map<string, SemanticRelationEdge[]>();
+  const relationsByFileId = new Map<string, SemanticRelationEdge[]>();
+
+  for (const edge of relations) {
+    const meta = SEMANTIC_REL_META[edge.kind];
+    if (!meta) continue;
+    if (meta.category !== "consumer-to-producer" && meta.category !== "schema-to-use") continue;
+
+    const listFrom = relationsBySpecId.get(edge.fromSpecId) ?? [];
+    listFrom.push(edge);
+    relationsBySpecId.set(edge.fromSpecId, listFrom);
+
+    const listTo = relationsBySpecId.get(edge.toSpecId) ?? [];
+    listTo.push(edge);
+    relationsBySpecId.set(edge.toSpecId, listTo);
+
+    const consumerSpec = specMap.get(edge.fromSpecId);
+    if (consumerSpec && consumerSpec.fileId) {
+      const fileKey = `${consumerSpec.repoId}:${consumerSpec.fileId}`;
+      const listFile = relationsByFileId.get(fileKey) ?? [];
+      listFile.push(edge);
+      relationsByFileId.set(fileKey, listFile);
+    }
+  }
+
   for (let hop = 1; hop <= maxHops; hop++) {
     const next = new Set<string>();
     for (const currentSpecId of frontier) {
-      for (const edge of relations) {
+      const spec = specMap.get(currentSpecId);
+      const activeRelations = new Set<SemanticRelationEdge>();
+
+      const directRels = relationsBySpecId.get(currentSpecId);
+      if (directRels) {
+        for (const edge of directRels) activeRelations.add(edge);
+      }
+
+      if (spec && spec.fileId) {
+        const fileKey = `${spec.repoId}:${spec.fileId}`;
+        const fileRels = relationsByFileId.get(fileKey);
+        if (fileRels) {
+          for (const edge of fileRels) activeRelations.add(edge);
+        }
+      }
+
+      for (const edge of activeRelations) {
         for (const step of impactStepsFromEdge(edge, currentSpecId, specMap)) {
           if (bridgedLocalSpecs.has(step.impactedSpecId)) continue;
           if (visited.has(step.impactedSpecId) || next.has(step.impactedSpecId)) continue;
@@ -134,7 +176,7 @@ export function traceImpactPropagation(
     for (const id of next) visited.set(id, hop);
 
     if (hop === maxHops) {
-      truncated = hasMoreImpactTargets(next, specs, relations, visited);
+      truncated = hasMoreImpactTargets(next, specs, relationsBySpecId, relationsByFileId, visited);
       break;
     }
     frontier = next;
@@ -146,12 +188,29 @@ export function traceImpactPropagation(
 function hasMoreImpactTargets(
   frontier: Set<string>,
   specs: ReadableContractSpecNode[],
-  relations: SemanticRelationEdge[],
+  relationsBySpecId: Map<string, SemanticRelationEdge[]>,
+  relationsByFileId: Map<string, SemanticRelationEdge[]>,
   visited: Map<string, number>
 ): boolean {
   const specMap = new Map(specs.map((s) => [s.id, s]));
   for (const currentSpecId of frontier) {
-    for (const edge of relations) {
+    const spec = specMap.get(currentSpecId);
+    const activeRelations = new Set<SemanticRelationEdge>();
+
+    const directRels = relationsBySpecId.get(currentSpecId);
+    if (directRels) {
+      for (const edge of directRels) activeRelations.add(edge);
+    }
+
+    if (spec && spec.fileId) {
+      const fileKey = `${spec.repoId}:${spec.fileId}`;
+      const fileRels = relationsByFileId.get(fileKey);
+      if (fileRels) {
+        for (const edge of fileRels) activeRelations.add(edge);
+      }
+    }
+
+    for (const edge of activeRelations) {
       for (const step of impactStepsFromEdge(edge, currentSpecId, specMap)) {
         if (!visited.has(step.impactedSpecId)) return true;
       }
@@ -252,16 +311,7 @@ export function analyzeSemanticImpact(
   };
 }
 
-function selectImpactRootIds(matchedSpecIds: Set<string>, relations: SemanticRelationEdge[]): Set<string> {
-  const roots = new Set<string>();
-  for (const edge of relations) {
-    if (!matchedSpecIds.has(edge.fromSpecId) || !matchedSpecIds.has(edge.toSpecId)) continue;
-    const meta = SEMANTIC_REL_META[edge.kind];
-    if (!meta || (meta.category !== "consumer-to-producer" && meta.category !== "schema-to-use")) continue;
-    roots.add(meta.direction === "forward" ? edge.toSpecId : edge.fromSpecId);
-  }
-  return roots.size > 0 ? roots : matchedSpecIds;
-}
+
 
 export async function analyzeSemanticImpactFromDB(
   target: string,

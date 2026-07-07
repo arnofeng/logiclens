@@ -105,12 +105,80 @@ function parseASTValue(node: Parser.SyntaxNode): any {
   return node.text;
 }
 
+export function splitTopLevelCommas(input: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let inString: '"' | "'" | "`" | null = null;
+  let isEscape = false;
+  const stack: string[] = [];
+
+  const bracketPairs: Record<string, string> = {
+    "(": ")",
+    "[": "]",
+    "{": "}"
+  };
+  const closeToOpen: Record<string, string> = {
+    ")": "(",
+    "]": "[",
+    "}": "{"
+  };
+
+  for (let i = 0; i < input.length; i++) {
+    const char = input[i]!;
+
+    if (inString) {
+      current += char;
+      if (isEscape) {
+        isEscape = false;
+      } else if (char === "\\") {
+        isEscape = true;
+      } else if (char === inString) {
+        inString = null;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'" || char === "`") {
+      inString = char;
+      current += char;
+      continue;
+    }
+
+    if (bracketPairs[char]) {
+      stack.push(char);
+      current += char;
+      continue;
+    }
+
+    if (closeToOpen[char]) {
+      if (stack[stack.length - 1] === closeToOpen[char]) {
+        stack.pop();
+      }
+      current += char;
+      continue;
+    }
+
+    if (char === "," && stack.length === 0) {
+      parts.push(current);
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  if (current) {
+    parts.push(current);
+  }
+
+  return parts;
+}
+
 function parseAnnotationArguments(argsTextOrNode: string | Parser.SyntaxNode | undefined): AnnotationArgument[] {
   if (!argsTextOrNode) return [];
   if (typeof argsTextOrNode === "string") {
     if (!argsTextOrNode.trim()) return [];
-    return argsTextOrNode
-      .split(/,(?![^{([]*[}\])])/)
+    return splitTopLevelCommas(argsTextOrNode)
       .map((part) => part.trim())
       .filter(Boolean)
       .map((raw) => {
@@ -155,8 +223,7 @@ function parseDecoratorArguments(argsTextOrNode: string | Parser.SyntaxNode | un
   if (!argsTextOrNode) return [];
   if (typeof argsTextOrNode === "string") {
     if (!argsTextOrNode.trim()) return [];
-    return argsTextOrNode
-      .split(/,(?![^{([]*[}\])])/)
+    return splitTopLevelCommas(argsTextOrNode)
       .map((part) => stripLiteralQuotes(part.trim()))
       .filter(Boolean);
   }
@@ -181,60 +248,277 @@ function javaPackageName(source: string): string | undefined {
   return source.match(/^\s*package\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*;/m)?.[1];
 }
 
-function findContainingOwner(symbols: CodeSymbol[], line: number): CodeSymbol | undefined {
-  const containing = symbols
-    .filter((symbol) => symbol.startLine <= line && symbol.endLine >= line)
-    .sort((a, b) => (a.endLine - a.startLine) - (b.endLine - b.startLine))[0];
-  if (containing) return containing;
-  return findFollowingOwner(symbols, line);
+const KIND_PRIORITY: Record<string, number> = {
+  class: 10,
+  interface: 9,
+  enum: 8,
+  struct: 7,
+  method: 6,
+  function: 5,
+  constructor: 4,
+  field: 3,
+  variable: 2,
+};
+
+export class SymbolsIndex {
+  private symbolsByRange = new Map<string, CodeSymbol[]>();
+  private sortedByStartLine: CodeSymbol[];
+  private sortedBySize: CodeSymbol[];
+  private symbolByLine: (CodeSymbol | undefined)[];
+
+  constructor(symbols: CodeSymbol[]) {
+    for (const s of symbols) {
+      const key = `${s.startLine}:${s.endLine}`;
+      const list = this.symbolsByRange.get(key) ?? [];
+      list.push(s);
+      this.symbolsByRange.set(key, list);
+    }
+    this.sortedByStartLine = [...symbols].sort((a, b) => a.startLine - b.startLine);
+    this.sortedBySize = [...symbols].sort((a, b) => (a.endLine - a.startLine) - (b.endLine - b.startLine));
+
+    let maxLine = 0;
+    for (const s of symbols) {
+      if (s.endLine > maxLine) maxLine = s.endLine;
+    }
+    this.symbolByLine = new Array(maxLine + 1);
+    for (let i = this.sortedBySize.length - 1; i >= 0; i--) {
+      const s = this.sortedBySize[i];
+      for (let line = s.startLine; line <= s.endLine; line++) {
+        this.symbolByLine[line] = s;
+      }
+    }
+  }
+
+  findRange(startLine: number, endLine: number): CodeSymbol | undefined {
+    const list = this.symbolsByRange.get(`${startLine}:${endLine}`);
+    if (!list) return undefined;
+    let best = list[0]!;
+    for (let i = 1; i < list.length; i++) {
+      const s = list[i]!;
+      const prioBest = KIND_PRIORITY[best.kind] ?? 0;
+      const prioS = KIND_PRIORITY[s.kind] ?? 0;
+      if (prioS > prioBest) {
+        best = s;
+      }
+    }
+    return best;
+  }
+
+  findContaining(line: number): CodeSymbol | undefined {
+    if (line < 0 || line >= this.symbolByLine.length) return undefined;
+    return this.symbolByLine[line];
+  }
+
+  findFollowing(line: number): CodeSymbol | undefined {
+    let low = 0;
+    let high = this.sortedByStartLine.length - 1;
+    let idx = -1;
+
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      if (this.sortedByStartLine[mid].startLine >= line) {
+        idx = mid;
+        high = mid - 1;
+      } else {
+        low = mid + 1;
+      }
+    }
+
+    return idx !== -1 ? this.sortedByStartLine[idx] : undefined;
+  }
+
+  findContainingOwner(line: number): CodeSymbol | undefined {
+    const containing = this.findContaining(line);
+    if (containing) return containing;
+    return this.findFollowingOwner(line);
+  }
+
+  findFollowingOwner(line: number): CodeSymbol | undefined {
+    let low = 0;
+    let high = this.sortedByStartLine.length - 1;
+    let idx = -1;
+
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      if (this.sortedByStartLine[mid].startLine >= line) {
+        idx = mid;
+        high = mid - 1;
+      } else {
+        low = mid + 1;
+      }
+    }
+
+    if (idx === -1) return undefined;
+
+    let best = this.sortedByStartLine[idx];
+    const matchStartLine = best.startLine;
+    for (let i = idx + 1; i < this.sortedByStartLine.length; i++) {
+      const s = this.sortedByStartLine[i];
+      if (s.startLine !== matchStartLine) break;
+      const sizeS = s.endLine - s.startLine;
+      const sizeBest = best.endLine - best.startLine;
+      if (sizeS < sizeBest) {
+        best = s;
+      }
+    }
+    return best;
+  }
 }
 
-function findFollowingOwner(symbols: CodeSymbol[], line: number): CodeSymbol | undefined {
-  return symbols
-    .filter((symbol) => symbol.startLine >= line)
-    .sort((a, b) => a.startLine - b.startLine || (a.endLine - a.startLine) - (b.endLine - b.startLine))[0];
+function scanAnnotationsOrDecorators(
+  source: string,
+  index: SymbolsIndex,
+  kind: "annotation" | "decorator"
+): any[] {
+  const facts: any[] = [];
+  let i = 0;
+
+  const lineOffsets: number[] = [0];
+  for (let j = 0; j < source.length; j++) {
+    if (source[j] === "\n") {
+      lineOffsets.push(j + 1);
+    }
+  }
+  const getLineNumber = (offsetIndex: number): number => {
+    let low = 0;
+    let high = lineOffsets.length - 1;
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      if (lineOffsets[mid]! <= offsetIndex) {
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+    return high + 1;
+  };
+
+  while (i < source.length) {
+    const char = source[i]!;
+
+    if (char === "/" && source[i + 1] === "/") {
+      i += 2;
+      while (i < source.length && source[i] !== "\n") i++;
+      continue;
+    }
+    if (char === "/" && source[i + 1] === "*") {
+      i += 2;
+      while (i < source.length && !(source[i] === "*" && source[i + 1] === "/")) i++;
+      i += 2;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      const quote = char;
+      i++;
+      let isEscape = false;
+      while (i < source.length) {
+        const c = source[i]!;
+        if (isEscape) {
+          isEscape = false;
+        } else if (c === "\\") {
+          isEscape = true;
+        } else if (c === quote) {
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+
+    if (char === "@") {
+      const startIdx = i;
+      i++;
+      const nameStart = i;
+      while (i < source.length && /[a-zA-Z0-9_$.]/.test(source[i]!)) {
+        i++;
+      }
+      const name = source.substring(nameStart, i).trim();
+      if (!name || name.endsWith(".")) {
+        continue;
+      }
+
+      while (i < source.length && /\s/.test(source[i]!)) {
+        i++;
+      }
+
+      let args: string | undefined = undefined;
+      let rawText = source.substring(startIdx, i);
+
+      if (i < source.length && source[i] === "(") {
+        const argsStart = i + 1;
+        i++;
+        let depth = 1;
+        let inStr: '"' | "'" | "`" | null = null;
+        let isEsc = false;
+
+        while (i < source.length && depth > 0) {
+          const c = source[i]!;
+          if (inStr) {
+            if (isEsc) {
+              isEsc = false;
+            } else if (c === "\\") {
+              isEsc = true;
+            } else if (c === inStr) {
+              inStr = null;
+            }
+          } else {
+            if (c === '"' || c === "'" || c === "`") {
+              inStr = c;
+            } else if (c === "(") {
+              depth++;
+            } else if (c === ")") {
+              depth--;
+            }
+          }
+          i++;
+        }
+
+        if (depth === 0) {
+          args = source.substring(argsStart, i - 1);
+          rawText = source.substring(startIdx, i);
+        }
+      }
+
+      const line = getLineNumber(startIdx);
+      if (kind === "annotation") {
+        const owner = index.findContainingOwner(line);
+        facts.push({
+          ownerSymbolId: owner?.id,
+          ownerKind: owner ? ownerKindForAnnotation(owner) : "file",
+          name,
+          arguments: parseAnnotationArguments(args),
+          raw: rawText,
+          line
+        });
+      } else {
+        const owner = index.findFollowingOwner(line) ?? index.findContainingOwner(line);
+        facts.push({
+          ownerSymbolId: owner?.id,
+          ownerKind: owner ? ownerKindForDecorator(owner) : "property",
+          name,
+          arguments: parseDecoratorArguments(args),
+          raw: rawText,
+          line
+        });
+      }
+      continue;
+    }
+
+    i++;
+  }
+
+  return facts;
 }
 
 function extractJavaAnnotations(source: string, symbols: CodeSymbol[]): AnnotationFact[] {
-  const facts: AnnotationFact[] = [];
-  const annotationRe = /@([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*(?:\(([^)]*)\))?/g;
-  const lines = source.split(/\r?\n/);
-  for (const [index, lineText] of lines.entries()) {
-    for (const match of lineText.matchAll(annotationRe)) {
-      const line = index + 1;
-      const owner = findContainingOwner(symbols, line);
-      facts.push({
-        ownerSymbolId: owner?.id,
-        ownerKind: owner ? ownerKindForAnnotation(owner) : "file",
-        name: match[1] ?? "",
-        arguments: parseAnnotationArguments(match[2]),
-        raw: match[0],
-        line
-      });
-    }
-  }
-  return facts;
+  const index = new SymbolsIndex(symbols);
+  return scanAnnotationsOrDecorators(source, index, "annotation");
 }
 
 function extractDecorators(source: string, symbols: CodeSymbol[]): DecoratorFact[] {
-  const facts: DecoratorFact[] = [];
-  const decoratorRe = /@([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*(?:\(([^)]*)\))?/g;
-  const lines = source.split(/\r?\n/);
-  for (const [index, lineText] of lines.entries()) {
-    for (const match of lineText.matchAll(decoratorRe)) {
-      const line = index + 1;
-      const owner = findFollowingOwner(symbols, line) ?? findContainingOwner(symbols, line);
-      facts.push({
-        ownerSymbolId: owner?.id,
-        ownerKind: owner ? ownerKindForDecorator(owner) : "property",
-        name: match[1] ?? "",
-        arguments: parseDecoratorArguments(match[2]),
-        raw: match[0],
-        line
-      });
-    }
-  }
-  return facts;
+  const index = new SymbolsIndex(symbols);
+  return scanAnnotationsOrDecorators(source, index, "decorator");
 }
 
 function extractLiterals(symbols: CodeSymbol[]): LiteralFact[] {
@@ -308,7 +592,7 @@ function getAnnotationArgsNode(node: Parser.SyntaxNode): Parser.SyntaxNode | und
   return undefined;
 }
 
-function findOwnerSymbol(symbols: CodeSymbol[], node: Parser.SyntaxNode): CodeSymbol | undefined {
+function findOwnerSymbol(index: SymbolsIndex, node: Parser.SyntaxNode): CodeSymbol | undefined {
   let curr: Parser.SyntaxNode | null = node.parent;
   while (curr) {
     if (
@@ -321,19 +605,12 @@ function findOwnerSymbol(symbols: CodeSymbol[], node: Parser.SyntaxNode): CodeSy
     ) {
       const startLine = curr.startPosition.row + 1;
       const endLine = curr.endPosition.row + 1;
-      const matched = symbols.find(s => s.startLine === startLine && s.endLine === endLine);
+      const matched = index.findRange(startLine, endLine);
       if (matched) return matched;
     }
     curr = curr.parent;
   }
   return undefined;
-}
-
-function findOwnerSymbolByProximity(symbols: CodeSymbol[], line: number): CodeSymbol | undefined {
-  const candidates = symbols.filter(s => s.startLine >= line);
-  if (candidates.length === 0) return undefined;
-  candidates.sort((a, b) => a.startLine - b.startLine);
-  return candidates[0];
 }
 
 function getJavaPackageName(rootNode: Parser.SyntaxNode): string | undefined {
@@ -376,7 +653,7 @@ function getDecoratorNameAndArgsNode(node: Parser.SyntaxNode): { name: string, a
   return { name, argsNode };
 }
 
-function findPythonOwner(symbols: CodeSymbol[], node: Parser.SyntaxNode): CodeSymbol | undefined {
+function findPythonOwner(index: SymbolsIndex, node: Parser.SyntaxNode): CodeSymbol | undefined {
   const parent = node.parent;
   if (parent && parent.type === "decorated_definition") {
     for (let i = 0; i < parent.childCount; i++) {
@@ -384,27 +661,24 @@ function findPythonOwner(symbols: CodeSymbol[], node: Parser.SyntaxNode): CodeSy
       if (child.type === "function_definition" || child.type === "class_definition") {
         const startLine = child.startPosition.row + 1;
         const endLine = child.endPosition.row + 1;
-        return symbols.find(s => s.startLine === startLine && s.endLine === endLine);
+        return index.findRange(startLine, endLine);
       }
     }
   }
   return undefined;
 }
 
-function findDecoratorOwner(symbols: CodeSymbol[], node: Parser.SyntaxNode, isPython: boolean): CodeSymbol | undefined {
+function findDecoratorOwner(index: SymbolsIndex, node: Parser.SyntaxNode, isPython: boolean): CodeSymbol | undefined {
   if (isPython) {
-    const pyOwner = findPythonOwner(symbols, node);
+    const pyOwner = findPythonOwner(index, node);
     if (pyOwner) return pyOwner;
   }
-  // For decorators, matching by proximity of symbol definition immediately following is extremely robust
-  return findOwnerSymbolByProximity(symbols, node.startPosition.row + 1);
+  return index.findFollowingOwner(node.startPosition.row + 1);
 }
 
-function findLiteralOwner(symbols: CodeSymbol[], node: Parser.SyntaxNode): CodeSymbol | undefined {
+function findLiteralOwner(index: SymbolsIndex, node: Parser.SyntaxNode): CodeSymbol | undefined {
   const line = node.startPosition.row + 1;
-  return symbols
-    .filter(s => s.startLine <= line && s.endLine >= line)
-    .sort((a, b) => (a.endLine - a.startLine) - (b.endLine - b.startLine))[0];
+  return index.findContaining(line);
 }
 
 function extractLanguageFactsAST(parsedFile: ParsedFile, source: string, tree: Parser.Tree): ParsedSourceFacts {
@@ -428,11 +702,13 @@ function extractLanguageFactsAST(parsedFile: ParsedFile, source: string, tree: P
     "hex_integer_literal", "int_literal", "float_literal"
   ]);
 
+  const index = new SymbolsIndex(parsedFile.symbols);
+
   walkTree(tree.rootNode, (node) => {
     if (wantsAnnotations && (node.type === "annotation" || node.type === "marker_annotation")) {
       const name = getAnnotationName(node);
       const argsNode = getAnnotationArgsNode(node);
-      const owner = findOwnerSymbol(parsedFile.symbols, node);
+      const owner = findOwnerSymbol(index, node);
       annotations.push({
         ownerSymbolId: owner?.id,
         ownerKind: owner ? ownerKindForAnnotation(owner) : "file",
@@ -445,7 +721,7 @@ function extractLanguageFactsAST(parsedFile: ParsedFile, source: string, tree: P
 
     if (wantsDecorators && node.type === "decorator") {
       const { name, argsNode } = getDecoratorNameAndArgsNode(node);
-      const owner = findDecoratorOwner(parsedFile.symbols, node, isPython);
+      const owner = findDecoratorOwner(index, node, isPython);
       decorators.push({
         ownerSymbolId: owner?.id,
         ownerKind: owner ? ownerKindForDecorator(owner) : (isPython ? "method" : "property"),
@@ -457,7 +733,7 @@ function extractLanguageFactsAST(parsedFile: ParsedFile, source: string, tree: P
     }
 
     if (LITERAL_TYPES.has(node.type)) {
-      const owner = findLiteralOwner(parsedFile.symbols, node);
+      const owner = findLiteralOwner(index, node);
       if (owner) {
         const raw = node.text;
         let kind: LiteralFact["kind"] = "string";

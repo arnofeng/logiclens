@@ -19,7 +19,8 @@ import { deserializeSpec } from "../spec.js";
 import {
   CONSUMER_TO_PRODUCER_KINDS,
   SCHEMA_TO_USE_KINDS,
-  SEMANTIC_REL_META
+  SEMANTIC_REL_META,
+  selectImpactRootIds
 } from "../semanticRelations.js";
 import {
   type ChangeIntent,
@@ -49,74 +50,13 @@ export type { ImpactAnalysisOptions } from "./types.js";
 // Graph traversal helpers
 // ---------------------------------------------------------------------------
 
-/** Builds an adjacency list in the semantic impact propagation direction. */
-function buildImpactAdjacency(
-  edges: SemanticRelationEdge[]
-): Map<string, { impactedSpecId: string; fromSpecId: string; toSpecId: string; kind: SemanticRelationKind; reason: string; confidence: number }[]> {
-  const adj = new Map<string, { impactedSpecId: string; fromSpecId: string; toSpecId: string; kind: SemanticRelationKind; reason: string; confidence: number }[]>();
-  for (const e of edges) {
-    const meta = SEMANTIC_REL_META[e.kind];
-    if (!meta || (meta.category !== "consumer-to-producer" && meta.category !== "schema-to-use")) continue;
-
-    const currentSpecId = meta.direction === "forward" ? e.toSpecId : e.fromSpecId;
-    const impactedSpecId = meta.direction === "forward" ? e.fromSpecId : e.toSpecId;
-    const next = {
-      impactedSpecId,
-      fromSpecId: e.fromSpecId,
-      toSpecId: e.toSpecId,
-      kind: e.kind,
-      reason: e.reason,
-      confidence: e.confidence
-    };
-    const list = adj.get(currentSpecId);
-    if (list) {
-      list.push(next);
-    } else {
-      adj.set(currentSpecId, [next]);
-    }
-  }
-  return adj;
-}
-
-/**
- * Finds all specs impacted by `startSpecIds` by following relation-specific
- * impact propagation direction up to `maxHops` hops.
- */
-function traverseImpactDirection(
-  startSpecIds: Set<string>,
-  impactAdj: Map<string, { impactedSpecId: string; kind: SemanticRelationKind; confidence: number }[]>,
-  maxHops: number
-): Map<string, number> {
-  const visited = new Map<string, number>();
-  let frontier = new Set(startSpecIds);
-  for (const id of frontier) visited.set(id, 0);
-
-  for (let hop = 1; hop <= maxHops; hop++) {
-    const next = new Set<string>();
-    for (const id of frontier) {
-      const neighbors = impactAdj.get(id);
-      if (!neighbors) continue;
-      for (const n of neighbors) {
-        if (!visited.has(n.impactedSpecId)) {
-          visited.set(n.impactedSpecId, hop);
-          next.add(n.impactedSpecId);
-        }
-      }
-    }
-    if (next.size === 0) break;
-    frontier = next;
-  }
-
-  return visited;
-}
-
 type ImpactPathStep = {
   impactedSpecId: string;
   edge: SemanticRelationEdge;
   hop: number;
 };
 
-function traverseImpactSteps(
+export function traverseImpactSteps(
   startSpecIds: Set<string>,
   specs: ReadableContractSpecNode[],
   relations: SemanticRelationEdge[],
@@ -128,10 +68,52 @@ function traverseImpactSteps(
   let frontier = new Set(startSpecIds);
   for (const id of frontier) visited.set(id, 0);
 
+  // Index relations by direct specId and by consumer fileKey to avoid O(E) scan
+  const relationsBySpecId = new Map<string, SemanticRelationEdge[]>();
+  const relationsByFileId = new Map<string, SemanticRelationEdge[]>();
+
+  for (const edge of relations) {
+    const meta = SEMANTIC_REL_META[edge.kind];
+    if (!meta) continue;
+    if (meta.category !== "consumer-to-producer" && meta.category !== "schema-to-use") continue;
+
+    const listFrom = relationsBySpecId.get(edge.fromSpecId) ?? [];
+    listFrom.push(edge);
+    relationsBySpecId.set(edge.fromSpecId, listFrom);
+
+    const listTo = relationsBySpecId.get(edge.toSpecId) ?? [];
+    listTo.push(edge);
+    relationsBySpecId.set(edge.toSpecId, listTo);
+
+    const consumerSpec = specMap.get(edge.fromSpecId);
+    if (consumerSpec && consumerSpec.fileId) {
+      const fileKey = `${consumerSpec.repoId}:${consumerSpec.fileId}`;
+      const listFile = relationsByFileId.get(fileKey) ?? [];
+      listFile.push(edge);
+      relationsByFileId.set(fileKey, listFile);
+    }
+  }
+
   for (let hop = 1; hop <= maxHops; hop++) {
     const next = new Set<string>();
     for (const currentSpecId of frontier) {
-      for (const edge of relations) {
+      const spec = specMap.get(currentSpecId);
+      const activeRelations = new Set<SemanticRelationEdge>();
+
+      const directRels = relationsBySpecId.get(currentSpecId);
+      if (directRels) {
+        for (const edge of directRels) activeRelations.add(edge);
+      }
+
+      if (spec && spec.fileId) {
+        const fileKey = `${spec.repoId}:${spec.fileId}`;
+        const fileRels = relationsByFileId.get(fileKey);
+        if (fileRels) {
+          for (const edge of fileRels) activeRelations.add(edge);
+        }
+      }
+
+      for (const edge of activeRelations) {
         for (const impactedSpecId of getImpactStepSpecIds(edge, currentSpecId, specMap)) {
           if (visited.has(impactedSpecId) || next.has(impactedSpecId)) continue;
           next.add(impactedSpecId);
@@ -348,9 +330,9 @@ export function analyzeImpact(
   if (isSchemaChange && options.readFile && change.detail) {
     const consumerSpecIds = new Set<string>();
     // Collect all consumer specs from the impacts so far
-    for (const edge of relations) {
-      if (CONSUMER_TO_PRODUCER_KINDS.has(edge.kind)) {
-        consumerSpecIds.add(edge.fromSpecId);
+    for (const impact of impacts) {
+      if (impact.specId) {
+        consumerSpecIds.add(impact.specId);
       }
     }
 
@@ -360,7 +342,7 @@ export function analyzeImpact(
       const content = options.readFile(spec.repoId, spec.fileId);
       if (!content) continue;
 
-      const refs = findFieldReferences(content, change.detail);
+      const refs = findFieldReferences(content, change.detail, spec.fileId);
       if (refs.length > 0) {
         for (const ref of refs) {
           impacts.push({
@@ -408,16 +390,7 @@ export function analyzeImpact(
   };
 }
 
-function selectImpactRootIds(matchedSpecIds: Set<string>, relations: SemanticRelationEdge[]): Set<string> {
-  const roots = new Set<string>();
-  for (const edge of relations) {
-    if (!matchedSpecIds.has(edge.fromSpecId) || !matchedSpecIds.has(edge.toSpecId)) continue;
-    const meta = SEMANTIC_REL_META[edge.kind];
-    if (!meta || (meta.category !== "consumer-to-producer" && meta.category !== "schema-to-use")) continue;
-    roots.add(meta.direction === "forward" ? edge.toSpecId : edge.fromSpecId);
-  }
-  return roots.size > 0 ? roots : matchedSpecIds;
-}
+
 
 // ---------------------------------------------------------------------------
 // Impact classification — registry-based dispatch

@@ -23,15 +23,18 @@ import type {
   WorkflowOperationEdge
 } from "../../../core/parsing/types.js";
 import { systemId } from "../../../core/graph-model/schema.js";
-import type {
-  GraphDB,
-  GraphValue,
-  GraphWriteAtomicityMode,
-  GraphWriteBatchStatus,
-  GraphWriteBatchJournal,
-  ActiveAliasOverride,
-  ContractSummaryRow,
-  Stats
+import {
+  type GraphDB,
+  type GraphValue,
+  type GraphWriteAtomicityMode,
+  type GraphWriteBatchStatus,
+  type GraphWriteBatchJournal,
+  type ActiveAliasOverride,
+  type ContractSummaryRow,
+  type Stats,
+  withTransaction,
+  ALL_EVIDENCE_REL_TYPES,
+  REJECT_EVIDENCE_REL_TYPES
 } from "../../../core/graph-model/db.js";
 
 /**
@@ -124,6 +127,9 @@ const INDEX_STATEMENTS = [
 export class Neo4jGraphDB implements GraphDB {
   private driver: Driver;
   private closed = false;
+  private activeSession: Session | null = null;
+  private activeTx: any = null;
+  private txDepth = 0;
 
   private constructor(driver: Driver) {
     this.driver = driver;
@@ -139,9 +145,10 @@ export class Neo4jGraphDB implements GraphDB {
     return new Neo4jGraphDB(driver);
   }
 
-  private getSession(): Session {
+  private getSession(mode: "READ" | "WRITE" = "WRITE"): Session {
     if (this.closed) throw new Error("Graph database is closed");
-    return this.driver.session({ defaultAccessMode: neo4j.session.WRITE });
+    const defaultAccessMode = mode === "READ" ? neo4j.session.READ : neo4j.session.WRITE;
+    return this.driver.session({ defaultAccessMode });
   }
 
   async initSchema(systemName = "default-system"): Promise<void> {
@@ -181,6 +188,25 @@ export class Neo4jGraphDB implements GraphDB {
     );
   }
 
+  async upsertFilesBatch(files: FileNode[]): Promise<void> {
+    if (files.length === 0) return;
+    const batchSize = 5000;
+    for (let i = 0; i < files.length; i += batchSize) {
+      const chunk = files.slice(i, i + batchSize);
+      const params = chunk.map((f) => ({
+        id: f.id, repoId: f.repoId, path: f.path, language: f.language,
+        hash: f.hash, loc: f.loc, batchId: f.batchId ?? "", indexedAt: f.indexedAt ?? "", active: f.active ?? true
+      }));
+      await this.query(
+        "UNWIND $batch AS row " +
+        "MERGE (f:File {id: row.id}) " +
+        "ON CREATE SET f.repoId=row.repoId, f.path=row.path, f.language=row.language, f.hash=row.hash, f.loc=row.loc, f.batchId=row.batchId, f.indexedAt=row.indexedAt, f.active=row.active " +
+        "ON MATCH SET f.repoId=row.repoId, f.path=row.path, f.language=row.language, f.hash=row.hash, f.loc=row.loc, f.batchId=row.batchId, f.indexedAt=row.indexedAt, f.active=row.active;",
+        { batch: params as unknown as GraphValue }
+      );
+    }
+  }
+
   async upsertCode(code: CodeSymbol): Promise<void> {
     const params = {
       id: code.id,
@@ -202,6 +228,27 @@ export class Neo4jGraphDB implements GraphDB {
       "MERGE (c:Code {id: $id}) ON CREATE SET c.repoId=$repoId, c.fileId=$fileId, c.kind=$kind, c.name=$name, c.qualifiedName=$qualifiedName, c.startLine=$startLine, c.endLine=$endLine, c.signature=$signature, c.summary=$summary, c.hash=$hash, c.batchId=$batchId, c.indexedAt=$indexedAt, c.active=$active ON MATCH SET c.repoId=$repoId, c.fileId=$fileId, c.kind=$kind, c.name=$name, c.qualifiedName=$qualifiedName, c.startLine=$startLine, c.endLine=$endLine, c.signature=$signature, c.summary=$summary, c.hash=$hash, c.batchId=$batchId, c.indexedAt=$indexedAt, c.active=$active;",
       params as unknown as Record<string, GraphValue>
     );
+  }
+
+  async upsertCodeBatch(codes: CodeSymbol[]): Promise<void> {
+    if (codes.length === 0) return;
+    const batchSize = 5000;
+    for (let i = 0; i < codes.length; i += batchSize) {
+      const chunk = codes.slice(i, i + batchSize);
+      const params = chunk.map((c) => ({
+        id: c.id, repoId: c.repoId, fileId: c.fileId, kind: c.kind,
+        name: c.name, qualifiedName: c.qualifiedName, startLine: c.startLine,
+        endLine: c.endLine, signature: c.signature, summary: c.summary ?? "",
+        hash: c.hash, batchId: c.batchId ?? "", indexedAt: c.indexedAt ?? "", active: c.active ?? true
+      }));
+      await this.query(
+        "UNWIND $batch AS row " +
+        "MERGE (c:Code {id: row.id}) " +
+        "ON CREATE SET c.repoId=row.repoId, c.fileId=row.fileId, c.kind=row.kind, c.name=row.name, c.qualifiedName=row.qualifiedName, c.startLine=row.startLine, c.endLine=row.endLine, c.signature=row.signature, c.summary=row.summary, c.hash=row.hash, c.batchId=row.batchId, c.indexedAt=row.indexedAt, c.active=row.active " +
+        "ON MATCH SET c.repoId=row.repoId, c.fileId=row.fileId, c.kind=row.kind, c.name=row.name, c.qualifiedName=row.qualifiedName, c.startLine=row.startLine, c.endLine=row.endLine, c.signature=row.signature, c.summary=row.summary, c.hash=row.hash, c.batchId=row.batchId, c.indexedAt=row.indexedAt, c.active=row.active;",
+        { batch: params as unknown as GraphValue }
+      );
+    }
   }
 
   async upsertSection(section: DocSection): Promise<void> {
@@ -400,8 +447,47 @@ export class Neo4jGraphDB implements GraphDB {
     await this.query("MATCH (a:File {id: $fromFileId}), (b:File {id: $toFileId}) MERGE (a)-[r:IMPORTS {module: $module}]->(b) SET r.raw = $raw, r.batchId = $batchId, r.active = $active;", { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, GraphValue>);
   }
 
+  async addImportsBatch(edges: ImportEdge[]): Promise<void> {
+    if (edges.length === 0) return;
+    const batchSize = 5000;
+    for (let i = 0; i < edges.length; i += batchSize) {
+      const chunk = edges.slice(i, i + batchSize);
+      const params = chunk.map((e) => ({
+        fromFileId: e.fromFileId, toFileId: e.toFileId, module: e.module,
+        raw: e.raw, batchId: e.batchId ?? "", active: e.active ?? true
+      }));
+      await this.query(
+        "UNWIND $batch AS row " +
+        "MATCH (a:File {id: row.fromFileId}), (b:File {id: row.toFileId}) " +
+        "MERGE (a)-[r:IMPORTS {module: row.module}]->(b) " +
+        "SET r.raw = row.raw, r.batchId = row.batchId, r.active = row.active;",
+        { batch: params as unknown as GraphValue }
+      );
+    }
+  }
+
   async addCall(edge: CallEdge): Promise<void> {
     await this.query("MATCH (a:Code {id: $fromCodeId}), (b:Code {id: $toCodeId}) MERGE (a)-[r:CALLS {raw: $raw}]->(b) SET r.confidence = $confidence, r.resolution = $resolution, r.batchId = $batchId, r.active = $active;", { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, GraphValue>);
+  }
+
+  async addCallsBatch(edges: CallEdge[]): Promise<void> {
+    if (edges.length === 0) return;
+    const batchSize = 5000;
+    for (let i = 0; i < edges.length; i += batchSize) {
+      const chunk = edges.slice(i, i + batchSize);
+      const params = chunk.map((e) => ({
+        fromCodeId: e.fromCodeId, toCodeId: e.toCodeId, raw: e.raw,
+        confidence: e.confidence, resolution: e.resolution ?? "",
+        batchId: e.batchId ?? "", active: e.active ?? true
+      }));
+      await this.query(
+        "UNWIND $batch AS row " +
+        "MATCH (a:Code {id: row.fromCodeId}), (b:Code {id: row.toCodeId}) " +
+        "MERGE (a)-[r:CALLS {raw: row.raw}]->(b) " +
+        "SET r.confidence = row.confidence, r.resolution = row.resolution, r.batchId = row.batchId, r.active = row.active;",
+        { batch: params as unknown as GraphValue }
+      );
+    }
   }
 
   async addMention(codeIdValue: string, entityIdValue: string, confidence: number): Promise<void> {
@@ -580,27 +666,7 @@ export class Neo4jGraphDB implements GraphDB {
         { repoId: input.repoId, activeFileIds: input.activeFileIds }
       );
     const staleFileIds = staleRows.map((row) => row.id);
-    if (staleFileIds.length === 0) return 0;
 
-    const batchParams = { staleFileIds, batchId: input.batchId, staleIndexedAt: input.indexedAt, active: false };
-
-    // Batch-update File, Code, Section, Evidence nodes
-    await this.query("UNWIND $staleFileIds AS staleFileId MATCH (f:File) WHERE f.id = staleFileId SET f.active = $active, f.batchId = $batchId, f.indexedAt = $staleIndexedAt;", batchParams);
-    await this.query("UNWIND $staleFileIds AS staleFileId MATCH (c:Code) WHERE c.fileId = staleFileId SET c.active = $active, c.batchId = $batchId, c.indexedAt = $staleIndexedAt;", batchParams);
-    await this.query("UNWIND $staleFileIds AS staleFileId MATCH (s:Section) WHERE s.fileId = staleFileId SET s.active = $active, s.batchId = $batchId, s.indexedAt = $staleIndexedAt;", batchParams);
-    await this.query("UNWIND $staleFileIds AS staleFileId MATCH (e:Evidence) WHERE e.fileId = staleFileId SET e.active = $active, e.batchId = $batchId, e.indexedAt = $staleIndexedAt;", batchParams);
-
-    // Batch-update relationships tied to stale file IDs
-    await this.query("UNWIND $staleFileIds AS staleFileId MATCH (a:File)-[r:IMPORTS]->(b:File) WHERE a.id = staleFileId OR b.id = staleFileId SET r.active = $active, r.batchId = $batchId;", batchParams);
-    await this.query("UNWIND $staleFileIds AS staleFileId MATCH (a:Code)-[r:CALLS]->(b:Code) WHERE a.fileId = staleFileId OR b.fileId = staleFileId SET r.active = $active, r.batchId = $batchId;", batchParams);
-    for (const rel of ["OWNS_PACKAGE", "PRODUCES", "CONSUMES", "SHARES_CONTRACT", "CONTRACT_MENTIONS", "PARTICIPATES_IN", "WORKFLOW_STEP", "USES_PACKAGE", "DEPENDS_ON", "HAS_SPEC"]) {
-      await this.query(`UNWIND $staleFileIds AS staleFileId MATCH ()-[r:${rel}]->(), (e:Evidence) WHERE r.evidenceId = e.id AND e.fileId = staleFileId SET r.active = $active, r.batchId = $batchId;`, batchParams);
-    }
-    await this.query("UNWIND $staleFileIds AS staleFileId MATCH (cs:ContractSpec) WHERE cs.fileId = staleFileId SET cs.active = $active, cs.batchId = $batchId;", batchParams);
-    await this.query("UNWIND $staleFileIds AS staleFileId MATCH (cs:ContractSpec)-[r:SEMANTIC_REL]->() WHERE cs.fileId = staleFileId SET r.active = $active, r.batchId = $batchId;", batchParams);
-    await this.query("UNWIND $staleFileIds AS staleFileId MATCH ()-[r:SEMANTIC_REL]->(cs:ContractSpec) WHERE cs.fileId = staleFileId SET r.active = $active, r.batchId = $batchId;", batchParams);
-
-    // Handle stale evidence
     const evidenceRows = input.activeFileIds.length === 0
       ? await this.query<{ id: string }>(
         "MATCH (e:Evidence) WHERE e.repoId = $repoId AND (e.active IS NULL OR e.active = true) RETURN e.id AS id;",
@@ -611,20 +677,46 @@ export class Neo4jGraphDB implements GraphDB {
         { repoId: input.repoId, activeFileIds: input.activeFileIds }
       );
     const staleEvidenceIds = evidenceRows.map((row) => row.id);
-    if (staleEvidenceIds.length > 0) {
-      const evidenceBatchParams = { staleEvidenceIds, batchId: input.batchId, active: false };
-      await this.query("UNWIND $staleEvidenceIds AS evidenceId MATCH (e:Evidence) WHERE e.id = evidenceId SET e.active = $active, e.batchId = $batchId;", evidenceBatchParams);
-      for (const rel of ["OWNS_PACKAGE", "PRODUCES", "CONSUMES", "SHARES_CONTRACT", "CONTRACT_MENTIONS", "PARTICIPATES_IN", "WORKFLOW_STEP", "USES_PACKAGE", "DEPENDS_ON", "HAS_SPEC"]) {
-        await this.query(`UNWIND $staleEvidenceIds AS evidenceId MATCH ()-[r:${rel}]->() WHERE r.evidenceId = evidenceId SET r.active = $active, r.batchId = $batchId;`, evidenceBatchParams);
-      }
-    }
 
-    if (input.activeFileIds.length === 0) {
-      await this.query(
-        "MATCH (a:Repo)-[r:DEPENDS_ON]->(b:Repo) WHERE a.id = $repoId OR b.id = $repoId SET r.active = $active, r.batchId = $batchId;",
-        { repoId: input.repoId, batchId: input.batchId, active: false }
-      );
-    }
+    if (staleFileIds.length === 0 && staleEvidenceIds.length === 0) return 0;
+
+    await withTransaction(this, async () => {
+      const batchParams = { staleFileIds, batchId: input.batchId, staleIndexedAt: input.indexedAt, active: false };
+
+      if (staleFileIds.length > 0) {
+        // Batch-update File, Code, Section, Evidence nodes
+        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (f:File) WHERE f.id = staleFileId SET f.active = $active, f.batchId = $batchId, f.indexedAt = $staleIndexedAt;", batchParams);
+        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (c:Code) WHERE c.fileId = staleFileId SET c.active = $active, c.batchId = $batchId, c.indexedAt = $staleIndexedAt;", batchParams);
+        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (s:Section) WHERE s.fileId = staleFileId SET s.active = $active, s.batchId = $batchId, s.indexedAt = $staleIndexedAt;", batchParams);
+        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (e:Evidence) WHERE e.fileId = staleFileId SET e.active = $active, e.batchId = $batchId, e.indexedAt = $staleIndexedAt;", batchParams);
+
+        // Batch-update relationships tied to stale file IDs
+        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (a:File)-[r:IMPORTS]->(b:File) WHERE a.id = staleFileId OR b.id = staleFileId SET r.active = $active, r.batchId = $batchId;", batchParams);
+        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (a:Code)-[r:CALLS]->(b:Code) WHERE a.fileId = staleFileId OR b.fileId = staleFileId SET r.active = $active, r.batchId = $batchId;", batchParams);
+        const relTypes = ALL_EVIDENCE_REL_TYPES.join("|");
+        await this.query(`UNWIND $staleFileIds AS staleFileId MATCH ()-[r:${relTypes}]->(), (e:Evidence) WHERE r.evidenceId = e.id AND e.fileId = staleFileId SET r.active = $active, r.batchId = $batchId;`, batchParams);
+        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (cs:ContractSpec) WHERE cs.fileId = staleFileId SET cs.active = $active, cs.batchId = $batchId;", batchParams);
+        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (cs:ContractSpec)-[r:SEMANTIC_REL]->() WHERE cs.fileId = staleFileId SET r.active = $active, r.batchId = $batchId;", batchParams);
+        await this.query("UNWIND $staleFileIds AS staleFileId MATCH ()-[r:SEMANTIC_REL]->(cs:ContractSpec) WHERE cs.fileId = staleFileId SET r.active = $active, r.batchId = $batchId;", batchParams);
+      }
+
+      if (staleEvidenceIds.length > 0) {
+        const evidenceBatchParams = { staleEvidenceIds, batchId: input.batchId, active: false };
+        await this.query("UNWIND $staleEvidenceIds AS evidenceId MATCH (e:Evidence) WHERE e.id = evidenceId SET e.active = $active, e.batchId = $batchId;", evidenceBatchParams);
+        const relTypes = ALL_EVIDENCE_REL_TYPES.join("|");
+        await this.query(`UNWIND $staleEvidenceIds AS evidenceId MATCH ()-[r:${relTypes}]->() WHERE r.evidenceId = evidenceId SET r.active = $active, r.batchId = $batchId;`, evidenceBatchParams);
+      }
+
+      if (input.activeFileIds.length === 0) {
+        await this.query(
+          "MATCH (a:Repo)-[r:DEPENDS_ON]->(b:Repo) WHERE a.id = $repoId OR b.id = $repoId SET r.active = $active, r.batchId = $batchId;",
+          { repoId: input.repoId, batchId: input.batchId, active: false }
+        );
+      }
+    });
+    // Return only the file count — the IndexState field is named "filesStale".
+    // Mixing in staleEvidenceIds.length would write an evidence count under a
+    // field that callers expect to contain a file count.
     return staleFileIds.length;
   }
 
@@ -680,7 +772,7 @@ export class Neo4jGraphDB implements GraphDB {
         );
         const evParams = toNeo4jParams({ evidenceId: input.evidenceId });
         await tx.run("MATCH (e:Evidence) WHERE e.id = $evidenceId SET e.active = false;", evParams);
-        for (const rel of ["OWNS_PACKAGE", "PRODUCES", "CONSUMES", "SHARES_CONTRACT", "CONTRACT_MENTIONS", "PARTICIPATES_IN", "WORKFLOW_STEP", "USES_PACKAGE", "DEPENDS_ON"]) {
+        for (const rel of REJECT_EVIDENCE_REL_TYPES) {
           await tx.run(`MATCH ()-[r:${rel}]->() WHERE r.evidenceId = $evidenceId SET r.active = false;`, evParams);
         }
       });
@@ -744,13 +836,73 @@ export class Neo4jGraphDB implements GraphDB {
     );
   }
 
+  private isReadQuery(cypher: string): boolean {
+    const normalized = cypher.trim().toUpperCase();
+    if (/\b(CREATE|MERGE|SET|DELETE|REMOVE|DETACH)\b/.test(normalized)) {
+      return false;
+    }
+    return true;
+  }
+
   async query<T = Record<string, GraphValue>>(cypher: string, params?: Record<string, GraphValue>): Promise<T[]> {
-    const session = this.getSession();
+    if (this.activeTx) {
+      const result = await this.activeTx.run(cypher, toNeo4jParams(params));
+      return result.records.map((record: any) => recordToPlain(record) as T);
+    }
+    // Non-transactional path: each query gets its own session with the
+    // correct access mode.  High-volume write paths use withTransaction
+    // (activeTx) so the per-query session overhead only affects ad-hoc
+    // reads like stats(), listRepos(), etc.
+    const mode = this.isReadQuery(cypher) ? "READ" : "WRITE";
+    const session = this.getSession(mode);
     try {
       const result = await session.run(cypher, toNeo4jParams(params));
-      return result.records.map((record) => recordToPlain(record) as T);
+      return result.records.map((record: any) => recordToPlain(record) as T);
     } finally {
       await session.close();
+    }
+  }
+
+  async beginTransaction(): Promise<void> {
+    if (this.activeTx) {
+      this.txDepth++;
+      return;
+    }
+    this.activeSession = this.getSession();
+    this.activeTx = this.activeSession.beginTransaction();
+    this.txDepth = 1;
+  }
+
+  async commitTransaction(): Promise<void> {
+    if (!this.activeTx) {
+      throw new Error("No transaction in progress");
+    }
+    this.txDepth--;
+    if (this.txDepth > 0) return;
+    try {
+      await this.activeTx.commit();
+    } finally {
+      this.activeTx = null;
+      if (this.activeSession) {
+        await this.activeSession.close();
+        this.activeSession = null;
+      }
+    }
+  }
+
+  async rollbackTransaction(): Promise<void> {
+    if (!this.activeTx) {
+      return;
+    }
+    try {
+      await this.activeTx.rollback();
+    } finally {
+      this.activeTx = null;
+      this.txDepth = 0;
+      if (this.activeSession) {
+        await this.activeSession.close();
+        this.activeSession = null;
+      }
     }
   }
 
@@ -782,7 +934,7 @@ export class Neo4jGraphDB implements GraphDB {
   }
 }
 
-export function decodeList(value: string | undefined): string[] {
+export function decodeList(value: string | null | undefined): string[] {
   if (!value) return [];
   try {
     const parsed = JSON.parse(value);

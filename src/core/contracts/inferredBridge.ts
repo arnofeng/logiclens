@@ -120,16 +120,27 @@ export function inferInternalCallEdges(
   const results: InferredInternalCallEdge[] = [];
   const seen = new Set<string>();
 
+  const specsByFile = new Map<string, ReadableContractSpecNode[]>();
+  for (const spec of specs) {
+    if (spec.fileId) {
+      const fileKey = `${spec.repoId}:${spec.fileId}`;
+      const list = specsByFile.get(fileKey) ?? [];
+      list.push(spec);
+      specsByFile.set(fileKey, list);
+    }
+  }
+
   for (const edge of relations) {
     const meta = SEMANTIC_REL_META[edge.kind];
     if (!meta || meta.category !== "consumer-to-producer" || meta.direction !== "forward") continue;
 
     const localConsumer = specMap.get(edge.fromSpecId);
-    if (!localConsumer) continue;
+    if (!localConsumer || !localConsumer.fileId) continue;
 
-    for (const candidate of specMap.values()) {
+    const fileKey = `${localConsumer.repoId}:${localConsumer.fileId}`;
+    const candidates = specsByFile.get(fileKey) ?? [];
+    for (const candidate of candidates) {
       if (candidate.id === localConsumer.id) continue;
-      if (candidate.repoId !== localConsumer.repoId || candidate.fileId !== localConsumer.fileId) continue;
       if (!isLocalProducerBridgeTarget(candidate)) continue;
       if (!sameActionName(localConsumer, candidate)) continue;
 
@@ -176,6 +187,19 @@ export function actionNameOf(spec: ReadableContractSpecNode): string | null {
   }
   if (spec.specKind === "graphql-operation") {
     return spec.canonicalKey.split(".").pop()?.toLowerCase() || null;
+  }
+  if (spec.specKind === "event") {
+    let eventName: string | undefined;
+    try {
+      const parsed = JSON.parse(spec.specJson);
+      eventName = parsed.eventName;
+    } catch {}
+    if (eventName) {
+      return eventName.toLowerCase();
+    }
+    const topic = spec.eventTopic || spec.canonicalKey.split(":").slice(1).join(":");
+    const segment = topic.split("?")[0]?.split(/[./:]/).filter(Boolean).pop();
+    return segment ? segment.toLowerCase() : null;
   }
   return null;
 }

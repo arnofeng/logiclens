@@ -26,15 +26,18 @@ import type {
 } from "../../../core/parsing/types.js";
 import { schemaStatements, systemId } from "../../../core/graph-model/schema.js";
 import { getBrandedEnv } from "../../../shared/branding.js";
-import type {
-  GraphDB,
-  GraphValue,
-  GraphWriteAtomicityMode,
-  GraphWriteBatchStatus,
-  GraphWriteBatchJournal,
-  ActiveAliasOverride,
-  ContractSummaryRow,
-  Stats
+import {
+  type GraphDB,
+  type GraphValue,
+  type GraphWriteAtomicityMode,
+  type GraphWriteBatchStatus,
+  type GraphWriteBatchJournal,
+  type ActiveAliasOverride,
+  type ContractSummaryRow,
+  type Stats,
+  withTransaction,
+  ALL_EVIDENCE_REL_TYPES,
+  REJECT_EVIDENCE_REL_TYPES
 } from "../../../core/graph-model/db.js";
 
 async function allRows(result: QueryResult | QueryResult[]): Promise<Record<string, KuzuValue>[]> {
@@ -117,6 +120,7 @@ export class KuzuGraphDB implements GraphDB {
   private conn?: kuzu.Connection;
   private closed = false;
   private managedKey?: string;
+  private txDepth = 0;
 
   private constructor(db: kuzu.Database, conn: kuzu.Connection, managedKey?: string) {
     this.db = db;
@@ -181,6 +185,35 @@ export class KuzuGraphDB implements GraphDB {
     await this.connection().query(`ALTER TABLE ${tableName} ADD ${columnName} ${columnType};`);
   }
 
+  async beginTransaction(): Promise<void> {
+    if (this.txDepth > 0) {
+      this.txDepth++;
+      return;
+    }
+    await this.query("BEGIN TRANSACTION;");
+    this.txDepth = 1;
+  }
+
+  async commitTransaction(): Promise<void> {
+    if (this.txDepth <= 0) {
+      throw new Error("No transaction in progress");
+    }
+    this.txDepth--;
+    if (this.txDepth > 0) return;
+    await this.query("COMMIT;");
+  }
+
+  async rollbackTransaction(): Promise<void> {
+    if (this.txDepth <= 0) {
+      return;
+    }
+    try {
+      await this.query("ROLLBACK;");
+    } finally {
+      this.txDepth = 0;
+    }
+  }
+
   async upsertRepo(repo: RepoNode): Promise<void> {
     await this.query(
       // NOTE: ON MATCH intentionally omits r.summary — summary is managed
@@ -208,6 +241,25 @@ export class KuzuGraphDB implements GraphDB {
     );
   }
 
+  async upsertFilesBatch(files: FileNode[]): Promise<void> {
+    if (files.length === 0) return;
+    const batchSize = 5000;
+    for (let i = 0; i < files.length; i += batchSize) {
+      const chunk = files.slice(i, i + batchSize);
+      const params = chunk.map((f) => ({
+        id: f.id, repoId: f.repoId, path: f.path, language: f.language,
+        hash: f.hash, loc: f.loc, batchId: f.batchId ?? "", indexedAt: f.indexedAt ?? "", active: f.active ?? true
+      }));
+      await this.query(
+        "UNWIND $batch AS row " +
+        "MERGE (f:File {id: row.id}) " +
+        "ON CREATE SET f.repoId=row.repoId, f.path=row.path, f.language=row.language, f.hash=row.hash, f.loc=row.loc, f.batchId=row.batchId, f.indexedAt=row.indexedAt, f.active=row.active " +
+        "ON MATCH SET f.repoId=row.repoId, f.path=row.path, f.language=row.language, f.hash=row.hash, f.loc=row.loc, f.batchId=row.batchId, f.indexedAt=row.indexedAt, f.active=row.active;",
+        { batch: params as unknown as GraphValue }
+      );
+    }
+  }
+
   async upsertCode(code: CodeSymbol): Promise<void> {
     const params = {
       id: code.id,
@@ -229,6 +281,27 @@ export class KuzuGraphDB implements GraphDB {
       "MERGE (c:Code {id: $id}) ON CREATE SET c.repoId=$repoId, c.fileId=$fileId, c.kind=$kind, c.name=$name, c.qualifiedName=$qualifiedName, c.startLine=$startLine, c.endLine=$endLine, c.signature=$signature, c.summary=$summary, c.hash=$hash, c.batchId=$batchId, c.indexedAt=$indexedAt, c.active=$active ON MATCH SET c.repoId=$repoId, c.fileId=$fileId, c.kind=$kind, c.name=$name, c.qualifiedName=$qualifiedName, c.startLine=$startLine, c.endLine=$endLine, c.signature=$signature, c.summary=$summary, c.hash=$hash, c.batchId=$batchId, c.indexedAt=$indexedAt, c.active=$active;",
       params as unknown as Record<string, GraphValue>
     );
+  }
+
+  async upsertCodeBatch(codes: CodeSymbol[]): Promise<void> {
+    if (codes.length === 0) return;
+    const batchSize = 5000;
+    for (let i = 0; i < codes.length; i += batchSize) {
+      const chunk = codes.slice(i, i + batchSize);
+      const params = chunk.map((c) => ({
+        id: c.id, repoId: c.repoId, fileId: c.fileId, kind: c.kind,
+        name: c.name, qualifiedName: c.qualifiedName, startLine: c.startLine,
+        endLine: c.endLine, signature: c.signature, summary: c.summary ?? "",
+        hash: c.hash, batchId: c.batchId ?? "", indexedAt: c.indexedAt ?? "", active: c.active ?? true
+      }));
+      await this.query(
+        "UNWIND $batch AS row " +
+        "MERGE (c:Code {id: row.id}) " +
+        "ON CREATE SET c.repoId=row.repoId, c.fileId=row.fileId, c.kind=row.kind, c.name=row.name, c.qualifiedName=row.qualifiedName, c.startLine=row.startLine, c.endLine=row.endLine, c.signature=row.signature, c.summary=row.summary, c.hash=row.hash, c.batchId=row.batchId, c.indexedAt=row.indexedAt, c.active=row.active " +
+        "ON MATCH SET c.repoId=row.repoId, c.fileId=row.fileId, c.kind=row.kind, c.name=row.name, c.qualifiedName=row.qualifiedName, c.startLine=row.startLine, c.endLine=row.endLine, c.signature=row.signature, c.summary=row.summary, c.hash=row.hash, c.batchId=row.batchId, c.indexedAt=row.indexedAt, c.active=row.active;",
+        { batch: params as unknown as GraphValue }
+      );
+    }
   }
 
   async upsertSection(section: DocSection): Promise<void> {
@@ -427,8 +500,47 @@ export class KuzuGraphDB implements GraphDB {
     await this.query("MATCH (a:File {id: $fromFileId}), (b:File {id: $toFileId}) MERGE (a)-[r:IMPORTS {module: $module}]->(b) SET r.raw = $raw, r.batchId = $batchId, r.active = $active;", { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, GraphValue>);
   }
 
+  async addImportsBatch(edges: ImportEdge[]): Promise<void> {
+    if (edges.length === 0) return;
+    const batchSize = 5000;
+    for (let i = 0; i < edges.length; i += batchSize) {
+      const chunk = edges.slice(i, i + batchSize);
+      const params = chunk.map((e) => ({
+        fromFileId: e.fromFileId, toFileId: e.toFileId, module: e.module,
+        raw: e.raw, batchId: e.batchId ?? "", active: e.active ?? true
+      }));
+      await this.query(
+        "UNWIND $batch AS row " +
+        "MATCH (a:File {id: row.fromFileId}), (b:File {id: row.toFileId}) " +
+        "MERGE (a)-[r:IMPORTS {module: row.module}]->(b) " +
+        "SET r.raw = row.raw, r.batchId = row.batchId, r.active = row.active;",
+        { batch: params as unknown as GraphValue }
+      );
+    }
+  }
+
   async addCall(edge: CallEdge): Promise<void> {
     await this.query("MATCH (a:Code {id: $fromCodeId}), (b:Code {id: $toCodeId}) MERGE (a)-[r:CALLS {raw: $raw}]->(b) SET r.confidence = $confidence, r.resolution = $resolution, r.batchId = $batchId, r.active = $active;", { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, GraphValue>);
+  }
+
+  async addCallsBatch(edges: CallEdge[]): Promise<void> {
+    if (edges.length === 0) return;
+    const batchSize = 5000;
+    for (let i = 0; i < edges.length; i += batchSize) {
+      const chunk = edges.slice(i, i + batchSize);
+      const params = chunk.map((e) => ({
+        fromCodeId: e.fromCodeId, toCodeId: e.toCodeId, raw: e.raw,
+        confidence: e.confidence, resolution: e.resolution ?? "",
+        batchId: e.batchId ?? "", active: e.active ?? true
+      }));
+      await this.query(
+        "UNWIND $batch AS row " +
+        "MATCH (a:Code {id: row.fromCodeId}), (b:Code {id: row.toCodeId}) " +
+        "MERGE (a)-[r:CALLS {raw: row.raw}]->(b) " +
+        "SET r.confidence = row.confidence, r.resolution = row.resolution, r.batchId = row.batchId, r.active = row.active;",
+        { batch: params as unknown as GraphValue }
+      );
+    }
   }
 
   async addMention(codeIdValue: string, entityIdValue: string, confidence: number): Promise<void> {
@@ -500,7 +612,9 @@ export class KuzuGraphDB implements GraphDB {
       "MATCH (f:File) WHERE f.repoId = $repoId DELETE f;",
       "MATCH (s:ContractSpec) WHERE s.repoId = $repoId DELETE s;"
     ];
-    for (const statement of statements) await this.query(statement, params);
+    await withTransaction(this, async () => {
+      for (const statement of statements) await this.query(statement, params);
+    });
   }
 
   async beginGraphWriteBatch(journal: Omit<GraphWriteBatchJournal, "status" | "updatedAt"> & { updatedAt?: string }): Promise<void> {
@@ -599,23 +713,7 @@ export class KuzuGraphDB implements GraphDB {
         { repoId: input.repoId, activeFileIds: input.activeFileIds }
       );
     const staleFileIds = staleRows.map((row) => row.id);
-    if (staleFileIds.length === 0) return 0;
-    for (const staleFileId of staleFileIds) {
-      const nodeParams = { staleFileId, batchId: input.batchId, staleIndexedAt: input.indexedAt, active: false };
-      const relParams = { staleFileId, batchId: input.batchId, active: false };
-      await this.query("MATCH (f:File) WHERE f.id = $staleFileId SET f.active = $active, f.batchId = $batchId, f.indexedAt = $staleIndexedAt;", nodeParams);
-      await this.query("MATCH (c:Code) WHERE c.fileId = $staleFileId SET c.active = $active, c.batchId = $batchId, c.indexedAt = $staleIndexedAt;", nodeParams);
-      await this.query("MATCH (s:Section) WHERE s.fileId = $staleFileId SET s.active = $active, s.batchId = $batchId, s.indexedAt = $staleIndexedAt;", nodeParams);
-      await this.query("MATCH (e:Evidence) WHERE e.fileId = $staleFileId SET e.active = $active, e.batchId = $batchId, e.indexedAt = $staleIndexedAt;", nodeParams);
-      await this.query("MATCH (a:File)-[r:IMPORTS]->(b:File) WHERE a.id = $staleFileId OR b.id = $staleFileId SET r.active = $active, r.batchId = $batchId;", relParams);
-      await this.query("MATCH (a:Code)-[r:CALLS]->(b:Code) WHERE a.fileId = $staleFileId OR b.fileId = $staleFileId SET r.active = $active, r.batchId = $batchId;", relParams);
-      for (const rel of ["OWNS_PACKAGE", "PRODUCES", "CONSUMES", "SHARES_CONTRACT", "CONTRACT_MENTIONS", "PARTICIPATES_IN", "WORKFLOW_STEP", "USES_PACKAGE", "DEPENDS_ON", "HAS_SPEC"]) {
-        await this.query(`MATCH ()-[r:${rel}]->(), (e:Evidence) WHERE r.evidenceId = e.id AND e.fileId = $staleFileId SET r.active = $active, r.batchId = $batchId;`, relParams);
-      }
-      await this.query("MATCH (cs:ContractSpec) WHERE cs.fileId = $staleFileId SET cs.active = $active, cs.batchId = $batchId;", relParams);
-      await this.query("MATCH (cs:ContractSpec)-[r:SEMANTIC_REL]->(cs2:ContractSpec) WHERE cs.fileId = $staleFileId SET r.active = $active, r.batchId = $batchId;", relParams);
-      await this.query("MATCH (cs2:ContractSpec)-[r:SEMANTIC_REL]->(cs:ContractSpec) WHERE cs.fileId = $staleFileId SET r.active = $active, r.batchId = $batchId;", relParams);
-    }
+
     const evidenceRows = input.activeFileIds.length === 0
       ? await this.query<{ id: string }>(
         "MATCH (e:Evidence) WHERE e.repoId = $repoId AND (e.active IS NULL OR e.active = true) RETURN e.id AS id;",
@@ -625,19 +723,42 @@ export class KuzuGraphDB implements GraphDB {
         "MATCH (e:Evidence) WHERE e.repoId = $repoId AND NOT (e.fileId IN $activeFileIds) AND (e.active IS NULL OR e.active = true) RETURN e.id AS id;",
         { repoId: input.repoId, activeFileIds: input.activeFileIds }
       );
-    for (const evidenceIdValue of evidenceRows.map((row) => row.id)) {
-      const relParams = { evidenceId: evidenceIdValue, batchId: input.batchId, active: false };
-      await this.query("MATCH (e:Evidence) WHERE e.id = $evidenceId SET e.active = $active, e.batchId = $batchId;", relParams);
-      for (const rel of ["OWNS_PACKAGE", "PRODUCES", "CONSUMES", "SHARES_CONTRACT", "CONTRACT_MENTIONS", "PARTICIPATES_IN", "WORKFLOW_STEP", "USES_PACKAGE", "DEPENDS_ON", "HAS_SPEC"]) {
-        await this.query(`MATCH ()-[r:${rel}]->() WHERE r.evidenceId = $evidenceId SET r.active = $active, r.batchId = $batchId;`, relParams);
+    const staleEvidenceIds = evidenceRows.map((row) => row.id);
+
+    if (staleFileIds.length === 0 && staleEvidenceIds.length === 0) return 0;
+
+    await withTransaction(this, async () => {
+      if (staleFileIds.length > 0) {
+        const nodeParams = { staleFileIds, batchId: input.batchId, staleIndexedAt: input.indexedAt, active: false };
+        const relParams = { staleFileIds, batchId: input.batchId, active: false };
+        await this.query("MATCH (f:File) WHERE f.id IN $staleFileIds SET f.active = $active, f.batchId = $batchId, f.indexedAt = $staleIndexedAt;", nodeParams);
+        await this.query("MATCH (c:Code) WHERE c.fileId IN $staleFileIds SET c.active = $active, c.batchId = $batchId, c.indexedAt = $staleIndexedAt;", nodeParams);
+        await this.query("MATCH (s:Section) WHERE s.fileId IN $staleFileIds SET s.active = $active, s.batchId = $batchId, s.indexedAt = $staleIndexedAt;", nodeParams);
+        await this.query("MATCH (e:Evidence) WHERE e.fileId IN $staleFileIds SET e.active = $active, e.batchId = $batchId, e.indexedAt = $staleIndexedAt;", nodeParams);
+        await this.query("MATCH (a:File)-[r:IMPORTS]->(b:File) WHERE a.id IN $staleFileIds OR b.id IN $staleFileIds SET r.active = $active, r.batchId = $batchId;", relParams);
+        await this.query("MATCH (a:Code)-[r:CALLS]->(b:Code) WHERE a.fileId IN $staleFileIds OR b.fileId IN $staleFileIds SET r.active = $active, r.batchId = $batchId;", relParams);
+        const relTypes = ALL_EVIDENCE_REL_TYPES.join("|");
+        await this.query(`MATCH ()-[r:${relTypes}]->(), (e:Evidence) WHERE r.evidenceId = e.id AND e.fileId IN $staleFileIds SET r.active = $active, r.batchId = $batchId;`, relParams);
+        await this.query("MATCH (cs:ContractSpec) WHERE cs.fileId IN $staleFileIds SET cs.active = $active, cs.batchId = $batchId;", relParams);
+        await this.query("MATCH (cs:ContractSpec)-[r:SEMANTIC_REL]->(cs2:ContractSpec) WHERE cs.fileId IN $staleFileIds SET r.active = $active, r.batchId = $batchId;", relParams);
+        await this.query("MATCH (cs2:ContractSpec)-[r:SEMANTIC_REL]->(cs:ContractSpec) WHERE cs.fileId IN $staleFileIds SET r.active = $active, r.batchId = $batchId;", relParams);
       }
-    }
-    if (input.activeFileIds.length === 0) {
-      await this.query(
-        "MATCH (a:Repo)-[r:DEPENDS_ON]->(b:Repo) WHERE a.id = $repoId OR b.id = $repoId SET r.active = $active, r.batchId = $batchId;",
-        { repoId: input.repoId, batchId: input.batchId, active: false }
-      );
-    }
+
+      if (staleEvidenceIds.length > 0) {
+        const relParams = { staleEvidenceIds, batchId: input.batchId, active: false };
+        await this.query("MATCH (e:Evidence) WHERE e.id IN $staleEvidenceIds SET e.active = $active, e.batchId = $batchId;", relParams);
+        const relTypes = ALL_EVIDENCE_REL_TYPES.join("|");
+        await this.query(`MATCH ()-[r:${relTypes}]->() WHERE r.evidenceId IN $staleEvidenceIds SET r.active = $active, r.batchId = $batchId;`, relParams);
+      }
+
+      if (input.activeFileIds.length === 0) {
+        await this.query(
+          "MATCH (a:Repo)-[r:DEPENDS_ON]->(b:Repo) WHERE a.id = $repoId OR b.id = $repoId SET r.active = $active, r.batchId = $batchId;",
+          { repoId: input.repoId, batchId: input.batchId, active: false }
+        );
+      }
+    });
+    // Return only the file count — the IndexState field is named "filesStale".
     return staleFileIds.length;
   }
 
@@ -675,14 +796,16 @@ export class KuzuGraphDB implements GraphDB {
 
   async rejectEvidence(input: { evidenceId: string; reason: string }): Promise<void> {
     const createdAt = new Date().toISOString();
-    await this.query(
-      "MERGE (f:RelationFeedback {id: $id}) ON CREATE SET f.evidenceId=$evidenceId, f.action=$action, f.reason=$reason, f.createdAt=$createdAt ON MATCH SET f.action=$action, f.reason=$reason, f.createdAt=$createdAt;",
-      { id: `feedback:${input.evidenceId}:reject`, evidenceId: input.evidenceId, action: "reject", reason: input.reason, createdAt }
-    );
-    await this.query("MATCH (e:Evidence) WHERE e.id = $evidenceId SET e.active = false;", { evidenceId: input.evidenceId });
-    for (const rel of ["OWNS_PACKAGE", "PRODUCES", "CONSUMES", "SHARES_CONTRACT", "CONTRACT_MENTIONS", "PARTICIPATES_IN", "WORKFLOW_STEP", "USES_PACKAGE", "DEPENDS_ON"]) {
-      await this.query(`MATCH ()-[r:${rel}]->() WHERE r.evidenceId = $evidenceId SET r.active = false;`, { evidenceId: input.evidenceId });
-    }
+    await withTransaction(this, async () => {
+      await this.query(
+        "MERGE (f:RelationFeedback {id: $id}) ON CREATE SET f.evidenceId=$evidenceId, f.action=$action, f.reason=$reason, f.createdAt=$createdAt ON MATCH SET f.action=$action, f.reason=$reason, f.createdAt=$createdAt;",
+        { id: `feedback:${input.evidenceId}:reject`, evidenceId: input.evidenceId, action: "reject", reason: input.reason, createdAt }
+      );
+      await this.query("MATCH (e:Evidence) WHERE e.id = $evidenceId SET e.active = false;", { evidenceId: input.evidenceId });
+      for (const rel of REJECT_EVIDENCE_REL_TYPES) {
+        await this.query(`MATCH ()-[r:${rel}]->() WHERE r.evidenceId = $evidenceId SET r.active = false;`, { evidenceId: input.evidenceId });
+      }
+    });
   }
 
   async upsertAliasOverride(input: { alias: string; targetRepoId: string; reason: string }): Promise<void> {

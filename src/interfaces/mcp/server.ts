@@ -246,16 +246,31 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   const logMcpCall = async (type: "tool" | "resource" | "prompt", name: string, args: any) => {
     if (!client.getConfig().mcp.logCalls) return;
     const timestamp = new Date().toISOString();
-    const message = `[${timestamp}] [MCP Call] Type: ${type}, Name: ${name}, Args: ${JSON.stringify(args)}\n`;
+    const sanitizedType = String(type).replace(/[\r\n]/g, " ");
+    const sanitizedName = String(name).replace(/[\r\n]/g, " ");
+    const serializedArgs = JSON.stringify(args).replace(/[\r\n]/g, " ");
+    const message = `[${timestamp}] [MCP Call] Type: ${sanitizedType}, Name: ${sanitizedName}, Args: ${serializedArgs}\n`;
 
     // Write to stderr so AI Client logs capture it
     process.stderr.write(message);
 
-    // Append to local log file
+    // Append to local log file with size-based rotation (max 5 MB)
     try {
       const logsDir = path.resolve(cwd, BRAND_PATHS.logs);
       await fs.mkdir(logsDir, { recursive: true });
-      await fs.appendFile(path.join(logsDir, "mcp.log"), message, "utf8");
+      const logFilePath = path.join(logsDir, "mcp.log");
+      try {
+        const stat = await fs.stat(logFilePath);
+        if (stat.size > 5242880) {
+          const backupPath = path.join(logsDir, "mcp.log.1");
+          try {
+            await fs.rename(logFilePath, backupPath);
+          } catch {
+            // Keep appending to avoid data loss if rename fails
+          }
+        }
+      } catch {}
+      await fs.appendFile(logFilePath, message, "utf8");
     } catch (e) {
       process.stderr.write(`[MCP Error] Failed to write call log to file: ${e instanceof Error ? e.message : String(e)}\n`);
     }
@@ -349,10 +364,10 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
       description: "List cross-repository dependencies and their evidence in the workspace",
       inputSchema: {
         strength: z.enum(["strong", "weak"]).optional().describe("Filter dependencies by strength (strong: package/import/api, weak: event/shared-contract)"),
-        type: z.string().optional().describe("Filter by dependency type (package, import, api, event, shared-contract)"),
-        limit: z.number().optional().describe("Maximum number of dependencies to retrieve"),
-        repo: z.string().optional().describe("Filter dependencies involving a specific repository"),
-        target: z.string().optional().describe("Filter dependencies targeting a specific repository (requires repo)"),
+        type: z.string().min(1).max(256).optional().describe("Filter by dependency type (package, import, api, event, shared-contract)"),
+        limit: z.number().int().min(1).max(1000).optional().describe("Maximum number of dependencies to retrieve"),
+        repo: z.string().min(1).max(256).optional().describe("Filter dependencies involving a specific repository"),
+        target: z.string().min(1).max(256).optional().describe("Filter dependencies targeting a specific repository (requires repo)"),
         direction: z.enum(["outgoing", "incoming"]).optional().describe("Direction: outgoing (repo as consumer) or incoming (repo as producer)"),
       },
     },
@@ -371,9 +386,9 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
     {
       description: "List recognized contracts and their producer/consumer/shares counts",
       inputSchema: {
-        kind: z.string().optional().describe("Filter by contract kind (package, api, event, dto, schema, enum, config)"),
-        limit: z.number().optional().describe("Maximum number of contracts to retrieve"),
-        repo: z.string().optional().describe("Filter contracts involving a specific repository name"),
+        kind: z.string().min(1).max(256).optional().describe("Filter by contract kind (package, api, event, dto, schema, enum, config)"),
+        limit: z.number().int().min(1).max(1000).optional().describe("Maximum number of contracts to retrieve"),
+        repo: z.string().min(1).max(256).optional().describe("Filter contracts involving a specific repository name"),
         direction: z.enum(["outgoing", "incoming"]).optional().describe("Direction: outgoing (repo as producer) or incoming (repo as consumer). Requires repo."),
       },
     },
@@ -392,8 +407,8 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
     {
       description: "Before editing an API, event, schema, or cross-repo symbol, check what your change will break. Evaluates the downstream blast radius of changing a code symbol or contract and rates each impact (breaking/risky/compatible) with file/line evidence. Pass `change` in '<changeType>:<detail>' format (e.g. 'field-removed:couponCode') for structured, severity-rated analysis; omit it for a broad symbol/entity impact survey.",
       inputSchema: {
-        target: z.string().describe("The target symbol, entity, or contract to analyze (e.g. 'OrderCreatedEvent', 'event:OrderCreatedEvent', or 'schema:CreateOrderRequest')"),
-        change: z.string().optional().describe("Optional proposed change in '<changeType>:<detail>' format. Change types: field-added, field-removed, field-type-changed, endpoint-removed, endpoint-renamed, endpoint-schema-change, topic-removed, topic-renamed, event-payload-change, rpc-removed, rpc-renamed, rpc-signature-change. Example: 'field-removed:couponCode'"),
+        target: z.string().min(1).max(512).describe("The target symbol, entity, or contract to analyze (e.g. 'OrderCreatedEvent', 'event:OrderCreatedEvent', or 'schema:CreateOrderRequest')"),
+        change: z.string().min(1).max(512).optional().describe("Optional proposed change in '<changeType>:<detail>' format. Change types: field-added, field-removed, field-type-changed, endpoint-removed, endpoint-renamed, endpoint-schema-change, topic-removed, topic-renamed, event-payload-change, rpc-removed, rpc-renamed, rpc-signature-change. Example: 'field-removed:couponCode'"),
       },
     },
     async ({ target, change }) => {
@@ -438,7 +453,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
     {
       description: "Retrieve structured codebase context (matching code symbols, markdown sections, contracts, dependencies, semantic matches, and call edges) for a query",
       inputSchema: {
-        question: z.string().describe("The question to ask (e.g. 'Which code is involved in order creation?')"),
+        question: z.string().min(1).max(1024).describe("The question to ask (e.g. 'Which code is involved in order creation?')"),
       },
     },
     async ({ question }) => {
@@ -467,11 +482,16 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
       inputSchema: {
         target: z
           .string()
+          .min(1)
+          .max(512)
           .optional()
           .describe("Natural contract identifier, e.g. \"http POST /orders\", \"event OrderCreated\", \"schema CreateOrderRequest\""),
-        specId: z.string().optional().describe("Internal ContractSpec ID (single-hop mode)"),
+        specId: z.string().min(1).max(256).optional().describe("Internal ContractSpec ID (single-hop mode)"),
         maxHops: z
           .number()
+          .int()
+          .min(1)
+          .max(20)
           .optional()
           .describe("Max hops per direction for target mode (default 3)"),
         direction: z

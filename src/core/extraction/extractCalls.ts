@@ -53,10 +53,9 @@ export function extractCallsFromTreeSitter(
   const matches = activeQuery.matches(tree.rootNode);
   const calls: CallRef[] = [];
 
+  const sortedSymbols = [...symbols].sort((a, b) => (a.endLine - a.startLine) - (b.endLine - b.startLine));
   const findCaller = (line: number): string | undefined => {
-    const containing = symbols
-      .filter((symbol) => symbol.startLine <= line && symbol.endLine >= line)
-      .sort((a, b) => (a.endLine - a.startLine) - (b.endLine - b.startLine))[0];
+    const containing = sortedSymbols.find((symbol) => symbol.startLine <= line && symbol.endLine >= line);
     return containing?.id;
   };
 

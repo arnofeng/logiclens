@@ -139,7 +139,22 @@ export function extractImportsFromTreeSitter(
     if (importNode && moduleText) {
       if (!importsMap.has(importNode)) {
         if (language === "java") {
-          moduleText = rawText.replace(/^import\s+(?:static\s+)?/, "").replace(/;$/, "").trim();
+          moduleText = rawText.replace(/^import\s+/, "").replace(/;$/, "").trim();
+          const isStatic = /^static\s+/.test(moduleText);
+          moduleText = moduleText.replace(/^static\s+/, "");
+          if (isStatic) {
+            if (moduleText.endsWith(".*")) {
+              moduleText = moduleText.slice(0, -2);
+            } else {
+              const lastDot = moduleText.lastIndexOf(".");
+              if (lastDot !== -1) {
+                moduleText = moduleText.substring(0, lastDot);
+              }
+            }
+            if (moduleText.endsWith(".")) {
+              moduleText = moduleText.slice(0, -1);
+            }
+          }
         }
         importsMap.set(importNode, {
           fileId,

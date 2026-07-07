@@ -300,6 +300,7 @@ export function traceSemanticGraph(
     const adj = dir === "outgoing" ? outAdj : inAdj;
     const role: SemanticTraceNodeRole = dir === "outgoing" ? "downstream" : "upstream";
     let frontier = new Set(targetIds);
+    const visited = new Set(targetIds);
 
     for (let hop = 1; hop <= maxHops; hop++) {
       const next = new Set<string>();
@@ -323,10 +324,12 @@ export function traceSemanticGraph(
               direction: dir
             });
           }
-          if (!nodeHop.has(otherId)) {
-            nodeHop.set(otherId, hop);
-            // Don't overwrite a "target" role if reached again.
-            if (!nodeRole.has(otherId)) nodeRole.set(otherId, role);
+          if (!visited.has(otherId)) {
+            visited.add(otherId);
+            if (!nodeRole.has(otherId)) {
+              nodeHop.set(otherId, hop);
+              nodeRole.set(otherId, role);
+            }
             next.add(otherId);
           }
         }

@@ -19,8 +19,10 @@ import {
   type ContractTraceRow,
   type EntityTraceRow,
   type UnresolvedEvidenceRow,
-  type CodeSearchRow
+  type CodeSearchRow,
+  type SectionSearchRow
 } from "../../core/graph-model/queries.js";
+import type { EdgeRow } from "../../core/graph-model/subgraph.js";
 import type { SemanticImpactReport } from "../../core/contracts/impact/semanticImpact.js";
 import { retrieveForQuestion, type RetrievalResult } from "../../features/ask/retrieve.js";
 import { answerQuestion } from "../../features/ask/answer.js";
@@ -48,9 +50,9 @@ export type ImpactResult = {
   semanticImpact?: SemanticImpactReport;
   contractTrace: ContractTraceRow[];
   entityTrace: EntityTraceRow[];
-  seeds: any[];
-  edges: any[];
-  sections: any[];
+  seeds: CodeSearchRow[];
+  edges: EdgeRow[];
+  sections: SectionSearchRow[];
   recommendedFiles: string[];
 };
 
@@ -461,41 +463,92 @@ export class AppClient {
     maxHops?: number;
   }): Promise<import("../../core/contracts/impact/types.js").ImpactReport> {
     const db = await this.getDb();
-    const { analyzeImpactFromDB } = await import("../../core/contracts/impact/impactEngine.js");
+    const { analyzeImpactFromDB, traverseImpactSteps, findTargetSpecs } = await import("../../core/contracts/impact/impactEngine.js");
+    const { selectImpactRootIds } = await import("../../core/contracts/semanticRelations.js");
+    const { rowToReadableContractSpec, rowToSemanticRel, SPEC_RETURN, SEMANTIC_REL_RETURN } = await import("../../core/contracts/specRows.js");
+    const { normalizeSemanticTarget } = await import("../../core/contracts/targetNormalization.js");
+    const { isKnownContractSpecNode } = await import("../../core/parsing/types.js");
 
-    // Resolve file paths for field-level search.  fileId format is
-    // "file:<repoName>:<relativePath>"; we map repoName → disk path via config
-    // or fall back to <cwd>/<repoName>.
+    // 1. Load all specs and relations from the DB (just like analyzeImpactFromDB does)
+    const specRows = await db.query<any>(
+      `MATCH (s:ContractSpec)
+       WHERE (s.active IS NULL OR s.active = true)
+       RETURN ${SPEC_RETURN}`
+    );
+    const relRows = await db.query<any>(
+      `MATCH (a:ContractSpec)-[r:SEMANTIC_REL]->(b:ContractSpec)
+       WHERE (r.active IS NULL OR r.active = true)
+       RETURN ${SEMANTIC_REL_RETURN}`
+    );
+
+    const specs = specRows.map(rowToReadableContractSpec);
+    const relations = relRows.map(rowToSemanticRel);
+
+    const specMap = new Map(specs.map((s) => [s.id, s]));
+    const target = changeIntent.target;
+    const change = {
+      target,
+      changeType: changeIntent.changeType as any,
+      detail: changeIntent.detail
+    };
+
+    // 2. Identify target specs
+    const normalizedTarget = normalizeSemanticTarget(target);
+    const knownSpecs = specs.filter(isKnownContractSpecNode);
+    const targetSpecs = findTargetSpecs(normalizedTarget, knownSpecs);
+
+    // 3. Find files to read asynchronously
+    const filesToRead = new Set<string>(); // "repoId:fileId"
+    const fileIdToParams = new Map<string, { repoId: string; fileId: string }>();
+
+    if (targetSpecs.length > 0) {
+      const targetSpecIds = new Set(targetSpecs.map((s) => s.id));
+      const rootSpecIds = selectImpactRootIds(targetSpecIds, relations);
+      const { steps: pathSteps } = traverseImpactSteps(rootSpecIds, specs, relations, changeIntent.maxHops ?? 3);
+
+      const isSchemaChange = targetSpecs.some((s) => s.specKind === "schema");
+      if (isSchemaChange && change.detail) {
+        for (const step of pathSteps) {
+          const impactedSpec = specMap.get(step.impactedSpecId);
+          if (impactedSpec && !targetSpecIds.has(step.impactedSpecId) && impactedSpec.fileId) {
+            const key = `${impactedSpec.repoId}:${impactedSpec.fileId}`;
+            filesToRead.add(key);
+            fileIdToParams.set(key, { repoId: impactedSpec.repoId, fileId: impactedSpec.fileId });
+          }
+        }
+      }
+    }
+
+    // 4. Pre-read files asynchronously
     const repoPaths = new Map<string, string>();
     for (const repo of this.config.repos ?? []) {
       if (repo.name) repoPaths.set(repo.name, repo.path ?? path.join(this.cwd, repo.name));
     }
 
-    const readFile = (repoName: string, fileId: string): string | undefined => {
-      // fileId: "file:repoName:relative/path"
+    const fileContents = new Map<string, string>();
+    const readPromises = Array.from(filesToRead).map(async (key) => {
+      const { repoId, fileId } = fileIdToParams.get(key)!;
       const parts = fileId.split(":");
-      const fRepoName = parts[1] ?? repoName;
+      const fRepoName = parts[1] ?? repoId;
       const relativePath = parts.slice(2).join(":");
-      if (!relativePath) return undefined;
+      if (!relativePath) return;
 
       const repoPath = repoPaths.get(fRepoName) ?? path.join(this.cwd, fRepoName);
       try {
-        return fs.readFileSync(path.join(repoPath, relativePath), "utf-8");
-      } catch {
-        return undefined;
-      }
+        const content = await fs.promises.readFile(path.join(repoPath, relativePath), "utf-8");
+        fileContents.set(key, content);
+      } catch {}
+    });
+    await Promise.all(readPromises);
+
+    const readFile = (repoId: string, fileId: string): string | undefined => {
+      return fileContents.get(`${repoId}:${fileId}`);
     };
 
-    const report = await analyzeImpactFromDB(
-      {
-        target: changeIntent.target,
-        changeType: changeIntent.changeType as any,
-        detail: changeIntent.detail,
-      },
-      db,
-      { readFile, maxHops: changeIntent.maxHops }
-    );
-    return report;
+    return analyzeImpactFromDB(change, db, {
+      maxHops: changeIntent.maxHops,
+      readFile
+    });
   }
 
   async semanticImpact(

@@ -34,7 +34,10 @@ export type ConfidenceRule =
   | "exact-graphql-match"
   | "probable-regex-route"
   | "probable-grpc-package-unspecified"
-  | "probable-grpc-package-mismatch";
+  | "probable-grpc-package-mismatch"
+  | "exact-dubbo-match"
+  | "probable-dubbo-group-version-unspecified"
+  | "probable-dubbo-group-version-mismatch";
 
 export type ConfidenceBand = "exact" | "probable" | "heuristic";
 
@@ -76,7 +79,10 @@ const CONFIDENCE_BY_RULE: Record<ConfidenceRule, number> = {
   "exact-graphql-match": 0.95,
   "probable-regex-route": 0.85,
   "probable-grpc-package-unspecified": 0.9,
-  "probable-grpc-package-mismatch": 0.8
+  "probable-grpc-package-mismatch": 0.8,
+  "exact-dubbo-match": 0.95,
+  "probable-dubbo-group-version-unspecified": 0.9,
+  "probable-dubbo-group-version-mismatch": 0.8
 };
 
 export function confidenceFor(rule: ConfidenceRule): number {

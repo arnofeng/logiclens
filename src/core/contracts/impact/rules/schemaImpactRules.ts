@@ -96,7 +96,7 @@ export function assessSchemaFieldChange(
   if (options.readFile && dependentSpec.fileId) {
     const fileContent = options.readFile(dependentSpec.repoId, dependentSpec.fileId);
     if (fileContent) {
-      const refs = findFieldReferences(fileContent, fieldName);
+      const refs = findFieldReferences(fileContent, fieldName, dependentSpec.fileId);
       if (refs.length > 0) {
         // Produce per-reference impact items
         for (const ref of refs) {

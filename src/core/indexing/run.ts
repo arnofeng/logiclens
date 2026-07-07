@@ -56,8 +56,19 @@ export async function runIndexing(
     }, (repoConfig) => `repo:${repoConfig.name}`);
     const failedJobs = jobs.filter((job) => job.status === "failed");
     if (failedJobs.length > 0) {
-      const details = failedJobs.map((job) => `${job.id}: ${job.error ?? "unknown error"}`).join("; ");
-      throw new Error(`Indexing failed for ${details}`);
+      // When concurrent per-repo indexing has partial failures, we do NOT
+      // rollback the successful repos.  markRepoArtifactsStale has already
+      // reassigned old artifacts to the current batchId, so a batch-scoped
+      // cleanup would destroy pre-existing data alongside the new writes.
+      // Instead we surface exactly which repos succeeded and which failed
+      // so the operator can decide whether to re-run or clean up.
+      const succeededRepos = indexedRepoIds.join(", ") || "(none)";
+      const failedDetails = failedJobs.map((job) => `${job.id}: ${job.error ?? "unknown error"}`).join("; ");
+      throw new Error(
+        `Indexing partially failed.\n` +
+        `  Succeeded repos: ${succeededRepos}\n` +
+        `  Failed: ${failedDetails}`
+      );
     }
     await runDependencyRebuild({ db, ctx, repoIds: options.repo ? indexedRepoIds : undefined });
   }

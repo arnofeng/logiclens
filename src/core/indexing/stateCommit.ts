@@ -1,5 +1,4 @@
-import type { GraphDB } from "../graph-model/db.js";
-import type { GraphWriteAtomicityMode, GraphWriteBatchStatus } from "../graph-model/db.js";
+import { type GraphDB, withTransaction, type GraphWriteAtomicityMode, type GraphWriteBatchStatus } from "../graph-model/db.js";
 import type { RepoNode } from "../parsing/types.js";
 import type { SummaryFailureState } from "./summaries.js";
 import { runIndexPhase } from "./phases.js";
@@ -48,19 +47,25 @@ export async function runIndexStateCommitPhase(input: {
       ? errorMessage(error)
       : combineIndexWarnings(formatSummaryWarning(summaryFailures), semanticWarning);
 
-    await db.upsertIndexState({
-      repoId: repo.id,
-      repoName: repo.name,
-      lastBatchId: batchId,
-      lastIndexedAt: indexedAt,
-      lastCommitSha: repo.commitSha,
-      filesScanned,
-      filesChanged,
-      filesStale,
-      status,
-      error: stateError,
-      graphWriteAtomicity,
-      graphWriteStatus
+    // Wrap in a transaction so the IndexState commit is atomic with respect
+    // to the graph writes that precede it. If the DB adapter supports
+    // transactions, this ensures the state row and the graph data are
+    // committed (or rolled back) as a unit.
+    await withTransaction(db, async () => {
+      await db.upsertIndexState({
+        repoId: repo.id,
+        repoName: repo.name,
+        lastBatchId: batchId,
+        lastIndexedAt: indexedAt,
+        lastCommitSha: repo.commitSha,
+        filesScanned,
+        filesChanged,
+        filesStale,
+        status,
+        error: stateError,
+        graphWriteAtomicity,
+        graphWriteStatus
+      });
     });
   });
 }

@@ -14,7 +14,7 @@ export function extractHeuristicEntitiesFromSection(section: DocSection): Entity
 
 function extractEntitiesFromText(text: string, description: string): EntityNode[] {
   const names = new Set<string>();
-  for (const match of text.matchAll(/\b[A-Z][A-Za-z0-9]*(?:Event|Command|Query|Service|Controller|Order|Payment|User)?\b/g)) {
+  for (const match of text.matchAll(/\b(?:[A-Z][A-Za-z0-9]*)?(?:Event|Command|Query|Service|Controller|Order|Payment|User)\b/g)) {
     const value = match[0];
     if (value.length > 2 && !stopWords.has(value)) names.add(value);
   }

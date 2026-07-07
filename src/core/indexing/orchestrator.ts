@@ -1,5 +1,5 @@
 import { createBatchId } from "../graph-model/batchWriter.js";
-import type { GraphDB } from "../graph-model/db.js";
+import { type GraphDB, withTransaction } from "../graph-model/db.js";
 import type { AppConfig } from "../../config/schema.js";
 import type { ParsedGraphFile, RepoNode } from "../parsing/types.js";
 import { toRepoNode } from "../workspace/repoRegistry.js";
@@ -27,6 +27,7 @@ export type IndexCounters = {
 
 export type IndexPathResult = IndexCounters & {
   repos: RepoNode[];
+  batchId: string;
 };
 
 type BatchCounts = Map<string, { scanned: number; changed: number }>;
@@ -283,29 +284,42 @@ export async function runBatchedFullIndex(input: {
 
       const summaryFailures = await runSummaryPipeline({ ctx, batchId, repos: batchRepos, parsedFiles, label: `batch ${batchNumber}` });
       logStage(ctx, `${batchLabel} scan/parse/summarize`, scanStarted);
-      const graphWrite = await runGraphPipeline({
-        db,
-        ctx,
-        batchId,
-        indexedAt,
-        repos: batchRepos,
-        parsedFiles,
-        label: `batch ${batchNumber}/${repoBatches.length}`,
-        stageLabel: batchLabel,
-        selection: selectGraphWriter({ writeMode: ctx.writeMode, batchedFull: true, graphIsEmpty: graphIsEmpty && batchIndex === 0, provider: ctx.config.graph.provider })
+      // Wrap graph writes + semantic + state commits in a single transaction
+      // so that a partial failure rolls back the entire batch atomically.
+      // Inner withTransaction calls inside graph/stale/state phases are
+      // nested no-ops (Neo4j + Kuzu both support txDepth now).
+      let graphWrite: GraphWriteResult | undefined;
+      let semanticWarning: string | undefined;
+      await withTransaction(db, async () => {
+        graphWrite = await runGraphPipeline({
+          db,
+          ctx,
+          batchId,
+          indexedAt,
+          repos: batchRepos,
+          parsedFiles,
+          label: `batch ${batchNumber}/${repoBatches.length}`,
+          stageLabel: batchLabel,
+          selection: selectGraphWriter({ writeMode: ctx.writeMode, batchedFull: true, graphIsEmpty: graphIsEmpty && batchIndex === 0, provider: ctx.config.graph.provider })
+        });
+        graphIsEmpty = false;
+        semanticWarning = await runSemanticPipeline({ ctx, batchId, repos: batchRepos, parsedFiles, label: `batch ${batchNumber}/${repoBatches.length}` });
+        await commitSucceededRepos({ db, repos: batchRepos, counts: perRepoCounts, batchId, indexedAt, summaryFailures, semanticWarning, graphWrite });
       });
-      graphIsEmpty = false;
-      const semanticWarning = await runSemanticPipeline({ ctx, batchId, repos: batchRepos, parsedFiles, label: `batch ${batchNumber}/${repoBatches.length}` });
-      await commitSucceededRepos({ db, repos: batchRepos, counts: perRepoCounts, batchId, indexedAt, summaryFailures, semanticWarning, graphWrite });
 
       log(ctx)(`${batchLabel} complete: repos=${batchRepos.length} filesScanned=${batchCounts.filesScanned} filesChanged=${batchCounts.filesChanged} duration=${((Date.now() - batchStarted) / 1000).toFixed(2)}s`);
     } catch (error) {
+      try {
+        await db.cleanupGraphWriteBatch(batchId);
+      } catch (err) {
+        warn(ctx)(`Cleanup failed for batch ${batchId}: ${err}`);
+      }
       await commitFailedRepos({ db, repos: batchRepos, counts: perRepoCounts, batchId, indexedAt, error });
       throw error;
     }
   }
 
-  return { filesScanned, filesChanged, repos: indexedRepos };
+  return { filesScanned, filesChanged, repos: indexedRepos, batchId: createBatchId("batched-full") };
 }
 
 export async function runFullCopyBulkIndex(input: {
@@ -329,22 +343,34 @@ export async function runFullCopyBulkIndex(input: {
 
     const summaryFailures = await runSummaryPipeline({ ctx, batchId, repos, parsedFiles, label: "all repos" });
     logStage(ctx, "Scan/parse/summarize", scanStarted);
-    const graphWrite = await runGraphPipeline({
-      db,
-      ctx,
-      batchId,
-      indexedAt,
-      repos,
-      parsedFiles,
-      label: "bulk-copy",
-      selection: selectGraphWriter({ writeMode: ctx.writeMode, fullCopyBulk: true, provider: ctx.config.graph.provider })
+    // Wrap graph writes + semantic + dependency rebuild + state commits
+    // in a single transaction so the entire bulk-copy run is atomic.
+    let graphWrite: GraphWriteResult | undefined;
+    let semanticWarning: string | undefined;
+    let rebuilt = 0;
+    await withTransaction(db, async () => {
+      graphWrite = await runGraphPipeline({
+        db,
+        ctx,
+        batchId,
+        indexedAt,
+        repos,
+        parsedFiles,
+        label: "bulk-copy",
+        selection: selectGraphWriter({ writeMode: ctx.writeMode, fullCopyBulk: true, provider: ctx.config.graph.provider })
+      });
+      semanticWarning = await runSemanticPipeline({ ctx, batchId, repos, parsedFiles, label: "all repos" });
+      rebuilt = await runRelationRebuildPhase({ db, batchId: createBatchId("deps"), log: log(ctx) });
+      logStage(ctx, `Dependency rebuild (${rebuilt} edges)`, Date.now());
+      await commitSucceededRepos({ db, repos, counts: perRepoCounts, batchId, indexedAt, summaryFailures, semanticWarning, graphWrite });
     });
-    const semanticWarning = await runSemanticPipeline({ ctx, batchId, repos, parsedFiles, label: "all repos" });
-    const rebuilt = await runRelationRebuildPhase({ db, batchId: createBatchId("deps"), log: log(ctx) });
-    logStage(ctx, `Dependency rebuild (${rebuilt} edges)`, Date.now());
-    await commitSucceededRepos({ db, repos, counts: perRepoCounts, batchId, indexedAt, summaryFailures, semanticWarning, graphWrite });
-    return { ...counts, repos };
+    return { ...counts, repos, batchId };
   } catch (error) {
+    try {
+      await db.cleanupGraphWriteBatch(batchId);
+    } catch (err) {
+      warn(ctx)(`Cleanup failed for batch ${batchId}: ${err}`);
+    }
     await commitFailedRepos({ db, repos, counts: perRepoCounts, batchId, indexedAt, error });
     throw error;
   }
@@ -362,6 +388,7 @@ export async function runPerRepoIndex(input: {
   const indexedAt = new Date().toISOString();
 
   try {
+    // Repo node is idempotent setup — safe outside the write transaction.
     await db.upsertRepo(repo);
     const scanStarted = Date.now();
     const scanParse = await scanAndParseRepo({
@@ -377,44 +404,59 @@ export async function runPerRepoIndex(input: {
     const summaryFailures = summaryFailuresByRepo.get(repo.id);
     logStage(ctx, `Scan/parse/summarize ${repo.name}`, scanStarted);
 
+    // Wrap graph writes + stale mark + state commit in a single transaction.
+    // Nested withTransaction calls inside graph/stale/state phases are no-ops
+    // because Neo4jGraphDB supports nested transactions via txDepth.
     let semanticWarning: string | undefined;
     let graphWrite: GraphWriteResult | undefined;
-    if (parsedFiles.length > 0) {
-      graphWrite = await runGraphPipeline({
+    let filesStale = 0;
+    await withTransaction(db, async () => {
+      if (parsedFiles.length > 0) {
+        graphWrite = await runGraphPipeline({
+          db,
+          ctx,
+          batchId,
+          indexedAt,
+          repos: [repo],
+          parsedFiles,
+          label: repo.name,
+          repoName: repo.name,
+          selection: selectGraphWriter({ writeMode: ctx.writeMode, changedOnly: options.changedOnly, provider: ctx.config.graph.provider })
+        });
+        semanticWarning = await runSemanticPipeline({ ctx, batchId, repos: [repo], parsedFiles, label: repo.name, repoName: repo.name });
+      }
+
+      const staleStarted = Date.now();
+      filesStale = await runStaleMarkPhase({ db, repo, activeFileIds: scanParse.activeFileIds, batchId, indexedAt });
+      logStage(ctx, `Stale mark ${repo.name}`, staleStarted);
+      await runIndexStateCommitPhase({
         db,
-        ctx,
+        repo,
         batchId,
         indexedAt,
-        repos: [repo],
-        parsedFiles,
-        label: repo.name,
-        repoName: repo.name,
-        selection: selectGraphWriter({ writeMode: ctx.writeMode, changedOnly: options.changedOnly, provider: ctx.config.graph.provider })
+        filesScanned: scanParse.filesScanned,
+        filesChanged: parsedFiles.length,
+        filesStale,
+        status: "succeeded",
+        summaryFailures,
+        semanticWarning,
+        graphWriteAtomicity: graphWrite?.atomicityMode,
+        graphWriteStatus: graphWrite?.journalStatus
       });
-      semanticWarning = await runSemanticPipeline({ ctx, batchId, repos: [repo], parsedFiles, label: repo.name, repoName: repo.name });
-    }
-
-    const staleStarted = Date.now();
-    const filesStale = await runStaleMarkPhase({ db, repo, activeFileIds: scanParse.activeFileIds, batchId, indexedAt });
-    logStage(ctx, `Stale mark ${repo.name}`, staleStarted);
-    await runIndexStateCommitPhase({
-      db,
-      repo,
-      batchId,
-      indexedAt,
-      filesScanned: scanParse.filesScanned,
-      filesChanged: parsedFiles.length,
-      filesStale,
-      status: "succeeded",
-      summaryFailures,
-      semanticWarning,
-      graphWriteAtomicity: graphWrite?.atomicityMode,
-      graphWriteStatus: graphWrite?.journalStatus
     });
 
-    return { filesScanned: scanParse.filesScanned, filesChanged: scanParse.filesChanged, repos: [repo] };
+    return { filesScanned: scanParse.filesScanned, filesChanged: scanParse.filesChanged, repos: [repo], batchId };
   } catch (error) {
+    // The outer withTransaction already rolled back graph writes.  Cleanup is
+    // best-effort: deactivate any data that may have been partially committed
+    // by adapters that don't support rollback (e.g. Kuzu).
+    try {
+      await db.cleanupGraphWriteBatch(batchId);
+    } catch (err) {
+      warn(ctx)(`Cleanup failed for batch ${batchId}: ${err}`);
+    }
     const graphWriteFailure = getGraphWriteFailureDetails(error);
+    // Record the failed state in a fresh transaction (the outer one was rolled back).
     await runIndexStateCommitPhase({
       db,
       repo,

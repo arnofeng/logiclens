@@ -121,7 +121,10 @@ function resolveGrpcSchemaRelations(
       const lookupKey = grpcSpec.package && !grpcSpec.requestType.includes(".")
         ? `${grpcSpec.package}.${grpcSpec.requestType}`
         : grpcSpec.requestType;
-      const schemaId = lookupSchemaId(schemaIndex, lookupKey, spec);
+      let schemaId = lookupSchemaId(schemaIndex, lookupKey, spec);
+      if (!schemaId && lookupKey !== grpcSpec.requestType) {
+        schemaId = lookupSchemaId(schemaIndex, grpcSpec.requestType, spec);
+      }
       if (schemaId) {
         const key = `${spec.id}:${schemaId}:REQUEST_SCHEMA`;
         if (!seen.has(key)) {
@@ -143,7 +146,10 @@ function resolveGrpcSchemaRelations(
       const lookupKey = grpcSpec.package && !grpcSpec.responseType.includes(".")
         ? `${grpcSpec.package}.${grpcSpec.responseType}`
         : grpcSpec.responseType;
-      const schemaId = lookupSchemaId(schemaIndex, lookupKey, spec);
+      let schemaId = lookupSchemaId(schemaIndex, lookupKey, spec);
+      if (!schemaId && lookupKey !== grpcSpec.responseType) {
+        schemaId = lookupSchemaId(schemaIndex, grpcSpec.responseType, spec);
+      }
       if (schemaId) {
         const key = `${spec.id}:${schemaId}:RESPONSE_SCHEMA`;
         if (!seen.has(key)) {
@@ -282,48 +288,54 @@ function resolvePendingSchemaRefs(
   const edges: SemanticRelationEdge[] = [];
   const seen = new Set<string>();
 
-  // Build lookup: contractId → specId (for resolving the `fromSpecId` side)
+  // Build lookup: contractId → specId[]
   const specIds = new Set(contractSpecs.map((spec) => spec.id));
-  const contractIdToSpecId = new Map<string, string>();
+  const contractIdToSpecIds = new Map<string, string[]>();
   for (const spec of contractSpecs) {
-    if (!contractIdToSpecId.has(spec.contractId)) {
-      contractIdToSpecId.set(spec.contractId, spec.id);
-    }
+    const list = contractIdToSpecIds.get(spec.contractId) ?? [];
+    list.push(spec.id);
+    contractIdToSpecIds.set(spec.contractId, list);
   }
 
   for (const rel of existingRelations) {
     if (!PENDING_SCHEMA_REF_KINDS.has(rel.kind)) continue;
     if (!rel.toSpecId.startsWith("schema-ref:")) continue;
 
-    let resolvedFromSpecId = specIds.has(rel.fromSpecId) ? rel.fromSpecId : undefined;
-    if (!resolvedFromSpecId) {
+    let resolvedFromSpecIds: string[] = [];
+    if (specIds.has(rel.fromSpecId)) {
+      resolvedFromSpecIds.push(rel.fromSpecId);
+    } else {
       const fromMatch = rel.fromSpecId.match(/^spec:(.+):pending$/);
-      if (!fromMatch) continue;
-      const fromContractId = fromMatch[1]!;
-      resolvedFromSpecId = contractIdToSpecId.get(fromContractId);
+      if (fromMatch) {
+        const fromContractId = fromMatch[1]!;
+        resolvedFromSpecIds = contractIdToSpecIds.get(fromContractId) ?? [];
+      }
     }
-    if (!resolvedFromSpecId) continue;
+    if (resolvedFromSpecIds.length === 0) continue;
 
     // Resolve toSpecId: strip `schema-ref:` prefix, look up schema name
     const baseTypeName = rel.toSpecId.slice("schema-ref:".length);
-    const fromSpec = contractSpecs.find((spec) => spec.id === resolvedFromSpecId);
-    const resolvedToSpecId = lookupSchemaId(schemaIndex, baseTypeName, fromSpec);
-    if (!resolvedToSpecId) continue;
 
-    // Skip self-references
-    if (resolvedFromSpecId === resolvedToSpecId) continue;
+    for (const resolvedFromSpecId of resolvedFromSpecIds) {
+      const fromSpec = contractSpecs.find((spec) => spec.id === resolvedFromSpecId);
+      const resolvedToSpecId = lookupSchemaId(schemaIndex, baseTypeName, fromSpec);
+      if (!resolvedToSpecId) continue;
 
-    const key = `${resolvedFromSpecId}:${resolvedToSpecId}:${rel.kind}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      edges.push({
-        fromSpecId: resolvedFromSpecId,
-        toSpecId: resolvedToSpecId,
-        kind: rel.kind,
-        evidenceId: rel.evidenceId,
-        reason: rel.reason,
-        confidence: rel.confidence
-      });
+      // Skip self-references
+      if (resolvedFromSpecId === resolvedToSpecId) continue;
+
+      const key = `${resolvedFromSpecId}:${resolvedToSpecId}:${rel.kind}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        edges.push({
+          fromSpecId: resolvedFromSpecId,
+          toSpecId: resolvedToSpecId,
+          kind: rel.kind,
+          evidenceId: rel.evidenceId,
+          reason: rel.reason,
+          confidence: rel.confidence
+        });
+      }
     }
   }
 

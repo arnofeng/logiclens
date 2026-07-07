@@ -123,12 +123,13 @@ export async function runIndexQueue<T>(
   }));
   const concurrency = Math.max(1, options.concurrency);
   let cursor = 0;
+  let hasFailed = false;
 
   async function runNext(): Promise<void> {
-    while (cursor < jobs.length) {
+    while (cursor < jobs.length && !hasFailed) {
       const job = jobs[cursor++]!;
       const maxAttempts = 1 + (options.retries ?? 0);
-      while (job.attempts < maxAttempts) {
+      while (job.attempts < maxAttempts && !hasFailed) {
         job.attempts += 1;
         job.status = "running";
         job.startedAt = new Date().toISOString();
@@ -142,6 +143,7 @@ export async function runIndexQueue<T>(
           if (job.attempts >= maxAttempts) {
             job.status = "failed";
             job.finishedAt = new Date().toISOString();
+            hasFailed = true;
             break;
           }
         }
@@ -150,5 +152,16 @@ export async function runIndexQueue<T>(
   }
 
   await Promise.all(Array.from({ length: Math.min(concurrency, jobs.length) }, () => runNext()));
+
+  if (hasFailed) {
+    for (const job of jobs) {
+      if (job.status === "pending") {
+        job.status = "failed";
+        job.error = "Aborted due to preceding failure";
+        job.finishedAt = new Date().toISOString();
+      }
+    }
+  }
+
   return jobs;
 }

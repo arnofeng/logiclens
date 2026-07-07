@@ -39,7 +39,8 @@ export function createVueParser(): LanguageParser {
  * Extracts all script blocks (e.g. <script> or <script setup>) from Vue SFC,
  * replacing all non-script block characters with spaces (except newlines, to preserve lines).
  */
-export function extractAndPadVueScripts(source: string): { scriptSource: string; isTypeScript: boolean } {
+export function extractAndPadVueScripts(sourceInput: string): { scriptSource: string; isTypeScript: boolean } {
+  const source = sourceInput.replace(/\r\n/g, "\n");
   let isTypeScript = false;
   const scriptRanges: Array<{ start: number; end: number }> = [];
 

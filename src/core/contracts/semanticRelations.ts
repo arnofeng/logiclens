@@ -8,6 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import type {
+  SemanticRelationEdge,
   SemanticRelationKind,
   RepoDependencyEdge
 } from "../parsing/types.js";
@@ -121,3 +122,14 @@ export const CONSUMER_TO_PRODUCER_KINDS: ReadonlySet<SemanticRelationKind> =
 /** Kinds that go from a schema to the endpoint/event/schema that uses it. */
 export const SCHEMA_TO_USE_KINDS: ReadonlySet<SemanticRelationKind> =
   deriveKinds("schema-to-use");
+
+export function selectImpactRootIds(matchedSpecIds: Set<string>, relations: SemanticRelationEdge[]): Set<string> {
+  const roots = new Set<string>();
+  for (const edge of relations) {
+    if (!matchedSpecIds.has(edge.fromSpecId) || !matchedSpecIds.has(edge.toSpecId)) continue;
+    const meta = SEMANTIC_REL_META[edge.kind];
+    if (!meta || (meta.category !== "consumer-to-producer" && meta.category !== "schema-to-use")) continue;
+    roots.add(meta.direction === "forward" ? edge.toSpecId : edge.fromSpecId);
+  }
+  return roots.size > 0 ? roots : matchedSpecIds;
+}

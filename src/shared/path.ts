@@ -5,7 +5,7 @@ export function toPosixPath(input: string): string {
 }
 
 export function normalizeName(input: string): string {
-  return input.trim().replace(/\\/g, "/").replace(/[^a-zA-Z0-9_.:-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase();
+  return input.trim().replace(/\\/g, "/").replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase();
 }
 
 export function repoId(name: string): string {
@@ -33,5 +33,5 @@ export function contractId(kind: string, key: string): string {
 }
 
 export function evidenceId(parts: string[]): string {
-  return `evidence:${normalizeName(parts.join(":"))}`;
+  return `evidence:${parts.map(normalizeName).join(":")}`;
 }

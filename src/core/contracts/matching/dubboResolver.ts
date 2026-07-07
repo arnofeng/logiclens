@@ -95,19 +95,19 @@ function classifyDubboMatch(
   if (groupVersion === "mismatch") {
     return {
       reason: `Dubbo method match with group/version mismatch: ${consumerName} -> ${producerName}`,
-      confidence: confidenceFor("probable-grpc-package-mismatch")
+      confidence: confidenceFor("probable-dubbo-group-version-mismatch")
     };
   }
   if (groupVersion === "partial") {
     return {
       reason: `Dubbo method match with group/version unspecified: ${consumerName} -> ${producerName}`,
-      confidence: confidenceFor("probable-grpc-package-unspecified")
+      confidence: confidenceFor("probable-dubbo-group-version-unspecified")
     };
   }
 
   return {
     reason: `Dubbo exact match: ${consumerName}`,
-    confidence: confidenceFor("exact-grpc-match")
+    confidence: confidenceFor("exact-dubbo-match")
   };
 }
 
