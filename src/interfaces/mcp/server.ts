@@ -118,6 +118,11 @@ export function buildFreshnessMetadata(input: {
   };
 }
 
+export function buildFreshnessNotice(metadata: FreshnessMetadata): string {
+  if (!metadata.stale) return "";
+  return `Freshness: stale (${metadata.reasons.join(", ")}). Call ${MCP_TOOLS.getWatchStatus} for full details.`;
+}
+
 function createCatchUpState(mode: CatchUpState["mode"], repos: string[]): CatchUpState {
   return {
     mode,
@@ -321,10 +326,11 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
           indexQueue: client.getIndexQueueStatus()
         });
 
-        if (metadata.stale) {
+        const notice = buildFreshnessNotice(metadata);
+        if (notice) {
           response.content.push({
             type: "text",
-            text: `${BRAND.displayName} freshness metadata:\n${JSON.stringify(metadata, null, 2)}`
+            text: notice
           });
         }
       }

@@ -6,7 +6,7 @@ import { shouldWatchRepo, shouldEnableWatcher, __resetWslCacheForTests } from ".
 import { FileMatcher, FileWatcher, WatchRepoIndex, planRecursiveWatchRoots } from "../src/features/watch/watcher.js";
 import { createClient } from "../src/index.js";
 import { defaultConfig, writeConfig } from "../src/config/loadConfig.js";
-import { buildFreshnessMetadata, buildFreshnessWarning } from "../src/interfaces/mcp/server.js";
+import { buildFreshnessMetadata, buildFreshnessNotice, buildFreshnessWarning } from "../src/interfaces/mcp/server.js";
 import { SingleProcessIndexQueue } from "../src/core/indexing/scheduler.js";
 import { BRAND, BRAND_PATHS } from "../src/shared/branding.js";
 
@@ -454,6 +454,49 @@ describe(`${BRAND.displayName} File Watcher Subsystem`, () => {
       expect(metadata.stale).toBe(true);
       expect(metadata.reasons).toEqual(expect.arrayContaining(["catch-up-running", "pending-file-changes", "index-queue-running"]));
       expect(metadata.indexQueue.runningJob?.source).toBe("watch");
+    });
+
+    it("summarizes stale freshness without embedding full metadata in tool responses", () => {
+      const metadata = buildFreshnessMetadata({
+        pending: [{
+          repoName: "service-a",
+          path: "src/OrderService.ts",
+          firstSeenMs: 1,
+          lastSeenMs: 2,
+          indexing: true
+        }],
+        watcherActive: true,
+        degradedReason: undefined,
+        catchUp: {
+          mode: "background",
+          running: true,
+          completed: false,
+          failed: false,
+          pendingRepos: ["service-a"],
+          completedRepos: [],
+          currentRepos: ["service-a"]
+        },
+        indexQueue: {
+          running: true,
+          runningJob: {
+            id: "index:1",
+            source: "watch",
+            label: "watch:service-a",
+            status: "running",
+            queuedAt: "2026-01-01T00:00:00.000Z"
+          },
+          pendingJobs: [],
+          completedJobs: 0,
+          failedJobs: 0
+        }
+      });
+
+      const notice = buildFreshnessNotice(metadata);
+      expect(notice).toContain("Freshness: stale");
+      expect(notice).toContain("logiclens_get_watch_status");
+      expect(notice).not.toContain("pendingFiles");
+      expect(notice).not.toContain("indexQueue");
+      expect(notice).not.toContain("src/OrderService.ts");
     });
   });
 });
