@@ -10,6 +10,7 @@ import {
   listDependencies,
   listContracts,
   listUnresolvedEvidence,
+  loadActiveSemanticGraph,
   traceContract,
   traceEntity,
   hasCodeSymbolMatch,
@@ -463,24 +464,11 @@ export class AppClient {
     const db = await this.getDb();
     const { analyzeImpactFromDB, traverseImpactSteps, findTargetSpecs } = await import("../../core/contracts/impact/impactEngine.js");
     const { selectImpactRootIds } = await import("../../core/contracts/semanticRelations.js");
-    const { rowToReadableContractSpec, rowToSemanticRel, SPEC_RETURN, SEMANTIC_REL_RETURN } = await import("../../core/contracts/specRows.js");
     const { normalizeSemanticTarget } = await import("../../core/contracts/targetNormalization.js");
     const { isKnownContractSpecNode } = await import("../../core/parsing/types.js");
 
-    // 1. Load all specs and relations from the DB (just like analyzeImpactFromDB does)
-    const specRows = await db.query<any>(
-      `MATCH (s:ContractSpec)
-       WHERE (s.active IS NULL OR s.active = true)
-       RETURN ${SPEC_RETURN}`
-    );
-    const relRows = await db.query<any>(
-      `MATCH (a:ContractSpec)-[r:SEMANTIC_REL]->(b:ContractSpec)
-       WHERE (r.active IS NULL OR r.active = true)
-       RETURN ${SEMANTIC_REL_RETURN}`
-    );
-
-    const specs = specRows.map(rowToReadableContractSpec);
-    const relations = relRows.map(rowToSemanticRel);
+    // 1. Load all specs and relations from the shared graph query layer.
+    const { specs, relations } = await loadActiveSemanticGraph(db);
 
     const specMap = new Map(specs.map((s) => [s.id, s]));
     const target = changeIntent.target;

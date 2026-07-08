@@ -29,14 +29,7 @@ import {
 } from "./apiPath.js";
 import { canonicalEventContractKey } from "./event.js";
 import type { GraphDB } from "../graph-model/db.js";
-import {
-  SEMANTIC_REL_RETURN,
-  SPEC_RETURN,
-  rowToReadableContractSpec,
-  rowToSemanticRel,
-  type SemanticRelRow,
-  type SpecRow
-} from "./specRows.js";
+import { loadActiveSemanticGraph } from "../graph-model/queries.js";
 import {
   inferInternalCallEdges,
   type TraceRelationKind
@@ -441,20 +434,7 @@ export async function traceSemanticGraphFromDB(
   db: GraphDB,
   options: SemanticTraceOptions = {}
 ): Promise<SemanticTraceGraph> {
-  const specRows = await db.query<SpecRow>(
-    `MATCH (s:ContractSpec)
-     WHERE (s.active IS NULL OR s.active = true)
-     RETURN ${SPEC_RETURN}`
-  );
-
-  const relRows = await db.query<SemanticRelRow>(
-    `MATCH (a:ContractSpec)-[r:SEMANTIC_REL]->(b:ContractSpec)
-     WHERE (r.active IS NULL OR r.active = true)
-     RETURN ${SEMANTIC_REL_RETURN}`
-  );
-
-  const specs = specRows.map(rowToReadableContractSpec);
-  const relations = relRows.map(rowToSemanticRel);
+  const { specs, relations } = await loadActiveSemanticGraph(db);
 
   return traceSemanticGraph(target, specs, relations, options);
 }

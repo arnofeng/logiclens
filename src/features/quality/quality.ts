@@ -1,4 +1,5 @@
 import type { GraphDB } from "../../core/graph-model/db.js";
+import { listLowConfidenceRelations, listProducerContracts } from "../../core/graph-model/queries.js";
 import { PROBABLE_CONFIDENCE_THRESHOLD } from "../../shared/confidence.js";
 
 export type LowConfidenceRelation = {
@@ -29,26 +30,8 @@ export type QualityAudit = {
 export async function auditRelationQuality(db: GraphDB, options: { minConfidence?: number; limit?: number } = {}): Promise<QualityAudit> {
   const minConfidence = options.minConfidence ?? PROBABLE_CONFIDENCE_THRESHOLD;
   const limit = options.limit ?? 50;
-  const lowConfidence: LowConfidenceRelation[] = [];
-  for (const [rel, role] of [["PRODUCES", "producer"], ["CONSUMES", "consumer"], ["SHARES_CONTRACT", "shared"], ["OWNS_PACKAGE", "owner"]] as const) {
-    lowConfidence.push(...await db.query<LowConfidenceRelation>(
-      `MATCH (r:Repo)-[edge:${rel}]->(c:Contract), (e:Evidence)
-       WHERE edge.evidenceId = e.id
-         AND (edge.active IS NULL OR edge.active = true)
-         AND (e.active IS NULL OR e.active = true)
-         AND edge.confidence < $minConfidence
-       RETURN e.id AS evidenceId, r.name AS repoName, c.kind AS contractKind, c.key AS contractKey,
-              '${role}' AS role, edge.confidence AS confidence, e.filePath AS filePath,
-              e.line AS line, e.rule AS rule, e.raw AS raw
-       LIMIT $limit;`,
-      { minConfidence, limit }
-    ));
-  }
-  const producerRows = await db.query<{ contractKind: string; contractKey: string; repoName: string }>(
-    `MATCH (r:Repo)-[p:PRODUCES]->(c:Contract)
-     WHERE (p.active IS NULL OR p.active = true)
-     RETURN c.kind AS contractKind, c.key AS contractKey, r.name AS repoName;`
-  );
+  const lowConfidence = await listLowConfidenceRelations(db, { minConfidence, limit });
+  const producerRows = await listProducerContracts(db);
   const producerGroups = new Map<string, Set<string>>();
   for (const row of producerRows) {
     const key = `${row.contractKind}:${row.contractKey}`;

@@ -5,6 +5,7 @@ import type {
 } from "../../parsing/types.js";
 import { isKnownContractSpecNode } from "../../parsing/types.js";
 import type { GraphDB } from "../../graph-model/db.js";
+import { loadActiveSemanticGraph } from "../../graph-model/queries.js";
 import { SEMANTIC_REL_META, selectImpactRootIds } from "../semanticRelations.js";
 import { findTargetSpecs } from "./impactEngine.js";
 import { normalizeSemanticTarget } from "../targetNormalization.js";
@@ -14,14 +15,6 @@ import {
   implementationBridgeStepsFromEdge,
   type TraceRelationKind
 } from "../inferredBridge.js";
-import {
-  SEMANTIC_REL_RETURN,
-  SPEC_RETURN,
-  rowToReadableContractSpec,
-  rowToSemanticRel,
-  type SemanticRelRow,
-  type SpecRow
-} from "../specRows.js";
 
 export type SemanticImpactNode = {
   specId: string;
@@ -318,22 +311,12 @@ export async function analyzeSemanticImpactFromDB(
   db: GraphDB,
   options: SemanticImpactOptions = {}
 ): Promise<SemanticImpactReport | null> {
-  const specRows = await db.query<SpecRow>(
-    `MATCH (s:ContractSpec)
-     WHERE (s.active IS NULL OR s.active = true)
-     RETURN ${SPEC_RETURN}`
-  );
-
-  const relRows = await db.query<SemanticRelRow>(
-    `MATCH (a:ContractSpec)-[r:SEMANTIC_REL]->(b:ContractSpec)
-     WHERE (r.active IS NULL OR r.active = true)
-     RETURN ${SEMANTIC_REL_RETURN}`
-  );
+  const { specs, relations } = await loadActiveSemanticGraph(db);
 
   return analyzeSemanticImpact(
     target,
-    specRows.map(rowToReadableContractSpec),
-    relRows.map(rowToSemanticRel),
+    specs,
+    relations,
     options
   );
 }

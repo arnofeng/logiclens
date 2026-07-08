@@ -1,22 +1,12 @@
 import type { GraphDB } from "../../graph-model/db.js";
+import { loadActiveRepoDependencies, loadActiveSemanticGraph } from "../../graph-model/queries.js";
 import type {
   ContractSpecNode,
   RepoDependencyEdge,
   SemanticRelationEdge
 } from "../../parsing/types.js";
-import { isKnownSpecKind } from "../../parsing/types.js";
+import { isKnownContractSpecNode } from "../../parsing/types.js";
 import { materializeDependenciesFromSemanticRelations } from "../extraction/crossRepoContracts.js";
-import {
-  DEP_EDGE_RETURN,
-  SEMANTIC_REL_RETURN,
-  SPEC_RETURN,
-  rowToContractSpec,
-  rowToDepEdge,
-  rowToSemanticRel,
-  type DepEdgeRow,
-  type SemanticRelRow,
-  type SpecRow
-} from "../specRows.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -209,30 +199,11 @@ export function evaluatePrecisionRecallInMemory(
  * This is suitable for runtime calibration against an already-indexed workspace.
  */
 export async function evaluatePrecisionRecall(db: GraphDB): Promise<PrecisionRecallReport> {
-  // Load all active SEMANTIC_REL edges
-  const semanticRows = await db.query<SemanticRelRow>(
-    `MATCH (a:ContractSpec)-[r:SEMANTIC_REL]->(b:ContractSpec)
-     WHERE (r.active IS NULL OR r.active = true)
-     RETURN ${SEMANTIC_REL_RETURN}`
-  );
-
-  // Load all active ContractSpec nodes
-  const specRows = await db.query<SpecRow>(
-    `MATCH (s:ContractSpec)
-     WHERE (s.active IS NULL OR s.active = true)
-     RETURN ${SPEC_RETURN}`
-  );
-
-  // Load all active DEPENDS_ON edges
-  const depRows = await db.query<DepEdgeRow>(
-    `MATCH (from:Repo)-[d:DEPENDS_ON]->(to:Repo)
-     WHERE (d.active IS NULL OR d.active = true)
-     RETURN ${DEP_EDGE_RETURN}`
-  );
-
-  const semanticRels = semanticRows.map(rowToSemanticRel);
-  const specs = specRows.filter((row) => isKnownSpecKind(row.specKind)).map(rowToContractSpec);
-  const legacyDeps = depRows.map(rowToDepEdge);
+  const [{ specs: allSpecs, relations: semanticRels }, legacyDeps] = await Promise.all([
+    loadActiveSemanticGraph(db),
+    loadActiveRepoDependencies(db)
+  ]);
+  const specs = allSpecs.filter(isKnownContractSpecNode);
 
   return evaluatePrecisionRecallInMemory(semanticRels, specs, legacyDeps);
 }

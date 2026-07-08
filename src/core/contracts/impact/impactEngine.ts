@@ -474,14 +474,7 @@ function bySeverityThenRepo(a: ImpactItem, b: ImpactItem): number {
 // ---------------------------------------------------------------------------
 
 import type { GraphDB } from "../../graph-model/db.js";
-import {
-  SEMANTIC_REL_RETURN,
-  SPEC_RETURN,
-  rowToReadableContractSpec,
-  rowToSemanticRel,
-  type SemanticRelRow,
-  type SpecRow
-} from "../specRows.js";
+import { loadActiveSemanticGraph } from "../../graph-model/queries.js";
 
 /**
  * Analyzes impact by querying the graph database for ContractSpec nodes and
@@ -492,20 +485,7 @@ export async function analyzeImpactFromDB(
   db: GraphDB,
   options: ImpactAnalysisOptions = {}
 ): Promise<ImpactReport> {
-  const specRows = await db.query<SpecRow>(
-    `MATCH (s:ContractSpec)
-     WHERE (s.active IS NULL OR s.active = true)
-     RETURN ${SPEC_RETURN}`
-  );
-
-  const relRows = await db.query<SemanticRelRow>(
-    `MATCH (a:ContractSpec)-[r:SEMANTIC_REL]->(b:ContractSpec)
-     WHERE (r.active IS NULL OR r.active = true)
-     RETURN ${SEMANTIC_REL_RETURN}`
-  );
-
-  const specs = specRows.map(rowToReadableContractSpec);
-  const relations = relRows.map(rowToSemanticRel);
+  const { specs, relations } = await loadActiveSemanticGraph(db);
 
   return analyzeImpact(change, specs, relations, options);
 }

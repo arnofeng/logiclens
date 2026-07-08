@@ -1,4 +1,9 @@
 import type { GraphDB } from "../../core/graph-model/db.js";
+import {
+  listContractKeysByKind,
+  listRepoContractCountsByRole,
+  listRepoContractKeysByRole
+} from "../../core/graph-model/queries.js";
 
 export type QualityRuleViolation = {
   ruleId: string;
@@ -16,9 +21,7 @@ export async function auditContractQuality(
   const violations: QualityRuleViolation[] = [];
 
   // --- Rule 1: Java Class-level Package Contracts ---
-  const packageContracts = await db.query<{ key: string }>(
-    "MATCH (c:Contract) WHERE c.kind = 'package' RETURN c.key AS key;"
-  );
+  const packageContracts = await listContractKeysByKind(db, "package");
   
   const commonClassNames = new Set([
     "list", "map", "set", "hashmap", "arraylist", "collection", "iterator", "string", "integer", "double", "float", "long", "boolean", "byte", "short", "character", "date", "calendar", "uuid", "file", "path", "stream"
@@ -52,9 +55,7 @@ export async function auditContractQuality(
   }
 
   // --- Rule 2: API Contract Without leading slash ('/') ---
-  const apiContracts = await db.query<{ key: string }>(
-    "MATCH (c:Contract) WHERE c.kind = 'api' RETURN c.key AS key;"
-  );
+  const apiContracts = await listContractKeysByKind(db, "api");
   
   const noSlashApis = apiContracts
     .map(c => c.key)
@@ -71,9 +72,7 @@ export async function auditContractQuality(
   }
 
   // --- Rule 3: API producer only has method path, no class base path ---
-  const producers = await db.query<{ repoName: string; key: string }>(
-    "MATCH (r:Repo)-[:PRODUCES]->(c:Contract) WHERE c.kind = 'api' RETURN r.name AS repoName, c.key AS key;"
-  );
+  const producers = await listRepoContractKeysByRole(db, { kind: "api", role: "producer" });
   
   function isMethodPathWithoutBasePath(key: string): boolean {
     const normalized = key.replace(/\{[^}]+\}/g, "param"); // e.g. /{id} -> /param
@@ -104,12 +103,8 @@ export async function auditContractQuality(
   }
 
   // --- Rule 4: Consumer has /smart/backorder, producer only has /smart/backorder/list ---
-  const allConsumers = await db.query<{ repoName: string; key: string }>(
-    "MATCH (r:Repo)-[:CONSUMES]->(c:Contract) WHERE c.kind = 'api' RETURN r.name AS repoName, c.key AS key;"
-  );
-  const allProducers = await db.query<{ repoName: string; key: string }>(
-    "MATCH (r:Repo)-[:PRODUCES]->(c:Contract) WHERE c.kind = 'api' RETURN r.name AS repoName, c.key AS key;"
-  );
+  const allConsumers = await listRepoContractKeysByRole(db, { kind: "api", role: "consumer" });
+  const allProducers = await listRepoContractKeysByRole(db, { kind: "api", role: "producer" });
   
   const producerKeys = new Set(allProducers.map(p => p.key));
   const unproducedConsumers = allConsumers.filter(c => !producerKeys.has(c.key));
@@ -166,9 +161,7 @@ export async function auditContractQuality(
   }
 
   // --- Rule 6: Package contract inflation (> 1000) ---
-  const repoPackages = await db.query<{ repoName: string; count: number }>(
-    "MATCH (r:Repo)-[:OWNS_PACKAGE]->(c:Contract) RETURN r.name AS repoName, count(c) AS count;"
-  );
+  const repoPackages = await listRepoContractCountsByRole(db, { kind: "package", role: "owner" });
   
   const inflatedRepos = repoPackages
     .filter(rp => Number(rp.count) > packageInflationLimit)

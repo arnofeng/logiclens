@@ -3,7 +3,27 @@ export type { ContractSummaryRow } from "./db.js";
 import { repoId } from "../../shared/path.js";
 import { confidenceBand, type ConfidenceBand } from "../../shared/confidence.js";
 import { canonicalContractKey } from "../contracts/extraction/crossRepoContracts.js";
-import type { ContractKind, ContractRole } from "../parsing/types.js";
+import {
+  DEP_EDGE_RETURN,
+  SEMANTIC_REL_RETURN,
+  SPEC_RETURN,
+  rowToContractSpec,
+  rowToDepEdge,
+  rowToReadableContractSpec,
+  rowToSemanticRel,
+  type DepEdgeRow,
+  type SemanticRelRow,
+  type SpecRow
+} from "../contracts/specRows.js";
+import type {
+  ContractKind,
+  ContractRole,
+  ContractSpecNode,
+  ReadableContractSpecNode,
+  RepoDependencyEdge,
+  SemanticRelationEdge
+} from "../parsing/types.js";
+import { isKnownSpecKind } from "../parsing/types.js";
 
 export interface DependencyQueryOptions {
   limit?: number;
@@ -103,6 +123,44 @@ export type UnresolvedEvidenceRow = {
   rule: string;
   reason: string;
   resolution: "dynamic-unresolved";
+};
+
+export type LowConfidenceRelationRow = {
+  evidenceId: string;
+  repoName: string;
+  contractKind: string;
+  contractKey: string;
+  role: ContractRole;
+  confidence: number;
+  filePath: string;
+  line: number;
+  rule: string;
+  raw: string;
+};
+
+export type ProducerContractRow = {
+  contractKind: string;
+  contractKey: string;
+  repoName: string;
+};
+
+export type ContractKeyRow = {
+  key: string;
+};
+
+export type RepoContractKeyRow = {
+  repoName: string;
+  key: string;
+};
+
+export type RepoContractCountRow = {
+  repoName: string;
+  count: number;
+};
+
+export type ActiveSemanticGraph = {
+  specs: ReadableContractSpecNode[];
+  relations: SemanticRelationEdge[];
 };
 
 /**
@@ -370,6 +428,125 @@ export async function listUnresolvedEvidence(db: GraphDB, limit = 100): Promise<
     reason: row.raw.match(/unresolved:\s*(.+)$/)?.[1] ?? "dynamic expression could not be resolved statically",
     resolution: "dynamic-unresolved"
   }));
+}
+
+export async function listLowConfidenceRelations(
+  db: GraphDB,
+  options: { minConfidence: number; limit: number }
+): Promise<LowConfidenceRelationRow[]> {
+  const rels = [
+    ["PRODUCES", "producer"],
+    ["CONSUMES", "consumer"],
+    ["SHARES_CONTRACT", "shared"],
+    ["OWNS_PACKAGE", "owner"]
+  ] as const;
+
+  const results = await Promise.all(
+    rels.map(([rel, role]) => db.query<LowConfidenceRelationRow>(
+      `MATCH (r:Repo)-[edge:${rel}]->(c:Contract), (e:Evidence)
+       WHERE edge.evidenceId = e.id
+         AND (edge.active IS NULL OR edge.active = true)
+         AND (e.active IS NULL OR e.active = true)
+         AND edge.confidence < $minConfidence
+       RETURN e.id AS evidenceId, r.name AS repoName, c.kind AS contractKind, c.key AS contractKey,
+              '${role}' AS role, edge.confidence AS confidence, e.filePath AS filePath,
+              e.line AS line, e.rule AS rule, e.raw AS raw
+       LIMIT $limit;`,
+      options
+    ))
+  );
+  return results.flat();
+}
+
+export async function listProducerContracts(db: GraphDB): Promise<ProducerContractRow[]> {
+  return db.query<ProducerContractRow>(
+    `MATCH (r:Repo)-[p:PRODUCES]->(c:Contract)
+     WHERE (p.active IS NULL OR p.active = true)
+     RETURN c.kind AS contractKind, c.key AS contractKey, r.name AS repoName;`
+  );
+}
+
+export async function listContractKeysByKind(db: GraphDB, kind: ContractKind): Promise<ContractKeyRow[]> {
+  return db.query<ContractKeyRow>(
+    "MATCH (c:Contract) WHERE c.kind = $kind RETURN c.key AS key;",
+    { kind }
+  );
+}
+
+export async function listRepoContractKeysByRole(
+  db: GraphDB,
+  input: { kind: ContractKind; role: Extract<ContractRole, "producer" | "consumer" | "owner" | "shared"> }
+): Promise<RepoContractKeyRow[]> {
+  const rel = input.role === "owner"
+    ? "OWNS_PACKAGE"
+    : input.role === "producer"
+      ? "PRODUCES"
+      : input.role === "consumer"
+        ? "CONSUMES"
+        : "SHARES_CONTRACT";
+  return db.query<RepoContractKeyRow>(
+    `MATCH (r:Repo)-[edge:${rel}]->(c:Contract)
+     WHERE c.kind = $kind AND (edge.active IS NULL OR edge.active = true)
+     RETURN r.name AS repoName, c.key AS key;`,
+    { kind: input.kind }
+  );
+}
+
+export async function listRepoContractCountsByRole(
+  db: GraphDB,
+  input: { kind: ContractKind; role: Extract<ContractRole, "producer" | "consumer" | "owner" | "shared"> }
+): Promise<RepoContractCountRow[]> {
+  const rel = input.role === "owner"
+    ? "OWNS_PACKAGE"
+    : input.role === "producer"
+      ? "PRODUCES"
+      : input.role === "consumer"
+        ? "CONSUMES"
+        : "SHARES_CONTRACT";
+  return db.query<RepoContractCountRow>(
+    `MATCH (r:Repo)-[edge:${rel}]->(c:Contract)
+     WHERE c.kind = $kind AND (edge.active IS NULL OR edge.active = true)
+     RETURN r.name AS repoName, count(c) AS count;`,
+    { kind: input.kind }
+  );
+}
+
+export async function loadActiveSemanticGraph(db: GraphDB): Promise<ActiveSemanticGraph> {
+  const [specRows, relRows] = await Promise.all([
+    db.query<SpecRow>(
+      `MATCH (s:ContractSpec)
+       WHERE (s.active IS NULL OR s.active = true)
+       RETURN ${SPEC_RETURN}`
+    ),
+    db.query<SemanticRelRow>(
+      `MATCH (a:ContractSpec)-[r:SEMANTIC_REL]->(b:ContractSpec)
+       WHERE (r.active IS NULL OR r.active = true)
+       RETURN ${SEMANTIC_REL_RETURN}`
+    )
+  ]);
+
+  return {
+    specs: specRows.map(rowToReadableContractSpec),
+    relations: relRows.map(rowToSemanticRel)
+  };
+}
+
+export async function loadActiveKnownContractSpecs(db: GraphDB): Promise<ContractSpecNode[]> {
+  const rows = await db.query<SpecRow>(
+    `MATCH (s:ContractSpec)
+     WHERE (s.active IS NULL OR s.active = true)
+     RETURN ${SPEC_RETURN}`
+  );
+  return rows.filter((row) => isKnownSpecKind(row.specKind)).map(rowToContractSpec);
+}
+
+export async function loadActiveRepoDependencies(db: GraphDB): Promise<RepoDependencyEdge[]> {
+  const rows = await db.query<DepEdgeRow>(
+    `MATCH (from:Repo)-[d:DEPENDS_ON]->(to:Repo)
+     WHERE (d.active IS NULL OR d.active = true)
+     RETURN ${DEP_EDGE_RETURN}`
+  );
+  return rows.map(rowToDepEdge);
 }
 
 export async function traceEntity(db: GraphDB, value: string, limit = 100): Promise<EntityTraceRow[]> {
