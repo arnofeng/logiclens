@@ -245,15 +245,17 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
         "produce and consume each API, event, and schema, and can reason about the downstream impact " +
         "of a change. The graph is derived statically from source code and every answer carries " +
         "evidence (file:line), so treat it as ground truth instead of guessing cross-repo relationships.\n\n" +
-        `Reach for ${BRAND.displayName} whenever you are about to change code that other repositories may depend on - ` +
-        "before editing an API endpoint, event, DTO/schema, or a widely-used symbol:\n" +
-        `  - ${MCP_TOOLS.impactAnalysis}: before proposing an edit, check what it breaks. Pass the proposed ` +
-        "`change` (e.g. \"field-removed:couponCode\") to get a severity-rated blast radius (breaking/risky/" +
-        "compatible) with file/line evidence.\n" +
-        `  - ${MCP_TOOLS.trace}: multi-hop semantic trace — find the producers, consumers, and request/` +
-        "response/payload schemas connected to a contract.\n" +
-        `  - ${MCP_TOOLS.listContracts} / ${MCP_TOOLS.listDependencies}: survey cross-repo contracts and ` +
-        "dependencies before making structural changes.",
+        `Reach for ${BRAND.displayName} whenever you are about to change code that other repositories may depend on. ` +
+        "Prefer precise graph tools over broad retrieval:\n" +
+        `  - ${MCP_TOOLS.impactAnalysis}: FIRST choice before editing an API endpoint, event, DTO/schema, RPC, ` +
+        "GraphQL field, or widely-used symbol. Pass `change` when the proposed change is known.\n" +
+        `  - ${MCP_TOOLS.trace}: FIRST choice for a known contract identifier such as "http POST /orders", ` +
+        "\"event OrderCreated\", \"schema CreateOrderRequest\", \"grpc OrderService/CreateOrder\", " +
+        "or \"graphql Mutation.createOrder\".\n" +
+        `  - ${MCP_TOOLS.listContracts}: use to discover exact contract targets before tracing or impact analysis.\n` +
+        `  - ${MCP_TOOLS.listDependencies}: use to inspect repository-to-repository dependency evidence.\n` +
+        `  - ${MCP_TOOLS.askQuestion}: LAST resort only for broad exploratory questions when no known contract, ` +
+        "repo, or symbol can be named. Do not use it for impact analysis, dependency listing, or contract tracing.",
     }
   );
 
@@ -352,7 +354,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   server.registerTool(
     MCP_TOOLS.getStats,
     {
-      description: "Get summary statistics of the graph database (number of repos, files, code nodes, calls, etc.)",
+      description: "Use for a quick health/coverage overview only. Returns graph database summary counts such as repositories, files, code nodes, calls, contracts, and dependencies. Do not use for dependency analysis, impact analysis, or contract tracing.",
     },
     async () => {
       return wrapWithFreshness(MCP_TOOLS.getStats, {}, async () => {
@@ -367,7 +369,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   server.registerTool(
     MCP_TOOLS.getWatchStatus,
     {
-      description: `Get ${BRAND.displayName} file watcher and startup catch-up status, including partial coverage and pending files`,
+      description: `Use when a tool response says freshness is stale, or when checking whether ${BRAND.displayName} indexing/watch coverage is current. Returns file watcher status, startup catch-up status, partial coverage, pending files, and index queue details. Do not use for code relationship analysis.`,
     },
     async () => {
       return wrapWithFreshness(MCP_TOOLS.getWatchStatus, {}, async () => {
@@ -381,18 +383,24 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   server.registerTool(
     MCP_TOOLS.listDependencies,
     {
-      description: "List cross-repository dependencies and their evidence in the workspace",
+      description: "Use to answer which repositories depend on which other repositories, with evidence. Best for repo-level dependency questions and surveys before structural changes. Do not use for tracing one API/event/schema; use logiclens_trace for known contracts. Do not use for change risk; use logiclens_impact_analysis.",
       inputSchema: {
-        strength: z.enum(["strong", "weak"]).optional().describe("Filter dependencies by strength (strong: package/import/api, weak: event/shared-contract)"),
-        type: z.string().min(1).max(256).optional().describe("Filter by dependency type (package, import, api, event, shared-contract)"),
-        limit: z.number().int().min(1).max(1000).optional().describe("Maximum number of dependencies to retrieve"),
-        repo: z.string().min(1).max(256).optional().describe("Filter dependencies involving a specific repository"),
-        target: z.string().min(1).max(256).optional().describe("Filter dependencies targeting a specific repository (requires repo)"),
-        direction: z.enum(["outgoing", "incoming"]).optional().describe("Direction: outgoing (repo as consumer) or incoming (repo as producer)"),
+        strength: z.enum(["strong", "weak"]).optional().describe("Optional filter. strong = package/import/api dependencies; weak = event/shared-contract style dependencies."),
+        type: z.string().min(1).max(256).optional().describe("Optional dependency type filter, for example package, import, api, event, shared-contract, grpc, graphql, or dubbo."),
+        limit: z.number().int().min(1).max(1000).optional().describe("Maximum dependencies to retrieve. Use a small value such as 50 for exploration; maximum 1000."),
+        repo: z.string().min(1).max(256).optional().describe("Repository name to focus on. With direction=outgoing, this repo is the consumer. With direction=incoming, this repo is the producer."),
+        target: z.string().min(1).max(256).optional().describe("Optional other repository name for a repo-to-repo dependency pair. Requires repo. Example: repo='frontend', target='orders-service'."),
+        direction: z.enum(["outgoing", "incoming"]).optional().describe("Use with repo. outgoing = dependencies from repo to other repos (repo consumes/depends on them). incoming = dependencies from other repos to repo (repo is produced/depended on)."),
       },
     },
     async ({ strength, type, limit, repo, target, direction }) => {
       return wrapWithFreshness(MCP_TOOLS.listDependencies, { strength, type, limit, repo, target, direction }, async () => {
+        if (target && !repo) {
+          throw new Error("`target` requires `repo`. Example: { \"repo\": \"frontend\", \"target\": \"orders-service\" }.");
+        }
+        if (direction && !repo) {
+          throw new Error("`direction` requires `repo`. Use repo plus direction=outgoing for dependencies from that repo, or direction=incoming for dependencies into that repo.");
+        }
         const deps = await client.dependencies({ strength, type, limit, repo, target, direction });
         return {
           content: [{ type: "text" as const, text: JSON.stringify(deps, null, 2) }],
@@ -404,16 +412,19 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   server.registerTool(
     MCP_TOOLS.listContracts,
     {
-      description: "List recognized contracts and their producer/consumer/shares counts",
+      description: "Use to discover exact API/event/schema/RPC/GraphQL/package contract identifiers before calling logiclens_trace or logiclens_impact_analysis. Returns contracts with producer/consumer/share counts. Do not use for broad natural-language code search; use only to enumerate or filter known contract surfaces.",
       inputSchema: {
-        kind: z.string().min(1).max(256).optional().describe("Filter by contract kind (package, api, event, dto, schema, enum, config)"),
-        limit: z.number().int().min(1).max(1000).optional().describe("Maximum number of contracts to retrieve"),
-        repo: z.string().min(1).max(256).optional().describe("Filter contracts involving a specific repository name"),
-        direction: z.enum(["outgoing", "incoming"]).optional().describe("Direction: outgoing (repo as producer) or incoming (repo as consumer). Requires repo."),
+        kind: z.string().min(1).max(256).optional().describe("Optional contract kind filter, for example package, api, event, dto, schema, enum, config, grpc, graphql, or dubbo."),
+        limit: z.number().int().min(1).max(1000).optional().describe("Maximum contracts to retrieve. Use a small value such as 50 for exploration; maximum 1000."),
+        repo: z.string().min(1).max(256).optional().describe("Repository name to focus on. With direction=outgoing, this repo produces the contracts. With direction=incoming, this repo consumes the contracts."),
+        direction: z.enum(["outgoing", "incoming"]).optional().describe("Use with repo. outgoing = contracts produced by repo. incoming = contracts consumed by repo."),
       },
     },
     async ({ kind, limit, repo, direction }) => {
       return wrapWithFreshness(MCP_TOOLS.listContracts, { kind, limit, repo, direction }, async () => {
+        if (direction && !repo) {
+          throw new Error("`direction` requires `repo`. Use repo plus direction=outgoing for contracts produced by that repo, or direction=incoming for contracts consumed by that repo.");
+        }
         const contracts = await client.contracts({ kind, limit, repo, direction });
         return {
           content: [{ type: "text" as const, text: JSON.stringify(contracts, null, 2) }],
@@ -425,10 +436,10 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   server.registerTool(
     MCP_TOOLS.impactAnalysis,
     {
-      description: "Before editing an API, event, schema, or cross-repo symbol, check what your change will break. Evaluates the downstream blast radius of changing a code symbol or contract and rates each impact (breaking/risky/compatible) with file/line evidence. Pass `change` in '<changeType>:<detail>' format (e.g. 'field-removed:couponCode') for structured, severity-rated analysis; omit it for a broad symbol/entity impact survey.",
+      description: "Use FIRST before editing or proposing changes to an API endpoint, event, schema/DTO field, enum, RPC, GraphQL field, package contract, or widely-used symbol. Evaluates downstream blast radius and rates impacts as breaking/risky/compatible with file:line evidence. If the exact contract name is unknown, call logiclens_list_contracts first. Do not use logiclens_ask_question for change risk.",
       inputSchema: {
-        target: z.string().min(1).max(512).describe("The target symbol, entity, or contract to analyze (e.g. 'OrderCreatedEvent', 'event:OrderCreatedEvent', or 'schema:CreateOrderRequest')"),
-        change: z.string().min(1).max(512).optional().describe("Optional proposed change in '<changeType>:<detail>' format. Change types: field-added, field-removed, field-type-changed, endpoint-removed, endpoint-renamed, endpoint-schema-change, topic-removed, topic-renamed, event-payload-change, rpc-removed, rpc-renamed, rpc-signature-change. Example: 'field-removed:couponCode'"),
+        target: z.string().min(1).max(512).describe("Required target symbol, entity, or contract. Prefer exact contract identifiers from logiclens_list_contracts, for example 'http POST /orders', 'event OrderCreated', 'schema CreateOrderRequest', 'grpc OrderService/CreateOrder', or 'graphql Mutation.createOrder'."),
+        change: z.string().min(1).max(512).optional().describe("Optional proposed change in '<changeType>:<detail>' format. Valid change types: field-added, field-removed, field-type-changed, endpoint-removed, endpoint-renamed, endpoint-schema-change, topic-removed, topic-renamed, event-payload-change, rpc-removed, rpc-renamed, rpc-signature-change. Examples: 'field-removed:couponCode', 'endpoint-schema-change:request body changed'. Omit only for a broad impact survey."),
       },
     },
     async ({ target, change }) => {
@@ -471,9 +482,9 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   server.registerTool(
     MCP_TOOLS.askQuestion,
     {
-      description: "Retrieve structured codebase context (matching code symbols, markdown sections, contracts, dependencies, semantic matches, and call edges) for a query",
+      description: "LAST RESORT broad retrieval. Use only when the user asks an exploratory natural-language question and no exact repository, contract, API/event/schema/RPC/GraphQL target, or symbol is known. Accuracy is lower than graph-specific tools. Do not use for dependency lists, contract discovery, contract tracing, or change impact; prefer logiclens_list_dependencies, logiclens_list_contracts, logiclens_trace, and logiclens_impact_analysis.",
       inputSchema: {
-        question: z.string().min(1).max(1024).describe("The question to ask (e.g. 'Which code is involved in order creation?')"),
+        question: z.string().min(1).max(1024).describe("Broad natural-language question only. If the question names a contract or change, use logiclens_trace or logiclens_impact_analysis instead."),
       },
     },
     async ({ question }) => {
@@ -491,13 +502,10 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
     MCP_TOOLS.trace,
     {
       description:
-        "Trace SEMANTIC_REL edges between ContractSpecs to discover how services are connected " +
-        "(which endpoint calls which, which event is published/subscribed, which schema backs a " +
-        "request/response/payload). Two modes:\n" +
-        "  - target: natural identifier (e.g. \"http POST /orders\", \"event OrderCreated\", " +
-        "\"schema CreateOrderRequest\"): multi-hop trace returning the full connected sub-graph " +
-        "(downstream schemas + upstream consumers). PREFERRED - no internal IDs needed.\n" +
-        "  - specId: an internal ContractSpec ID: single-hop trace of direct edges.\n" +
+        "Use FIRST when the user names a known API endpoint, event, schema/DTO, RPC, GraphQL operation, package, or other contract and wants producers, consumers, request/response/payload schemas, or cross-repo flow. Prefer `target` natural identifiers; call logiclens_list_contracts first if the exact target is unknown. Do not use logiclens_ask_question for known contracts.\n" +
+        "Modes:\n" +
+        "  - target: natural identifier, for example \"http POST /orders\", \"event OrderCreated\", \"schema CreateOrderRequest\", \"grpc OrderService/CreateOrder\", \"dubbo com.acme.OrderService#createOrder\", \"graphql Mutation.createOrder\". Multi-hop trace returning the connected subgraph.\n" +
+        "  - specId: internal ContractSpec ID only when already present in previous tool output. Single-hop trace of direct edges.\n" +
         "Provide exactly one of `target` or `specId`.",
       inputSchema: {
         target: z
@@ -505,19 +513,19 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
           .min(1)
           .max(512)
           .optional()
-          .describe("Natural contract identifier, e.g. \"http POST /orders\", \"event OrderCreated\", \"schema CreateOrderRequest\""),
-        specId: z.string().min(1).max(256).optional().describe("Internal ContractSpec ID (single-hop mode)"),
+          .describe("Preferred. Natural contract identifier, for example \"http POST /orders\", \"event OrderCreated\", \"schema CreateOrderRequest\", \"grpc OrderService/CreateOrder\", \"dubbo com.acme.OrderService#createOrder\", or \"graphql Mutation.createOrder\"."),
+        specId: z.string().min(1).max(256).optional().describe("Internal ContractSpec ID from prior tool output. Do not guess this. Use only when target is not provided."),
         maxHops: z
           .number()
           .int()
           .min(1)
           .max(20)
           .optional()
-          .describe("Max hops per direction for target mode (default 3)"),
+          .describe("Optional max hops per direction for target mode. Default 3. Use 2-5 for most analysis; maximum 20."),
         direction: z
           .enum(["outgoing", "incoming", "both"])
           .optional()
-          .describe("Direction: outgoing (from -> to), incoming (to -> from), or both (default)"),
+          .describe("Optional edge direction for trace. both = producers, consumers, and schemas when available (default). outgoing = downstream edges from the target. incoming = upstream edges into the target."),
       },
     },
     async ({ target, specId, maxHops, direction }) => {
@@ -525,6 +533,9 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
         MCP_TOOLS.trace,
         { target, specId, maxHops, direction },
         async () => {
+          if (target && specId) {
+            throw new Error("Provide exactly one of `target` or `specId`, not both. Prefer `target` unless you are reusing an internal ContractSpec ID from previous output.");
+          }
           if (target) {
             const graph = await client.trace(target, {
               maxHops,
@@ -539,7 +550,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
           if (!specId) {
             throw new Error(
               "Provide either `target` (natural identifier) or `specId`. " +
-              "For free-form questions, use the `ask_question` tool instead."
+              `For contract discovery, use ${MCP_TOOLS.listContracts}. Use ${MCP_TOOLS.askQuestion} only as a last resort for broad exploratory questions.`
             );
           }
           const result = await client.semanticTrace(specId, {
@@ -693,7 +704,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
             role: "user",
             content: {
               type: "text",
-              text: `Identify all cross-repository workflows and actions involving the domain entity '${entity}'. First use '${MCP_TOOLS.askQuestion}' or '${MCP_TOOLS.impactAnalysis}' with the entity name to discover relevant contracts, events, and APIs. Then use '${MCP_TOOLS.trace}' with specific contract identifiers (e.g. "event OrderCreated", "http POST /orders") to trace the full semantic dependency chain. Construct a detailed sequential description showing how services consume and produce events/APIs related to this entity.`,
+              text: `Identify all cross-repository workflows and actions involving the domain entity '${entity}'. First use '${MCP_TOOLS.listContracts}' to discover relevant contracts, events, APIs, schemas, RPCs, and GraphQL operations. Use '${MCP_TOOLS.listDependencies}' if repository-level producer/consumer relationships are needed. Then use '${MCP_TOOLS.trace}' with specific contract identifiers (e.g. "event OrderCreated", "http POST /orders") to trace the full semantic dependency chain. Use '${MCP_TOOLS.askQuestion}' only as a last resort if the structured tools do not reveal a usable target. Construct a detailed sequential description showing how services consume and produce events/APIs related to this entity.`,
             },
           },
         ],
