@@ -7,6 +7,8 @@ import { hashText } from "../../shared/hash.js";
 import Parser from "tree-sitter";
 import { getCachedParser, getLanguageGrammar, parseTreeSitterSource } from "../parsing/treeSitter.js";
 import { javaQueries } from "../parsing/languages/java.js";
+import { getBrandedEnv } from "../../shared/branding.js";
+import type { ProgressReporter } from "../../shared/progress.js";
 
 export { scoreCallResolution } from "../../shared/confidence.js";
 
@@ -21,7 +23,7 @@ function warnReferenceResolution(message: string, error?: unknown): void {
 }
 
 function shouldWriteReferenceTrace(): boolean {
-  return process.env.NODE_ENV !== "test" && !process.env.VITEST;
+  return getBrandedEnv("REFERENCE_TRACE") === "1" || getBrandedEnv("REFERENCE_TRACE") === "true";
 }
 
 function writeReferenceTrace(message: string): void {
@@ -51,8 +53,15 @@ export function resolveImports(parsedFiles: ParsedFile[]): ImportEdge[] {
   return edges;
 }
 
-export function resolveCalls(parsedFiles: ParsedFile[]): CallEdge[] {
+export function resolveCalls(parsedFiles: ParsedFile[], progress?: ProgressReporter): CallEdge[] {
   const started = Date.now();
+  let completedProgressSteps = 0;
+  const totalProgressSteps = 8;
+  const reportProgress = (label: string): void => {
+    completedProgressSteps += 1;
+    progress?.({ current: completedProgressSteps, total: totalProgressSteps, label });
+  };
+
   const callCount = parsedFiles.reduce((count, file) => count + file.calls.length, 0);
   writeReferenceTrace(`Resolve calls prepare start: files=${parsedFiles.length} calls=${callCount}`);
   const symbols = parsedFiles.flatMap((file) => file.symbols);
@@ -70,42 +79,49 @@ export function resolveCalls(parsedFiles: ParsedFile[]): CallEdge[] {
     acc.set(edge.fromFileId, list);
     return acc;
   }, new Map<string, string[]>());
+  reportProgress("prepare");
 
   let stepStarted = Date.now();
   writeReferenceTrace(`Resolve calls re-exports start: symbols=${symbols.length}`);
   const reExportTargets = buildReExportTargets(parsedFiles, importsByFile, byName);
   writeReferenceTrace(`Resolve calls re-exports complete: targets=${reExportTargets.size} duration=${Date.now() - stepStarted}ms`);
+  reportProgress("re-export targets");
 
   stepStarted = Date.now();
   writeReferenceTrace("Resolve calls imported aliases start");
   const importedAliasTargets = buildImportedAliasTargets(parsedFiles, importsByFile, byName, reExportTargets);
   writeReferenceTrace(`Resolve calls imported aliases complete: targets=${importedAliasTargets.size} duration=${Date.now() - stepStarted}ms`);
+  reportProgress("imported aliases");
 
   stepStarted = Date.now();
   writeReferenceTrace("Resolve calls TypeScript compiler targets start");
   const compilerTargets = buildTypeScriptCompilerTargets(parsedFiles);
   writeReferenceTrace(`Resolve calls TypeScript compiler targets complete: targets=${compilerTargets.size} duration=${Date.now() - stepStarted}ms`);
+  reportProgress("TypeScript compiler targets");
 
   stepStarted = Date.now();
   writeReferenceTrace("Resolve calls Java static targets start");
   const javaStaticTargets = buildJavaStaticTargets(parsedFiles);
   writeReferenceTrace(`Resolve calls Java static targets complete: targets=${javaStaticTargets.size} duration=${Date.now() - stepStarted}ms`);
+  reportProgress("Java static targets");
 
   stepStarted = Date.now();
   writeReferenceTrace("Resolve calls Python module targets start");
   const pythonStaticTargets = buildPythonModuleTargets(parsedFiles);
   writeReferenceTrace(`Resolve calls Python module targets complete: targets=${pythonStaticTargets.size} duration=${Date.now() - stepStarted}ms`);
+  reportProgress("Python module targets");
 
   stepStarted = Date.now();
   writeReferenceTrace("Resolve calls Go package targets start");
   const goStaticTargets = buildGoPackageTargets(parsedFiles);
   writeReferenceTrace(`Resolve calls Go package targets complete: targets=${goStaticTargets.size} duration=${Date.now() - stepStarted}ms`);
+  reportProgress("Go package targets");
 
   stepStarted = Date.now();
   writeReferenceTrace("Resolve calls edge matching start");
   const edges: CallEdge[] = [];
   const seen = new Set<string>();
-    for (const file of parsedFiles) {
+  for (const file of parsedFiles) {
     for (const call of file.calls) {
       if (!call.callerSymbolId) continue;
       const raw = boundedRaw(call.raw);
@@ -153,6 +169,7 @@ export function resolveCalls(parsedFiles: ParsedFile[]): CallEdge[] {
     }
   }
   writeReferenceTrace(`Resolve calls edge matching complete: edges=${edges.length} duration=${Date.now() - stepStarted}ms total=${Date.now() - started}ms`);
+  reportProgress("edge matching");
   return edges;
 }
 

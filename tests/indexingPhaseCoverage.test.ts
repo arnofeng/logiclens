@@ -81,14 +81,24 @@ describe("indexing phase coverage", () => {
   });
 
   it("builds graph facts through the fact-build phase boundary", async () => {
+    const progressEvents: Array<{ current: number; total: number; label?: string }> = [];
+    const createProgressBar = vi.fn(() => ({
+      tick: vi.fn(),
+      update: vi.fn(),
+      complete: vi.fn(),
+      reporter: () => (event: { current: number; total: number; label?: string }) => progressEvents.push(event)
+    }));
     const result = await runFactBuildPhase({
       batchId: "batch:facts",
       indexedAt: "2026-06-22T00:00:00.000Z",
       repos: [repo],
       parsedFiles: [],
-      config: configSchema.parse({})
+      config: configSchema.parse({}),
+      createProgressBar
     });
 
+    expect(createProgressBar).toHaveBeenCalledWith("Contract extraction", 1);
+    expect(progressEvents.length).toBeGreaterThan(0);
     expect(result.facts.batchId).toBe("batch:facts");
     expect(result.counts).toMatchObject({
       files: 0,
@@ -97,6 +107,52 @@ describe("indexing phase coverage", () => {
       imports: 0,
       calls: 0
     });
+  });
+
+  it("reports resolve-call and framework progress when applicable", async () => {
+    const progressEvents: Record<string, Array<{ current: number; total: number; label?: string }>> = {};
+    const createProgressBar = vi.fn((label: string) => ({
+      tick: vi.fn(),
+      update: vi.fn(),
+      complete: vi.fn(),
+      reporter: () => (event: { current: number; total: number; label?: string }) => {
+        const events = progressEvents[label] ?? [];
+        events.push(event);
+        progressEvents[label] = events;
+      }
+    }));
+    const repoB = { ...repo, id: "repo:phase-service-b", name: "phase-service-b" };
+    const parsed = {
+      repoId: repo.id,
+      fileId: "file:phase-service:src/app.ts",
+      path: "src/app.ts",
+      language: "typescript",
+      hash: "h1",
+      loc: 1,
+      imports: [],
+      symbols: [],
+      calls: []
+    } as any;
+    const parsedB = {
+      ...parsed,
+      repoId: repoB.id,
+      fileId: "file:phase-service-b:src/app.ts",
+      hash: "h2"
+    } as any;
+
+    await runFactBuildPhase({
+      batchId: "batch:facts-progress",
+      indexedAt: "2026-06-22T00:00:00.000Z",
+      repos: [repo, repoB],
+      parsedFiles: [parsed, parsedB],
+      config: configSchema.parse({}),
+      createProgressBar
+    });
+
+    expect(createProgressBar).toHaveBeenCalledWith("Resolve calls", 1);
+    expect(createProgressBar).toHaveBeenCalledWith("Framework detection", 2);
+    expect(progressEvents["Resolve calls"]?.at(-1)).toMatchObject({ current: 8, total: 8 });
+    expect(progressEvents["Framework detection"]?.at(-1)).toMatchObject({ current: 2, total: 2 });
   });
 
   it("aggregates scan/parse counts without depending on command state", () => {

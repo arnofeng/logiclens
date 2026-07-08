@@ -92,6 +92,26 @@ describe("resolveReferences", () => {
     })]);
   });
 
+  it("reports resolveCalls stage progress", () => {
+    const repo = repoId("service-a");
+    const file = parsedFile(repo, "src/orders.ts");
+    const events: Array<{ current: number; total: number; label?: string }> = [];
+
+    resolveCalls([file], (event) => events.push(event));
+
+    expect(events.map((event) => event.label)).toEqual([
+      "prepare",
+      "re-export targets",
+      "imported aliases",
+      "TypeScript compiler targets",
+      "Java static targets",
+      "Python module targets",
+      "Go package targets",
+      "edge matching"
+    ]);
+    expect(events.at(-1)).toMatchObject({ current: 8, total: 8 });
+  });
+
   it("bounds call raw text while preserving a hash suffix for identity", () => {
     const repo = repoId("service-a");
     const file = parsedFile(repo, "src/orders.ts");

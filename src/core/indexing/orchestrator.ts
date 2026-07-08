@@ -114,7 +114,15 @@ async function runGraphPipeline(input: {
   // full, batched, and per-repo paths share the same writer semantics.
   const factsStarted = Date.now();
   log(ctx)(repoName ? `Facts build start ${repoName}` : logPrefix ? `${logPrefix} facts build start` : "Facts build start");
-  const factBuild = await runFactBuildPhase({ batchId, indexedAt, repos, parsedFiles, config: ctx.config, repoName });
+  const factBuild = await runFactBuildPhase({
+    batchId,
+    indexedAt,
+    repos,
+    parsedFiles,
+    config: ctx.config,
+    repoName,
+    createProgressBar: createProgressBar(ctx)
+  });
   logStage(ctx, repoName ? `Facts build ${repoName}` : logPrefix ? `${logPrefix} facts build` : "Facts build", factsStarted);
 
   const writeStarted = Date.now();

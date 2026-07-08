@@ -29,6 +29,8 @@ import type {
 } from "../parsing/types.js";
 import { extractHeuristicEntities, extractHeuristicEntitiesFromSection } from "../semantic/extractEntities.js";
 import { confidenceFor } from "../../shared/confidence.js";
+import { getBrandedEnv } from "../../shared/branding.js";
+import type { ProgressReporter } from "../../shared/progress.js";
 
 export type ContainsEdge = {
   fromId: string;
@@ -107,7 +109,7 @@ function uniqueByKey<T>(items: T[], keyFor: (item: T) => string): T[] {
 }
 
 function shouldWriteFactTrace(): boolean {
-  return process.env.NODE_ENV !== "test" && !process.env.VITEST;
+  return getBrandedEnv("FACT_TRACE") === "1" || getBrandedEnv("FACT_TRACE") === "true";
 }
 
 function writeFactTrace(message: string): void {
@@ -122,6 +124,9 @@ export async function buildGraphFactsBatch(input: {
   semantic: boolean;
   aliasOverrides?: AliasOverride[];
   config?: AppConfig;
+  progress?: ProgressReporter;
+  frameworkProgress?: ProgressReporter;
+  resolveCallsProgress?: ProgressReporter;
 }): Promise<GraphFactsBatch> {
   const indexedAt = input.indexedAt ?? new Date().toISOString();
   const codeFiles = input.parsedFiles.filter((file): file is ParsedFile => !isParsedDocument(file));
@@ -174,12 +179,17 @@ export async function buildGraphFactsBatch(input: {
 
   const callsStarted = Date.now();
   writeFactTrace(`Facts resolve calls start: codeFiles=${codeFiles.length}`);
-  const calls = resolveCalls(codeFiles).map((edge) => ({ ...edge, batchId: input.batchId, active: true }));
+  const calls = resolveCalls(codeFiles, input.resolveCallsProgress).map((edge) => ({ ...edge, batchId: input.batchId, active: true }));
   writeFactTrace(`Facts resolve calls complete: calls=${calls.length} duration=${Date.now() - callsStarted}ms`);
 
   const repoIds = new Set(input.parsedFiles.map((file) => file.repoId));
   writeFactTrace(`Facts cross-repo extraction start: repos=${input.repos.filter((repo) => repoIds.has(repo.id)).length} files=${input.parsedFiles.length}`);
-  const crossRepo = await extractCrossRepoContracts(input.repos.filter((repo) => repoIds.has(repo.id)), input.parsedFiles, { aliasOverrides: input.aliasOverrides ?? [], config: input.config });
+  const crossRepo = await extractCrossRepoContracts(input.repos.filter((repo) => repoIds.has(repo.id)), input.parsedFiles, {
+    aliasOverrides: input.aliasOverrides ?? [],
+    config: input.config,
+    progress: input.progress,
+    frameworkProgress: input.frameworkProgress
+  });
 
   for (const edge of crossRepo.contractEntities) {
     const name = edge.entityId.replace(/^entity:/, "");

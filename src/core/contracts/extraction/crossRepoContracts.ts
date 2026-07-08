@@ -26,7 +26,7 @@ import {
   materializedWorkflowOperationDedupKey
 } from "./dedup.js";
 import type { AppConfig } from "../../../config/schema.js";
-import { BRAND } from "../../../shared/branding.js";
+import { BRAND, getBrandedEnv } from "../../../shared/branding.js";
 import { loadConfig, defaultConfig } from "../../../config/loadConfig.js";
 import { detectFrameworks, isExtractorEnabled } from "../../frameworks/detect.js";
 import type { DetectedFramework } from "../../frameworks/types.js";
@@ -40,9 +40,10 @@ import { ExtractionBuilder } from "./extractionBuilder.js";
 import type { FactCollector } from "./factCollector.js";
 import type { ExtractedFacts } from "./contracts.js";
 import { buildExtractionFileIndex, filesForRepoId, filesForRepoIds } from "./fileIndex.js";
+import type { ProgressReporter } from "../../../shared/progress.js";
 
 function shouldWriteExtractionTrace(): boolean {
-  return process.env.NODE_ENV !== "test" && !process.env.VITEST;
+  return getBrandedEnv("EXTRACT_TRACE") === "1" || getBrandedEnv("EXTRACT_TRACE") === "true";
 }
 
 function writeExtractionTrace(message: string): void {
@@ -321,7 +322,7 @@ export function materializeDependenciesFromSemanticRelations(
 export async function extractCrossRepoContracts(
   repos: RepoNode[],
   parsedFiles: ParsedGraphFile[],
-  options: { aliasOverrides?: AliasOverride[]; config?: AppConfig } = {}
+  options: { aliasOverrides?: AliasOverride[]; config?: AppConfig; progress?: ProgressReporter; frameworkProgress?: ProgressReporter } = {}
 ): Promise<CrossRepoExtraction> {
   let config = options.config;
   if (!config) {
@@ -336,7 +337,7 @@ export async function extractCrossRepoContracts(
     parsedFiles,
     repoResolver: (repoId) => repos.find((repo) => repo.id === repoId),
     aliasOverrides: options.aliasOverrides
-  }, config);
+  }, config, options.progress, options.frameworkProgress);
 
   // Filter out pending placeholder edges that carry IDs (schema-ref:<Type>,
   // spec:<id>:pending) which cannot be written to the graph (no matching
@@ -461,7 +462,9 @@ function buildExtractContext(
 
 export async function extractContractFactsWithRegistry(
   context: ExtractContext,
-  config?: AppConfig
+  config?: AppConfig,
+  progress?: ProgressReporter,
+  frameworkProgress?: ProgressReporter
 ): Promise<ExtractedFacts> {
   let resolvedConfig = config;
   if (!resolvedConfig) {
@@ -474,17 +477,28 @@ export async function extractContractFactsWithRegistry(
 
   // Pre-detect frameworks for all repos in the context
   const fileIndex = buildExtractionFileIndex(context.parsedFiles);
+  let totalProgressSteps = 1 + builtinContractExtractors.length;
+  let completedProgressSteps = 0;
+  const reportProgress = (label: string): void => {
+    completedProgressSteps += 1;
+    progress?.({ current: completedProgressSteps, total: totalProgressSteps, label });
+  };
+
   const frameworkDetectionStarted = Date.now();
   writeExtractionTrace(`Framework detection start: repos=${context.repos.length} files=${context.parsedFiles.length}`);
   const detectedFrameworksMap = new Map<string, DetectedFramework[]>();
+  let completedFrameworkRepos = 0;
   await Promise.all(context.repos.map(async (repo) => {
     const repoStarted = Date.now();
     writeExtractionTrace(`Framework detection repo start: ${repo.name}`);
     const dfs = await detectFrameworks(repo, filesForRepoId(fileIndex, repo.id));
     detectedFrameworksMap.set(repo.id, dfs);
     writeExtractionTrace(`Framework detection repo ${repo.name}: frameworks=${dfs.length} duration=${Date.now() - repoStarted}ms`);
+    completedFrameworkRepos += 1;
+    frameworkProgress?.({ current: completedFrameworkRepos, total: context.repos.length, label: repo.name });
   }));
   writeExtractionTrace(`Framework detection complete: ${Date.now() - frameworkDetectionStarted}ms`);
+  reportProgress("framework detection");
 
   const builder = new ExtractionBuilder();
   const postExtractContexts = new Map<string, { repos: RepoNode[]; parsedFiles: ParsedGraphFile[] }>();
@@ -500,6 +514,7 @@ export async function extractContractFactsWithRegistry(
     });
 
     if (enabledRepos.length === 0) {
+      reportProgress(`${extractor.name} skipped`);
       continue; // Skip this extractor entirely if not enabled for any repo
     }
 
@@ -525,6 +540,7 @@ export async function extractContractFactsWithRegistry(
     const durationMs = Date.now() - started;
     extractorTimings.push({ name: extractor.name, durationMs, files: extractorFiles.length, repos: enabledRepos.length });
     writeExtractionTrace(`Extractor ${extractor.name}: ${durationMs}ms`);
+    reportProgress(extractor.name);
   }
   const totalExtractorMs = extractorTimings.reduce((sum, timing) => sum + timing.durationMs, 0);
   const slowestExtractor = extractorTimings.reduce<typeof extractorTimings[number] | undefined>(
@@ -540,6 +556,7 @@ export async function extractContractFactsWithRegistry(
   // Freeze a read-only view for postExtract readers, then let extractors
   // amend by writing into the same builder.
   const mergedForPost = builder.build();
+  totalProgressSteps += builtinContractExtractors.filter((extractor) => extractor.postExtract && postExtractContexts.has(extractor.name)).length;
   for (const extractor of builtinContractExtractors) {
     if (!extractor.postExtract) continue;
     const filteredContext = postExtractContexts.get(extractor.name);
@@ -553,6 +570,7 @@ export async function extractContractFactsWithRegistry(
     writeExtractionTrace(`PostExtract start ${extractor.name}: repos=${filteredContext.repos.length} files=${filteredContext.parsedFiles.length}`);
     await extractor.postExtract(postCtx, builder);
     writeExtractionTrace(`PostExtract ${extractor.name}: ${Date.now() - started}ms`);
+    reportProgress(`${extractor.name} postExtract`);
   }
 
   return builder.build();

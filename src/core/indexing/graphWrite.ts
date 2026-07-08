@@ -52,7 +52,7 @@ export type GraphWriteFailureDetails = {
 type ProgressBarLike = {
   update(current: number, label?: string, total?: number, stepMs?: number): void;
   reporter(): ProgressReporter;
-  complete(): void;
+  complete(label?: string): void;
 };
 
 function errorMessage(error: unknown): string {
@@ -147,10 +147,34 @@ export async function runFactBuildPhase(input: {
   parsedFiles: ParsedGraphFile[];
   config: AppConfig;
   repoName?: string;
+  createProgressBar?: (label: string, total: number) => ProgressBarLike;
 }): Promise<FactBuildResult> {
-  const { batchId, indexedAt, repos, parsedFiles, config, repoName } = input;
+  const { batchId, indexedAt, repos, parsedFiles, config, repoName, createProgressBar } = input;
   const result = await runIndexPhase({ phase: "fact-build", repoName, batchId }, async () => {
-    const facts = await buildGraphFactsBatch({ batchId, indexedAt, repos, parsedFiles, semantic: true, config });
+    const hasCodeFiles = parsedFiles.some((file) => file.language !== "markdown");
+    const activeRepoIds = new Set(parsedFiles.map((file) => file.repoId));
+    const activeRepoCount = repos.filter((repo) => activeRepoIds.has(repo.id)).length;
+    const resolveCallsProgress = hasCodeFiles
+      ? createProgressBar?.(repoName ? `Resolve calls ${repoName}` : "Resolve calls", 1)
+      : undefined;
+    const frameworkProgress = activeRepoCount > 1
+      ? createProgressBar?.("Framework detection", activeRepoCount)
+      : undefined;
+    const extractionProgress = createProgressBar?.(repoName ? `Contract extraction ${repoName}` : "Contract extraction", 1);
+    const facts = await buildGraphFactsBatch({
+      batchId,
+      indexedAt,
+      repos,
+      parsedFiles,
+      semantic: true,
+      config,
+      progress: extractionProgress?.reporter(),
+      frameworkProgress: frameworkProgress?.reporter(),
+      resolveCallsProgress: resolveCallsProgress?.reporter()
+    });
+    resolveCallsProgress?.complete("done");
+    frameworkProgress?.complete("done");
+    extractionProgress?.complete("done");
     return {
       facts,
       counts: {
