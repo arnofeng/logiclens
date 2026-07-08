@@ -5,12 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.1-beta.15] - 2026-07-08
+
+### Added
+
+- **Semantic contract impact analysis**: `impact` now resolves natural contract targets such as `http POST /orders` and `schema CreateOrderRequest`, follows semantic contract relations across hops, reports affected repositories, and supports `--max-hops`, `--legacy`, and `--verbose`.
+- **Repository-scoped dependency and contract queries**: Added `--repo`, `--target`, and `--direction` filters for `deps`, plus `--repo` and `--direction` filters for `contracts`.
+- **Indexing progress reporting**: Added progress updates for repository discovery, extraction, reference resolution, and fact-building phases.
+- **Extraction file index**: Added a shared file index and standardized extractor signatures to improve cross-file and cross-repository contract extraction.
 
 ### Changed
 
 - **Merged `trace` and `spec-trace` into a single `trace` command**: The old single-hop reference-level `trace` command (L4, `kind:value` input) has been removed. The multi-hop semantic `spec-trace` command (L7, natural-language input, SEMANTIC_REL traversal) is now the new `trace`. The MCP tool `logiclens_semantic_trace` has been merged into `logiclens_trace`.
 - **Removed `TraceResult` type** from the SDK public API. Use the new `SemanticTraceGraph` return type from `client.trace()`.
+- Renamed SDK exports toward app-neutral terminology: `LogicLensClient`/`createLogicLens` are replaced by `AppClient`/`createClient`, with `GraphClient` exported as an alias.
+- Improved dependency query ordering by prioritizing package, import, and API dependency types, with a default result limit of 20.
+- Decoupled runtime branding literals and configuration naming across the CLI, SDK, installer, and MCP server.
+
+### Fixed
+
+- Improved cross-repository contract extraction and reference resolution, including stronger symbol, import, schema, and framework handling.
+- Hardened Kuzu and Neo4j graph writes, upserts, cleanup paths, and active relation handling.
+- Improved schema, gRPC, GraphQL, Dubbo, HTTP, and event resolver matching coverage.
+- Addressed release-readiness and code-review issues across indexing, parsing, watcher behavior, config loading, MCP errors, and installer targets.
 
 ## [0.1.1-beta.14] - 2026-07-01
 
@@ -124,7 +141,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial tagged beta release.
 
-[Unreleased]: https://github.com/logiclens/logiclens/compare/v0.1.1-beta.14...HEAD
+[Unreleased]: https://github.com/logiclens/logiclens/compare/v0.1.1-beta.15...HEAD
+[0.1.1-beta.15]: https://github.com/logiclens/logiclens/compare/v0.1.1-beta.14...v0.1.1-beta.15
 [0.1.1-beta.14]: https://github.com/logiclens/logiclens/compare/v0.1.1-beta.13...v0.1.1-beta.14
 [0.1.1-beta.13]: https://github.com/logiclens/logiclens/compare/v0.1.1-beta.12...v0.1.1-beta.13
 [0.1.1-beta.12]: https://github.com/logiclens/logiclens/compare/v0.1.1-beta.11...v0.1.1-beta.12
