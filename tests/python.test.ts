@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { pythonExtractor } from "../src/core/contracts/extraction/builtin/pythonExtractor.js";
 import { repoId } from "../src/shared/path.js";
-import type { ExtractedRelation } from "../src/core/contracts/extraction/crossRepoContracts.js";
 
 
 describe("Python support", () => {

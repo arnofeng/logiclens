@@ -1,7 +1,6 @@
 import type { ContractSpecNode, SemanticRelationEdge, SemanticRelationKind } from "../../parsing/types.js";
 import type { SpecRoleMap } from "./types.js";
 import { confidenceFor } from "../../../shared/confidence.js";
-import { deserializeSpec } from "../spec.js";
 import type { HttpEndpointSpec, EventSpec, SchemaSpec, GrpcMethodSpec, GraphQLOperationSpec } from "../spec.js";
 
 // ---------------------------------------------------------------------------

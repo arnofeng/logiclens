@@ -5,12 +5,6 @@ import { describe, expect, it } from "vitest";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { springMvcExtractor } from "../src/core/contracts/extraction/builtin/springMvcExtractor.js";
 import { repoId } from "../src/shared/path.js";
-import type { ExtractedRelation } from "../src/core/contracts/extraction/crossRepoContracts.js";
-
-function isRepoContractRelation(r: ExtractedRelation): r is ExtractedRelation & { kind: "repo-contract" } {
-  return r.kind === "repo-contract";
-}
-
 async function extractFromSource(source: string) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-spring-test-"));
   const relativePath = "src/main/java/com/example/TestController.java";

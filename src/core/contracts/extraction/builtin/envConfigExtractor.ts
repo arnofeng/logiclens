@@ -10,8 +10,7 @@ import {
   contract,
   evidence,
   parsedCodeFiles,
-  pushContractEvidence,
-  sourceLine, } from "./shared.js";
+  pushContractEvidence, } from "./shared.js";
 
 import {
   parseJsAst,

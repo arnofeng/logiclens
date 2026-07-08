@@ -14,20 +14,19 @@ import {
   pushContractSpec,
   toBusinessEntityName, } from "./shared.js";
 import {
-  findContainingSymbol,
   parseSourceAst,
   walkSourceAst
 } from "./sourceAstUtils.js";
 import { entityId } from "../../../../shared/path.js";
 
 /**
- * Java Schema Extractor â€?extracts field-level schema information from POJO /
+ * Java Schema Extractor extracts field-level schema information from POJO /
  * DTO class declarations.
  *
  * Handles:
  *  - Plain field declarations (`private String name`)
  *  - Generic wrappers: `Optional<T>`, `List<T>`, `Map<K,V>`, `ResponseEntity<T>`
- *  - Lombok `@Data` / `@Getter` / `@Setter` annotated classes (fields only â€?
+ *  - Lombok `@Data` / `@Getter` / `@Setter` annotated classes (fields only
  *    no setter/getter expansion needed)
  *  - Inheritance: records the parent class name but does NOT expand parent
  *    fields (keeps the schema graph simple; parent schemas get their own node)
@@ -274,12 +273,4 @@ function isJavaTypeNode(type: string): boolean {
     type === "array_type" ||
     type === "scoped_type_identifier" ||
     type === "dimensions";
-}
-
-function safeJsonParse(json: string): unknown {
-  try {
-    return JSON.parse(json);
-  } catch {
-    return null;
-  }
 }

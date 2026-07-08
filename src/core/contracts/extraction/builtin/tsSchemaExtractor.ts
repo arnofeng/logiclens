@@ -14,7 +14,6 @@ import {
   pushContractSpec,
   toBusinessEntityName, } from "./shared.js";
 import {
-  findContainingSymbol,
   parseSourceAst,
   walkSourceAst
 } from "./sourceAstUtils.js";
@@ -163,7 +162,7 @@ function findDeclarationNode(
     if (found) return;
     if (node.type !== "interface_declaration" && node.type !== "type_alias_declaration") return;
     // In tree-sitter-typescript, interface_declaration uses field "name"
-    // but type_alias_declaration does NOT â€?the type_identifier is just a named child.
+    // but type_alias_declaration does NOT; the type_identifier is just a named child.
     let nameNode = node.childForFieldName("name");
     if (!nameNode) {
       nameNode = node.namedChildren.find(
@@ -233,9 +232,9 @@ function extractTypeAliasFields(node: Parser.SyntaxNode): SchemaFieldSpec[] {
 
 /**
  * Recursively extracts fields from a type node.  Handles:
- * - object_type â†?direct properties
- * - intersection_type â†?merge properties from each branch
- * - generic_type (utility) â†?only when the first arg is an object_type
+ * - object_type direct properties
+ * - intersection_type merge properties from each branch
+ * - generic_type (utility) only when the first arg is an object_type
  */
 function extractFieldsFromTypeNode(node: Parser.SyntaxNode): SchemaFieldSpec[] {
   if (node.type === "object_type") {
@@ -304,8 +303,8 @@ function parsePropertySignature(node: Parser.SyntaxNode): SchemaFieldSpec | unde
   const innerType = typeAnnotation ? typeAnnotation.namedChild(0) : null;
   const rawType = innerType ? typeText(innerType) : "any";
 
-  // Normalize the type first â€?the normalization function handles nullable
-  // unwrapping (e.g. "string | null" â†?"string?").
+  // Normalize the type first; the normalization function handles nullable
+  // unwrapping (e.g. "string | null" -> "string?").
   const normalized = normalizePrimitiveType("typescript", rawType);
 
   // Detect whether the result signals nullability (trailing "?").
@@ -341,7 +340,7 @@ function typeText(node: Parser.SyntaxNode): string {
 
 /**
  * Extracts the base type reference from a TS utility type wrapping.
- * e.g. `Omit<Order, 'id'>` â†?`Order`, `Partial<OrderDTO>` â†?`OrderDTO`.
+ * e.g. `Omit<Order, 'id'>` -> `Order`, `Partial<OrderDTO>` -> `OrderDTO`.
  * Returns `undefined` when the RHS is not a recognised utility type.
  */
 function extractBaseTypeFromUtilityType(node: Parser.SyntaxNode): string | undefined {
@@ -379,12 +378,4 @@ function extractBaseTypeFromUtilityType(node: Parser.SyntaxNode): string | undef
   }
 
   return undefined;
-}
-
-function safeJsonParse(json: string): unknown {
-  try {
-    return JSON.parse(json);
-  } catch {
-    return null;
-  }
 }

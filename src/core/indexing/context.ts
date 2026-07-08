@@ -40,7 +40,7 @@ export function createIndexRunContext(input: {
   logger: IndexLogger;
   writeMode: IndexWriteMode;
 }): IndexRunContext {
-  const { cwd, config, options, logger, writeMode } = input;
+  const { cwd, config, options: _options, logger, writeMode } = input;
   return {
     cwd,
     config,

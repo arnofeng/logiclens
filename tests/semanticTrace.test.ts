@@ -326,7 +326,7 @@ describe("printSemanticTrace CLI text rendering", () => {
 
     const logs: string[] = [];
     const originalLog = console.log;
-    console.log = (msg?: any, ...args: any[]) => {
+    console.log = (msg?: any, ..._args: any[]) => {
       logs.push(msg === undefined ? "" : String(msg));
     };
 

@@ -146,7 +146,7 @@ export async function auditContractQuality(
   }
   
   const caseVariants: string[] = [];
-  for (const [lower, group] of keyGroups.entries()) {
+  for (const [_lower, group] of keyGroups.entries()) {
     if (group.length > 1) {
       const unique = [...new Set(group)];
       if (unique.length > 1) {

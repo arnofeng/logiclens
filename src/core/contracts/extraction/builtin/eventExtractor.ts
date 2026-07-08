@@ -19,8 +19,8 @@ const EVENT_METHODS = new Set(["publish", "emit", "send", "subscribe", "on", "co
 const CONSUMER_METHODS = new Set(["subscribe", "on", "consume"]);
 // Generic method names that also have countless non-event meanings
 // (`res.send`, `process.on`, `el.emit`). These only count as events when an
-// independent signal â€?a recognized broker receiver or a messaging-library
-// import â€?confirms it, so they are import-gated below.
+// independent signal, either a recognized broker receiver or a messaging-library
+// import, confirms it, so they are import-gated below.
 const GENERIC_METHODS = new Set(["send", "on", "emit"]);
 
 // Framework column mirrors the broker; left unset (not the literal "unknown")

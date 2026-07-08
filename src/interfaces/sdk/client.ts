@@ -113,13 +113,11 @@ export class AppClient {
   private dbPromise?: Promise<GraphDB>;
   private closed = false;
   private providersRegistered = false;
-  private options: AppClientOptions;
   private logger: Required<AppLogger>;
   private watcher?: FileWatcher;
   private indexQueue = new SingleProcessIndexQueue();
 
   constructor(options: ClientOptions, config: AppConfig) {
-    this.options = options;
     this.config = config;
     this.cwd = options.cwd ?? process.cwd();
     this.logger = {
@@ -583,7 +581,6 @@ export class AppClient {
    * @returns The LLM-generated or fallback answer.
    */
   async ask(question: string): Promise<string> {
-    const db = await this.getDb();
     const retrieval = await this.retrieve(question);
     return answerQuestion(
       question,

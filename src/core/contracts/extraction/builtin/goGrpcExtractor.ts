@@ -1,6 +1,6 @@
 import { compatExtractor } from "./compat.js";
 import type Parser from "tree-sitter";
-import type { CodeSymbol, ParsedFile } from "../../../parsing/types.js";
+import type { CodeSymbol } from "../../../parsing/types.js";
 import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import { pushGrpcContract } from "./shared.js";

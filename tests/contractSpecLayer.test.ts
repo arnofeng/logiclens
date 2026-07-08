@@ -4,12 +4,11 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { canonicalContractKey, buildRepoDependenciesFromParticipants, type ContractParticipant } from "../src/core/contracts/extraction/crossRepoContracts.js";
 import { canonicalHttpContractKey, canonicalGrpcContractKey } from "../src/core/contracts/apiPath.js";
-import { createCrossRepoExtraction, toFactBundle, contract, evidence, pushGrpcContract, grpcContract } from "../src/core/contracts/extraction/builtin/shared.js";
+import { createCrossRepoExtraction, toFactBundle, contract, pushGrpcContract } from "../src/core/contracts/extraction/builtin/shared.js";
 import { buildGraphFactsBatch } from "../src/core/graph-model/facts.js";
 import { KuzuGraphDB } from "../src/core/graph-model/db.js";
-import { writeGraphFactsWithMerge } from "../src/core/graph-model/upsert.js";
 import type { ContractNode, EvidenceNode, ParsedFile, RepoNode } from "../src/core/parsing/types.js";
-import { contractId, evidenceId, fileId, repoId } from "../src/shared/path.js";
+import { evidenceId, fileId, repoId } from "../src/shared/path.js";
 
 // --- Helpers ---
 

@@ -123,8 +123,6 @@ export function compareDependencySets(
     const falseNegativeKeys = [...typeBaseline].filter((k) => !typeCandidates.has(k));
 
     const tp = truePositive.length;
-    const fp = falsePositiveKeys.length;
-    const fn = falseNegativeKeys.length;
     const precision = typeCandidates.size === 0 ? 1 : tp / typeCandidates.size;
     const recall = typeBaseline.size === 0 ? 1 : tp / typeBaseline.size;
     const f1 = precision + recall === 0 ? 0 : (2 * precision * recall) / (precision + recall);

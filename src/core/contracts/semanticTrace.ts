@@ -15,7 +15,6 @@
 // ---------------------------------------------------------------------------
 
 import type {
-  ContractSpecNode,
   ReadableContractSpecNode,
   SemanticRelationEdge
 } from "../parsing/types.js";

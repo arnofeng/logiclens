@@ -688,7 +688,7 @@ function findLiteralOwner(index: SymbolsIndex, node: Parser.SyntaxNode): CodeSym
   return index.findContaining(line);
 }
 
-function extractLanguageFactsAST(parsedFile: ParsedFile, source: string, tree: Parser.Tree): ParsedSourceFacts {
+function extractLanguageFactsAST(parsedFile: ParsedFile, _source: string, tree: Parser.Tree): ParsedSourceFacts {
   const dialect = getLanguageDefinition(parsedFile.language)?.factsDialect ?? "none";
   const wantsAnnotations = dialect === "java-annotations";
   const wantsDecorators = dialect === "js-decorators";

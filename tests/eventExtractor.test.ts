@@ -9,7 +9,6 @@ import { buildGraphFactsBatch } from "../src/core/graph-model/facts.js";
 import { KuzuGraphDB } from "../src/core/graph-model/db.js";
 import { writeGraphFactsWithMerge } from "../src/core/graph-model/upsert.js";
 import { repoId } from "../src/shared/path.js";
-import type { ExtractedRelation } from "../src/core/contracts/extraction/crossRepoContracts.js";
 import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
 
 

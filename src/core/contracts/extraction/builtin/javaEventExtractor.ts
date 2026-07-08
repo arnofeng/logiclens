@@ -1,7 +1,6 @@
 import { compatExtractor } from "./compat.js";
 import type Parser from "tree-sitter";
 import type { AnnotationFact } from "../../../parsing/facts.js";
-import type { ParsedFile } from "../../../parsing/types.js";
 import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import {
@@ -19,7 +18,7 @@ const LISTENER_ANNOTATIONS: Record<string, { broker: EventBroker; topicArgs: str
   RabbitListener: { broker: "rabbitmq", topicArgs: ["queues"] }
 };
 
-// Producer template methods â†?topic is the first string literal argument.
+// Producer template methods topic is the first string literal argument.
 // `broker` is set only when the method name is broker-specific; `send` is
 // ambiguous (kafkaTemplate / streamBridge / amqpTemplate all expose it) so it
 // defers to the receiver name or the file's imported broker instead.
@@ -111,7 +110,7 @@ export const javaEventExtractor = compatExtractor({
 
         const methodBroker = PRODUCER_METHODS[call.method];
         // A kafka receiver name overrides everything; then a broker-specific
-        // method name (convertAndSend â†?rabbitmq); otherwise trust the import.
+        // method name (convertAndSend rabbitmq); otherwise trust the import.
         const broker = call.object?.toLowerCase().includes("kafka") ? "kafka" : (methodBroker ?? importBroker);
         const symbol = findContainingSymbol(file.symbols, node);
         pushEventContract({

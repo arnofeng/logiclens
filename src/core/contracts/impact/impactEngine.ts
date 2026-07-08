@@ -148,36 +148,7 @@ function getImpactedSpecId(edge: SemanticRelationEdge, currentSpecId: string): s
 // ---------------------------------------------------------------------------
 
 /** Collects the edges that connect visited specs to their predecessors. */
-function collectIncomingEdgesOnPaths(
-  visited: Map<string, number>,
-  relations: SemanticRelationEdge[]
-): { fromSpecId: string; toSpecId: string; kind: SemanticRelationKind; reason: string; confidence: number; hop: number }[] {
-  const result: { fromSpecId: string; toSpecId: string; kind: SemanticRelationKind; reason: string; confidence: number; hop: number }[] = [];
 
-  for (const edge of relations) {
-    const meta = SEMANTIC_REL_META[edge.kind];
-    if (!meta || (meta.category !== "consumer-to-producer" && meta.category !== "schema-to-use")) continue;
-
-    const currentSpecId = meta.direction === "forward" ? edge.toSpecId : edge.fromSpecId;
-    const impactedSpecId = meta.direction === "forward" ? edge.fromSpecId : edge.toSpecId;
-    const hopCurrent = visited.get(currentSpecId);
-    const hopImpacted = visited.get(impactedSpecId);
-    if (hopCurrent === undefined || hopImpacted === undefined) continue;
-
-    if (hopImpacted === hopCurrent + 1) {
-      result.push({
-        fromSpecId: edge.fromSpecId,
-        toSpecId: edge.toSpecId,
-        kind: edge.kind,
-        reason: edge.reason,
-        confidence: edge.confidence,
-        hop: hopImpacted
-      });
-    }
-  }
-
-  return result;
-}
 
 // ---------------------------------------------------------------------------
 // Spec resolution
@@ -309,7 +280,7 @@ export function analyzeImpact(
   }
 
   // Walk relation-specific impact direction to find directly and indirectly affected consumers
-  const { visited, steps: pathSteps } = traverseImpactSteps(targetSpecIds, specs, transitiveRelations, maxHops);
+  const { visited: _visited, steps: pathSteps } = traverseImpactSteps(targetSpecIds, specs, transitiveRelations, maxHops);
 
   for (const step of pathSteps) {
     const impactedSpec = specMap.get(step.impactedSpecId);

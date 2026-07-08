@@ -12,8 +12,7 @@ import { describe, expect, it } from "vitest";
 import {
   normalizeSemanticTarget,
   traceSemanticGraph,
-  summarizeSpec,
-  traceSemanticGraphFromDB
+  summarizeSpec
 } from "../../src/core/contracts/semanticTrace.js";
 import { canonicalHttpContractKey } from "../../src/core/contracts/apiPath.js";
 import { serializeSpec } from "../../src/core/contracts/spec.js";
@@ -411,7 +410,7 @@ describe("traceSemanticGraph — Bug 1 regression (duplicate specs)", () => {
   });
 
   it("does not crash or produce wrong results with duplicate backend specs present", () => {
-    const { beList, feList, tableDataInfo } = buildCustomerActivityFixtures();
+    const { beList, feList, tableDataInfo: _tableDataInfo } = buildCustomerActivityFixtures();
     // Clone the backend spec as if postExtract duplicated it
     const duplicate = { ...beList, id: sid("be-dup"), specJson: serializeSpec({
       kind: "http-endpoint" as const,
@@ -602,7 +601,7 @@ describe("traceSemanticGraph — edge cases", () => {
   });
 
   it("does not cross-contaminate unrelated contracts", () => {
-    const { specs, rels, beList } = buildCustomerActivityFixtures();
+    const { specs, rels, beList: _beList } = buildCustomerActivityFixtures();
     // Add an unrelated event contract
     const eventSpec: ContractSpecNode = {
       id: sid("evt"), contractId: "contract:event:order.created", specKind: "event",

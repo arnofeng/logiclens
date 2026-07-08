@@ -6,11 +6,8 @@ import { createIndexRunContext } from "./context.js";
 import { runBatchedFullIndex, runDependencyRebuild, runFullCopyBulkIndex, runPerRepoIndex, type IndexCounters } from "./orchestrator.js";
 import type { IndexLogger, IndexOptions, IndexResult } from "./types.js";
 
-function chunks<T>(items: T[], size: number): T[][] {
-  const result: T[][] = [];
-  for (let index = 0; index < items.length; index += size) result.push(items.slice(index, index + size));
-  return result;
-}
+import { chunk } from "../../shared/chunk.js";
+
 
 function addCounters(target: IndexCounters, increment: IndexCounters): void {
   target.filesScanned += increment.filesScanned;
@@ -36,7 +33,7 @@ export async function runIndexing(
     if (planning.writeMode !== "auto" && planning.writeMode !== "bulk") {
       throw new Error("Batched full indexing supports write modes auto or bulk. Omit --batch-size to use merge or bulk-upsert.");
     }
-    const repoBatches = chunks(planning.repoConfigs, planning.batchSize);
+    const repoBatches = chunk(planning.repoConfigs, planning.batchSize);
     const result = await runBatchedFullIndex({ db, ctx, repoBatches, options: { ...options, batchSize: planning.batchSize }, initialRepoCount: planning.initialRepoCount });
     addCounters(totals, result);
     const rebuildStarted = Date.now();

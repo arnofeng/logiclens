@@ -534,7 +534,7 @@ function isJavaScriptLike(file: ParsedFile): boolean {
   return file.language === "typescript" || file.language === "tsx" || file.language === "javascript" || file.language === "jsx";
 }
 
-function lineOf(ts: TypeScriptApi, sourceFile: any, node: any): number {
+function lineOf(_ts: TypeScriptApi, sourceFile: any, node: any): number {
   return sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
 }
 

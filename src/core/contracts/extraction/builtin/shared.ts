@@ -7,19 +7,18 @@ import type {
   ContractNode,
   ContractRole,
   ContractSpecKind,
-  EntityNode,
   EvidenceNode,
   ParsedFile,
   ParsedGraphFile,
   RepoNode
 } from "../../../parsing/types.js";
 import { contractId, entityId, evidenceId, fileId, normalizeName } from "../../../../shared/path.js";
-import { normalizeApiPath, canonicalHttpContractKey, canonicalGrpcContractKey, canonicalDubboContractKey, canonicalGraphqlContractKey } from "../../apiPath.js";
+import { canonicalHttpContractKey, canonicalGrpcContractKey, canonicalDubboContractKey, canonicalGraphqlContractKey } from "../../apiPath.js";
 import { canonicalEventContractKey, type EventBroker } from "../../event.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import { serializeSpec, type ContractSpec, type DubboMethodSpec, type EventSpec, type HttpEndpointSpec, type GrpcMethodSpec, type GrpcStreaming, type SchemaSpec, type SchemaFieldSpec, type GraphQLOperationSpec } from "../../spec.js";
 import type { AliasOverride } from "../crossRepoContracts.js";
-import type { FactCollector, PackageUsageEntry } from "../factCollector.js";
+import type { FactCollector } from "../factCollector.js";
 
 export type PackageJson = {
   name?: string;

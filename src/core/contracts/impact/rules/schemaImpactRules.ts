@@ -63,7 +63,7 @@ export function assessSchemaFieldChange(
   change: ChangeIntent,
   dependentSpec: ContractSpecNode,
   relationKind: SemanticRelationKind,
-  reason: string,
+  _reason: string,
   confidence: number,
   options: ImpactAnalysisOptions
 ): ImpactItem[] {

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { shouldWatchRepo, shouldEnableWatcher, __resetWslCacheForTests } from "../src/features/watch/policy.js";
 import { FileMatcher, FileWatcher, WatchRepoIndex, planRecursiveWatchRoots } from "../src/features/watch/watcher.js";
 import { createClient } from "../src/index.js";

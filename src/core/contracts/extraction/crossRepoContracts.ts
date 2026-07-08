@@ -2,7 +2,6 @@ import type {
   ContractEntityEdge,
   ContractKind,
   ContractNode,
-  ContractRole,
   ContractSpecEdge,
   ContractSpecNode,
   EntityNode,
@@ -37,7 +36,6 @@ import {
 import { mergeAndDedupeDeps } from "../depsMerge.js";
 import { SEMANTIC_REL_META } from "../semanticRelations.js";
 import { ExtractionBuilder } from "./extractionBuilder.js";
-import type { FactCollector } from "./factCollector.js";
 import type { ExtractedFacts } from "./contracts.js";
 import { buildExtractionFileIndex, filesForRepoId, filesForRepoIds } from "./fileIndex.js";
 import type { ProgressReporter } from "../../../shared/progress.js";

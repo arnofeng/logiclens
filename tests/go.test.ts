@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { goExtractor } from "../src/core/contracts/extraction/builtin/goExtractor.js";
 import { repoId } from "../src/shared/path.js";
-import type { ExtractedRelation } from "../src/core/contracts/extraction/crossRepoContracts.js";
 
 
 describe("Go support", () => {

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 // Use vi.hoisted to declare mock functions before vi.mock is hoisted
 const { mockIsInt } = vi.hoisted(() => {
-  const mockIsInt = vi.fn((value: unknown) => false);
+  const mockIsInt = vi.fn((_value: unknown) => false);
   return { mockIsInt };
 });
 

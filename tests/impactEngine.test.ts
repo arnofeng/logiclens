@@ -16,11 +16,6 @@ import {
 import {
   assessSchemaFieldChange
 } from "../src/core/contracts/impact/rules/schemaImpactRules.js";
-import type {
-  ChangeIntent,
-  ImpactItem,
-  ImpactReport
-} from "../src/core/contracts/impact/types.js";
 import { serializeSpec } from "../src/core/contracts/spec.js";
 import type {
   ContractSpecNode,

@@ -1,6 +1,6 @@
 import { compatExtractor } from "./compat.js";
 import type { FactCollector } from "../factCollector.js";
-import type { ParsedFile, CodeSymbol } from "../../../parsing/types.js";
+import type { CodeSymbol } from "../../../parsing/types.js";
 import { parseProto, type Message, type Field, type Service, type Method } from "./protoSchema.js";
 import { pushGrpcContract, pushSchemaContract } from "./shared.js";
 import { normalizePrimitiveType, type SchemaFieldSpec } from "../../spec.js";

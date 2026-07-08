@@ -52,7 +52,7 @@ function findLineNumber(content: string, searchStr: string): number {
 
 const packageJsonDetector: FrameworkDetector = {
   name: "builtin:package-json-detector",
-  async detect(repo, parsedFiles) {
+  async detect(repo, _parsedFiles) {
     const results: DetectedFramework[] = [];
     const packageJsonPath = path.join(repo.path, "package.json");
     if (await fileExists(packageJsonPath)) {
@@ -113,7 +113,7 @@ const packageJsonDetector: FrameworkDetector = {
 
 const pomXmlDetector: FrameworkDetector = {
   name: "builtin:pom-xml-detector",
-  async detect(repo, parsedFiles) {
+  async detect(repo, _parsedFiles) {
     const results: DetectedFramework[] = [];
     const pomPath = path.join(repo.path, "pom.xml");
     if (await fileExists(pomPath)) {
@@ -162,7 +162,7 @@ const pomXmlDetector: FrameworkDetector = {
 
 const gradleDetector: FrameworkDetector = {
   name: "builtin:gradle-detector",
-  async detect(repo, parsedFiles) {
+  async detect(repo, _parsedFiles) {
     const results: DetectedFramework[] = [];
     const gradleFiles = ["build.gradle", "build.gradle.kts"];
     for (const gFile of gradleFiles) {
@@ -215,7 +215,7 @@ const gradleDetector: FrameworkDetector = {
 
 const goModDetector: FrameworkDetector = {
   name: "builtin:go-mod-detector",
-  async detect(repo, parsedFiles) {
+  async detect(repo, _parsedFiles) {
     const results: DetectedFramework[] = [];
     const goModPath = path.join(repo.path, "go.mod");
     if (await fileExists(goModPath)) {
@@ -263,7 +263,7 @@ const goModDetector: FrameworkDetector = {
 
 const requirementsDetector: FrameworkDetector = {
   name: "builtin:requirements-detector",
-  async detect(repo, parsedFiles) {
+  async detect(repo, _parsedFiles) {
     const results: DetectedFramework[] = [];
     const reqPath = path.join(repo.path, "requirements.txt");
     if (await fileExists(reqPath)) {
@@ -295,7 +295,7 @@ const requirementsDetector: FrameworkDetector = {
 
 const pyprojectDetector: FrameworkDetector = {
   name: "builtin:pyproject-detector",
-  async detect(repo, parsedFiles) {
+  async detect(repo, _parsedFiles) {
     const results: DetectedFramework[] = [];
     const pyProjectPath = path.join(repo.path, "pyproject.toml");
     if (await fileExists(pyProjectPath)) {

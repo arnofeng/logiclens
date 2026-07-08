@@ -3,8 +3,6 @@ import {
   buildASTSchema,
   GraphQLSchema,
   GraphQLType,
-  isObjectType,
-  isInputObjectType,
   isNonNullType,
   isListType
 } from "graphql";

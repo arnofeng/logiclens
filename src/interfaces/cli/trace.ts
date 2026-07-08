@@ -114,14 +114,7 @@ export function printSemanticTrace(target: string, graph: SemanticTraceGraph): v
   console.log(`  ${BRAND.cliName} impact ${quoteIfNeeded(target)}`);
 }
 
-/** Returns a hint of the relation kind(s) that connect a node into the trace. */
-function kindHint(graph: SemanticTraceGraph, specId: string): string {
-  const kinds = new Set<string>();
-  for (const e of graph.edges) {
-    if (e.fromSpecId === specId || e.toSpecId === specId) kinds.add(e.kind);
-  }
-  return kinds.size > 0 ? [...kinds].join(", ") : "-";
-}
+
 
 function relationRoots(graph: SemanticTraceGraph): SemanticTraceNode[] {
   const targetIds = new Set(graph.targets.map((t) => t.specId));

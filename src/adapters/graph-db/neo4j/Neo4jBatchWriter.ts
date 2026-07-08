@@ -2,6 +2,7 @@ import type { GraphDB } from "../../../core/graph-model/db.js";
 import type { GraphFactsBatch } from "../../../core/graph-model/facts.js";
 import { systemId } from "../../../core/graph-model/schema.js";
 import type { ProgressReporter } from "../../../shared/progress.js";
+import { chunk } from "../../../shared/chunk.js";
 
 /** Maximum rows per UNWIND batch to avoid excessive memory / transaction size. */
 const BATCH_SIZE = 5000;
@@ -12,14 +13,6 @@ export type Neo4jBatchWriteOptions = {
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
-/** Chunk an array into sub-arrays of at most `size` elements. */
-function chunk<T>(items: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    chunks.push(items.slice(i, i + size));
-  }
-  return chunks;
-}
 
 /** Run `fn` for each chunk of `items`, reporting progress after each chunk. */
 async function forEachChunk<T>(
