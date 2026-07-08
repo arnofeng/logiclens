@@ -64,6 +64,11 @@ export async function discoverGitRepos(
       return;
     }
 
+    entries.sort((left, right) => {
+      const symlinkOrder = Number(left.isSymbolicLink()) - Number(right.isSymbolicLink());
+      return symlinkOrder || left.name.localeCompare(right.name);
+    });
+
     for (const entry of entries) {
       const entryPath = path.join(currentDir, entry.name);
       // Determine if directory. (Need to resolve symlinks if any)

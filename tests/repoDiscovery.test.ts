@@ -31,8 +31,10 @@ describe("repo discovery", () => {
 
     // Create a symlink loop: loop-dir -> plain-dir
     const loopLink = path.join(dir, "loop-dir");
+    let symlinkCreated = false;
     try {
       await fs.symlink(path.join(dir, "plain-dir"), loopLink, "dir");
+      symlinkCreated = true;
     } catch {
       // Windows might require admin privileges for symlinks, so skip loop assertion if symlink fails
     }
@@ -45,6 +47,9 @@ describe("repo discovery", () => {
     const result2 = await discoverGitRepos(dir, 2);
     const names = result2.repos.map((r) => r.name);
     expect(names).toContain("plain-dir/nested-repo");
+    if (symlinkCreated) {
+      expect(names).not.toContain("loop-dir/nested-repo");
+    }
 
     await fs.rm(dir, { recursive: true, force: true });
   });
