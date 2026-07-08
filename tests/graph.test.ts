@@ -26,6 +26,31 @@ describe("graph", () => {
     };
   }
 
+  it("commits and rolls back manually controlled Kuzu transactions", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-kuzu-manual-tx-"));
+    const db = await KuzuGraphDB.open(path.join(dir, "graph"));
+    try {
+      await db.query("CREATE NODE TABLE TxProbe(id STRING, note STRING, PRIMARY KEY(id));");
+
+      await db.beginTransaction();
+      await db.query("CREATE (:TxProbe {id: 'committed', note: 'yes'});");
+      await db.commitTransaction();
+      const committed = await db.query<{ id: string }>("MATCH (n:TxProbe {id: 'committed'}) RETURN n.id AS id;");
+      expect(committed).toEqual([{ id: "committed" }]);
+
+      await db.beginTransaction();
+      await db.query("CREATE (:TxProbe {id: 'rolled-back', note: 'no'});");
+      await db.rollbackTransaction();
+      const rolledBack = await db.query<{ id: string }>("MATCH (n:TxProbe {id: 'rolled-back'}) RETURN n.id AS id;");
+      expect(rolledBack).toEqual([]);
+
+      const afterRollback = await db.query<{ id: string }>("MATCH (n:TxProbe {id: 'committed'}) RETURN n.id AS id;");
+      expect(afterRollback).toEqual([{ id: "committed" }]);
+    } finally {
+      await db.close();
+    }
+  });
+
   it("clears repo indexed artifacts through the graph layer", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-clear-repo-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));

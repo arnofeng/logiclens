@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { AsyncLocalStorage } from "node:async_hooks";
 import kuzu, { type KuzuValue, type QueryResult } from "kuzu";
 import type {
   CallEdge,
@@ -97,7 +98,12 @@ function decodeJournalRow(row: {
   };
 }
 
-const managedKuzuHandles = new Map<string, { db: kuzu.Database; conn: kuzu.Connection }>();
+const managedKuzuHandles = new Map<string, { db: kuzu.Database }>();
+
+type KuzuTransactionContext = {
+  conn: kuzu.Connection;
+  depth: number;
+};
 
 // Kuzu reserves `maxDBSize` bytes of virtual address space via mmap up front.
 // Passing 0 selects Kuzu's default of 8 TiB (2^43), which some constrained
@@ -118,15 +124,14 @@ function resolveMaxDBSize(): number {
 
 export class KuzuGraphDB implements GraphDB {
   private db?: kuzu.Database;
-  private conn?: kuzu.Connection;
   private closed = false;
   private managedKey?: string;
-  private txDepth = 0;
+  private manualTx?: KuzuTransactionContext;
+  private readonly txStorage = new AsyncLocalStorage<KuzuTransactionContext>();
   private readonly crud: CypherCrud;
 
-  private constructor(db: kuzu.Database, conn: kuzu.Connection, managedKey?: string) {
+  private constructor(db: kuzu.Database, managedKey?: string) {
     this.db = db;
-    this.conn = conn;
     this.managedKey = managedKey;
     this.crud = createCypherCrud(this);
   }
@@ -136,7 +141,7 @@ export class KuzuGraphDB implements GraphDB {
     const dbPath = path.extname(resolved) ? resolved : path.join(resolved, "kuzu.db");
     if (shouldUseManagedKuzuClose()) {
       const managed = managedKuzuHandles.get(dbPath);
-      if (managed) return new KuzuGraphDB(managed.db, managed.conn, dbPath);
+      if (managed) return new KuzuGraphDB(managed.db, dbPath);
     }
     await fs.mkdir(path.dirname(dbPath), { recursive: true });
     // Lower checkpoint threshold (default 16 MB) so dirty WAL pages are
@@ -152,19 +157,18 @@ export class KuzuGraphDB implements GraphDB {
       true,            // autoCheckpoint
       1048576          // checkpointThreshold — 1 MB instead of 16 MB
     );
-    const conn = new kuzu.Connection(db);
     await db.init();
-    await conn.init();
     if (shouldUseManagedKuzuClose()) {
-      managedKuzuHandles.set(dbPath, { db, conn });
-      return new KuzuGraphDB(db, conn, dbPath);
+      managedKuzuHandles.set(dbPath, { db });
+      return new KuzuGraphDB(db, dbPath);
     }
-    return new KuzuGraphDB(db, conn);
+    return new KuzuGraphDB(db);
   }
 
   async initSchema(systemName = "default-system"): Promise<void> {
-    const conn = this.connection();
-    for (const statement of schemaStatements) await conn.query(statement);
+    await this.withConnection(async (conn) => {
+      for (const statement of schemaStatements) await conn.query(statement);
+    });
     await this.ensureColumn("System", "summary", "STRING");
     await this.ensureColumn("Repo", "summary", "STRING");
     await this.ensureColumn("IndexState", "graphWriteAtomicity", "STRING");
@@ -185,35 +189,88 @@ export class KuzuGraphDB implements GraphDB {
   private async ensureColumn(tableName: string, columnName: string, columnType: string): Promise<void> {
     const columns = await this.query<TableInfoRow>(`CALL table_info('${tableName}') RETURN name;`);
     if (columns.some((column) => column.name === columnName)) return;
-    await this.connection().query(`ALTER TABLE ${tableName} ADD ${columnName} ${columnType};`);
+    await this.query(`ALTER TABLE ${tableName} ADD ${columnName} ${columnType};`);
+  }
+
+  async transaction<T>(fn: () => Promise<T>): Promise<T> {
+    const existing = this.activeTransaction();
+    if (existing) {
+      existing.depth++;
+      try {
+        return await fn();
+      } finally {
+        existing.depth--;
+      }
+    }
+
+    const conn = await this.createConnection();
+    const context: KuzuTransactionContext = { conn, depth: 1 };
+    try {
+      await conn.query("BEGIN TRANSACTION;");
+      const result = await this.txStorage.run(context, fn);
+      await conn.query("COMMIT;");
+      return result;
+    } catch (error) {
+      try {
+        await conn.query("ROLLBACK;");
+      } catch {}
+      throw error;
+    } finally {
+      await conn.close();
+    }
   }
 
   async beginTransaction(): Promise<void> {
-    if (this.txDepth > 0) {
-      this.txDepth++;
+    const activeStore = this.txStorage.getStore();
+    if (activeStore) {
+      activeStore.depth++;
       return;
     }
-    await this.query("BEGIN TRANSACTION;");
-    this.txDepth = 1;
+    if (this.manualTx) {
+      this.manualTx.depth++;
+      return;
+    }
+    const conn = await this.createConnection();
+    await conn.query("BEGIN TRANSACTION;");
+    this.manualTx = { conn, depth: 1 };
   }
 
   async commitTransaction(): Promise<void> {
-    if (this.txDepth <= 0) {
+    const activeStore = this.txStorage.getStore();
+    if (activeStore) {
+      activeStore.depth--;
+      return;
+    }
+    if (!this.manualTx) {
       throw new Error("No transaction in progress");
     }
-    this.txDepth--;
-    if (this.txDepth > 0) return;
-    await this.query("COMMIT;");
+    this.manualTx.depth--;
+    if (this.manualTx.depth > 0) return;
+    const tx = this.manualTx;
+    this.manualTx = undefined;
+    try {
+      await tx.conn.query("COMMIT;");
+    } finally {
+      await tx.conn.close();
+    }
   }
 
   async rollbackTransaction(): Promise<void> {
-    if (this.txDepth <= 0) {
+    const activeStore = this.txStorage.getStore();
+    if (activeStore) {
+      activeStore.depth = 0;
+      try {
+        await activeStore.conn.query("ROLLBACK;");
+      } catch {}
       return;
     }
+    if (!this.manualTx) return;
+    const tx = this.manualTx;
+    this.manualTx = undefined;
     try {
-      await this.query("ROLLBACK;");
+      await tx.conn.query("ROLLBACK;");
     } finally {
-      this.txDepth = 0;
+      await tx.conn.close();
     }
   }
 
@@ -646,7 +703,19 @@ export class KuzuGraphDB implements GraphDB {
   }
 
   async query<T = Record<string, GraphValue>>(cypher: string, params?: Record<string, GraphValue>): Promise<T[]> {
-    const conn = this.connection();
+    const active = this.activeTransaction();
+    if (active) {
+      return this.queryWithConnection<T>(active.conn, cypher, params);
+    }
+    const conn = await this.createConnection();
+    try {
+      return await this.queryWithConnection<T>(conn, cypher, params);
+    } finally {
+      await conn.close();
+    }
+  }
+
+  private async queryWithConnection<T>(conn: kuzu.Connection, cypher: string, params?: Record<string, GraphValue>): Promise<T[]> {
     if (params && Object.keys(params).length > 0) {
       const statement = await conn.prepare(cypher);
       if (!statement.isSuccess()) throw new Error(statement.getErrorMessage());
@@ -663,26 +732,50 @@ export class KuzuGraphDB implements GraphDB {
     if (this.closed) return;
     this.closed = true;
 
+    if (this.manualTx) {
+      const tx = this.manualTx;
+      this.manualTx = undefined;
+      try {
+        await tx.conn.query("ROLLBACK;");
+      } catch {}
+      await tx.conn.close();
+    }
+
     if (shouldUseManagedKuzuClose()) {
-      if (this.managedKey && this.db && this.conn) {
-        managedKuzuHandles.set(this.managedKey, { db: this.db, conn: this.conn });
+      if (this.managedKey && this.db) {
+        managedKuzuHandles.set(this.managedKey, { db: this.db });
       }
-      this.conn = undefined;
       this.db = undefined;
       return;
     }
 
-    const conn = this.conn;
     const db = this.db;
-    this.conn = undefined;
     this.db = undefined;
-    if (conn) await conn.close();
     if (db) await db.close();
   }
 
-  private connection(): kuzu.Connection {
-    if (this.closed || !this.conn || !this.db) throw new Error("Graph database is closed");
-    return this.conn;
+  private database(): kuzu.Database {
+    if (this.closed || !this.db) throw new Error("Graph database is closed");
+    return this.db;
+  }
+
+  private activeTransaction(): KuzuTransactionContext | undefined {
+    return this.txStorage.getStore() ?? this.manualTx;
+  }
+
+  private async createConnection(): Promise<kuzu.Connection> {
+    const conn = new kuzu.Connection(this.database());
+    await conn.init();
+    return conn;
+  }
+
+  private async withConnection<T>(fn: (conn: kuzu.Connection) => Promise<T>): Promise<T> {
+    const conn = await this.createConnection();
+    try {
+      return await fn(conn);
+    } finally {
+      await conn.close();
+    }
   }
 }
 

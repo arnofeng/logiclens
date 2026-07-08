@@ -82,6 +82,7 @@ export type ContractSummaryRow = {
 };
 
 export interface GraphDB {
+  transaction?<T>(fn: () => Promise<T>): Promise<T>;
   beginTransaction?(): Promise<void>;
   commitTransaction?(): Promise<void>;
   rollbackTransaction?(): Promise<void>;
@@ -151,6 +152,9 @@ export interface GraphDB {
 }
 
 export async function withTransaction<T>(db: GraphDB, fn: () => Promise<T>): Promise<T> {
+  if (db.transaction) {
+    return db.transaction(fn);
+  }
   if (db.beginTransaction) {
     await db.beginTransaction();
   }

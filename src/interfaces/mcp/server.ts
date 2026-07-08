@@ -7,6 +7,7 @@ import path from "node:path";
 import type { PendingFile, WatchStatus } from "../../features/watch/watcher.js";
 import { appVersion } from "../../shared/version.js";
 import { BRAND, BRAND_DEFAULTS, BRAND_PATHS, brandedMcpToolName, configFilePath } from "../../shared/branding.js";
+import { startMcpOwnerRpcServer } from "./ownerRpc.js";
 import { z } from "zod";
 
 type CatchUpState = WatchStatus["catchUp"];
@@ -175,17 +176,26 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   const client: InstanceType<typeof GraphClient> = await createClient({ cwd });
   await client.watch({ catchUp: "background" });
   const catchUpState = startCatchUp(client, "background");
+  const ownerRpc = await startMcpOwnerRpcServer({
+    client,
+    cwd,
+    getCatchUp: () => catchUpState,
+    defaultWatchOptions: { catchUp: "background" }
+  });
 
   const mcpPidPath = path.resolve(cwd, BRAND_PATHS.mcpPid);
   await fs.mkdir(path.dirname(mcpPidPath), { recursive: true });
   await fs.writeFile(
     mcpPidPath,
-    JSON.stringify({ pid: process.pid, cwd: path.resolve(cwd), version: appVersion, startedAt: Date.now() }, null, 2),
+    JSON.stringify({ pid: process.pid, cwd: path.resolve(cwd), version: appVersion, startedAt: Date.now(), rpc: ownerRpc.info }, null, 2),
     "utf8"
   );
 
   const cleanup = async () => {
     client.unwatch();
+    try {
+      await ownerRpc.close();
+    } catch {}
     await client.close();
     try {
       await fs.rm(mcpPidPath, { force: true });
