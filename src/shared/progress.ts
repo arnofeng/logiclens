@@ -26,6 +26,8 @@ export class ProgressBar {
   private readonly started = Date.now();
   private readonly interactive = Boolean(process.stderr.isTTY && !process.env.CI);
   private lastStepMs?: number;
+  private completedAt?: number;
+  private finalized = false;
 
   constructor(
     private readonly label: string,
@@ -45,22 +47,27 @@ export class ProgressBar {
     this.current = Math.min(current, total);
     this.lastStepMs = stepMs;
     if (total <= 0) return;
+    const isComplete = this.current >= total;
+    if (isComplete && this.completedAt === undefined) this.completedAt = Date.now();
     const percent = Math.floor((this.current / total) * 100);
     if (!this.interactive) {
       const bucket = Math.floor(percent / 10);
       if (bucket !== this.lastLoggedBucket || this.current === total) {
         this.lastLoggedBucket = bucket;
         const stepStr = stepMs !== undefined ? `(${(stepMs / 1000).toFixed(1)}s) ` : "";
-        process.stderr.write(`${this.label}: ${percent}% (${this.current}/${total})${label ? ` ${label}` : ""} [${stepStr}elapsed]\n`);
+        const elapsed = ((this.elapsedMs()) / 1000).toFixed(1);
+        process.stderr.write(`${this.label}: ${percent}% (${this.current}/${total})${label ? ` ${label}` : ""} [${stepStr}${elapsed}s elapsed]\n`);
       }
       return;
     }
+    if (this.finalized) return;
     this.render(label, total);
+    if (isComplete) this.finalizeInteractiveLine();
   }
 
   complete(label = "done"): void {
+    if (this.finalized) return;
     this.update(this.total, label);
-    if (this.interactive) process.stderr.write("\n");
   }
 
   private render(label: string | undefined, total: number): void {
@@ -68,12 +75,22 @@ export class ProgressBar {
     const ratio = total === 0 ? 1 : this.current / total;
     const filled = Math.min(width, Math.max(0, Math.round(ratio * width)));
     const bar = `${"#".repeat(filled)}${"-".repeat(width - filled)}`;
-    const elapsed = ((Date.now() - this.started) / 1000).toFixed(1);
+    const elapsed = (this.elapsedMs() / 1000).toFixed(1);
     const stepStr = this.lastStepMs !== undefined ? `${(this.lastStepMs / 1000).toFixed(1)}s / ` : "";
     const suffix = label ? ` ${label}` : "";
     const line = fitLineToTerminal(`${this.label} [${bar}] ${this.current}/${total} ${Math.round(ratio * 100)}% ${stepStr}${elapsed}s${suffix}`);
     const padding = this.lastLineLength > line.length ? " ".repeat(this.lastLineLength - line.length) : "";
     process.stderr.write(`\r\x1b[2K${line}${padding}`);
     this.lastLineLength = line.length + padding.length;
+  }
+
+  private finalizeInteractiveLine(): void {
+    if (this.finalized) return;
+    process.stderr.write("\n");
+    this.finalized = true;
+  }
+
+  private elapsedMs(): number {
+    return (this.completedAt ?? Date.now()) - this.started;
   }
 }
