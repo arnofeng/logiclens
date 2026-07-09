@@ -383,7 +383,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   server.registerTool(
     MCP_TOOLS.listDependencies,
     {
-      description: "Use to answer which repositories depend on which other repositories, with evidence. Best for repo-level dependency questions and surveys before structural changes. Do not use for tracing one API/event/schema; use logiclens_trace for known contracts. Do not use for change risk; use logiclens_impact_analysis.",
+      description: `Use to answer which repositories depend on which other repositories, with evidence. Best for repo-level dependency questions and surveys before structural changes. Do not use for tracing one API/event/schema; use ${MCP_TOOLS.trace} for known contracts. Do not use for change risk; use ${MCP_TOOLS.impactAnalysis}.`,
       inputSchema: {
         strength: z.enum(["strong", "weak"]).optional().describe("Optional filter. strong = package/import/api dependencies; weak = event/shared-contract style dependencies."),
         type: z.string().min(1).max(256).optional().describe("Optional dependency type filter, for example package, import, api, event, shared-contract, grpc, graphql, or dubbo."),
@@ -412,7 +412,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   server.registerTool(
     MCP_TOOLS.listContracts,
     {
-      description: "Use to discover exact API/event/schema/RPC/GraphQL/package contract identifiers before calling logiclens_trace or logiclens_impact_analysis. Returns contracts with producer/consumer/share counts. Do not use for broad natural-language code search; use only to enumerate or filter known contract surfaces.",
+      description: `Use to discover exact API/event/schema/RPC/GraphQL/package contract identifiers before calling ${MCP_TOOLS.trace} or ${MCP_TOOLS.impactAnalysis}. Returns contracts with producer/consumer/share counts. Do not use for broad natural-language code search; use only to enumerate or filter known contract surfaces.`,
       inputSchema: {
         kind: z.string().min(1).max(256).optional().describe("Optional contract kind filter, for example package, api, event, dto, schema, enum, config, grpc, graphql, or dubbo."),
         limit: z.number().int().min(1).max(1000).optional().describe("Maximum contracts to retrieve. Use a small value such as 50 for exploration; maximum 1000."),
@@ -436,9 +436,9 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   server.registerTool(
     MCP_TOOLS.impactAnalysis,
     {
-      description: "Use FIRST before editing or proposing changes to an API endpoint, event, schema/DTO field, enum, RPC, GraphQL field, package contract, or widely-used symbol. Evaluates downstream blast radius and rates impacts as breaking/risky/compatible with file:line evidence. If the exact contract name is unknown, call logiclens_list_contracts first. Do not use logiclens_ask_question for change risk.",
+      description: `Use FIRST before editing or proposing changes to an API endpoint, event, schema/DTO field, enum, RPC, GraphQL field, package contract, or widely-used symbol. Evaluates downstream blast radius and rates impacts as breaking/risky/compatible with file:line evidence. If the exact contract name is unknown, call ${MCP_TOOLS.listContracts} first. Do not use ${MCP_TOOLS.askQuestion} for change risk.`,
       inputSchema: {
-        target: z.string().min(1).max(512).describe("Required target symbol, entity, or contract. Prefer exact contract identifiers from logiclens_list_contracts, for example 'http POST /orders', 'event OrderCreated', 'schema CreateOrderRequest', 'grpc OrderService/CreateOrder', or 'graphql Mutation.createOrder'."),
+        target: z.string().min(1).max(512).describe(`Required target symbol, entity, or contract. Prefer exact contract identifiers from ${MCP_TOOLS.listContracts}, for example 'http POST /orders', 'event OrderCreated', 'schema CreateOrderRequest', 'grpc OrderService/CreateOrder', or 'graphql Mutation.createOrder'.`),
         change: z.string().min(1).max(512).optional().describe("Optional proposed change in '<changeType>:<detail>' format. Valid change types: field-added, field-removed, field-type-changed, endpoint-removed, endpoint-renamed, endpoint-schema-change, topic-removed, topic-renamed, event-payload-change, rpc-removed, rpc-renamed, rpc-signature-change. Examples: 'field-removed:couponCode', 'endpoint-schema-change:request body changed'. Omit only for a broad impact survey."),
       },
     },
@@ -482,9 +482,9 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   server.registerTool(
     MCP_TOOLS.askQuestion,
     {
-      description: "LAST RESORT broad retrieval. Use only when the user asks an exploratory natural-language question and no exact repository, contract, API/event/schema/RPC/GraphQL target, or symbol is known. Accuracy is lower than graph-specific tools. Do not use for dependency lists, contract discovery, contract tracing, or change impact; prefer logiclens_list_dependencies, logiclens_list_contracts, logiclens_trace, and logiclens_impact_analysis.",
+      description: `LAST RESORT broad retrieval. Use only when the user asks an exploratory natural-language question and no exact repository, contract, API/event/schema/RPC/GraphQL target, or symbol is known. Accuracy is lower than graph-specific tools. Do not use for dependency lists, contract discovery, contract tracing, or change impact; prefer ${MCP_TOOLS.listDependencies}, ${MCP_TOOLS.listContracts}, ${MCP_TOOLS.trace}, and ${MCP_TOOLS.impactAnalysis}.`,
       inputSchema: {
-        question: z.string().min(1).max(1024).describe("Broad natural-language question only. If the question names a contract or change, use logiclens_trace or logiclens_impact_analysis instead."),
+        question: z.string().min(1).max(1024).describe(`Broad natural-language question only. If the question names a contract or change, use ${MCP_TOOLS.trace} or ${MCP_TOOLS.impactAnalysis} instead.`),
       },
     },
     async ({ question }) => {
@@ -502,7 +502,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
     MCP_TOOLS.trace,
     {
       description:
-        "Use FIRST when the user names a known API endpoint, event, schema/DTO, RPC, GraphQL operation, package, or other contract and wants producers, consumers, request/response/payload schemas, or cross-repo flow. Prefer `target` natural identifiers; call logiclens_list_contracts first if the exact target is unknown. Do not use logiclens_ask_question for known contracts.\n" +
+        `Use FIRST when the user names a known API endpoint, event, schema/DTO, RPC, GraphQL operation, package, or other contract and wants producers, consumers, request/response/payload schemas, or cross-repo flow. Prefer \`target\` natural identifiers; call ${MCP_TOOLS.listContracts} first if the exact target is unknown. Do not use ${MCP_TOOLS.askQuestion} for known contracts.\n` +
         "Modes:\n" +
         "  - target: natural identifier, for example \"http POST /orders\", \"event OrderCreated\", \"schema CreateOrderRequest\", \"grpc OrderService/CreateOrder\", \"dubbo com.acme.OrderService#createOrder\", \"graphql Mutation.createOrder\". Multi-hop trace returning the connected subgraph.\n" +
         "  - specId: internal ContractSpec ID only when already present in previous tool output. Single-hop trace of direct edges.\n" +
