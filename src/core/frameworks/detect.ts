@@ -7,6 +7,7 @@ import type { FrameworkDetector } from "./types.js";
 import type { AppConfig } from "../../config/schema.js";
 import { fileId, evidenceId } from "../../shared/path.js";
 import { confidenceFor } from "../../shared/confidence.js";
+import { frameworkDetectorRegistry } from "../registries/registry.js";
 
 // Helper to check if file exists
 async function fileExists(filePath: string): Promise<boolean> {
@@ -474,7 +475,7 @@ const goFallbackDetector: FrameworkDetector = {
   }
 };
 
-const builtinFrameworkDetectors: FrameworkDetector[] = [
+export const builtinFrameworkDetectors: FrameworkDetector[] = [
   packageJsonDetector,
   pomXmlDetector,
   gradleDetector,
@@ -488,15 +489,29 @@ const builtinFrameworkDetectors: FrameworkDetector[] = [
   goFallbackDetector
 ];
 
+let builtinsRegistered = false;
+
+export function registerBuiltinFrameworkDetectors(): void {
+  if (builtinsRegistered) return;
+  frameworkDetectorRegistry.registerMany(builtinFrameworkDetectors);
+  builtinsRegistered = true;
+}
+
+export function registeredFrameworkDetectors(): FrameworkDetector[] {
+  registerBuiltinFrameworkDetectors();
+  return frameworkDetectorRegistry.detectors();
+}
+
 export async function detectFrameworks(
   repo: RepoNode,
   parsedFiles: ParsedGraphFile[] = []
 ): Promise<DetectedFramework[]> {
+  registerBuiltinFrameworkDetectors();
   const results: DetectedFramework[] = [];
   const repoParsedFiles = parsedFiles.every((file) => file.repoId === repo.id)
     ? parsedFiles
     : parsedFiles.filter((file) => file.repoId === repo.id);
-  for (const detector of builtinFrameworkDetectors) {
+  for (const detector of frameworkDetectorRegistry.detectors()) {
     try {
       const dfs = await detector.detect(repo, repoParsedFiles);
       results.push(...dfs);

@@ -18,7 +18,7 @@ import type {
 } from "../../parsing/types.js";
 import type { ContractExtractor, ExtractContext, PostExtractContext } from "../../registries/types.js";
 import { normalizeName } from "../../../shared/path.js";
-import { builtinContractExtractors } from "./builtin/index.js";
+import { registeredContractExtractors } from "./builtin/index.js";
 import {
   dedupBy,
   materializedRepoDependencyDedupKey,
@@ -125,7 +125,7 @@ export async function extractRepoContractFacts(
     repoResolver: (repoId) => repos.find((repo) => repo.id === repoId),
     aliasOverrides: options.aliasOverrides
   };
-  for (const extractor of builtinContractExtractors) {
+  for (const extractor of registeredContractExtractors()) {
     await extractor.extract(context, builder);
   }
   return builder.build();
@@ -475,7 +475,8 @@ export async function extractContractFactsWithRegistry(
 
   // Pre-detect frameworks for all repos in the context
   const fileIndex = buildExtractionFileIndex(context.parsedFiles);
-  let totalProgressSteps = 1 + builtinContractExtractors.length;
+  const extractors = registeredContractExtractors();
+  let totalProgressSteps = 1 + extractors.length;
   let completedProgressSteps = 0;
   const reportProgress = (label: string): void => {
     completedProgressSteps += 1;
@@ -502,7 +503,7 @@ export async function extractContractFactsWithRegistry(
   const postExtractContexts = new Map<string, { repos: RepoNode[]; parsedFiles: ParsedGraphFile[] }>();
   const extractorFilesCache = new Map<string, ParsedGraphFile[]>();
   const extractorTimings: Array<{ name: string; durationMs: number; files: number; repos: number }> = [];
-  for (const extractor of builtinContractExtractors) {
+  for (const extractor of extractors) {
     const started = Date.now();
 
     // Filter repos for which this extractor is enabled
@@ -554,8 +555,8 @@ export async function extractContractFactsWithRegistry(
   // Freeze a read-only view for postExtract readers, then let extractors
   // amend by writing into the same builder.
   const mergedForPost = builder.build();
-  totalProgressSteps += builtinContractExtractors.filter((extractor) => extractor.postExtract && postExtractContexts.has(extractor.name)).length;
-  for (const extractor of builtinContractExtractors) {
+  totalProgressSteps += extractors.filter((extractor) => extractor.postExtract && postExtractContexts.has(extractor.name)).length;
+  for (const extractor of extractors) {
     if (!extractor.postExtract) continue;
     const filteredContext = postExtractContexts.get(extractor.name);
     if (!filteredContext) continue;

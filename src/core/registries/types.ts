@@ -1,6 +1,7 @@
 import type { ExtractedFacts } from "../contracts/extraction/contracts.js";
 import type { FactCollector } from "../contracts/extraction/factCollector.js";
 import type { ParsedGraphFile, RepoNode } from "../parsing/types.js";
+import type { DetectedFramework } from "../frameworks/types.js";
 import type { ProviderCallRuntime } from "../../shared/providerPolicy.js";
 
 export type EmbeddingVector = number[];
@@ -54,4 +55,14 @@ export interface ContractExtractor {
   needs?: ContractExtractorDeps;
   extract(context: ExtractContext, collector: FactCollector): Promise<void> | void;
   postExtract?(context: PostExtractContext, collector: FactCollector): Promise<void> | void;
+}
+
+export interface FrameworkDetector {
+  name: string;
+  detect(repo: RepoNode, parsedFiles: ParsedGraphFile[]): Promise<DetectedFramework[]> | DetectedFramework[];
+}
+
+export interface ReferenceResolver {
+  name: string;
+  languages: string[];
 }

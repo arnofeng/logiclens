@@ -7,9 +7,16 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
+    "ignoreDeprecations": "6.0",
     "outDir": "dist",
     "rootDir": ".",
-    "types": ["node"]
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@logiclens/plugin-sdk": ["packages/plugin-sdk/src/index.ts"],
+      "@logiclens/plugin-sdk/utils": ["packages/plugin-sdk/src/utils.ts"],
+      "@logiclens/plugin-runtime": ["packages/plugin-runtime/src/index.ts"]
+    }
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"],
   "exclude": ["tests/fixtures/**"]

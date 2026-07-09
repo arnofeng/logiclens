@@ -35,6 +35,12 @@ export const BRAND_DEFAULTS = {
   mcpProcessName: `${BRAND.cliName}-mcp-server`
 } as const;
 
+export const BRAND_PLUGIN_PACKAGES = {
+  sdk: "@logiclens/plugin-sdk",
+  sdkUtils: "@logiclens/plugin-sdk/utils",
+  runtime: "@logiclens/plugin-runtime"
+} as const;
+
 export function brandedPath(cwd: string, relativePath: string): string {
   return path.resolve(cwd, relativePath);
 }

@@ -4,7 +4,8 @@
     "rootDir": "src",
     "sourceMap": true,
     "inlineSources": true,
-    "declaration": true
+    "declaration": true,
+    "paths": {}
   },
   "include": ["src/**/*.ts"],
   "exclude": ["tests/**", "dist/**", "node_modules/**"]

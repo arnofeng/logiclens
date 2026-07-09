@@ -25,6 +25,7 @@ import { pythonGrpcExtractor } from "./pythonGrpcExtractor.js";
 import { jsGrpcExtractor } from "./jsGrpcExtractor.js";
 import { graphqlSdlExtractor } from "./graphqlSdlExtractor.js";
 import { graphqlClientExtractor } from "./graphqlClientExtractor.js";
+import { contractExtractorRegistry } from "../../../registries/registry.js";
 
 /** Each extractor already self-wraps via compatExtractor at its export site. */
 export const builtinContractExtractors: ContractExtractor[] = [
@@ -55,3 +56,16 @@ export const builtinContractExtractors: ContractExtractor[] = [
   graphqlSdlExtractor,
   graphqlClientExtractor
 ];
+
+let builtinsRegistered = false;
+
+export function registerBuiltinContractExtractors(): void {
+  if (builtinsRegistered) return;
+  contractExtractorRegistry.registerMany(builtinContractExtractors);
+  builtinsRegistered = true;
+}
+
+export function registeredContractExtractors(): ContractExtractor[] {
+  registerBuiltinContractExtractors();
+  return contractExtractorRegistry.extractors();
+}

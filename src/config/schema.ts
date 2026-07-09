@@ -113,6 +113,10 @@ export const configSchema = z.object({
   mcp: z.object({
     logCalls: z.boolean().default(false)
   }).default({ logCalls: false }),
+  plugins: z.object({
+    enabled: z.array(z.string()).default([]),
+    failFast: z.boolean().default(false)
+  }).default({ enabled: [], failFast: false }),
   watch: z.object({
     enabled: z.boolean().default(true),
     mode: z.enum(["auto", "repo-roots", "common-root", "off"]).default("auto"),
