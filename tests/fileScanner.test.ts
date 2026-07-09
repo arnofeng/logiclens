@@ -1,13 +1,18 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { configSchema } from "../src/config/schema.js";
 import { parserRegistry } from "../src/core/registries/registry.js";
+import { registerBuiltinParsers } from "../src/core/parsing/parserRegistry.js";
 import { scanRepoFiles } from "../src/core/workspace/fileScanner.js";
 import { isGeneratedFile } from "../src/shared/generatedFile.js";
 
 describe("file scanner", () => {
+  beforeAll(async () => {
+    await registerBuiltinParsers();
+  });
+
   it("includes JavaScript, JSX, and Markdown document files", async () => {
     const files = await scanRepoFiles(path.resolve("tests/fixtures/service-c"), configSchema.parse({}));
     expect(files.map((file) => [file.relativePath, file.language])).toEqual([

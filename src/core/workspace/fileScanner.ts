@@ -3,7 +3,6 @@ import fs from "node:fs/promises";
 import fg from "fast-glob";
 import ignore from "ignore";
 import type { AppConfig } from "../../config/schema.js";
-import { builtinLanguageForPath, registerBuiltinParsers } from "../parsing/parserRegistry.js";
 import { parserRegistry } from "../registries/registry.js";
 import { toPosixPath } from "../../shared/path.js";
 import { isGeneratedFile } from "../../shared/generatedFile.js";
@@ -78,18 +77,6 @@ export async function scanRepoFiles(repoPath: string, config: AppConfig): Promis
     // so they don't pollute contract evidence with scaffolding noise.
     .filter((relativePath) => !isGeneratedFile(relativePath));
 
-  // P1-2: Lazy grammar loading - detect which languages appear in this repo
-  // before registering grammars, so we only load what is actually needed.
-  const languageSet = new Set<string>();
-  for (const relativePath of posixEntries) {
-    const inferred = builtinLanguageForPath(relativePath);
-    if (inferred) languageSet.add(inferred);
-  }
-
-  // Register only the grammars we actually need.
-  registerBuiltinParsers(languageSet);
-
-  // Now resolve actual language for each candidate entry
   const candidateEntries: { relativePath: string; language: string }[] = [];
   for (const relativePath of posixEntries) {
     const lang = languageForPath(relativePath);

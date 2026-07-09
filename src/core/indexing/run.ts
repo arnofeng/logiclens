@@ -5,7 +5,7 @@ import { planIndexRun } from "./planning.js";
 import { createIndexRunContext } from "./context.js";
 import { runBatchedFullIndex, runDependencyRebuild, runFullCopyBulkIndex, runPerRepoIndex, type IndexCounters } from "./orchestrator.js";
 import type { IndexLogger, IndexOptions, IndexResult } from "./types.js";
-import { loadAndRegisterConfiguredPlugins } from "../plugins/register.js";
+import { autoDetectAndRegisterPlugins } from "../plugins/register.js";
 
 import { chunk } from "../../shared/chunk.js";
 
@@ -23,12 +23,14 @@ export async function runIndexing(
   const started = Date.now();
   const cwd = options.cwd ?? process.cwd();
   const logger = options.logger ?? {};
-  await loadAndRegisterConfiguredPlugins({
+  const planning = await planIndexRun({ db, config, options });
+  await autoDetectAndRegisterPlugins({
     config,
     cwd,
-    warn: (message) => logger.warn?.(message)
+    repoConfigs: planning.repoConfigs,
+    warn: (message) => logger.warn?.(message),
+    log: (message) => logger.log?.(message)
   });
-  const planning = await planIndexRun({ db, config, options });
   const ctx = createIndexRunContext({ cwd, config, options, logger, writeMode: planning.writeMode });
   const totals: IndexCounters = { filesScanned: 0, filesChanged: 0 };
 

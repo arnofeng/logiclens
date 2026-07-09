@@ -13,6 +13,21 @@ export type PluginManifest = {
   version: string;
   logiclensPluginApiVersion: string;
   capabilities: PluginCapability[];
+  entry?: string;
+  languages?: PluginManifestLanguage[];
+};
+
+export type PluginLanguageDetect = {
+  extensions?: string[];
+  markers?: string[];
+  globs?: string[];
+};
+
+export type PluginManifestLanguage = {
+  id: string;
+  extensions: string[];
+  requiresLanguages?: string[];
+  detect?: PluginLanguageDetect;
 };
 
 export type PluginEvidenceInput = {

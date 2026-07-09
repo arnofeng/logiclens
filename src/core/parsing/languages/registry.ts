@@ -2,25 +2,17 @@ import type Parser from "tree-sitter";
 import type { ParsedFile } from "../types.js";
 import { codeId } from "../../../shared/path.js";
 
-import JavaScriptGrammar from "tree-sitter-javascript";
-import JavaGrammar from "tree-sitter-java";
-import TypeScriptModule from "tree-sitter-typescript";
-import PythonGrammar from "tree-sitter-python";
-import GoGrammar from "tree-sitter-go";
-
 import { tsQueries, jsQueries } from "./typescript.js";
 import { javaQueries } from "./java.js";
 import { pythonQueries } from "./python.js";
 import { goQueries } from "./go.js";
-
-const grammars = TypeScriptModule as unknown as { typescript: unknown; tsx: unknown };
 
 export type FactsDialect = "java-annotations" | "js-decorators" | "none";
 
 export interface LanguageDefinition {
   id: string;
   extensions: string[];
-  loadGrammar: () => unknown;
+  loadGrammar: () => Promise<unknown>;
   queries: { symbols: string; imports: string; calls: string };
   factsDialect: FactsDialect;
   helpers?: {
@@ -34,35 +26,50 @@ export const LANGUAGE_DEFINITIONS: LanguageDefinition[] = [
   {
     id: "typescript",
     extensions: [".ts"],
-    loadGrammar: () => grammars.typescript,
+    loadGrammar: async () => {
+      const module = await import("tree-sitter-typescript") as unknown as { default?: { typescript: unknown }; typescript?: unknown };
+      return module.default?.typescript ?? module.typescript;
+    },
     queries: tsQueries,
     factsDialect: "js-decorators",
   },
   {
     id: "tsx",
     extensions: [".tsx"],
-    loadGrammar: () => grammars.tsx,
+    loadGrammar: async () => {
+      const module = await import("tree-sitter-typescript") as unknown as { default?: { tsx: unknown }; tsx?: unknown };
+      return module.default?.tsx ?? module.tsx;
+    },
     queries: tsQueries,
     factsDialect: "js-decorators",
   },
   {
     id: "javascript",
     extensions: [".js"],
-    loadGrammar: () => JavaScriptGrammar,
+    loadGrammar: async () => {
+      const module = await import("tree-sitter-javascript") as { default: unknown };
+      return module.default;
+    },
     queries: jsQueries,
     factsDialect: "js-decorators",
   },
   {
     id: "jsx",
     extensions: [".jsx"],
-    loadGrammar: () => JavaScriptGrammar,
+    loadGrammar: async () => {
+      const module = await import("tree-sitter-javascript") as { default: unknown };
+      return module.default;
+    },
     queries: jsQueries,
     factsDialect: "js-decorators",
   },
   {
     id: "java",
     extensions: [".java"],
-    loadGrammar: () => JavaGrammar,
+    loadGrammar: async () => {
+      const module = await import("tree-sitter-java") as { default: unknown };
+      return module.default;
+    },
     queries: javaQueries,
     factsDialect: "java-annotations",
     postParse: (parsedFile: ParsedFile) => {
@@ -75,14 +82,20 @@ export const LANGUAGE_DEFINITIONS: LanguageDefinition[] = [
   {
     id: "python",
     extensions: [".py"],
-    loadGrammar: () => PythonGrammar,
+    loadGrammar: async () => {
+      const module = await import("tree-sitter-python") as { default: unknown };
+      return module.default;
+    },
     queries: pythonQueries,
     factsDialect: "js-decorators",
   },
   {
     id: "go",
     extensions: [".go"],
-    loadGrammar: () => GoGrammar,
+    loadGrammar: async () => {
+      const module = await import("tree-sitter-go") as { default: unknown };
+      return module.default;
+    },
     queries: goQueries,
     factsDialect: "none",
   },
@@ -96,12 +109,26 @@ const byExt = new Map<string, LanguageDefinition>(
   LANGUAGE_DEFINITIONS.flatMap((d) => d.extensions.map((e) => [e, d] as const))
 );
 
+const loadedGrammars = new Map<string, unknown>();
+
 export function getLanguageDefinition(id: string): LanguageDefinition | undefined {
   return byId.get(id);
 }
 
 export function languageDefForExtension(ext: string): LanguageDefinition | undefined {
   return byExt.get(ext);
+}
+
+export async function loadLanguageGrammar(def: LanguageDefinition): Promise<unknown> {
+  const cached = loadedGrammars.get(def.id);
+  if (cached) return cached;
+  const grammar = await def.loadGrammar();
+  loadedGrammars.set(def.id, grammar);
+  return grammar;
+}
+
+export function getLoadedLanguageGrammar(id: string): unknown | undefined {
+  return loadedGrammars.get(id);
 }
 
 function applyJavaPackagePrefix(parsedFile: ParsedFile, packageName: string): void {

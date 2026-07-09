@@ -1,15 +1,19 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ExtractionBuilder } from "../src/core/contracts/extraction/extractionBuilder.js";
 import { normalizePublicFacts } from "../src/core/plugins/publicFactNormalizer.js";
 import { adaptFactExtractor, adaptFrameworkDetector, adaptLanguageParser } from "../src/core/plugins/adapter.js";
 import { clearRegisteredPluginCapabilities, registerLoadedPlugins } from "../src/core/plugins/register.js";
+import { autoDetectAndRegisterPlugins } from "../src/core/plugins/register.js";
+import { detectActiveLanguages, builtinLanguagePluginManifests, scanRepoPathSnapshot } from "../src/core/plugins/detection.js";
 import { ContractExtractorRegistry, FrameworkDetectorRegistry, contractExtractorRegistry, frameworkDetectorRegistry, parserRegistry } from "../src/core/registries/registry.js";
 import { registerBuiltinParsers } from "../src/core/parsing/parserRegistry.js";
-import { validatePlugin } from "@logiclens/plugin-runtime";
+import { discoverLogicLensPlugin, loadDiscoveredLogicLensPlugins, validatePlugin } from "@logiclens/plugin-runtime";
 import { LOGICLENS_PLUGIN_API_VERSION, definePlugin } from "@logiclens/plugin-sdk";
 import { joinHttpPaths, normalizeRouteTemplate } from "@logiclens/plugin-sdk/utils";
+import { defaultConfig } from "../src/config/loadConfig.js";
 
 describe("plugin architecture foundation", () => {
   it("publishes plugin APIs as workspace packages only", async () => {
@@ -298,6 +302,118 @@ describe("plugin architecture foundation", () => {
     expect(plugin.factExtractors?.[0]?.postExtract).toBeDefined();
   });
 
+  it("requires exported language declarations to match manifest languages", () => {
+    const manifest = {
+      name: "bad-language-plugin",
+      version: "0.0.1",
+      logiclensPluginApiVersion: LOGICLENS_PLUGIN_API_VERSION,
+      capabilities: ["language" as const],
+      languages: [{ id: "go", extensions: [".go"] }]
+    };
+    const plugin = definePlugin({
+      manifest,
+      languages: [{
+        id: "go",
+        extensions: [".go2"],
+        parse() {
+          return {};
+        }
+      }]
+    });
+
+    expect(() => validatePlugin(plugin, "bad-language-plugin")).toThrow(/exactly match/);
+  });
+
+  it("resolves plugin entry from package.json when plugin.json omits entry", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-plugin-entry-"));
+    await fs.writeFile(path.join(dir, "plugin.json"), JSON.stringify({
+      name: "entry-test",
+      version: "0.0.1",
+      logiclensPluginApiVersion: LOGICLENS_PLUGIN_API_VERSION,
+      capabilities: ["fact-extractor"]
+    }), "utf8");
+    await fs.writeFile(path.join(dir, "package.json"), JSON.stringify({ exports: { ".": { import: "./index.js" } } }), "utf8");
+    await fs.writeFile(path.join(dir, "index.js"), "export default { manifest: { name: 'entry-test', version: '0.0.1', logiclensPluginApiVersion: '0.1.0', capabilities: ['fact-extractor'] }, factExtractors: [] };", "utf8");
+
+    const discovered = await discoverLogicLensPlugin(dir);
+    expect(discovered.entryPath).toBe(path.join(dir, "index.js"));
+    await expect(loadDiscoveredLogicLensPlugins([discovered], { failFast: true })).resolves.toHaveLength(1);
+  });
+
+  it("detects Vue and cascades to JS/TS delegate languages", async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-vue-detect-"));
+    await fs.writeFile(path.join(repo, "App.vue"), "<script setup lang=\"ts\">const x = 1</script>", "utf8");
+    const config = { ...defaultConfig(), include: ["**/*.vue"], repos: [{ name: "vue", path: repo }] };
+    const snapshot = await scanRepoPathSnapshot(repo, config);
+    const active = detectActiveLanguages({ plugins: builtinLanguagePluginManifests, snapshots: [snapshot] });
+
+    expect(active.has("vue")).toBe(true);
+    expect(active.has("javascript")).toBe(true);
+    expect(active.has("jsx")).toBe(true);
+    expect(active.has("typescript")).toBe(true);
+    expect(active.has("tsx")).toBe(true);
+  });
+
+  it("matches markers up to three repo levels after ignore filtering", async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-marker-depth-"));
+    await fs.mkdir(path.join(repo, "packages", "apps", "orders"), { recursive: true });
+    await fs.mkdir(path.join(repo, "dist", "nested"), { recursive: true });
+    await fs.writeFile(path.join(repo, "packages", "apps", "orders", "pom.xml"), "<project />", "utf8");
+    await fs.writeFile(path.join(repo, "dist", "nested", "go.mod"), "module ignored", "utf8");
+    const config = { ...defaultConfig(), include: ["**/*"], exclude: ["**/dist/**"], repos: [{ name: "markers", path: repo }] };
+    const snapshot = await scanRepoPathSnapshot(repo, config);
+    const active = detectActiveLanguages({ plugins: builtinLanguagePluginManifests, snapshots: [snapshot] });
+
+    expect(active.has("java")).toBe(true);
+    expect(active.has("go")).toBe(false);
+  });
+
+  it("matches glob double-star slash against zero nested directories", () => {
+    const active = detectActiveLanguages({
+      plugins: [{
+        source: "test:java-glob",
+        sourceKind: "project",
+        manifest: {
+          name: "java-glob",
+          version: "0.0.1",
+          capabilities: ["language"],
+          languages: [{
+            id: "java",
+            extensions: [".java"],
+            detect: { globs: ["src/main/java/**/*.java"] }
+          }]
+        }
+      }],
+      snapshots: [{ repoPath: ".", paths: ["src/main/java/MyClass.java"] }]
+    });
+
+    expect(active.has("java")).toBe(true);
+  });
+
+  it("loads legacy configured generic plugins without matching a language", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-legacy-generic-"));
+    const pluginDir = path.join(cwd, "generic-plugin");
+    const repoDir = path.join(cwd, "repo");
+    await fs.mkdir(pluginDir, { recursive: true });
+    await fs.mkdir(repoDir, { recursive: true });
+    await fs.writeFile(path.join(repoDir, "README.md"), "# test", "utf8");
+    await fs.writeFile(path.join(pluginDir, "plugin.js"), `
+      export default {
+        manifest: { name: "generic-plugin", version: "0.0.1", logiclensPluginApiVersion: "${LOGICLENS_PLUGIN_API_VERSION}", capabilities: ["fact-extractor"] },
+        factExtractors: [{ name: "generic:test", extract() {} }]
+      };
+    `, "utf8");
+    const config = {
+      ...defaultConfig(),
+      repos: [{ name: "repo", path: repoDir }],
+      plugins: { enabled: ["./generic-plugin/plugin.js"], failFast: true }
+    };
+
+    await autoDetectAndRegisterPlugins({ config, cwd, repoConfigs: config.repos });
+    expect(contractExtractorRegistry.names()).toContain("generic:test");
+    clearRegisteredPluginCapabilities();
+  });
+
   it("clears plugin-registered capabilities between config loads", () => {
     clearRegisteredPluginCapabilities();
     registerLoadedPlugins([{
@@ -338,9 +454,9 @@ describe("plugin architecture foundation", () => {
     expect(frameworkDetectorRegistry.names()).not.toContain("memory:detector");
   });
 
-  it("restores extension mappings when a plugin parser overrides a builtin extension", () => {
+  it("restores extension mappings when a plugin parser overrides a builtin extension", async () => {
     clearRegisteredPluginCapabilities();
-    registerBuiltinParsers(new Set(["typescript"]));
+    await registerBuiltinParsers(new Set(["typescript"]));
     const originalTsParser = parserRegistry.resolve({ relativePath: "src/OrderService.ts" });
     expect(originalTsParser?.language).toBe("typescript");
 

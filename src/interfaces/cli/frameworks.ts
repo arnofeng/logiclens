@@ -2,13 +2,14 @@ import { loadConfig } from "../../config/loadConfig.js";
 import { toRepoNode } from "../../core/workspace/repoRegistry.js";
 import { detectFrameworks, isExtractorEnabled } from "../../core/frameworks/detect.js";
 import { registeredContractExtractors } from "../../core/contracts/extraction/builtin/index.js";
-import { loadAndRegisterConfiguredPlugins } from "../../core/plugins/register.js";
+import { autoDetectAndRegisterPlugins } from "../../core/plugins/register.js";
 
 export async function frameworksCommand(cwd = process.cwd()): Promise<void> {
   const config = await loadConfig(cwd);
-  await loadAndRegisterConfiguredPlugins({
+  await autoDetectAndRegisterPlugins({
     config,
     cwd,
+    repoConfigs: config.repos,
     warn: (message) => console.warn(message)
   });
 

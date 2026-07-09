@@ -1,10 +1,11 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { configSchema } from "../src/config/schema.js";
 import type { KuzuGraphDB } from "../src/core/graph-model/db.js";
 import { scanAndParseRepo } from "../src/core/indexing/scanParse.js";
+import { registerBuiltinParsers } from "../src/core/parsing/parserRegistry.js";
 import type { RepoNode } from "../src/core/parsing/types.js";
 import { parserRegistry } from "../src/core/registries/registry.js";
 import { hashText } from "../src/shared/hash.js";
@@ -31,6 +32,10 @@ function repoFor(name: string, repoPath: string): RepoNode {
 }
 
 describe("scan/parse phase", () => {
+  beforeAll(async () => {
+    await registerBuiltinParsers();
+  });
+
   it("returns a shared scan/parse result structure for full indexing", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-scan-parse-"));
     await fs.mkdir(path.join(cwd, "src"), { recursive: true });

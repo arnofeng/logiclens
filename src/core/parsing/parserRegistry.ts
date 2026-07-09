@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import Parser from "tree-sitter";
 import { parseMarkdownDocument } from "./markdown/adapter.js";
-import { LANGUAGE_DEFINITIONS, getLanguageDefinition, languageDefForExtension, type LanguageDefinition } from "./languages/registry.js";
+import { LANGUAGE_DEFINITIONS, getLanguageDefinition, languageDefForExtension, loadLanguageGrammar, type LanguageDefinition } from "./languages/registry.js";
 import { GenericTreeSitterParser } from "./genericTreeSitterParser.js";
 import { createVueParser } from "./languages/vue.js";
 import { createGraphqlParser } from "./languages/graphql.js";
@@ -65,8 +65,8 @@ function getQualifiedPrefix(node: Parser.SyntaxNode): string {
   return classes.length > 0 ? classes.join(".") + "." : "";
 }
 
-function createSourceParser(def: LanguageDefinition): LanguageParser {
-  const grammar = def.loadGrammar();
+async function createSourceParser(def: LanguageDefinition): Promise<LanguageParser> {
+  const grammar = await loadLanguageGrammar(def);
   return new GenericTreeSitterParser({
     language: def.id,
     extensions: def.extensions,
@@ -208,7 +208,7 @@ function createProtoParser(): LanguageParser {
  * Markdown is always registered because it is needed for document indexing
  * regardless of the source language set.
  */
-export function registerBuiltinParsers(languages?: Set<string>): void {
+export async function registerBuiltinParsers(languages?: Set<string>): Promise<void> {
   if (builtinsRegistered && !languages) return;
 
   // Markdown is always needed (README, docs, MDX).
@@ -228,7 +228,7 @@ export function registerBuiltinParsers(languages?: Set<string>): void {
 
   for (const def of LANGUAGE_DEFINITIONS) {
     if (should(def.id) && !parserRegistry.resolve({ language: def.id })) {
-      parserRegistry.register(createSourceParser(def));
+      parserRegistry.register(await createSourceParser(def));
     }
   }
 
@@ -237,13 +237,13 @@ export function registerBuiltinParsers(languages?: Set<string>): void {
     const jsxDef = getLanguageDefinition("jsx")!;
     const jsDef = getLanguageDefinition("javascript")!;
     if (!parserRegistry.resolve({ language: "tsx" })) {
-      parserRegistry.register(createSourceParser(tsxDef));
+      parserRegistry.register(await createSourceParser(tsxDef));
     }
     if (!parserRegistry.resolve({ language: "jsx" })) {
-      parserRegistry.register(createSourceParser(jsxDef));
+      parserRegistry.register(await createSourceParser(jsxDef));
     }
     if (!parserRegistry.resolve({ language: "javascript" })) {
-      parserRegistry.register(createSourceParser(jsDef));
+      parserRegistry.register(await createSourceParser(jsDef));
     }
     parserRegistry.register(createVueParser());
   }
@@ -299,7 +299,7 @@ export async function parseSourceFile(input: {
   const source = await fs.readFile(input.absolutePath, "utf8");
   const normalizedPath = input.relativePath.split(path.sep).join("/");
   if (!parserRegistry.resolve({ language: input.language, relativePath: normalizedPath })) {
-    registerBuiltinParsers(new Set([input.language]));
+    await registerBuiltinParsers(new Set([input.language]));
   }
   const id = fileId(input.repoId, normalizedPath);
   const hash = hashText(source);

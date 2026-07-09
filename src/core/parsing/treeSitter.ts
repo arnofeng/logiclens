@@ -1,11 +1,13 @@
 import Parser from "tree-sitter";
 import type { SourceLanguage } from "./types.js";
-import { getLanguageDefinition } from "./languages/registry.js";
+import { getLanguageDefinition, getLoadedLanguageGrammar } from "./languages/registry.js";
 
 export function getLanguageGrammar(language: string): any {
   const def = getLanguageDefinition(language);
   if (!def) throw new Error(`No grammar registered for "${language}".`);
-  return def.loadGrammar();
+  const grammar = getLoadedLanguageGrammar(language);
+  if (!grammar) throw new Error(`Grammar for "${language}" has not been loaded. Register the parser before parsing.`);
+  return grammar;
 }
 
 const parserCache = new Map<string, Parser>();
