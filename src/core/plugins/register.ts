@@ -12,16 +12,22 @@ import type { PluginManifest } from "@logiclens/plugin-sdk";
 import type { AppConfig } from "../../config/schema.js";
 import { parserRegistry, contractExtractorRegistry, frameworkDetectorRegistry } from "../registries/registry.js";
 import { toRepoNode } from "../workspace/repoRegistry.js";
-import { registerBuiltinParsers } from "../parsing/parserRegistry.js";
 import { adaptFactExtractor, adaptFrameworkDetector, adaptLanguageParser } from "./adapter.js";
 import {
   builtinLanguagePluginManifests,
+  detectJavaSignals,
   detectActiveLanguages,
   pluginsForActiveLanguages,
   projectPluginDir,
   scanRepoPathSnapshot,
   type AvailablePlugin
 } from "./detection.js";
+import {
+  registerBuiltinParsersForActiveLanguages,
+  registerCommonBuiltins,
+  registerJavaBuiltinsForSignals,
+  resetJavaBuiltinCapabilities
+} from "./bootstrap.js";
 import { BRAND } from "../../shared/branding.js";
 
 const registeredPluginState = {
@@ -55,6 +61,7 @@ export async function autoDetectAndRegisterPlugins(input: {
   log?: (message: string) => void;
 }): Promise<LoadedLogicLensPlugin[]> {
   clearRegisteredPluginCapabilities();
+  resetJavaBuiltinCapabilities();
   const repos = input.repoConfigs.map((repo) => toRepoNode(repo, input.cwd));
   const snapshots = await Promise.all(repos.map((repo) => scanRepoPathSnapshot(repo.path, input.config)));
   const available = await discoverAvailablePlugins({
@@ -64,8 +71,14 @@ export async function autoDetectAndRegisterPlugins(input: {
     warn: input.warn
   });
   const activeLanguages = detectActiveLanguages({ plugins: available, snapshots });
+  const javaSignals = await detectJavaSignals(snapshots);
+  if (javaSignals.hasSourceFiles || javaSignals.hasBuildMarkers || javaSignals.hasDubboXml) {
+    activeLanguages.add("java");
+  }
 
-  await registerBuiltinParsers(activeLanguages);
+  registerCommonBuiltins();
+  registerJavaBuiltinsForSignals(javaSignals);
+  await registerBuiltinParsersForActiveLanguages(activeLanguages, javaSignals);
 
   const loadable = pluginsForActiveLanguages(available, activeLanguages)
     .filter((plugin) => plugin.entryPath);

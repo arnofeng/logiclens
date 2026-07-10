@@ -51,7 +51,7 @@ function findLineNumber(content: string, searchStr: string): number {
 
 // Built-in detectors:
 
-const packageJsonDetector: FrameworkDetector = {
+export const packageJsonDetector: FrameworkDetector = {
   name: "builtin:package-json-detector",
   async detect(repo, _parsedFiles) {
     const results: DetectedFramework[] = [];
@@ -112,7 +112,7 @@ const packageJsonDetector: FrameworkDetector = {
   }
 };
 
-const pomXmlDetector: FrameworkDetector = {
+export const pomXmlDetector: FrameworkDetector = {
   name: "builtin:pom-xml-detector",
   async detect(repo, _parsedFiles) {
     const results: DetectedFramework[] = [];
@@ -161,7 +161,7 @@ const pomXmlDetector: FrameworkDetector = {
   }
 };
 
-const gradleDetector: FrameworkDetector = {
+export const gradleDetector: FrameworkDetector = {
   name: "builtin:gradle-detector",
   async detect(repo, _parsedFiles) {
     const results: DetectedFramework[] = [];
@@ -214,7 +214,7 @@ const gradleDetector: FrameworkDetector = {
   }
 };
 
-const goModDetector: FrameworkDetector = {
+export const goModDetector: FrameworkDetector = {
   name: "builtin:go-mod-detector",
   async detect(repo, _parsedFiles) {
     const results: DetectedFramework[] = [];
@@ -262,7 +262,7 @@ const goModDetector: FrameworkDetector = {
   }
 };
 
-const requirementsDetector: FrameworkDetector = {
+export const requirementsDetector: FrameworkDetector = {
   name: "builtin:requirements-detector",
   async detect(repo, _parsedFiles) {
     const results: DetectedFramework[] = [];
@@ -294,7 +294,7 @@ const requirementsDetector: FrameworkDetector = {
   }
 };
 
-const pyprojectDetector: FrameworkDetector = {
+export const pyprojectDetector: FrameworkDetector = {
   name: "builtin:pyproject-detector",
   async detect(repo, _parsedFiles) {
     const results: DetectedFramework[] = [];
@@ -326,7 +326,7 @@ const pyprojectDetector: FrameworkDetector = {
   }
 };
 
-const javaFallbackDetector: FrameworkDetector = {
+export const javaFallbackDetector: FrameworkDetector = {
   name: "builtin:java-fallback-detector",
   async detect(repo, parsedFiles) {
     const results: DetectedFramework[] = [];
@@ -352,7 +352,7 @@ const javaFallbackDetector: FrameworkDetector = {
   }
 };
 
-const jsFallbackDetector: FrameworkDetector = {
+export const jsFallbackDetector: FrameworkDetector = {
   name: "builtin:js-fallback-detector",
   async detect(repo, parsedFiles) {
     const results: DetectedFramework[] = [];
@@ -378,7 +378,7 @@ const jsFallbackDetector: FrameworkDetector = {
   }
 };
 
-const springMvcFallbackDetector: FrameworkDetector = {
+export const springMvcFallbackDetector: FrameworkDetector = {
   name: "builtin:spring-mvc-fallback-detector",
   async detect(repo, parsedFiles) {
     const results: DetectedFramework[] = [];
@@ -429,7 +429,7 @@ const springMvcFallbackDetector: FrameworkDetector = {
   }
 };
 
-const pythonFallbackDetector: FrameworkDetector = {
+export const pythonFallbackDetector: FrameworkDetector = {
   name: "builtin:python-fallback-detector",
   async detect(repo, parsedFiles) {
     const hasPython = parsedFiles.some((f) => f.language === "python");
@@ -452,7 +452,7 @@ const pythonFallbackDetector: FrameworkDetector = {
   }
 };
 
-const goFallbackDetector: FrameworkDetector = {
+export const goFallbackDetector: FrameworkDetector = {
   name: "builtin:go-fallback-detector",
   async detect(repo, parsedFiles) {
     const hasGo = parsedFiles.some((f) => f.language === "go");
@@ -475,30 +475,89 @@ const goFallbackDetector: FrameworkDetector = {
   }
 };
 
-export const builtinFrameworkDetectors: FrameworkDetector[] = [
+export const dubboXmlFrameworkDetector: FrameworkDetector = {
+  name: "builtin:dubbo-xml-detector",
+  async detect(repo, parsedFiles) {
+    const sourceFile = parsedFiles.find((file) =>
+      file.language === "xml" &&
+      "source" in file &&
+      typeof file.source === "string" &&
+      (/<dubbo:(?:service|reference)\b/i.test(file.source) || /xmlns:dubbo\s*=\s*["'][^"']*dubbo[^"']*["']/i.test(file.source))
+    );
+    if (!sourceFile) return [];
+    const dubboEvidence = createFrameworkEvidence({
+      repoId: repo.id,
+      filePath: sourceFile.path,
+      line: 1,
+      raw: "dubbo xml config",
+      rule: "dubbo-xml-config",
+      confidence: confidenceFor("exact-framework-marker")
+    });
+    return [{
+      repoId: repo.id,
+      name: "java:dubbo-xml",
+      language: "java",
+      confidence: confidenceFor("exact-framework-marker"),
+      evidence: [dubboEvidence]
+    }];
+  }
+};
+
+export const commonBuiltinFrameworkDetectors: FrameworkDetector[] = [
   packageJsonDetector,
-  pomXmlDetector,
-  gradleDetector,
   goModDetector,
   requirementsDetector,
   pyprojectDetector,
-  javaFallbackDetector,
   jsFallbackDetector,
-  springMvcFallbackDetector,
   pythonFallbackDetector,
   goFallbackDetector
 ];
 
-let builtinsRegistered = false;
+export const javaBuiltinFrameworkDetectors: FrameworkDetector[] = [
+  pomXmlDetector,
+  gradleDetector,
+  javaFallbackDetector,
+  springMvcFallbackDetector
+];
 
-export function registerBuiltinFrameworkDetectors(): void {
-  if (builtinsRegistered) return;
-  frameworkDetectorRegistry.registerMany(builtinFrameworkDetectors);
-  builtinsRegistered = true;
+export const javaDubboXmlFrameworkDetectors: FrameworkDetector[] = [
+  dubboXmlFrameworkDetector
+];
+
+function registerDetectorGroup(detectors: readonly FrameworkDetector[]): void {
+  for (const detector of detectors) {
+    if (!frameworkDetectorRegistry.resolve(detector.name)) {
+      frameworkDetectorRegistry.register(detector);
+    }
+  }
+}
+
+function unregisterDetectorGroup(detectors: readonly FrameworkDetector[]): void {
+  for (const detector of detectors) {
+    if (frameworkDetectorRegistry.resolve(detector.name) === detector) {
+      frameworkDetectorRegistry.unregister(detector.name);
+    }
+  }
+}
+
+export function registerCommonFrameworkDetectors(): void {
+  registerDetectorGroup(commonBuiltinFrameworkDetectors);
+}
+
+export function registerJavaFrameworkDetectors(): void {
+  registerDetectorGroup(javaBuiltinFrameworkDetectors);
+}
+
+export function registerJavaDubboXmlFrameworkDetectors(): void {
+  registerDetectorGroup(javaDubboXmlFrameworkDetectors);
+}
+
+export function unregisterJavaFrameworkDetectors(): void {
+  unregisterDetectorGroup(javaBuiltinFrameworkDetectors);
+  unregisterDetectorGroup(javaDubboXmlFrameworkDetectors);
 }
 
 export function registeredFrameworkDetectors(): FrameworkDetector[] {
-  registerBuiltinFrameworkDetectors();
   return frameworkDetectorRegistry.detectors();
 }
 
@@ -506,7 +565,12 @@ export async function detectFrameworks(
   repo: RepoNode,
   parsedFiles: ParsedGraphFile[] = []
 ): Promise<DetectedFramework[]> {
-  registerBuiltinFrameworkDetectors();
+  // Framework detectors are lightweight and some of them inspect repository
+  // marker files directly, so preserve detectFrameworks as a self-contained
+  // entry point without eagerly loading any language grammar.
+  registerCommonFrameworkDetectors();
+  registerJavaFrameworkDetectors();
+  registerJavaDubboXmlFrameworkDetectors();
   const results: DetectedFramework[] = [];
   const repoParsedFiles = parsedFiles.every((file) => file.repoId === repo.id)
     ? parsedFiles

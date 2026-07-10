@@ -8,8 +8,10 @@ import { adaptFactExtractor, adaptFrameworkDetector, adaptLanguageParser } from 
 import { clearRegisteredPluginCapabilities, registerLoadedPlugins } from "../src/core/plugins/register.js";
 import { autoDetectAndRegisterPlugins } from "../src/core/plugins/register.js";
 import { detectActiveLanguages, builtinLanguagePluginManifests, scanRepoPathSnapshot } from "../src/core/plugins/detection.js";
+import { registerCommonBuiltins, resetJavaBuiltinCapabilities } from "../src/core/plugins/bootstrap.js";
 import { ContractExtractorRegistry, FrameworkDetectorRegistry, contractExtractorRegistry, frameworkDetectorRegistry, parserRegistry } from "../src/core/registries/registry.js";
 import { registerBuiltinParsers } from "../src/core/parsing/parserRegistry.js";
+import { getLoadedLanguageGrammar } from "../src/core/parsing/languages/registry.js";
 import { discoverLogicLensPlugin, loadDiscoveredLogicLensPlugins, validatePlugin } from "@logiclens/plugin-runtime";
 import { LOGICLENS_PLUGIN_API_VERSION, definePlugin } from "@logiclens/plugin-sdk";
 import { joinHttpPaths, normalizeRouteTemplate } from "@logiclens/plugin-sdk/utils";
@@ -390,6 +392,49 @@ describe("plugin architecture foundation", () => {
     expect(active.has("java")).toBe(true);
   });
 
+  it("activates Java build markers without registering the Java parser or source extractors", async () => {
+    resetJavaBuiltinCapabilities();
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-java-marker-only-"));
+    await fs.writeFile(path.join(repo, "pom.xml"), "<project />", "utf8");
+    const config = { ...defaultConfig(), include: ["**/*"], repos: [{ name: "marker", path: repo }] };
+
+    await autoDetectAndRegisterPlugins({ config, cwd: repo, repoConfigs: config.repos });
+
+    expect(parserRegistry.resolve({ language: "java" })).toBeUndefined();
+    expect(getLoadedLanguageGrammar("java")).toBeUndefined();
+    expect(contractExtractorRegistry.names()).not.toContain("builtin:spring-mvc");
+    expect(frameworkDetectorRegistry.names()).toContain("builtin:pom-xml-detector");
+  });
+
+  it("activates Dubbo XML without registering the Java parser", async () => {
+    resetJavaBuiltinCapabilities();
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-dubbo-xml-only-"));
+    await fs.writeFile(path.join(repo, "dubbo.xml"), "<beans xmlns:dubbo=\"http://dubbo.apache.org/schema/dubbo\"><dubbo:service interface=\"com.example.Api\" /></beans>", "utf8");
+    const config = { ...defaultConfig(), include: ["**/*"], repos: [{ name: "dubbo", path: repo }] };
+
+    await autoDetectAndRegisterPlugins({ config, cwd: repo, repoConfigs: config.repos });
+
+    expect(parserRegistry.resolve({ language: "java" })).toBeUndefined();
+    expect(getLoadedLanguageGrammar("java")).toBeUndefined();
+    expect(contractExtractorRegistry.names()).toContain("builtin:dubbo-xml");
+    expect(frameworkDetectorRegistry.names()).toContain("builtin:dubbo-xml-detector");
+  });
+
+  it("registers Java parser and source extractors only when Java source files are present", async () => {
+    resetJavaBuiltinCapabilities();
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-java-source-"));
+    await fs.mkdir(path.join(repo, "src", "main", "java"), { recursive: true });
+    await fs.writeFile(path.join(repo, "src", "main", "java", "OrderController.java"), "class OrderController {}", "utf8");
+    const config = { ...defaultConfig(), include: ["**/*"], repos: [{ name: "java", path: repo }] };
+
+    await autoDetectAndRegisterPlugins({ config, cwd: repo, repoConfigs: config.repos });
+
+    expect(parserRegistry.resolve({ language: "java" })).toBeDefined();
+    expect(getLoadedLanguageGrammar("java")).toBeDefined();
+    expect(contractExtractorRegistry.names()).toContain("builtin:spring-mvc");
+    expect(frameworkDetectorRegistry.names()).toContain("builtin:java-fallback-detector");
+  });
+
   it("loads legacy configured generic plugins without matching a language", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-legacy-generic-"));
     const pluginDir = path.join(cwd, "generic-plugin");
@@ -452,6 +497,36 @@ describe("plugin architecture foundation", () => {
     expect(parserRegistry.resolve({ language: "memory-lang" })).toBeUndefined();
     expect(contractExtractorRegistry.names()).not.toContain("memory:extractor");
     expect(frameworkDetectorRegistry.names()).not.toContain("memory:detector");
+  });
+
+  it("restores common builtins after same-named plugin capabilities are removed", () => {
+    clearRegisteredPluginCapabilities();
+    registerCommonBuiltins();
+    const builtinExtractor = contractExtractorRegistry.resolve("builtin:package-json");
+    const builtinDetector = frameworkDetectorRegistry.resolve("builtin:package-json-detector");
+
+    registerLoadedPlugins([{
+      source: "memory:builtin-override",
+      plugin: definePlugin({
+        manifest: {
+          name: "memory-builtin-override",
+          version: "0.0.1",
+          logiclensPluginApiVersion: LOGICLENS_PLUGIN_API_VERSION,
+          capabilities: ["fact-extractor", "framework-detector"]
+        },
+        factExtractors: [{ name: "builtin:package-json", extract() {} }],
+        frameworkDetectors: [{ name: "builtin:package-json-detector", detect() {} }]
+      })
+    }]);
+
+    expect(contractExtractorRegistry.resolve("builtin:package-json")).not.toBe(builtinExtractor);
+    expect(frameworkDetectorRegistry.resolve("builtin:package-json-detector")).not.toBe(builtinDetector);
+
+    clearRegisteredPluginCapabilities();
+    registerCommonBuiltins();
+
+    expect(contractExtractorRegistry.resolve("builtin:package-json")).toBe(builtinExtractor);
+    expect(frameworkDetectorRegistry.resolve("builtin:package-json-detector")).toBe(builtinDetector);
   });
 
   it("restores extension mappings when a plugin parser overrides a builtin extension", async () => {

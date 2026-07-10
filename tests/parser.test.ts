@@ -3,9 +3,37 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
+import { parserRegistry } from "../src/core/registries/registry.js";
 import { repoId } from "../src/shared/path.js";
 
 describe("parser", () => {
+  it("lazily registers a parser outside the test runtime", async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousVitest = process.env.VITEST;
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-parser-bootstrap-"));
+    const absolutePath = path.join(dir, "Bootstrap.java");
+    await fs.writeFile(absolutePath, "class Bootstrap {}", "utf8");
+    parserRegistry.unregisterLanguage("java");
+    delete process.env.NODE_ENV;
+    delete process.env.VITEST;
+
+    try {
+      const parsed = await parseSourceFile({
+        repoId: repoId("bootstrap"),
+        absolutePath,
+        relativePath: "Bootstrap.java",
+        language: "java"
+      });
+      expect(parsed.language).toBe("java");
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+      if (previousVitest === undefined) delete process.env.VITEST;
+      else process.env.VITEST = previousVitest;
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("extracts TypeScript classes, methods, imports, and calls", async () => {
     const repo = repoId("service-a");
     const parsed = await parseSourceFile({

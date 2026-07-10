@@ -29,6 +29,7 @@ import type {
 } from "../parsing/types.js";
 import { extractHeuristicEntities, extractHeuristicEntitiesFromSection } from "../semantic/extractEntities.js";
 import { registerBuiltinParsers } from "../parsing/parserRegistry.js";
+import { registerBuiltinsForParsedFiles } from "../plugins/bootstrap.js";
 import { confidenceFor } from "../../shared/confidence.js";
 import { getBrandedEnv } from "../../shared/branding.js";
 import type { ProgressReporter } from "../../shared/progress.js";
@@ -132,6 +133,7 @@ export async function buildGraphFactsBatch(input: {
   const indexedAt = input.indexedAt ?? new Date().toISOString();
   const codeFiles = input.parsedFiles.filter((file): file is ParsedFile => !isParsedDocument(file));
   await registerBuiltinParsers(new Set(codeFiles.map((file) => file.language)));
+  registerBuiltinsForParsedFiles(input.parsedFiles);
   const files: FileNode[] = [];
   const code: CodeSymbol[] = [];
   const sections: DocSection[] = [];

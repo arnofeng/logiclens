@@ -6,6 +6,7 @@ import { detectFrameworks, isExtractorEnabled } from "../src/core/frameworks/det
 import type { RepoNode } from "../src/core/parsing/types.js";
 import { defaultConfig } from "../src/config/loadConfig.js";
 import { confidenceFor } from "../src/shared/confidence.js";
+import { parseFrameworkDetectionFiles } from "../src/interfaces/cli/frameworks.js";
 
 function mockRepoNode(name: string, repoPath: string): RepoNode {
   return {
@@ -21,6 +22,23 @@ function mockRepoNode(name: string, repoPath: string): RepoNode {
 }
 
 describe("framework detection", () => {
+  it("detects large Dubbo XML from the files scanned by the frameworks command", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-frameworks-dubbo-"));
+    const repo = mockRepoNode("test-dubbo", dir);
+    await fs.writeFile(
+      path.join(dir, "dubbo.xml"),
+      '<beans xmlns:dubbo="http://dubbo.apache.org/schema/dubbo"><!--' +
+        "x".repeat(512 * 1024) +
+        '--><dubbo:service interface="com.example.Api" /></beans>',
+      "utf8"
+    );
+
+    const parsedFiles = await parseFrameworkDetectionFiles(repo, { ...defaultConfig(), include: ["**/*"] });
+    const detected = await detectFrameworks(repo, parsedFiles);
+
+    expect(detected.map((framework) => framework.name)).toContain("java:dubbo-xml");
+  });
+
   it("detects package.json and axios dependency", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-frameworks-"));
     const repo = mockRepoNode("test-js", dir);

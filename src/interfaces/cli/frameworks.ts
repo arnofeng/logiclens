@@ -3,6 +3,21 @@ import { toRepoNode } from "../../core/workspace/repoRegistry.js";
 import { detectFrameworks, isExtractorEnabled } from "../../core/frameworks/detect.js";
 import { registeredContractExtractors } from "../../core/contracts/extraction/builtin/index.js";
 import { autoDetectAndRegisterPlugins } from "../../core/plugins/register.js";
+import { parseSourceFile, registerCommonParsers } from "../../core/parsing/parserRegistry.js";
+import { scanRepoFiles } from "../../core/workspace/fileScanner.js";
+import type { AppConfig } from "../../config/schema.js";
+import type { ParsedGraphFile, RepoNode } from "../../core/parsing/types.js";
+
+export async function parseFrameworkDetectionFiles(repo: RepoNode, config: AppConfig): Promise<ParsedGraphFile[]> {
+  registerCommonParsers();
+  const xmlFiles = (await scanRepoFiles(repo.path, config)).filter((file) => file.language === "xml");
+  return Promise.all(xmlFiles.map((file) => parseSourceFile({
+    repoId: repo.id,
+    absolutePath: file.absolutePath,
+    relativePath: file.relativePath,
+    language: file.language
+  })));
+}
 
 export async function frameworksCommand(cwd = process.cwd()): Promise<void> {
   const config = await loadConfig(cwd);
@@ -20,7 +35,8 @@ export async function frameworksCommand(cwd = process.cwd()): Promise<void> {
     console.log(`Repository: ${repo.name}`);
     console.log(`- Path: ${repo.path}`);
     
-    const detected = await detectFrameworks(repo, []);
+    const parsedFiles = await parseFrameworkDetectionFiles(repo, config);
+    const detected = await detectFrameworks(repo, parsedFiles);
     console.log(`- Detected frameworks:`);
     if (detected.length === 0) {
       console.log(`  * (none)`);

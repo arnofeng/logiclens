@@ -29,6 +29,7 @@ function makeXmlSymbol(file: ParsedFile, raw: string, offset: number, name: stri
 export const dubboXmlExtractor = compatExtractor({
   name: "builtin:dubbo-xml",
   languages: ["xml"],
+  frameworks: ["java:dubbo-xml"],
   extract(context, collector: FactCollector) {
     for (const file of parsedCodeFiles(context.parsedFiles)) {
       if (file.language !== "xml") continue;

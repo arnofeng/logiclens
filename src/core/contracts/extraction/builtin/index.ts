@@ -28,44 +28,80 @@ import { graphqlClientExtractor } from "./graphqlClientExtractor.js";
 import { contractExtractorRegistry } from "../../../registries/registry.js";
 
 /** Each extractor already self-wraps via compatExtractor at its export site. */
-export const builtinContractExtractors: ContractExtractor[] = [
+export const commonBuiltinContractExtractors: ContractExtractor[] = [
   packageJsonExtractor,
   importPackageExtractor,
-  javaPackageExtractor,
-  springMvcExtractor,
   jsHttpClientExtractor,
   sdkGeneratedClientExtractor,
   eventExtractor,
   tsSchemaExtractor,
-  javaSchemaExtractor,
   pythonSchemaExtractor,
   goSchemaExtractor,
   protoExtractor,
   goGrpcExtractor,
-  javaGrpcExtractor,
-  javaDubboExtractor,
-  dubboXmlExtractor,
   pythonGrpcExtractor,
   jsGrpcExtractor,
   sharedSymbolExtractor,
   envConfigExtractor,
   pythonExtractor,
   pythonEventExtractor,
-  javaEventExtractor,
   goExtractor,
   graphqlSdlExtractor,
   graphqlClientExtractor
 ];
 
-let builtinsRegistered = false;
+export const javaSourceContractExtractors: ContractExtractor[] = [
+  javaPackageExtractor,
+  springMvcExtractor,
+  javaSchemaExtractor,
+  javaGrpcExtractor,
+  javaDubboExtractor,
+  javaEventExtractor
+];
 
-export function registerBuiltinContractExtractors(): void {
-  if (builtinsRegistered) return;
-  contractExtractorRegistry.registerMany(builtinContractExtractors);
-  builtinsRegistered = true;
+export const javaDubboXmlContractExtractors: ContractExtractor[] = [
+  dubboXmlExtractor
+];
+
+export const builtinContractExtractors: ContractExtractor[] = [
+  ...commonBuiltinContractExtractors,
+  ...javaSourceContractExtractors,
+  ...javaDubboXmlContractExtractors
+];
+
+function registerExtractorGroup(extractors: readonly ContractExtractor[]): void {
+  for (const extractor of extractors) {
+    if (!contractExtractorRegistry.resolve(extractor.name)) {
+      contractExtractorRegistry.register(extractor);
+    }
+  }
+}
+
+function unregisterExtractorGroup(extractors: readonly ContractExtractor[]): void {
+  for (const extractor of extractors) {
+    if (contractExtractorRegistry.resolve(extractor.name) === extractor) {
+      contractExtractorRegistry.unregister(extractor.name);
+    }
+  }
+}
+
+export function registerCommonContractExtractors(): void {
+  registerExtractorGroup(commonBuiltinContractExtractors);
+}
+
+export function registerJavaSourceContractExtractors(): void {
+  registerExtractorGroup(javaSourceContractExtractors);
+}
+
+export function registerJavaDubboXmlContractExtractors(): void {
+  registerExtractorGroup(javaDubboXmlContractExtractors);
+}
+
+export function unregisterJavaContractExtractors(): void {
+  unregisterExtractorGroup(javaSourceContractExtractors);
+  unregisterExtractorGroup(javaDubboXmlContractExtractors);
 }
 
 export function registeredContractExtractors(): ContractExtractor[] {
-  registerBuiltinContractExtractors();
   return contractExtractorRegistry.extractors();
 }

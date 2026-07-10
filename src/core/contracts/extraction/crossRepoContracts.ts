@@ -38,6 +38,7 @@ import { SEMANTIC_REL_META } from "../semanticRelations.js";
 import { ExtractionBuilder } from "./extractionBuilder.js";
 import type { ExtractedFacts } from "./contracts.js";
 import { buildExtractionFileIndex, filesForRepoId, filesForRepoIds } from "./fileIndex.js";
+import { registerBuiltinsForParsedFiles } from "../../plugins/bootstrap.js";
 import type { ProgressReporter } from "../../../shared/progress.js";
 
 function shouldWriteExtractionTrace(): boolean {
@@ -118,6 +119,7 @@ export async function extractRepoContractFacts(
   parsedFiles: ParsedGraphFile[],
   options: { aliasOverrides?: AliasOverride[] } = {}
 ): Promise<ExtractedFacts> {
+  registerBuiltinsForParsedFiles(parsedFiles);
   const builder = new ExtractionBuilder();
   const context: ExtractContext = {
     repos,
@@ -464,6 +466,7 @@ export async function extractContractFactsWithRegistry(
   progress?: ProgressReporter,
   frameworkProgress?: ProgressReporter
 ): Promise<ExtractedFacts> {
+  registerBuiltinsForParsedFiles(context.parsedFiles);
   let resolvedConfig = config;
   if (!resolvedConfig) {
     try {

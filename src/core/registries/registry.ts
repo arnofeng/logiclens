@@ -130,6 +130,10 @@ export class FrameworkDetectorRegistry {
     for (const detector of detectors) this.register(detector);
   }
 
+  resolve(name: string): FrameworkDetector | undefined {
+    return this.byName.get(name);
+  }
+
   detectors(): FrameworkDetector[] {
     return [...this.byName.values()];
   }

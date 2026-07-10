@@ -42,6 +42,15 @@ export type RepoPathSnapshot = {
   paths: string[];
 };
 
+export type LanguageDetection = {
+  language: string;
+  hasSourceFiles: boolean;
+  hasBuildMarkers: boolean;
+  hasDubboXml: boolean;
+};
+
+const DUBBO_XML_MAX_BYTES = 512 * 1024;
+
 export const builtinLanguagePluginManifests: AvailablePlugin[] = [
   languageManifest("typescript", [".ts"], ["tsconfig.json"]),
   languageManifest("tsx", [".tsx"], ["tsconfig.json"]),
@@ -136,6 +145,30 @@ export function pluginsForActiveLanguages(
   );
 }
 
+export async function detectJavaSignals(snapshots: readonly RepoPathSnapshot[]): Promise<LanguageDetection> {
+  let hasSourceFiles = false;
+  let hasBuildMarkers = false;
+  let hasDubboXml = false;
+  const buildMarkers = new Set(["pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "gradlew"]);
+
+  for (const snapshot of snapshots) {
+    for (const relativePath of snapshot.paths) {
+      const extension = normalizeExtension(path.posix.extname(relativePath));
+      if (extension === ".java") {
+        hasSourceFiles = true;
+      }
+      if (isMarkerMatch(relativePath, buildMarkers)) {
+        hasBuildMarkers = true;
+      }
+      if (!hasDubboXml && extension === ".xml") {
+        hasDubboXml = await fileHasDubboXml(snapshot.repoPath, relativePath);
+      }
+    }
+  }
+
+  return { language: "java", hasSourceFiles, hasBuildMarkers, hasDubboXml };
+}
+
 function matchesLanguage(language: DetectLanguageRule, snapshots: readonly RepoPathSnapshot[]): boolean {
   const detect = language.detect ?? { extensions: language.extensions };
   const extensions = new Set((detect.extensions ?? []).map(normalizeExtension));
@@ -167,6 +200,15 @@ function isMarkerMatch(relativePath: string, markers: ReadonlySet<string>): bool
 function normalizeExtension(extension: string): string {
   const trimmed = extension.trim();
   return trimmed.startsWith(".") ? trimmed : `.${trimmed}`;
+}
+
+async function fileHasDubboXml(repoPath: string, relativePath: string): Promise<boolean> {
+  const absolutePath = path.join(repoPath, relativePath);
+  const stat = await fs.stat(absolutePath).catch(() => undefined);
+  if (!stat || !stat.isFile() || stat.size > DUBBO_XML_MAX_BYTES) return false;
+  const source = await fs.readFile(absolutePath, "utf8").catch(() => "");
+  return /<dubbo:(?:service|reference)\b/i.test(source) ||
+    /xmlns:dubbo\s*=\s*["'][^"']*dubbo[^"']*["']/i.test(source);
 }
 
 function globMatches(relativePath: string, glob: string): boolean {

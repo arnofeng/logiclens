@@ -211,20 +211,9 @@ function createProtoParser(): LanguageParser {
 export async function registerBuiltinParsers(languages?: Set<string>): Promise<void> {
   if (builtinsRegistered && !languages) return;
 
-  // Markdown is always needed (README, docs, MDX).
-  if (!parserRegistry.resolve({ language: "markdown" })) {
-    parserRegistry.register(markdownParser);
-  }
+  registerCommonParsers();
 
   const should = (lang: string) => !languages || languages.has(lang);
-
-  if (should("proto") && !parserRegistry.resolve({ language: "proto" })) {
-    parserRegistry.register(createProtoParser());
-  }
-
-  if (should("graphql") && !parserRegistry.resolve({ language: "graphql" })) {
-    parserRegistry.register(createGraphqlParser());
-  }
 
   for (const def of LANGUAGE_DEFINITIONS) {
     if (should(def.id) && !parserRegistry.resolve({ language: def.id })) {
@@ -266,6 +255,30 @@ export async function registerBuiltinParsers(languages?: Set<string>): Promise<v
   if (!languages) builtinsRegistered = true;
 }
 
+export function registerCommonParsers(): void {
+  if (!parserRegistry.resolve({ language: "markdown" })) {
+    parserRegistry.register(markdownParser);
+  }
+  if (!parserRegistry.resolve({ language: "proto" })) {
+    parserRegistry.register(createProtoParser());
+  }
+  if (!parserRegistry.resolve({ language: "graphql" })) {
+    parserRegistry.register(createGraphqlParser());
+  }
+  if (!parserRegistry.resolve({ language: "yaml" })) {
+    parserRegistry.register(createFileLevelParser("yaml", [".yml", ".yaml"]));
+  }
+  if (!parserRegistry.resolve({ language: "toml" })) {
+    parserRegistry.register(createFileLevelParser("toml", [".toml"]));
+  }
+  if (!parserRegistry.resolve({ language: "properties" })) {
+    parserRegistry.register(createFileLevelParser("properties", [".properties"]));
+  }
+  if (!parserRegistry.resolve({ language: "xml" })) {
+    parserRegistry.register(createSourceOnlyParser("xml", [".xml"], hasDubboXmlConfig));
+  }
+}
+
 export function parseSourceFile(input: {
   repoId: string;
   absolutePath: string;
@@ -298,12 +311,13 @@ export async function parseSourceFile(input: {
 }): Promise<ParsedGraphFile> {
   const source = await fs.readFile(input.absolutePath, "utf8");
   const normalizedPath = input.relativePath.split(path.sep).join("/");
-  if (!parserRegistry.resolve({ language: input.language, relativePath: normalizedPath })) {
-    await registerBuiltinParsers(new Set([input.language]));
-  }
   const id = fileId(input.repoId, normalizedPath);
   const hash = hashText(source);
-  const parser = parserRegistry.resolve({ language: input.language, relativePath: normalizedPath });
+  let parser = parserRegistry.resolve({ language: input.language, relativePath: normalizedPath });
+  if (!parser) {
+    await registerBuiltinParsers(new Set([input.language]));
+    parser = parserRegistry.resolve({ language: input.language, relativePath: normalizedPath });
+  }
   if (!parser) throw new Error(`No parser registered for ${input.language} (${normalizedPath}).`);
   return parser.parse({
     repoId: input.repoId,
