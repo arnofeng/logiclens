@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { PluginEventFact, PluginGrpcMethodFact, PluginSchemaFact, PluginSymbolView } from "@logiclens/plugin-sdk";
+import type { PluginCallView, PluginEventFact, PluginGrpcMethodFact, PluginSchemaFact, PluginSymbolView } from "@logiclens/plugin-sdk";
 import { parseCSharp } from "../packages/plugin-csharp/src/parser.js";
 import { csharpGrpcExtractor } from "../packages/plugin-csharp/src/grpcFacts.js";
 import { csharpEventExtractor } from "../packages/plugin-csharp/src/eventFacts.js";
@@ -13,7 +13,9 @@ async function context(sourceInput?: string, filePath = "AdditionalContracts.cs"
   const symbols: PluginSymbolView[] = (parsed.symbols ?? []).map((symbol, index) => ({ id: `symbol:${index}`, filePath,
     name: symbol.name, kind: symbol.kind, qualifiedName: symbol.qualifiedName ?? symbol.name, startLine: symbol.startLine,
     endLine: symbol.endLine, signature: symbol.signature ?? "" }));
-  const view = { repoId: "repo:csharp", path: filePath, language: "csharp", source, symbols, imports: [], calls: [] };
+  const calls: PluginCallView[] = (parsed.calls ?? []).map((call) => ({ filePath, calleeName: call.calleeName,
+    receiver: call.receiver, raw: call.raw, line: call.line }));
+  const view = { repoId: "repo:csharp", path: filePath, language: "csharp", source, symbols, imports: [], calls };
   const files = Object.assign([view], { all: () => [view], byLanguage: (language: string) => language === "csharp" ? [view] : [],
     byRepo: (repoId: string) => repoId === "repo:csharp" ? [view] : [], get: () => view });
   return { source, symbols, files };
@@ -51,7 +53,8 @@ describe("C# additional contracts", () => {
       ["rabbitmq-dotnet-client", "producer", "orders.created"], ["rabbitmq-dotnet-client", "consumer", "orders.queue"],
       ["masstransit", "producer", "OrderCreated"], ["masstransit", "consumer", "OrderCreated"],
       ["nservicebus", "producer", "OrderCreated"], ["nservicebus", "consumer", "OrderCreated"],
-      ["azure-service-bus", "producer", "orders.created"]
+      ["azure-service-bus", "producer", "orders.created"], ["azure-service-bus", "producer", "orders.a"],
+      ["azure-service-bus", "producer", "orders.b"]
     ]));
     expect(events.filter((fact) => fact.framework === "confluent-kafka" && fact.role === "producer")).toHaveLength(1);
     expect(events.every((fact) => fact.sourceSymbolId && fact.evidence.confidence === "exact")).toBe(true);
@@ -96,5 +99,26 @@ public class Scoped {
     await csharpEventExtractor.extract({ repos: [], files: generated.files, symbols: generated.symbols, imports: [], calls: [], emit: emit(generatedGrpc, generatedEvents, []) });
     expect(generatedGrpc).toEqual([]);
     expect(generatedEvents).toEqual([]);
+  });
+
+  it("rejects comment/string/invalid pseudo-code and retains same-named Azure endpoints in sibling methods", async () => {
+    const source = `
+public class Real {
+  private readonly ServiceBusClient azure;
+  public void A() { var sender = azure.CreateSender("a"); sender.SendMessageAsync(new ServiceBusMessage()); }
+  public void B() { var sender = azure.CreateSender("b"); sender.SendMessageAsync(new ServiceBusMessage()); }
+}
+/* class FakeService : Orders.OrdersBase {
+  public override Task<GhostReply> Ghost(GhostRequest request, ServerCallContext context) => Handle(request);
+  IProducer<string, Notice> producer; producer.Produce("ghost", value);
+} */
+public class Broken : Orders.OrdersBase { public override Task<Bad> Bad(Bad request, ServerCallContext context)`;
+    const parsed = await context(source, "Comments.cs");
+    const grpc: PluginGrpcMethodFact[] = [];
+    const events: PluginEventFact[] = [];
+    await csharpGrpcExtractor.extract({ repos: [], files: parsed.files, symbols: parsed.symbols, imports: [], calls: [], emit: emit(grpc, events, []) });
+    await csharpEventExtractor.extract({ repos: [], files: parsed.files, symbols: parsed.symbols, imports: [], calls: [], emit: emit(grpc, events, []) });
+    expect(grpc).toEqual([]);
+    expect(events.map((fact) => fact.topic)).toEqual(["a", "b"]);
   });
 });

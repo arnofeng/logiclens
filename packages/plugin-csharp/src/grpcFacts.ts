@@ -111,6 +111,11 @@ export const csharpGrpcExtractor: FactExtractorPlugin = {
     for (const file of context.files.byLanguage("csharp")) {
       if (isGeneratedPath(file.path)) continue;
       for (const candidate of [...producerCandidates(file), ...consumerCandidates(file)]) {
+        const isParsedCandidate = candidate.role === "producer"
+          ? file.symbols.some((symbol) => symbol.kind === "method" && symbol.name === candidate.symbolName && symbol.startLine === candidate.line)
+          : file.calls.some((call) => call.line === candidate.line &&
+            (call.calleeName === `${candidate.method}Async` || call.calleeName === candidate.method));
+        if (!isParsedCandidate) continue;
         const { line, raw, symbolName: _symbolName, evidence: _evidence, ...fact } = candidate;
         context.emit.grpcMethod({ ...fact, repoId: file.repoId, filePath: file.path,
           sourceSymbolId: sourceSymbol(context.symbols, file, candidate),

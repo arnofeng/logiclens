@@ -35,10 +35,14 @@ public class Messaging {
     rabbit.BasicConsume("orders.queue", consumer: null);
     await bus.Publish<OrderCreated>(message);
     await session.Publish<OrderCreated>(message);
+    await session.Send<OrderCreated>(message);
+    await session.SendLocal(message);
     var sender = azure.CreateSender("orders.created");
     await sender.SendMessageAsync(new ServiceBusMessage());
     kafkaProducer.ProduceAsync(BuildTopic(), new Message<string, OrderCreated>());
   }
+  public async Task AzureA() { var sender = azure.CreateSender("orders.a"); await sender.SendMessageAsync(new ServiceBusMessage()); }
+  public async Task AzureB() { var sender = azure.CreateSender("orders.b"); await sender.SendMessageAsync(new ServiceBusMessage()); }
 }
 
 public class MassTransitConsumer : IConsumer<OrderCreated> { }

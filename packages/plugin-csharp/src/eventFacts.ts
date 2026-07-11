@@ -23,6 +23,10 @@ export const csharpEventExtractor: FactExtractorPlugin = {
       const seen = new Set<string>();
       for (const rule of RULES) for (const candidate of rule(file)) {
         const line = lineAt(source, candidate.index);
+        const parsed = candidate.rule.endsWith("consumer-interface") || candidate.rule.endsWith("handler-interface")
+          ? file.symbols.some((symbol) => symbol.kind === "class" && symbol.startLine === line)
+          : file.calls.some((call) => call.line === line && call.raw.startsWith(candidate.raw));
+        if (!parsed) continue;
         const key = `${candidate.framework}\0${candidate.role}\0${candidate.topic}\0${line}`;
         if (seen.has(key)) continue;
         seen.add(key);
