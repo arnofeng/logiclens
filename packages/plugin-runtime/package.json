@@ -6,7 +6,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@logiclens/plugin-sdk": "0.1.0"
+    "@logiclens/plugin-sdk": "workspace:*"
   },
   "exports": {
     ".": {

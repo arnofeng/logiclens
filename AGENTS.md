@@ -6,13 +6,13 @@ LogicLens is a TypeScript, ESM-based CLI and library. Core implementation lives 
 
 ## Build, Test, and Development Commands
 
-- `npm install`: install root and workspace dependencies.
-- `npm run dev -- --help`: run the CLI from `src/cli.ts` during development.
-- `npm run build`: clean, build workspace packages, then compile the main package.
-- `npm run build:prod`: production build using `tsconfig.prod.json`.
-- `npm run typecheck`: run strict TypeScript checks across the root and package workspaces.
-- `npm test`: build packages, then run the Vitest suite through `scripts/test.ts`.
-- `npm run clean`: remove generated build artifacts.
+- `pnpm install`: install root and workspace dependencies.
+- `pnpm run dev -- --help`: run the CLI from `src/cli.ts` during development.
+- `pnpm run build`: clean, build workspace packages, then compile the main package.
+- `pnpm run build:prod`: production build using `tsconfig.prod.json`.
+- `pnpm run typecheck`: run strict TypeScript checks across the root and package workspaces.
+- `pnpm test`: build packages, then run the Vitest suite through `scripts/test.ts`.
+- `pnpm run clean`: remove generated build artifacts.
 
 ## Coding Style & Naming Conventions
 
@@ -20,7 +20,7 @@ Use TypeScript with `strict` enabled and NodeNext module resolution. Prefer expl
 
 ## Testing Guidelines
 
-Vitest discovers `tests/**/*.test.ts` and excludes `dist/` and `node_modules/`. Add focused tests near the relevant behavior, using fixtures in `tests/fixtures/` when parser or extractor behavior needs sample repositories. For changes to contracts, indexing, graph writes, or CLI behavior, run both `npm test` and `npm run typecheck` before submitting.
+Vitest discovers `tests/**/*.test.ts` and excludes `dist/` and `node_modules/`. Add focused tests near the relevant behavior, using fixtures in `tests/fixtures/` when parser or extractor behavior needs sample repositories. For changes to contracts, indexing, graph writes, or CLI behavior, run both `pnpm test` and `pnpm run typecheck` before submitting.
 
 ## Commit & Pull Request Guidelines
 

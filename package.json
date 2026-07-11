@@ -3,6 +3,7 @@
   "version": "0.1.1-beta.15",
   "description": "Local-first semantic contract graph for AI coding agents to reason about cross-repository interfaces and change impact.",
   "type": "module",
+  "packageManager": "pnpm@11.1.2",
   "workspaces": [
     "packages/*"
   ],
@@ -24,16 +25,16 @@
     "README-ZH.md"
   ],
   "scripts": {
-    "build": "npm run clean && npm run build:packages && tsc -p tsconfig.build.json",
-    "build:packages": "npm run build --workspace @logiclens/plugin-sdk && npm run build --workspace @logiclens/plugin-runtime",
-    "build:prod": "npm run clean && npm run build:packages && tsc -p tsconfig.prod.json",
+    "build": "pnpm run clean && pnpm run build:packages && tsc -p tsconfig.build.json",
+    "build:packages": "pnpm --filter @logiclens/plugin-sdk build && pnpm --filter @logiclens/plugin-runtime build",
+    "build:prod": "pnpm run clean && pnpm run build:packages && tsc -p tsconfig.prod.json",
     "clean": "tsx scripts/clean.ts",
     "dev": "tsx src/cli.ts",
-    "prepack": "npm run build:prod",
-    "pretest": "npm run build:packages",
+    "prepack": "pnpm run build:prod",
+    "pretest": "pnpm run build:packages",
     "test": "tsx scripts/test.ts",
-    "typecheck": "tsc --noEmit && tsc -p packages/plugin-sdk/tsconfig.json --noEmit && npm run build --workspace @logiclens/plugin-sdk && tsc -p packages/plugin-runtime/tsconfig.json --noEmit",
-    "audit:prod": "npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org"
+    "typecheck": "tsc --noEmit && tsc -p packages/plugin-sdk/tsconfig.json --noEmit && pnpm --filter @logiclens/plugin-sdk build && tsc -p packages/plugin-runtime/tsconfig.json --noEmit",
+    "audit:prod": "pnpm audit --prod --audit-level=high --registry=https://registry.npmjs.org"
   },
   "keywords": [
     "codegraph",
@@ -51,8 +52,8 @@
   },
   "homepage": "https://github.com/arnofeng/logiclens#readme",
   "dependencies": {
-    "@logiclens/plugin-sdk": "0.1.0",
-    "@logiclens/plugin-runtime": "0.1.0",
+    "@logiclens/plugin-sdk": "workspace:*",
+    "@logiclens/plugin-runtime": "workspace:*",
     "@clack/prompts": "^1.3.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@vue/compiler-sfc": "^3.5.38",

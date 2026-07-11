@@ -56,17 +56,18 @@ git checkout -b feature/my-new-feature
 ### Step 4: Local Development & Build
 
 #### Install Dependencies
-Make sure you have Node.js installed (v18+ or v20+ recommended), then run:
+Make sure you have Node.js 22 installed and Corepack enabled, then run:
 
 ```bash
-npm install
+corepack enable
+pnpm install
 ```
 
 #### Local Build
 After editing TypeScript files, rebuild the project:
 
 ```bash
-npm run build
+pnpm run build
 ```
 
 #### Run CLI in Dev Mode
@@ -74,10 +75,10 @@ During local development, you do not need to `npm link`. You can run the dev ver
 
 ```bash
 # View help
-npm run dev -- --help
+pnpm run dev -- --help
 
 # Initialize workspace in the current directory
-npm run dev -- init
+pnpm run dev -- init
 ```
 
 ### Step 5: Verification & Testing
@@ -88,14 +89,14 @@ We require all submitted code to pass static checks and unit tests.
 Run TypeScript compiler without code generation to verify there are no compilation or type errors:
 
 ```bash
-npm run typecheck
+pnpm run typecheck
 ```
 
 #### Run Unit Tests
 Run the test suite. If you are adding a new feature or fixing a bug, please write corresponding tests in the `tests/` directory:
 
 ```bash
-npm test
+pnpm test
 ```
 
 ### Step 6: Commit Your Changes

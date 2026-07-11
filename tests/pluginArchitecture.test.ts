@@ -27,8 +27,8 @@ describe("plugin architecture foundation", () => {
     expect(packageJson.exports?.["./plugin-sdk"]).toBeUndefined();
     expect(packageJson.exports?.["./plugin-sdk/utils"]).toBeUndefined();
     expect(packageJson.exports?.["./plugin-runtime"]).toBeUndefined();
-    expect(packageJson.dependencies?.["@logiclens/plugin-sdk"]).toBe("0.1.0");
-    expect(packageJson.dependencies?.["@logiclens/plugin-runtime"]).toBe("0.1.0");
+    expect(packageJson.dependencies?.["@logiclens/plugin-sdk"]).toBe("workspace:*");
+    expect(packageJson.dependencies?.["@logiclens/plugin-runtime"]).toBe("workspace:*");
   });
 
   it("keeps plugin SDK free of core imports", async () => {

@@ -7,7 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const cliPath = path.resolve(__dirname, "../dist/cli.js");
 
 if (!fs.existsSync(cliPath)) {
-  console.error("This package is not built. Run `npm run build` before using the local package.");
+  console.error("This package is not built. Run `pnpm run build` before using the local package.");
   process.exit(1);
 }
 
