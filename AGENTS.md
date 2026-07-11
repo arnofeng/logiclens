@@ -24,7 +24,7 @@ Vitest discovers `tests/**/*.test.ts` and excludes `dist/` and `node_modules/`. 
 
 ## Commit & Pull Request Guidelines
 
-Recent history follows Conventional Commits, for example `feat: per-query Kuzu connections...` and `refactor: centralize shared Cypher queries...`. Use `feat:`, `fix:`, `docs:`, `test:`, or `refactor:` with a concise imperative summary. Pull requests should describe motivation, implementation, linked issues, and verification commands. Include screenshots or terminal output only when they clarify CLI behavior or documentation changes.
+Recent history follows Conventional Commits, for example `feat: per-query Kuzu connections...` and `refactor: centralize shared Cypher queries...`. Use `feat:`, `fix:`, `docs:`, `test:`, or `refactor:` with a concise imperative summary. When committing code, include a commit message body that lists the concrete changes made. Pull requests should describe motivation, implementation, linked issues, and verification commands. Include screenshots or terminal output only when they clarify CLI behavior or documentation changes.
 
 ## Security & Configuration Tips
 
