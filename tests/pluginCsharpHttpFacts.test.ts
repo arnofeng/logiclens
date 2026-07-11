@@ -139,4 +139,16 @@ public class ConstantRoutes {
     const endpoints = await run([{ path: "Constants.cs", source: constants }]);
     expect(endpoints.map((item) => [item.method, item.path])).toEqual([["GET", "/a/one"], ["GET", "/b/two"]]);
   });
+
+  it("aligns qualified and collection-wrapped body references with stable schema names", async () => {
+    const source = `
+[ApiController]
+[Route("orders")]
+public class OrdersController : ControllerBase {
+  [HttpPost]
+  public Task<ActionResult<List<Contracts.OrderResponse>>> Create(Contracts.CreateOrderRequest body) => Handle(body);
+}`;
+    const endpoints = await run([{ path: "Wrapped.cs", source }]);
+    expect(endpoints[0]).toMatchObject({ requestBodyType: "Contracts.CreateOrderRequest", responseBodyType: "Contracts.OrderResponse" });
+  });
 });

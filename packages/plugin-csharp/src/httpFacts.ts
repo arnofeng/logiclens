@@ -62,6 +62,25 @@ async function parser(): Promise<ParserInstance> {
 
 function line(node: SyntaxNode): number { return node.startPosition.row + 1; }
 function name(node: SyntaxNode): string | undefined { return node.childForFieldName("name")?.text; }
+function bodySchemaType(raw: string): string | undefined {
+  let value = raw.trim().replace(/^global::/, "").replace(/\?$/, "");
+  while (value.endsWith("[]")) value = value.slice(0, -2).trim();
+  const start = value.indexOf("<");
+  if (start >= 0 && value.endsWith(">")) {
+    const inner = value.slice(start + 1, -1);
+    let depth = 0;
+    let lastComma = -1;
+    for (let index = 0; index < inner.length; index++) {
+      if (inner[index] === "<") depth++;
+      else if (inner[index] === ">") depth--;
+      else if (inner[index] === "," && depth === 0) lastComma = index;
+    }
+    return bodySchemaType(inner.slice(lastComma + 1));
+  }
+  const simple = value.replace(/^.*\./, "");
+  return simple && !/^(?:string|bool|byte|sbyte|short|ushort|int|uint|long|ulong|float|double|decimal|char|object)$/i.test(simple)
+    ? value : undefined;
+}
 function unquote(raw: string): string | undefined {
   if (raw.startsWith("@\"") && raw.endsWith("\"")) return raw.slice(2, -1).replace(/\"\"/g, "\"");
   if (raw.startsWith("\"\"\"") && raw.endsWith("\"\"\"")) return raw.slice(3, -3).trim();
@@ -161,7 +180,7 @@ function returnType(method: SyntaxNode): string | undefined {
     if (!nested) return undefined;
     current = nested;
   }
-  const value = current.text.trim();
+  const value = bodySchemaType(current.text);
   return value && value !== methodName && !["IActionResult", "ActionResult", "Task", "ValueTask", "IResult"].includes(value)
     ? value : undefined;
 }
@@ -172,7 +191,7 @@ function requestType(method: SyntaxNode): string | undefined {
     const parameterAttributes = attributes(parameter).map(attributeName);
     if (parameterAttributes.some((item) => ["FromRoute", "FromQuery", "FromHeader", "FromServices"].includes(item))) continue;
     const type = parameter.namedChildren.find((child) => child.type !== "attribute_list" && child !== parameter.childForFieldName("name"));
-    if (type && !/^(?:string|bool|byte|sbyte|short|ushort|int|uint|long|ulong|float|double|decimal|char|Guid|DateTime|CancellationToken|HttpContext|HttpRequest|HttpResponse)$/i.test(type.text)) return type.text;
+    if (type && !/^(?:string|bool|byte|sbyte|short|ushort|int|uint|long|ulong|float|double|decimal|char|Guid|DateTime|CancellationToken|HttpContext|HttpRequest|HttpResponse)$/i.test(type.text)) return bodySchemaType(type.text);
   }
   return undefined;
 }
@@ -443,7 +462,7 @@ function minimalEndpoints(root: SyntaxNode, constants: ConstantTable): Endpoint[
     const namedMatches = handlerExpression?.type === "identifier" ? namedHandlers.get(handlerExpression.text) ?? [] : [];
     const namedHandler = namedMatches.length === 1 ? namedMatches[0] : undefined;
     for (const method of methods) result.push({ method, rawPath: route, path: joinGroupRoute(prefix, route), role: "producer",
-      framework: "aspnet-core-minimal-api", requestBodyType: type?.text ?? (namedHandler ? requestType(namedHandler) : undefined),
+      framework: "aspnet-core-minimal-api", requestBodyType: type ? bodySchemaType(type.text) : (namedHandler ? requestType(namedHandler) : undefined),
       responseBodyType: namedHandler ? returnType(namedHandler) : undefined,
       symbolName: handlerExpression?.type === "identifier" ? handlerExpression.text : undefined,
       symbolLine: namedHandler ? line(namedHandler) : undefined,
