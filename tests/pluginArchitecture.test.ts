@@ -389,6 +389,40 @@ describe("plugin architecture foundation", () => {
     expect(facts.packageUsages.some((usage) => usage.packageName === "Microsoft.AspNetCore.App")).toBe(true);
   });
 
+  it("preserves public HTTP fields through the postExtract fact view", async () => {
+    let endpoint: { role?: string; requestBodyType?: string; responseBodyType?: string; sourceSymbolId?: string } | undefined;
+    const extractor = adaptFactExtractor({
+      name: "test:http-round-trip",
+      extract(ctx) {
+        ctx.emit.httpEndpoint({
+          repoId: "repo:http",
+          filePath: "Client.ts",
+          method: "POST",
+          path: "/orders",
+          role: "consumer",
+          framework: "fixture-http",
+          sourceSymbolId: "symbol:client",
+          requestBodyType: "CreateOrder",
+          responseBodyType: "OrderResponse",
+          evidence: { filePath: "Client.ts", line: 4, raw: "post('/orders')", rule: "fixture-http", confidence: "exact" }
+        });
+      },
+      postExtract(ctx) {
+        endpoint = ctx.facts.httpEndpoints()[0];
+      }
+    });
+    const builder = new ExtractionBuilder();
+    await extractor.extract({ repos: [], parsedFiles: [] }, builder);
+    await extractor.postExtract?.({ mergedFacts: builder.build(), repos: [], parsedFiles: [] }, builder);
+
+    expect(endpoint).toMatchObject({
+      role: "consumer",
+      requestBodyType: "CreateOrder",
+      responseBodyType: "OrderResponse",
+      sourceSymbolId: "symbol:client"
+    });
+  });
+
   it("adapts SDK framework detectors into core framework detectors", async () => {
     const detector = adaptFrameworkDetector({
       name: "plugin:csharp-framework-detector",
