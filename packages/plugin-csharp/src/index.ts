@@ -4,6 +4,8 @@ import { parseCSharp } from "./parser.js";
 import { csharpFrameworkDetector, csharpPackageExtractor } from "./projectFacts.js";
 import { csharpHttpExtractor } from "./httpFacts.js";
 import { csharpSchemaExtractor } from "./schemaFacts.js";
+import { csharpGrpcExtractor } from "./grpcFacts.js";
+import { csharpEventExtractor } from "./eventFacts.js";
 
 const csharpLanguage = defineLanguage({
   id: "csharp",
@@ -14,7 +16,7 @@ const csharpLanguage = defineLanguage({
 export const plugin = definePlugin({
   manifest,
   languages: [csharpLanguage],
-  factExtractors: [csharpPackageExtractor, csharpHttpExtractor, csharpSchemaExtractor],
+  factExtractors: [csharpPackageExtractor, csharpHttpExtractor, csharpGrpcExtractor, csharpEventExtractor, csharpSchemaExtractor],
   frameworkDetectors: [csharpFrameworkDetector]
 });
 

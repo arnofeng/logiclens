@@ -32,7 +32,9 @@ describe("C# plugin foundation", () => {
     const plugin = loaded[0]!.plugin;
     expect(() => validatePlugin(plugin, "csharp-test", discovered.manifest)).not.toThrow();
     expect(plugin.languages?.map((language) => language.id)).toEqual(["csharp"]);
-    expect(plugin.factExtractors?.map((extractor) => extractor.name)).toEqual(["csharp:project-package-usage", "csharp-aspnet-http", "csharp-schema"]);
+    expect(plugin.factExtractors?.map((extractor) => extractor.name)).toEqual([
+      "csharp:project-package-usage", "csharp-aspnet-http", "csharp:grpc", "csharp:events", "csharp-schema"
+    ]);
     expect(plugin.frameworkDetectors?.map((detector) => detector.name)).toEqual(["csharp:project-frameworks"]);
   });
 
@@ -52,8 +54,9 @@ describe("C# plugin foundation", () => {
   });
 
   it("contains no core or internal imports and keeps grammar imports dynamic", async () => {
-    const sourceFiles = ["src/index.ts", "src/manifest.ts", "src/parser.ts", "src/projectMetadata.ts", "src/projectFacts.ts"];
-    const sources = await Promise.all(sourceFiles.map((file) => fs.readFile(path.join(pluginDir, file), "utf8")));
+    const sourceFiles = (await fs.readdir(path.join(pluginDir, "src"), { recursive: true }))
+      .filter((file) => file.endsWith(".ts"));
+    const sources = await Promise.all(sourceFiles.map((file) => fs.readFile(path.join(pluginDir, "src", file), "utf8")));
     const source = sources.join("\n");
     expect(source).not.toMatch(/(?:from|import\s*\()["'][^"']*(?:src\/|src\\|core\/|core\\)/);
     expect(source).not.toMatch(/^\s*import\s+.*["']tree-sitter(?:-c-sharp)?["']/m);
