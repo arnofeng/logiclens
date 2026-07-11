@@ -24,6 +24,7 @@ describe("C# parser facts", () => {
     expect(result.symbols?.some((symbol) => "id" in symbol)).toBe(false);
     expect(result.imports).toEqual([
       expect.objectContaining({ module: "System.Collections.Generic.List<string>", raw: expect.stringContaining("global using") }),
+      expect.objectContaining({ module: "SimpleNamespace", raw: "using SimpleAlias = SimpleNamespace;" }),
       expect.objectContaining({ module: "System.Math", raw: expect.stringContaining("using static") }),
       expect.objectContaining({ module: "Plain.Project.Services" })
     ]);

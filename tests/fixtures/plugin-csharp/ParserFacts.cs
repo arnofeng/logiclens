@@ -1,4 +1,5 @@
 global using GlobalAlias = System.Collections.Generic.List<string>;
+using SimpleAlias = SimpleNamespace;
 using static System.Math;
 using Plain.Project.Services;
 

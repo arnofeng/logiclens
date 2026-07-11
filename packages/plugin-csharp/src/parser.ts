@@ -172,8 +172,10 @@ function extract(root: SyntaxNode): PluginParseResult {
     if (node.type === "field_declaration" || node.type === "property_declaration") nextAnnotationOwner = "field";
 
     if (node.type === "using_directive" && !node.hasError) {
-      const candidates = node.namedChildren.filter((child) => child.type !== "identifier" || !node.text.includes("="));
-      const target = candidates.at(-1);
+      const alias = node.childForFieldName("name");
+      const target = alias
+        ? node.namedChildren.find((child) => child.startIndex !== alias.startIndex)
+        : node.namedChildren.at(-1);
       if (target) imports.push({ module: target.text, raw: node.text, line: line(node) });
     }
 
