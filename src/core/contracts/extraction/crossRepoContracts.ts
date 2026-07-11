@@ -39,6 +39,7 @@ import { ExtractionBuilder } from "./extractionBuilder.js";
 import type { ExtractedFacts } from "./contracts.js";
 import { buildExtractionFileIndex, filesForRepoId, filesForRepoIds } from "./fileIndex.js";
 import { registerBuiltinsForParsedFiles } from "../../plugins/bootstrap.js";
+import { ensureBuiltinGrammarsForParsedFiles } from "../../parsing/parserRegistry.js";
 import type { ProgressReporter } from "../../../shared/progress.js";
 
 function shouldWriteExtractionTrace(): boolean {
@@ -119,6 +120,7 @@ export async function extractRepoContractFacts(
   parsedFiles: ParsedGraphFile[],
   options: { aliasOverrides?: AliasOverride[] } = {}
 ): Promise<ExtractedFacts> {
+  await ensureBuiltinGrammarsForParsedFiles(parsedFiles);
   registerBuiltinsForParsedFiles(parsedFiles);
   const builder = new ExtractionBuilder();
   const context: ExtractContext = {
@@ -466,6 +468,7 @@ export async function extractContractFactsWithRegistry(
   progress?: ProgressReporter,
   frameworkProgress?: ProgressReporter
 ): Promise<ExtractedFacts> {
+  await ensureBuiltinGrammarsForParsedFiles(context.parsedFiles);
   registerBuiltinsForParsedFiles(context.parsedFiles);
   let resolvedConfig = config;
   if (!resolvedConfig) {

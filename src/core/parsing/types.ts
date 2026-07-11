@@ -94,6 +94,7 @@ export type ParsedFile = {
   path: string;
   absolutePath?: string;
   language: SourceLanguage | string;
+  parseLanguage?: SourceLanguage;
   hash: string;
   loc: number;
   source?: string;

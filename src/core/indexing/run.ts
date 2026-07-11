@@ -24,14 +24,21 @@ export async function runIndexing(
   const cwd = options.cwd ?? process.cwd();
   const logger = options.logger ?? {};
   const planning = await planIndexRun({ db, config, options });
-  await autoDetectAndRegisterPlugins({
+  const pluginBootstrap = await autoDetectAndRegisterPlugins({
     config,
     cwd,
     repoConfigs: planning.repoConfigs,
     warn: (message) => logger.warn?.(message),
     log: (message) => logger.log?.(message)
   });
-  const ctx = createIndexRunContext({ cwd, config, options, logger, writeMode: planning.writeMode });
+  const ctx = createIndexRunContext({
+    cwd,
+    config,
+    options,
+    logger,
+    writeMode: planning.writeMode,
+    additionalIndexFilesByRepo: pluginBootstrap.additionalIndexFilesByRepo
+  });
   const totals: IndexCounters = { filesScanned: 0, filesChanged: 0 };
 
   // The command layer now only chooses the indexing route and aggregates the

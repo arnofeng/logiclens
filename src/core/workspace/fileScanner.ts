@@ -51,7 +51,11 @@ async function filterAsync<T>(arr: T[], predicate: (item: T) => Promise<boolean>
   return arr.filter((_, i) => results[i]);
 }
 
-export async function scanRepoFiles(repoPath: string, config: AppConfig): Promise<ScannedFile[]> {
+export async function scanRepoFiles(
+  repoPath: string,
+  config: AppConfig,
+  options: { additionalPaths?: readonly string[] } = {}
+): Promise<ScannedFile[]> {
   const ig = ignore();
   ig.add(config.exclude.map((entry) => entry.replace(/^\*\*\//, "")));
   const gitignore = path.join(repoPath, ".gitignore");
@@ -69,8 +73,10 @@ export async function scanRepoFiles(repoPath: string, config: AppConfig): Promis
     ignore: config.exclude
   });
 
-  const posixEntries = entries
+  const additionalPaths = (options.additionalPaths ?? [])
     .map(toPosixPath)
+    .filter(isSafeRelativePath);
+  const posixEntries = [...new Set([...entries.map(toPosixPath), ...additionalPaths])]
     .sort()
     .filter((relativePath) => !ig.ignores(relativePath))
     // Skip auto-generated files (protobuf stubs, gRPC scaffolding, mocks, minified bundles)
@@ -88,6 +94,8 @@ export async function scanRepoFiles(repoPath: string, config: AppConfig): Promis
   // Filter out binary files
   const textEntries = await filterAsync(candidateEntries, async (entry) => {
     const absolutePath = path.join(repoPath, entry.relativePath);
+    const stat = await fs.stat(absolutePath).catch(() => undefined);
+    if (!stat?.isFile()) return false;
     return !(await isBinaryFile(absolutePath));
   }, 32);
 
@@ -96,4 +104,10 @@ export async function scanRepoFiles(repoPath: string, config: AppConfig): Promis
     relativePath,
     language
   }));
+}
+
+function isSafeRelativePath(relativePath: string): boolean {
+  if (!relativePath || path.isAbsolute(relativePath)) return false;
+  const parts = relativePath.split("/");
+  return !parts.includes("..") && !parts.includes("");
 }

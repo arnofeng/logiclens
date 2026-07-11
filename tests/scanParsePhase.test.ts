@@ -81,6 +81,30 @@ describe("scan/parse phase", () => {
     expect(result.parsedFiles).toEqual([]);
   });
 
+  it("tracks core-added files in changed-only active file ids", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-scan-parse-added-"));
+    const source = "<dubbo:service interface=\"x.Api\" />\n";
+    await fs.writeFile(path.join(cwd, "dubbo.xml"), source, "utf8");
+    const repo = repoFor("scan-parse-added", cwd);
+    const addedFileId = fileId(repo.id, "dubbo.xml");
+    const db = {
+      knownFileHashes: async () => new Map([[addedFileId, hashText(source)]])
+    } as unknown as KuzuGraphDB;
+
+    const result = await scanAndParseRepo({
+      db,
+      repo,
+      config: configSchema.parse({}),
+      changedOnly: true,
+      additionalIndexFiles: ["dubbo.xml"],
+      createProgressBar
+    });
+
+    expect(result.filesScanned).toBe(1);
+    expect(result.filesChanged).toBe(0);
+    expect(result.activeFileIds).toEqual([addedFileId]);
+  });
+
   it("wraps parse failures with phase, repo, and file context", async () => {
     parserRegistry.register({
       name: "test:failing-parser",

@@ -42,11 +42,13 @@ export class ParserRegistry {
     return [...new Map(this.byLanguage.entries()).values()];
   }
 
-  unregisterLanguage(language: string): void {
-    const parser = this.byLanguage.get(language);
+  unregisterLanguage(language: string, expected?: LanguageParser): void {
+    const current = this.byLanguage.get(language);
+    if (expected && current && current !== expected) return;
+    const parser = current ?? expected;
     const overrides = this.extensionOverridesByLanguage.get(language);
     if (!parser && !overrides) return;
-    this.byLanguage.delete(language);
+    if (!current || current === parser) this.byLanguage.delete(language);
     const extensions = new Set([
       ...(parser?.extensions ?? []).map(normalizeExtension),
       ...(overrides?.keys() ?? [])

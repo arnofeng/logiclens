@@ -187,6 +187,7 @@ describe("indexing phase coverage", () => {
         config,
         logger: { createProgressBar: () => ({ tick: () => {}, update: () => {}, complete: () => {}, reporter: () => () => {} }) },
         writeMode: "bulk",
+        additionalIndexFilesByRepo: new Map(),
         llm: { summaryLevel: "off" },
         embedding: { enabled: false }
       };

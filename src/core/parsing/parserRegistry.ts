@@ -3,7 +3,7 @@ import path from "node:path";
 import Parser from "tree-sitter";
 import { parseMarkdownDocument } from "./markdown/adapter.js";
 import { LANGUAGE_DEFINITIONS, getLanguageDefinition, languageDefForExtension, loadLanguageGrammar, type LanguageDefinition } from "./languages/registry.js";
-import { GenericTreeSitterParser } from "./genericTreeSitterParser.js";
+import { LazyTreeSitterParser } from "./lazyTreeSitterParser.js";
 import { createVueParser } from "./languages/vue.js";
 import { createGraphqlParser } from "./languages/graphql.js";
 import { parserRegistry } from "../registries/registry.js";
@@ -65,17 +65,10 @@ function getQualifiedPrefix(node: Parser.SyntaxNode): string {
   return classes.length > 0 ? classes.join(".") + "." : "";
 }
 
-async function createSourceParser(def: LanguageDefinition): Promise<LanguageParser> {
-  const grammar = await loadLanguageGrammar(def);
-  return new GenericTreeSitterParser({
-    language: def.id,
-    extensions: def.extensions,
-    grammar,
-    queries: def.queries,
-    helpers: {
-      getQualifiedPrefix: def.helpers?.getQualifiedPrefix ?? getQualifiedPrefix,
-      getSignature: def.helpers?.getSignature
-    }
+function createSourceParser(def: LanguageDefinition): LanguageParser {
+  return new LazyTreeSitterParser(def, {
+    getQualifiedPrefix: def.helpers?.getQualifiedPrefix ?? getQualifiedPrefix,
+    getSignature: def.helpers?.getSignature
   });
 }
 
@@ -201,8 +194,9 @@ function createProtoParser(): LanguageParser {
  * Register built-in language parsers.
  *
  * P1-2 – Lazy grammar loading:
- * Pass a `languages` set (collected from scanned file extensions) to only load
- * the grammars that are actually needed for this repo. When omitted every
+ * Pass a `languages` set (collected from scanned file extensions) to only
+ * register parsers that are actually needed for this repo. Tree-sitter
+ * grammars are loaded on first AST use. When omitted every
  * built-in language is registered (safe default for one-off calls).
  *
  * Markdown is always registered because it is needed for document indexing
@@ -217,42 +211,47 @@ export async function registerBuiltinParsers(languages?: Set<string>): Promise<v
 
   for (const def of LANGUAGE_DEFINITIONS) {
     if (should(def.id) && !parserRegistry.resolve({ language: def.id })) {
-      parserRegistry.register(await createSourceParser(def));
+      parserRegistry.register(createSourceParser(def));
     }
   }
 
   if (should("vue") && !parserRegistry.resolve({ language: "vue" })) {
+    const tsDef = getLanguageDefinition("typescript")!;
     const tsxDef = getLanguageDefinition("tsx")!;
     const jsxDef = getLanguageDefinition("jsx")!;
     const jsDef = getLanguageDefinition("javascript")!;
+    if (!parserRegistry.resolve({ language: "typescript" })) {
+      parserRegistry.register(createSourceParser(tsDef));
+    }
     if (!parserRegistry.resolve({ language: "tsx" })) {
-      parserRegistry.register(await createSourceParser(tsxDef));
+      parserRegistry.register(createSourceParser(tsxDef));
     }
     if (!parserRegistry.resolve({ language: "jsx" })) {
-      parserRegistry.register(await createSourceParser(jsxDef));
+      parserRegistry.register(createSourceParser(jsxDef));
     }
     if (!parserRegistry.resolve({ language: "javascript" })) {
-      parserRegistry.register(await createSourceParser(jsDef));
+      parserRegistry.register(createSourceParser(jsDef));
     }
     parserRegistry.register(createVueParser());
   }
 
-  // P1-3: File-level-only parsers for config files — always register;
-  // these are cheap (no grammar load) and needed across all repos.
-  if (!parserRegistry.resolve({ language: "yaml" })) {
-    parserRegistry.register(createFileLevelParser("yaml", [".yml", ".yaml"]));
-  }
-  if (!parserRegistry.resolve({ language: "toml" })) {
-    parserRegistry.register(createFileLevelParser("toml", [".toml"]));
-  }
-  if (!parserRegistry.resolve({ language: "properties" })) {
-    parserRegistry.register(createFileLevelParser("properties", [".properties"]));
-  }
-  if (!parserRegistry.resolve({ language: "xml" })) {
-    parserRegistry.register(createSourceOnlyParser("xml", [".xml"], hasDubboXmlConfig));
-  }
-
   if (!languages) builtinsRegistered = true;
+}
+
+export async function ensureBuiltinGrammarsForParsedFiles(
+  parsedFiles: readonly ParsedGraphFile[]
+): Promise<void> {
+  const definitions = new Map<string, LanguageDefinition>();
+  for (const file of parsedFiles) {
+    const language = file.language === "vue" && "parseLanguage" in file
+      ? file.parseLanguage ?? "tsx"
+      : file.language === "vue"
+        ? "tsx"
+        : file.language;
+    const definition = getLanguageDefinition(language);
+    if (definition) definitions.set(definition.id, definition);
+  }
+  await Promise.all([...definitions.values()].map((definition) => loadLanguageGrammar(definition)));
 }
 
 export function registerCommonParsers(): void {

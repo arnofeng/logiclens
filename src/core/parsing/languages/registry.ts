@@ -110,6 +110,7 @@ const byExt = new Map<string, LanguageDefinition>(
 );
 
 const loadedGrammars = new Map<string, unknown>();
+const loadingGrammars = new Map<string, Promise<unknown>>();
 
 export function getLanguageDefinition(id: string): LanguageDefinition | undefined {
   return byId.get(id);
@@ -120,11 +121,21 @@ export function languageDefForExtension(ext: string): LanguageDefinition | undef
 }
 
 export async function loadLanguageGrammar(def: LanguageDefinition): Promise<unknown> {
-  const cached = loadedGrammars.get(def.id);
-  if (cached) return cached;
-  const grammar = await def.loadGrammar();
-  loadedGrammars.set(def.id, grammar);
-  return grammar;
+  if (loadedGrammars.has(def.id)) return loadedGrammars.get(def.id);
+
+  let loading = loadingGrammars.get(def.id);
+  if (!loading) {
+    loading = def.loadGrammar()
+      .then((grammar) => {
+        loadedGrammars.set(def.id, grammar);
+        return grammar;
+      })
+      .finally(() => {
+        loadingGrammars.delete(def.id);
+      });
+    loadingGrammars.set(def.id, loading);
+  }
+  return loading;
 }
 
 export function getLoadedLanguageGrammar(id: string): unknown | undefined {

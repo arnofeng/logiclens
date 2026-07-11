@@ -18,7 +18,7 @@ export function parseJsAst(file: ParsedFile): JsAstContext | undefined {
   if (!isJsLikeLanguage(file.language)) return undefined;
   const source = file.source ?? sourceFromSymbols(file);
   if (!source) return undefined;
-  const parseLanguage = file.language === "vue" ? "tsx" : file.language;
+  const parseLanguage = file.language === "vue" ? file.parseLanguage ?? "tsx" : file.language;
   return { tree: parseWithTreeSitter(source, parseLanguage), source };
 }
 

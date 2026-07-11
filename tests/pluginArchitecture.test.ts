@@ -10,8 +10,8 @@ import { autoDetectAndRegisterPlugins } from "../src/core/plugins/register.js";
 import { detectActiveLanguages, builtinLanguagePluginManifests, scanRepoPathSnapshot } from "../src/core/plugins/detection.js";
 import { registerCommonBuiltins, resetJavaBuiltinCapabilities } from "../src/core/plugins/bootstrap.js";
 import { ContractExtractorRegistry, FrameworkDetectorRegistry, contractExtractorRegistry, frameworkDetectorRegistry, parserRegistry } from "../src/core/registries/registry.js";
-import { registerBuiltinParsers } from "../src/core/parsing/parserRegistry.js";
-import { getLoadedLanguageGrammar } from "../src/core/parsing/languages/registry.js";
+import { parseSourceFile, registerBuiltinParsers } from "../src/core/parsing/parserRegistry.js";
+import { getLoadedLanguageGrammar, LANGUAGE_DEFINITIONS } from "../src/core/parsing/languages/registry.js";
 import { discoverLogicLensPlugin, loadDiscoveredLogicLensPlugins, validatePlugin } from "@logiclens/plugin-runtime";
 import { LOGICLENS_PLUGIN_API_VERSION, definePlugin } from "@logiclens/plugin-sdk";
 import { joinHttpPaths, normalizeRouteTemplate } from "@logiclens/plugin-sdk/utils";
@@ -396,7 +396,7 @@ describe("plugin architecture foundation", () => {
     resetJavaBuiltinCapabilities();
     const repo = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-java-marker-only-"));
     await fs.writeFile(path.join(repo, "pom.xml"), "<project />", "utf8");
-    const config = { ...defaultConfig(), include: ["**/*"], repos: [{ name: "marker", path: repo }] };
+    const config = { ...defaultConfig(), repos: [{ name: "marker", path: repo }] };
 
     await autoDetectAndRegisterPlugins({ config, cwd: repo, repoConfigs: config.repos });
 
@@ -410,14 +410,15 @@ describe("plugin architecture foundation", () => {
     resetJavaBuiltinCapabilities();
     const repo = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-dubbo-xml-only-"));
     await fs.writeFile(path.join(repo, "dubbo.xml"), "<beans xmlns:dubbo=\"http://dubbo.apache.org/schema/dubbo\"><dubbo:service interface=\"com.example.Api\" /></beans>", "utf8");
-    const config = { ...defaultConfig(), include: ["**/*"], repos: [{ name: "dubbo", path: repo }] };
+    const config = { ...defaultConfig(), repos: [{ name: "dubbo", path: repo }] };
 
-    await autoDetectAndRegisterPlugins({ config, cwd: repo, repoConfigs: config.repos });
+    const bootstrap = await autoDetectAndRegisterPlugins({ config, cwd: repo, repoConfigs: config.repos });
 
     expect(parserRegistry.resolve({ language: "java" })).toBeUndefined();
     expect(getLoadedLanguageGrammar("java")).toBeUndefined();
     expect(contractExtractorRegistry.names()).toContain("builtin:dubbo-xml");
     expect(frameworkDetectorRegistry.names()).toContain("builtin:dubbo-xml-detector");
+    expect(bootstrap.additionalIndexFilesByRepo.get(repo)).toEqual(["dubbo.xml"]);
   });
 
   it("registers Java parser and source extractors only when Java source files are present", async () => {
@@ -430,6 +431,13 @@ describe("plugin architecture foundation", () => {
     await autoDetectAndRegisterPlugins({ config, cwd: repo, repoConfigs: config.repos });
 
     expect(parserRegistry.resolve({ language: "java" })).toBeDefined();
+    expect(getLoadedLanguageGrammar("java")).toBeUndefined();
+    await parseSourceFile({
+      repoId: "repo:java",
+      absolutePath: path.join(repo, "src", "main", "java", "OrderController.java"),
+      relativePath: "src/main/java/OrderController.java",
+      language: "java"
+    });
     expect(getLoadedLanguageGrammar("java")).toBeDefined();
     expect(contractExtractorRegistry.names()).toContain("builtin:spring-mvc");
     expect(frameworkDetectorRegistry.names()).toContain("builtin:java-fallback-detector");
@@ -559,5 +567,18 @@ describe("plugin architecture foundation", () => {
     clearRegisteredPluginCapabilities();
 
     expect(parserRegistry.resolve({ relativePath: "src/OrderService.ts" })?.language).toBe("typescript");
+  });
+
+  it("keeps supported languages in core and reserves plugins for extensions", async () => {
+    expect(LANGUAGE_DEFINITIONS.map((definition) => definition.id).sort()).toEqual([
+      "go",
+      "java",
+      "javascript",
+      "jsx",
+      "python",
+      "tsx",
+      "typescript"
+    ]);
+    await expect(fs.stat(path.resolve("src/core/plugins/bundled"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

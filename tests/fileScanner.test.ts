@@ -100,6 +100,19 @@ describe("file scanner", () => {
     const files = await scanRepoFiles(cwd, configSchema.parse({}));
     expect(files.map((f) => f.relativePath).sort()).toEqual(["src/main.go", "src/service.py"]);
   });
+
+  it("revalidates core-added paths against exclusions and path traversal", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-core-added-paths-"));
+    await fs.mkdir(path.join(cwd, "dist"), { recursive: true });
+    await fs.writeFile(path.join(cwd, "dubbo.xml"), "<dubbo:service interface=\"x.Api\" />", "utf8");
+    await fs.writeFile(path.join(cwd, "dist", "ignored.xml"), "<dubbo:service interface=\"x.Ignored\" />", "utf8");
+
+    const files = await scanRepoFiles(cwd, configSchema.parse({}), {
+      additionalPaths: ["dubbo.xml", "dist/ignored.xml", "../outside.xml"]
+    });
+
+    expect(files.map((file) => file.relativePath)).toEqual(["dubbo.xml"]);
+  });
 });
 
 describe("isGeneratedFile", () => {

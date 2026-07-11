@@ -47,6 +47,7 @@ export type LanguageDetection = {
   hasSourceFiles: boolean;
   hasBuildMarkers: boolean;
   hasDubboXml: boolean;
+  dubboXmlFiles: Array<{ repoPath: string; relativePath: string }>;
 };
 
 const DUBBO_XML_MAX_BYTES = 512 * 1024;
@@ -82,7 +83,11 @@ function languageManifest(id: string, extensions: string[], markers: string[], r
   };
 }
 
-export async function scanRepoPathSnapshot(repoPath: string, config: AppConfig): Promise<RepoPathSnapshot> {
+export async function scanRepoPathSnapshot(
+  repoPath: string,
+  config: AppConfig,
+  detectionGlobs: readonly string[] = config.include
+): Promise<RepoPathSnapshot> {
   const ig = ignore();
   ig.add(config.exclude.map((entry) => entry.replace(/^\*\*\//, "")));
   const gitignore = path.join(repoPath, ".gitignore");
@@ -92,7 +97,7 @@ export async function scanRepoPathSnapshot(repoPath: string, config: AppConfig):
     // Missing .gitignore is fine.
   }
 
-  const entries = await fg(config.include, {
+  const entries = await fg([...detectionGlobs], {
     cwd: repoPath,
     absolute: false,
     onlyFiles: true,
@@ -145,10 +150,34 @@ export function pluginsForActiveLanguages(
   );
 }
 
+export function detectionGlobsForPlugins(
+  plugins: readonly AvailablePlugin[],
+  baseGlobs: readonly string[] = []
+): string[] {
+  const globs = new Set(baseGlobs);
+  for (const plugin of plugins) {
+    for (const language of plugin.manifest.languages ?? []) {
+      const detect = language.detect ?? { extensions: language.extensions };
+      for (const extension of detect.extensions ?? []) {
+        globs.add(`**/*${normalizeExtension(extension)}`);
+      }
+      for (const marker of detect.markers ?? []) {
+        globs.add(marker);
+        globs.add(`*/${marker}`);
+        globs.add(`*/*/${marker}`);
+        globs.add(`*/*/*/${marker}`);
+      }
+      for (const glob of detect.globs ?? []) globs.add(glob);
+    }
+  }
+  return [...globs].sort();
+}
+
 export async function detectJavaSignals(snapshots: readonly RepoPathSnapshot[]): Promise<LanguageDetection> {
   let hasSourceFiles = false;
   let hasBuildMarkers = false;
   let hasDubboXml = false;
+  const dubboXmlFiles: Array<{ repoPath: string; relativePath: string }> = [];
   const buildMarkers = new Set(["pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "gradlew"]);
 
   for (const snapshot of snapshots) {
@@ -160,13 +189,14 @@ export async function detectJavaSignals(snapshots: readonly RepoPathSnapshot[]):
       if (isMarkerMatch(relativePath, buildMarkers)) {
         hasBuildMarkers = true;
       }
-      if (!hasDubboXml && extension === ".xml") {
-        hasDubboXml = await fileHasDubboXml(snapshot.repoPath, relativePath);
+      if (extension === ".xml" && await fileHasDubboXml(snapshot.repoPath, relativePath)) {
+        hasDubboXml = true;
+        dubboXmlFiles.push({ repoPath: snapshot.repoPath, relativePath });
       }
     }
   }
 
-  return { language: "java", hasSourceFiles, hasBuildMarkers, hasDubboXml };
+  return { language: "java", hasSourceFiles, hasBuildMarkers, hasDubboXml, dubboXmlFiles };
 }
 
 function matchesLanguage(language: DetectLanguageRule, snapshots: readonly RepoPathSnapshot[]): boolean {

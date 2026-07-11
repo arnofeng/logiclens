@@ -2,6 +2,7 @@ import fs from "node:fs";
 import fsPromises from "node:fs/promises";
 import path from "node:path";
 import ignore from "ignore";
+import fg from "fast-glob";
 import { GraphClient } from "../../interfaces/sdk/client.js";
 import { shouldWatchRepo } from "./policy.js";
 import { isGeneratedFile } from "../../shared/generatedFile.js";
@@ -71,12 +72,15 @@ export class FileMatcher {
   private igExclude: any;
   private igInclude: any;
   private repoPath: string;
+  private exclude: string[];
+  private matchedCorePaths = new Set<string>();
   private excludedDirSegments: Set<string>;
   private excludedDirPaths: Set<string>;
   private brandedWorkspaceDirs = new Set(brandedWorkspaceDirNames());
 
   constructor(repoPath: string, include: string[], exclude: string[]) {
     this.repoPath = repoPath;
+    this.exclude = exclude;
     this.igInclude = ignore().add(include);
     this.igExclude = ignore().add(exclude.map((entry) => entry.replace(/^\*\*\//, "")));
     const excludedDirs = exclude
@@ -92,6 +96,19 @@ export class FileMatcher {
       this.igExclude.add(await fsPromises.readFile(gitignorePath, "utf8"));
     } catch {
       // Repositories without .gitignore are fine.
+    }
+    const candidates = await fg(["**/*.xml"], {
+      cwd: this.repoPath,
+      absolute: false,
+      onlyFiles: true,
+      dot: true,
+      ignore: this.exclude
+    });
+    for (const relativePath of candidates) {
+      const posixPath = relativePath.replace(/\\/g, "/");
+      if (!this.isPathExcluded(posixPath) && await this.matchesCoreCandidate(posixPath)) {
+        this.matchedCorePaths.add(posixPath);
+      }
     }
   }
 
@@ -114,7 +131,7 @@ export class FileMatcher {
     return this.igExclude.ignores(posixPath) || this.igExclude.ignores(dirPath);
   }
 
-  match(relativePath: string): boolean {
+  async match(relativePath: string): Promise<boolean> {
     const posixPath = relativePath.split(path.sep).join("/");
     if (
       posixPath.startsWith(".git/") ||
@@ -124,13 +141,53 @@ export class FileMatcher {
     ) {
       return false;
     }
-    if (!this.igInclude.ignores(posixPath)) return false;
-    if (this.igExclude.ignores(posixPath)) return false;
+    if (this.isPathExcluded(posixPath)) return false;
     if (isGeneratedFile(posixPath)) return false;
-    const lang = parserRegistry.resolve({ relativePath: posixPath })?.language;
-    const inferred = lang ?? builtinLanguageForPath(posixPath);
-    return Boolean(inferred);
+    if (this.igInclude.ignores(posixPath)) {
+      const lang = parserRegistry.resolve({ relativePath: posixPath })?.language;
+      const inferred = lang ?? builtinLanguageForPath(posixPath);
+      if (inferred) return true;
+    }
+    if (!isCoreCandidatePath(posixPath)) return false;
+
+    const previouslyMatched = this.matchedCorePaths.has(posixPath);
+    const currentlyMatches = await this.matchesCoreCandidate(posixPath);
+    if (currentlyMatches) this.matchedCorePaths.add(posixPath);
+    else this.matchedCorePaths.delete(posixPath);
+    return previouslyMatched || currentlyMatches;
   }
+
+  private isPathExcluded(posixPath: string): boolean {
+    return this.igExclude.ignores(posixPath);
+  }
+
+  private async matchesCoreCandidate(relativePath: string): Promise<boolean> {
+    if (isJavaBuildMarker(relativePath)) return true;
+    const absolutePath = path.join(this.repoPath, relativePath);
+    const stat = await fsPromises.stat(absolutePath).catch(() => undefined);
+    if (!stat?.isFile() || stat.size > 512 * 1024) return false;
+    const source = await fsPromises.readFile(absolutePath, "utf8").catch(() => "");
+    return /<dubbo:(?:service|reference)\b/i.test(source) ||
+      /xmlns:dubbo\s*=\s*["'][^"']*dubbo[^"']*["']/i.test(source);
+  }
+}
+
+const JAVA_BUILD_MARKERS = new Set([
+  "pom.xml",
+  "build.gradle",
+  "build.gradle.kts",
+  "settings.gradle",
+  "settings.gradle.kts",
+  "gradlew"
+]);
+
+function isCoreCandidatePath(relativePath: string): boolean {
+  return relativePath.toLowerCase().endsWith(".xml") || isJavaBuildMarker(relativePath);
+}
+
+function isJavaBuildMarker(relativePath: string): boolean {
+  const parts = relativePath.split("/");
+  return parts.length <= 4 && JAVA_BUILD_MARKERS.has(parts[parts.length - 1] ?? "");
 }
 
 export class WatchRepoIndex {
@@ -365,7 +422,7 @@ export class FileWatcher {
       try {
         const watcher = fs.watch(root, { recursive: true }, (_eventType, filename) => {
           if (!filename) return;
-          this.handleAbsoluteEvent(path.resolve(root, String(filename)));
+          void this.handleAbsoluteEvent(path.resolve(root, String(filename)));
         });
         watcher.on("error", (err) => this.handleWatchError(err, root));
         this.watchers.push(watcher);
@@ -408,7 +465,7 @@ export class FileWatcher {
       const watcher = fs.watch(dirToWatch, { recursive: false }, (eventType, filename) => {
         if (!filename) return;
         const fullPath = path.join(dirToWatch, String(filename));
-        this.handleAbsoluteEvent(fullPath);
+        void this.handleAbsoluteEvent(fullPath);
         if (eventType === "rename") void this.handleLinuxDirectoryMutation(entry, fullPath);
       });
       watcher.on("error", (err) => this.handleWatchError(err, dirToWatch, entry.name));
@@ -456,17 +513,17 @@ export class FileWatcher {
     this.markPartial(`Failed to watch "${location}": ${err.message ?? String(error)}`, repoName, location);
   }
 
-  private handleAbsoluteEvent(absolutePath: string): void {
+  private async handleAbsoluteEvent(absolutePath: string): Promise<void> {
     if (!this.active || this.degraded || !this.repoIndex) return;
     const match = this.repoIndex.matchAbsolute(absolutePath);
     if (!match) return;
-    this.handleRepoEvent(match.repo, match.relativePath);
+    await this.handleRepoEvent(match.repo, match.relativePath);
   }
 
-  private handleRepoEvent(repo: RepoWatchEntry, relativePath: string): void {
+  private async handleRepoEvent(repo: RepoWatchEntry, relativePath: string): Promise<void> {
     if (!this.active || this.degraded || this.pausedRepos.has(repo.name)) return;
     const normalizedPath = relativePath.replace(/\\/g, "/");
-    if (!repo.matcher.match(normalizedPath)) return;
+    if (!await repo.matcher.match(normalizedPath)) return;
 
     const key = `${repo.name}:${normalizedPath}`;
     const now = Date.now();
@@ -481,13 +538,13 @@ export class FileWatcher {
     this.scheduleSync();
   }
 
-  ingestEventForTests(repoName: string, relativePath: string): void {
+  async ingestEventForTests(repoName: string, relativePath: string): Promise<void> {
     const repo = this.repoEntries.find((entry) => entry.name === repoName);
-    if (repo) this.handleRepoEvent(repo, relativePath);
+    if (repo) await this.handleRepoEvent(repo, relativePath);
   }
 
-  ingestAbsoluteEventForTests(absolutePath: string): void {
-    this.handleAbsoluteEvent(absolutePath);
+  async ingestAbsoluteEventForTests(absolutePath: string): Promise<void> {
+    await this.handleAbsoluteEvent(absolutePath);
   }
 
   private scheduleSync(): void {

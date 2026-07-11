@@ -38,12 +38,15 @@ export async function scanAndParseRepo(input: {
   config: AppConfig;
   changedOnly?: boolean;
   maxFiles?: number;
+  additionalIndexFiles?: readonly string[];
   createProgressBar: (label: string, total: number) => ParseProgress;
 }): Promise<ScanParseRepoResult> {
   const { db, repo, config, changedOnly, createProgressBar } = input;
   const maxFiles = input.maxFiles ?? config.indexing.maxFilesPerRun;
   const scannedFiles = (await runIndexPhase({ phase: "scan", repoName: repo.name, repoId: repo.id }, async () => {
-    return (await scanRepoFiles(repo.path, config)).slice(0, maxFiles);
+    return (await scanRepoFiles(repo.path, config, {
+      additionalPaths: input.additionalIndexFiles
+    })).slice(0, maxFiles);
   })).result;
 
   const parseProgress = createProgressBar(`Files ${repo.name}`, scannedFiles.length);

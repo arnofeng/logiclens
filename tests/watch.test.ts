@@ -100,26 +100,26 @@ describe(`${BRAND.displayName} File Watcher Subsystem`, () => {
       await matcher.init();
 
       // Matches valid TypeScript file
-      expect(matcher.match("src/index.ts")).toBe(true);
+      expect(await matcher.match("src/index.ts")).toBe(true);
 
       // Matches valid Markdown document
-      expect(matcher.match("README.md")).toBe(true);
+      expect(await matcher.match("README.md")).toBe(true);
 
       // Skips node_modules
-      expect(matcher.match("node_modules/dep/index.ts")).toBe(false);
+      expect(await matcher.match("node_modules/dep/index.ts")).toBe(false);
 
       // Skips path matched by gitignore
-      expect(matcher.match("ignored.ts")).toBe(false);
+      expect(await matcher.match("ignored.ts")).toBe(false);
 
       // Skips generated files
-      expect(matcher.match("src/index.pb.ts")).toBe(false);
+      expect(await matcher.match("src/index.pb.ts")).toBe(false);
 
       // Skips unsupported parser file (e.g. random binary)
-      expect(matcher.match("assets/logo.png")).toBe(false);
+      expect(await matcher.match("assets/logo.png")).toBe(false);
 
       // Skips .git and branded internal folders
-      expect(matcher.match(".git/config")).toBe(false);
-      expect(matcher.match(`${BRAND_PATHS.graph}/data.mdb`)).toBe(false);
+      expect(await matcher.match(".git/config")).toBe(false);
+      expect(await matcher.match(`${BRAND_PATHS.graph}/data.mdb`)).toBe(false);
     });
 
     it("prunes ignored directories using directory semantics", async () => {
@@ -132,6 +132,26 @@ describe(`${BRAND.displayName} File Watcher Subsystem`, () => {
       expect(matcher.isDirExcluded(".git")).toBe(true);
       expect(matcher.isDirExcluded(BRAND.configDirName)).toBe(true);
       expect(matcher.isDirExcluded("src")).toBe(false);
+    });
+
+    it("matches core Java marker and Dubbo XML changes outside include", async () => {
+      const tempDir = await makeTempWorkspace();
+      await fs.writeFile(path.join(tempDir, ".gitignore"), "ignored.xml\n");
+      const matcher = new FileMatcher(tempDir, defaultConfig().include, defaultConfig().exclude);
+      await matcher.init();
+
+      await fs.writeFile(path.join(tempDir, "plain.xml"), "<root />");
+      expect(await matcher.match("plain.xml")).toBe(false);
+      await fs.writeFile(path.join(tempDir, "ignored.xml"), "<dubbo:service interface=\"x.Ignored\" />");
+      expect(await matcher.match("ignored.xml")).toBe(false);
+
+      await fs.writeFile(path.join(tempDir, "dubbo.xml"), "<dubbo:service interface=\"x.Api\" />");
+      expect(await matcher.match("dubbo.xml")).toBe(true);
+      await fs.rm(path.join(tempDir, "dubbo.xml"));
+      expect(await matcher.match("dubbo.xml")).toBe(true);
+
+      await fs.writeFile(path.join(tempDir, "pom.xml"), "<project />");
+      expect(await matcher.match("pom.xml")).toBe(true);
     });
   });
 
@@ -156,7 +176,7 @@ describe(`${BRAND.displayName} File Watcher Subsystem`, () => {
       expect(client.isWatching()).toBe(true);
 
       const watcher = (client as any).watcher as FileWatcher;
-      watcher.ingestEventForTests("my-repo", "hello.ts");
+      await watcher.ingestEventForTests("my-repo", "hello.ts");
 
       const pending = client.getPendingFiles();
       expect(pending.map((file) => `${file.repoName}/${file.path}`)).toContain("my-repo/hello.ts");
@@ -277,7 +297,7 @@ describe(`${BRAND.displayName} File Watcher Subsystem`, () => {
       expect(await watcher.start()).toBe(true);
 
       // Trigger change
-      watcher.ingestEventForTests("my-repo", "hello.ts");
+      await watcher.ingestEventForTests("my-repo", "hello.ts");
 
       // Wait for debounce retries to exhaust and degrade.
       await new Promise((resolve) => setTimeout(resolve, 450));
@@ -290,7 +310,7 @@ describe(`${BRAND.displayName} File Watcher Subsystem`, () => {
       await new Promise((resolve) => setTimeout(resolve, 300));
       expect(failCount).toBe(3);
 
-      watcher.ingestEventForTests("my-repo", "hello.ts");
+      await watcher.ingestEventForTests("my-repo", "hello.ts");
       await new Promise((resolve) => setTimeout(resolve, 200));
       expect(failCount).toBe(3);
 
@@ -308,8 +328,8 @@ describe(`${BRAND.displayName} File Watcher Subsystem`, () => {
       const watcher = new FileWatcher(client, { debounceMs: 1000 });
       expect(await watcher.start()).toBe(true);
 
-      watcher.ingestEventForTests("my-repo", "hello.ts");
-      watcher.ingestEventForTests("my-repo", "hello.ts");
+      await watcher.ingestEventForTests("my-repo", "hello.ts");
+      await watcher.ingestEventForTests("my-repo", "hello.ts");
 
       expect(watcher.getPendingFiles()).toHaveLength(1);
       watcher.stop();

@@ -9,6 +9,7 @@ export type IndexRunContext = {
   config: AppConfig;
   logger: IndexLogger;
   writeMode: IndexWriteMode;
+  additionalIndexFilesByRepo: ReadonlyMap<string, readonly string[]>;
   llm: {
     apiKey?: string;
     baseUrl?: string;
@@ -39,13 +40,15 @@ export function createIndexRunContext(input: {
   options: IndexOptions;
   logger: IndexLogger;
   writeMode: IndexWriteMode;
+  additionalIndexFilesByRepo: ReadonlyMap<string, readonly string[]>;
 }): IndexRunContext {
-  const { cwd, config, options: _options, logger, writeMode } = input;
+  const { cwd, config, options: _options, logger, writeMode, additionalIndexFilesByRepo } = input;
   return {
     cwd,
     config,
     logger,
     writeMode,
+    additionalIndexFilesByRepo,
     llm: {
       apiKey: config.llm.apiKey ?? process.env.OPENAI_API_KEY,
       baseUrl: config.llm.baseUrl ?? process.env.OPENAI_BASE_URL,

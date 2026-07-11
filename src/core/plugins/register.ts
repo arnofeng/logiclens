@@ -15,6 +15,7 @@ import { toRepoNode } from "../workspace/repoRegistry.js";
 import { adaptFactExtractor, adaptFrameworkDetector, adaptLanguageParser } from "./adapter.js";
 import {
   builtinLanguagePluginManifests,
+  detectionGlobsForPlugins,
   detectJavaSignals,
   detectActiveLanguages,
   pluginsForActiveLanguages,
@@ -29,6 +30,11 @@ import {
   resetJavaBuiltinCapabilities
 } from "./bootstrap.js";
 import { BRAND } from "../../shared/branding.js";
+
+export type PluginBootstrapResult = {
+  loadedPlugins: LoadedLogicLensPlugin[];
+  additionalIndexFilesByRepo: ReadonlyMap<string, readonly string[]>;
+};
 
 const registeredPluginState = {
   languages: new Set<string>(),
@@ -59,17 +65,20 @@ export async function autoDetectAndRegisterPlugins(input: {
   repoConfigs: AppConfig["repos"];
   warn?: (message: string) => void;
   log?: (message: string) => void;
-}): Promise<LoadedLogicLensPlugin[]> {
+}): Promise<PluginBootstrapResult> {
   clearRegisteredPluginCapabilities();
   resetJavaBuiltinCapabilities();
   const repos = input.repoConfigs.map((repo) => toRepoNode(repo, input.cwd));
-  const snapshots = await Promise.all(repos.map((repo) => scanRepoPathSnapshot(repo.path, input.config)));
   const available = await discoverAvailablePlugins({
     cwd: input.cwd,
     repoPaths: repos.map((repo) => repo.path),
     config: input.config,
     warn: input.warn
   });
+  const detectionGlobs = detectionGlobsForPlugins(available, [...input.config.include, "**/*.xml"]);
+  const snapshots = await Promise.all(
+    repos.map((repo) => scanRepoPathSnapshot(repo.path, input.config, detectionGlobs))
+  );
   const activeLanguages = detectActiveLanguages({ plugins: available, snapshots });
   const javaSignals = await detectJavaSignals(snapshots);
   if (javaSignals.hasSourceFiles || javaSignals.hasBuildMarkers || javaSignals.hasDubboXml) {
@@ -94,7 +103,16 @@ export async function autoDetectAndRegisterPlugins(input: {
   if (activeLanguages.size > 0) {
     input.log?.(`Detected language plugins: ${[...activeLanguages].sort().join(", ")}`);
   }
-  return allLoaded;
+  const additionalIndexFilesByRepo = new Map<string, string[]>();
+  for (const file of javaSignals.dubboXmlFiles) {
+    const paths = additionalIndexFilesByRepo.get(file.repoPath) ?? [];
+    paths.push(file.relativePath);
+    additionalIndexFilesByRepo.set(file.repoPath, paths);
+  }
+  return {
+    loadedPlugins: allLoaded,
+    additionalIndexFilesByRepo
+  };
 }
 
 export function registerLoadedPlugins(

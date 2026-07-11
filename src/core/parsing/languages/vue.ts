@@ -28,6 +28,7 @@ export function createVueParser(): LanguageParser {
         language: delegateLanguage
       })) as ParsedFile;
 
+      parsed.parseLanguage = delegateLanguage;
       // Override the language of the parsed file back to "vue"
       parsed.language = "vue";
       return parsed;
