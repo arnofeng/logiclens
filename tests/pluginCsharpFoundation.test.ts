@@ -32,8 +32,8 @@ describe("C# plugin foundation", () => {
     const plugin = loaded[0]!.plugin;
     expect(() => validatePlugin(plugin, "csharp-test", discovered.manifest)).not.toThrow();
     expect(plugin.languages?.map((language) => language.id)).toEqual(["csharp"]);
-    expect(plugin.factExtractors).toEqual([]);
-    expect(plugin.frameworkDetectors).toEqual([]);
+    expect(plugin.factExtractors?.map((extractor) => extractor.name)).toEqual(["csharp:project-package-usage"]);
+    expect(plugin.frameworkDetectors?.map((detector) => detector.name)).toEqual(["csharp:project-frameworks"]);
   });
 
   it("separates source extensions from project detection globs", async () => {
@@ -52,7 +52,7 @@ describe("C# plugin foundation", () => {
   });
 
   it("contains no core or internal imports and keeps grammar imports dynamic", async () => {
-    const sourceFiles = ["src/index.ts", "src/manifest.ts", "src/parser.ts"];
+    const sourceFiles = ["src/index.ts", "src/manifest.ts", "src/parser.ts", "src/projectMetadata.ts", "src/projectFacts.ts"];
     const sources = await Promise.all(sourceFiles.map((file) => fs.readFile(path.join(pluginDir, file), "utf8")));
     const source = sources.join("\n");
     expect(source).not.toMatch(/(?:from|import\s*\()["'][^"']*(?:src\/|src\\|core\/|core\\)/);
