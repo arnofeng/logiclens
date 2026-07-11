@@ -47,6 +47,33 @@ describe("C# project metadata and facts", () => {
     expect(parsed?.declarations).toEqual([]);
   });
 
+  it("keeps unresolved direct and central MSBuild version expressions out of metadata", async () => {
+    const direct = parseProjectMetadata("direct.csproj", `<Project><ItemGroup>
+  <PackageReference Include="Direct.Package" Version="$(DirectVersion)" />
+</ItemGroup></Project>`);
+    expect(direct?.declarations).toEqual([expect.objectContaining({ kind: "packageReference", name: "Direct.Package" })]);
+    expect(direct?.declarations[0]).not.toHaveProperty("version");
+
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-csharp-unresolved-version-"));
+    try {
+      await fs.writeFile(path.join(root, "Directory.Packages.props"), `<Project><ItemGroup><PackageVersion Include="Central.Package" Version="$(SharedVersion)" /></ItemGroup></Project>`);
+      await fs.writeFile(path.join(root, "App.csproj"), `<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><PackageReference Include="Central.Package" /></ItemGroup></Project>`);
+      const declarations = (await collectProjectMetadata(root)).flatMap((file) => file.declarations);
+      expect(declarations.filter((item) => item.name === "Central.Package").every((item) => item.version === undefined)).toBe(true);
+    } finally { await fs.rm(root, { recursive: true, force: true }); }
+  });
+
+  it("computes exact lines efficiently for large structured project files", () => {
+    const references = Array.from({ length: 10_000 }, (_, index) => `  <PackageReference Include="Package.${index}" Version="1.0.0" />`).join("\n");
+    const source = `<Project>\n${references}\n</Project>`;
+    const started = performance.now();
+    const parsed = parseProjectMetadata("large.csproj", source);
+    const elapsed = performance.now() - started;
+    expect(parsed?.declarations).toHaveLength(10_000);
+    expect(parsed?.declarations.at(-1)?.line).toBe(10_001);
+    expect(elapsed).toBeLessThan(1_500);
+  });
+
   it("does not treat conditional declarations as directly available metadata", () => {
     const parsed = parseProjectMetadata("conditional.csproj", `<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup Condition="'$(Mode)' == 'web'"><TargetFramework>net9.0</TargetFramework></PropertyGroup>

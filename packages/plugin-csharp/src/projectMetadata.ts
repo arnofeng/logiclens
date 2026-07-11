@@ -48,10 +48,21 @@ export type ProjectMetadataFile = {
   declarations: readonly ProjectDeclaration[];
 };
 
-function lineAt(source: string, offset: number): number {
-  let line = 1;
-  for (let index = 0; index < offset; index += 1) if (source.charCodeAt(index) === 10) line += 1;
-  return line;
+function newlineOffsets(source: string): number[] {
+  const offsets: number[] = [];
+  for (let index = source.indexOf("\n"); index >= 0; index = source.indexOf("\n", index + 1)) offsets.push(index);
+  return offsets;
+}
+
+function lineAt(offsets: readonly number[], offset: number): number {
+  let low = 0;
+  let high = offsets.length;
+  while (low < high) {
+    const middle = low + Math.floor((high - low) / 2);
+    if (offsets[middle]! < offset) low = middle + 1;
+    else high = middle;
+  }
+  return low + 1;
 }
 
 function decodeXml(value: string): string | undefined {
@@ -118,6 +129,7 @@ function parseOpeningTag(raw: string): { name: string; attributes: Record<string
 }
 
 function parseXml(source: string): XmlNode | undefined {
+  const lines = newlineOffsets(source);
   const roots: XmlNode[] = [];
   const stack: XmlNode[] = [];
   const appendText = (value: string): boolean => {
@@ -169,7 +181,7 @@ function parseXml(source: string): XmlNode | undefined {
     }
     const parsed = parseOpeningTag(rawTag);
     if (!parsed) return undefined;
-    const node: XmlNode = { name: parsed.name, attributes: parsed.attributes, children: [], text: "", line: lineAt(source, open), raw: rawTag, openingRaw: rawTag, start: open };
+    const node: XmlNode = { name: parsed.name, attributes: parsed.attributes, children: [], text: "", line: lineAt(lines, open), raw: rawTag, openingRaw: rawTag, start: open };
     const parent = stack.at(-1);
     if (parent) parent.children.push(node); else roots.push(node);
     if (!parsed.selfClosing) stack.push(node);
@@ -194,7 +206,9 @@ export function parseProjectMetadata(filePath: string, source: string): ProjectM
   const add = (kind: ProjectDeclarationKind, name: string | undefined, node: XmlNode, version?: string): void => {
     const trimmed = name?.trim();
     if (!trimmed || trimmed.includes("$(")) return;
-    declarations.push({ kind, name: trimmed, ...(version?.trim() ? { version: version.trim() } : {}), filePath, line: node.line, raw: node.raw });
+    const trimmedVersion = version?.trim();
+    const directVersion = trimmedVersion && !trimmedVersion.includes("$(") ? trimmedVersion : undefined;
+    declarations.push({ kind, name: trimmed, ...(directVersion ? { version: directVersion } : {}), filePath, line: node.line, raw: node.raw });
   };
   const rootSdk = attribute(root, "Sdk");
   if (rootSdk && !attribute(root, "Condition")) {
