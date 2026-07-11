@@ -1,0 +1,29 @@
+{
+  "name": "@logiclens/plugin-csharp",
+  "version": "0.1.0",
+  "description": "External C# language plugin for LogicLens.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@logiclens/plugin-sdk": "workspace:*",
+    "tree-sitter": "^0.21.1",
+    "tree-sitter-c-sharp": "0.23.1"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "plugin.json",
+    "README.md"
+  ],
+  "license": "MIT"
+}

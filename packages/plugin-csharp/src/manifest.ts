@@ -1,0 +1,22 @@
+import type { PluginManifest } from "@logiclens/plugin-sdk";
+
+export const manifest = {
+  name: "@logiclens/plugin-csharp",
+  version: "0.1.0",
+  logiclensPluginApiVersion: "0.1.0",
+  capabilities: ["language", "fact-extractor", "framework-detector"],
+  entry: "./dist/index.js",
+  languages: [{
+    id: "csharp",
+    extensions: [".cs"],
+    detect: {
+      extensions: [".cs"],
+      globs: [
+        "**/*.csproj",
+        "**/*.sln",
+        "**/Directory.Build.props",
+        "**/Directory.Packages.props"
+      ]
+    }
+  }]
+} satisfies PluginManifest;

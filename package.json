@@ -26,14 +26,14 @@
   ],
   "scripts": {
     "build": "pnpm run clean && pnpm run build:packages && tsc -p tsconfig.build.json",
-    "build:packages": "pnpm --filter @logiclens/plugin-sdk build && pnpm --filter @logiclens/plugin-runtime build",
+    "build:packages": "pnpm --filter @logiclens/plugin-sdk build && pnpm --filter @logiclens/plugin-runtime build && pnpm --filter @logiclens/plugin-csharp build",
     "build:prod": "pnpm run clean && pnpm run build:packages && tsc -p tsconfig.prod.json",
     "clean": "tsx scripts/clean.ts",
     "dev": "tsx src/cli.ts",
     "prepack": "pnpm run build:prod",
     "pretest": "pnpm run build:packages",
     "test": "tsx scripts/test.ts",
-    "typecheck": "tsc --noEmit && tsc -p packages/plugin-sdk/tsconfig.json --noEmit && pnpm --filter @logiclens/plugin-sdk build && tsc -p packages/plugin-runtime/tsconfig.json --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p packages/plugin-sdk/tsconfig.json --noEmit && pnpm --filter @logiclens/plugin-sdk build && tsc -p packages/plugin-runtime/tsconfig.json --noEmit && pnpm --filter @logiclens/plugin-csharp typecheck",
     "audit:prod": "pnpm audit --prod --audit-level=high --registry=https://registry.npmjs.org"
   },
   "keywords": [

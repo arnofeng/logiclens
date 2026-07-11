@@ -5,6 +5,7 @@ allowBuilds:
   esbuild: true
   kuzu: true
   tree-sitter: true
+  tree-sitter-c-sharp: true
   tree-sitter-go: true
   tree-sitter-java: true
   tree-sitter-javascript: true
