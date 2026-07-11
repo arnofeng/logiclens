@@ -62,24 +62,54 @@ async function parser(): Promise<ParserInstance> {
 
 function line(node: SyntaxNode): number { return node.startPosition.row + 1; }
 function name(node: SyntaxNode): string | undefined { return node.childForFieldName("name")?.text; }
-function bodySchemaType(raw: string): string | undefined {
+const BODY_WRAPPERS = new Set(["Task", "ValueTask", "ActionResult", "Ok", "Created", "ObjectResult"]);
+const BODY_COLLECTIONS = new Set(["IEnumerable", "ICollection", "IList", "IReadOnlyCollection", "IReadOnlyList", "List", "Collection", "HashSet", "ISet"]);
+const BODY_DICTIONARIES = new Set(["Dictionary", "IDictionary", "IReadOnlyDictionary", "SortedDictionary"]);
+const EMPTY_RESULTS = new Set(["NotFound", "NoContent", "UnauthorizedHttpResult", "ForbidHttpResult", "ConflictHttpResult", "StatusCodeHttpResult", "IResult", "IActionResult"]);
+
+function genericParts(value: string): { base: string; args: string[] } | undefined {
+  const start = value.indexOf("<");
+  if (start < 0 || !value.endsWith(">")) return undefined;
+  const args: string[] = [];
+  let depth = 0;
+  let begin = start + 1;
+  for (let index = start + 1; index < value.length - 1; index++) {
+    if (value[index] === "<") depth++;
+    else if (value[index] === ">") depth--;
+    else if (value[index] === "," && depth === 0) {
+      args.push(value.slice(begin, index).trim());
+      begin = index + 1;
+    }
+  }
+  args.push(value.slice(begin, -1).trim());
+  return { base: value.slice(0, start).trim().replace(/^.*\./, ""), args };
+}
+
+function bodySchemaCandidates(raw: string): Set<string> {
   let value = raw.trim().replace(/^global::/, "").replace(/\?$/, "");
   while (value.endsWith("[]")) value = value.slice(0, -2).trim();
-  const start = value.indexOf("<");
-  if (start >= 0 && value.endsWith(">")) {
-    const inner = value.slice(start + 1, -1);
-    let depth = 0;
-    let lastComma = -1;
-    for (let index = 0; index < inner.length; index++) {
-      if (inner[index] === "<") depth++;
-      else if (inner[index] === ">") depth--;
-      else if (inner[index] === "," && depth === 0) lastComma = index;
+  const generic = genericParts(value);
+  if (generic) {
+    if (generic.base === "Results") {
+      const candidates = new Set<string>();
+      for (const argument of generic.args) for (const candidate of bodySchemaCandidates(argument)) candidates.add(candidate);
+      return candidates;
     }
-    return bodySchemaType(inner.slice(lastComma + 1));
+    if ((BODY_WRAPPERS.has(generic.base) || BODY_COLLECTIONS.has(generic.base)) && generic.args.length === 1) {
+      return bodySchemaCandidates(generic.args[0]!);
+    }
+    if (BODY_DICTIONARIES.has(generic.base) && generic.args.length === 2) return bodySchemaCandidates(generic.args[1]!);
+    return new Set();
   }
   const simple = value.replace(/^.*\./, "");
-  return simple && !/^(?:string|bool|byte|sbyte|short|ushort|int|uint|long|ulong|float|double|decimal|char|object)$/i.test(simple)
-    ? value : undefined;
+  return simple && !EMPTY_RESULTS.has(simple)
+    && !/^(?:string|bool|byte|sbyte|short|ushort|int|uint|long|ulong|float|double|decimal|char|object)$/i.test(simple)
+    ? new Set([value]) : new Set();
+}
+
+function bodySchemaType(raw: string): string | undefined {
+  const candidates = [...bodySchemaCandidates(raw)];
+  return candidates.length === 1 ? candidates[0] : undefined;
 }
 function unquote(raw: string): string | undefined {
   if (raw.startsWith("@\"") && raw.endsWith("\"")) return raw.slice(2, -1).replace(/\"\"/g, "\"");

@@ -209,7 +209,7 @@ function fields(node: SyntaxNode): PluginSchemaField[] {
   }
   const body = node.namedChildren.find((child) => child.type === "declaration_list");
   for (const member of body?.namedChildren ?? []) {
-    if (member.type === "property_declaration" && hasModifier(member, "public")) {
+    if (member.type === "property_declaration" && hasModifier(member, "public") && !hasModifier(member, "static")) {
       const memberName = name(member);
       const type = typeChild(member);
       const accessor = member.namedChildren.find((child) => child.type === "accessor_list");
@@ -219,7 +219,7 @@ function fields(node: SyntaxNode): PluginSchemaField[] {
       const field = fieldFor(member, memberName, type.text, hasDefaultAfter(member, accessor));
       if (field) result.push(field);
     }
-    if (member.type === "field_declaration" && hasModifier(member, "public")) {
+    if (member.type === "field_declaration" && hasModifier(member, "public") && !hasModifier(member, "static")) {
       const attrs = attributes(member);
       if (!attrs.some((attribute) => SERIALIZED_MEMBER_ATTRIBUTES.has(attributeName(attribute)))) continue;
       const declaration = member.namedChildren.find((child) => child.type === "variable_declaration");

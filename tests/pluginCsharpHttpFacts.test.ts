@@ -151,4 +151,22 @@ public class OrdersController : ControllerBase {
     const endpoints = await run([{ path: "Wrapped.cs", source }]);
     expect(endpoints[0]).toMatchObject({ requestBodyType: "Contracts.CreateOrderRequest", responseBodyType: "Contracts.OrderResponse" });
   });
+
+  it("extracts a unique Results payload without guessing across ambiguous or custom multi-argument wrappers", async () => {
+    const source = `
+[ApiController]
+[Route("results")]
+public class ResultsController : ControllerBase {
+  [HttpGet("unique")]
+  public Results<Ok<OrderResponse>, NotFound> Unique() => Handle();
+  [HttpGet("ambiguous")]
+  public Results<Ok<OrderResponse>, Ok<ErrorResponse>> Ambiguous() => Handle();
+  [HttpGet("custom")]
+  public Envelope<OrderResponse, ErrorResponse> Custom() => Handle();
+}`;
+    const endpoints = await run([{ path: "Results.cs", source }]);
+    expect(endpoints.find((item) => item.path === "/results/unique")?.responseBodyType).toBe("OrderResponse");
+    expect(endpoints.find((item) => item.path === "/results/ambiguous")?.responseBodyType).toBeUndefined();
+    expect(endpoints.find((item) => item.path === "/results/custom")?.responseBodyType).toBeUndefined();
+  });
 });

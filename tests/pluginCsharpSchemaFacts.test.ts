@@ -121,6 +121,19 @@ public class AttributeModel {
     ]);
   });
 
+  it("excludes static properties and explicitly attributed static fields", async () => {
+    const source = `
+public class StaticModel {
+  public string Instance { get; set; }
+  public static string Shared { get; set; }
+  [JsonInclude] public static string IncludedShared;
+  [DataMember] public static string ContractShared;
+  [JsonInclude] public string IncludedInstance;
+}`;
+    const schema = (await run([], [{ path: "Static.cs", source }]))[0]!;
+    expect(schema.fields.map((field) => field.name)).toEqual(["Instance", "IncludedInstance"]);
+  });
+
   it("normalizes plugin facts and resolves request/response relations for a cross-language consumer", async () => {
     const extractor = adaptFactExtractor(csharpSchemaExtractor);
     const source = await fs.readFile(fixture, "utf8");
