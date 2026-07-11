@@ -104,7 +104,11 @@ describe("C# plugin foundation", () => {
   it("parses representative modern C# without root syntax errors", async () => {
     const source = await fs.readFile(path.resolve("tests/fixtures/plugin-csharp/ModernApi.cs"), "utf8");
     const parse = createCSharpParser();
-    await expect(parse(parseInput(source))).resolves.toEqual({ symbols: [], imports: [], calls: [], facts: {} });
+    const result = await parse(parseInput(source));
+    expect(result.symbols?.map((symbol) => symbol.qualifiedName)).toContain("LogicLens.Fixtures.Helpers.Convert");
+    expect(result.imports?.[0]?.module).toBe("Microsoft.AspNetCore.Mvc");
+    expect(result.calls?.map((call) => call.calleeName)).toContain("MapGet");
+    expect(result.facts?.annotations?.map((annotation) => annotation.name)).toContain("Marker");
   });
 
   it("leaves builtin languages and default include free of C# additions", async () => {
