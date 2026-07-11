@@ -39,13 +39,16 @@ export async function scanAndParseRepo(input: {
   changedOnly?: boolean;
   maxFiles?: number;
   additionalIndexFiles?: readonly string[];
+  activePluginSourceGlobs?: readonly string[];
   createProgressBar: (label: string, total: number) => ParseProgress;
 }): Promise<ScanParseRepoResult> {
   const { db, repo, config, changedOnly, createProgressBar } = input;
   const maxFiles = input.maxFiles ?? config.indexing.maxFilesPerRun;
   const scannedFiles = (await runIndexPhase({ phase: "scan", repoName: repo.name, repoId: repo.id }, async () => {
     return (await scanRepoFiles(repo.path, config, {
-      additionalPaths: input.additionalIndexFiles
+      additionalPaths: input.additionalIndexFiles,
+      activePluginSourceGlobs: input.activePluginSourceGlobs,
+      repoId: repo.id
     })).slice(0, maxFiles);
   })).result;
 

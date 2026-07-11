@@ -11,6 +11,8 @@ import { builtinLanguageForPath } from "../../core/parsing/parserRegistry.js";
 import { parserRegistry } from "../../core/registries/registry.js";
 import { toRepoNode } from "../../core/workspace/repoRegistry.js";
 import type { IndexQueueStatusSnapshot } from "../../core/indexing/scheduler.js";
+import { autoDetectAndRegisterPlugins } from "../../core/plugins/register.js";
+import { defaultInclude } from "../../config/schema.js";
 
 export type PendingFile = {
   repoName: string;
@@ -71,17 +73,23 @@ type RepoWatchEntry = {
 export class FileMatcher {
   private igExclude: any;
   private igInclude: any;
+  private igPluginSource: any;
   private repoPath: string;
+  private include: string[];
+  private repoId?: string;
   private exclude: string[];
   private matchedCorePaths = new Set<string>();
   private excludedDirSegments: Set<string>;
   private excludedDirPaths: Set<string>;
   private brandedWorkspaceDirs = new Set(brandedWorkspaceDirNames());
 
-  constructor(repoPath: string, include: string[], exclude: string[]) {
+  constructor(repoPath: string, include: string[], exclude: string[], activePluginSourceGlobs: readonly string[] = [], repoId?: string) {
     this.repoPath = repoPath;
+    this.include = include;
+    this.repoId = repoId;
     this.exclude = exclude;
     this.igInclude = ignore().add(include);
+    this.igPluginSource = ignore().add([...activePluginSourceGlobs]);
     this.igExclude = ignore().add(exclude.map((entry) => entry.replace(/^\*\*\//, "")));
     const excludedDirs = exclude
       .map((entry) => entry.replace(/\\/g, "/").replace(/^\*\*\//, "").replace(/\/\*\*$/, "").replace(/\/$/, ""))
@@ -143,8 +151,12 @@ export class FileMatcher {
     }
     if (this.isPathExcluded(posixPath)) return false;
     if (isGeneratedFile(posixPath)) return false;
+    if (this.igPluginSource.ignores(posixPath)) {
+      const includeIsUserRestricted = JSON.stringify(this.include) !== JSON.stringify(defaultInclude);
+      return !includeIsUserRestricted || this.igInclude.ignores(posixPath);
+    }
     if (this.igInclude.ignores(posixPath)) {
-      const lang = parserRegistry.resolve({ relativePath: posixPath })?.language;
+      const lang = parserRegistry.resolve({ relativePath: posixPath, repoId: this.repoId })?.language;
       const inferred = lang ?? builtinLanguageForPath(posixPath);
       if (inferred) return true;
     }
@@ -358,6 +370,14 @@ export class FileWatcher {
       return false;
     }
 
+    const pluginBootstrap = await autoDetectAndRegisterPlugins({
+      config,
+      cwd: this.client.getCwd(),
+      repoConfigs: repos,
+      warn: (message) => this.client.warn(message),
+      log: (message) => this.client.log(message)
+    });
+
     for (const repoConfig of repos) {
       const repoNode = toRepoNode(repoConfig, this.client.getCwd());
       const root = path.resolve(repoNode.path);
@@ -366,7 +386,13 @@ export class FileWatcher {
         this.markPartial(`Skipping repository "${repoConfig.name}": ${policy.reason}`, repoConfig.name, root);
         continue;
       }
-      const matcher = new FileMatcher(root, config.include, config.exclude);
+      const matcher = new FileMatcher(
+        root,
+        config.include,
+        config.exclude,
+        pluginBootstrap.availablePluginSourceGlobsByRepo.get(repoNode.path),
+        repoNode.id
+      );
       await matcher.init();
       this.repoEntries.push({ name: repoConfig.name, root, matcher });
     }

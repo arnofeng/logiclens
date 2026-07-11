@@ -105,6 +105,31 @@ describe("scan/parse phase", () => {
     expect(result.activeFileIds).toEqual([addedFileId]);
   });
 
+  it("tracks active plugin source files in changed-only active file ids", async () => {
+    parserRegistry.register({
+      name: "test:csharp-active-file",
+      language: "csharp",
+      extensions: [".cs"],
+      parse(input) {
+        return { repoId: input.repoId, fileId: input.fileId, path: input.relativePath, language: "csharp", hash: input.hash, loc: 1, imports: [], symbols: [], calls: [] };
+      }
+    });
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-scan-parse-plugin-"));
+    const source = "class Active {}\n";
+    await fs.writeFile(path.join(cwd, "Active.cs"), source, "utf8");
+    const repo = repoFor("scan-parse-plugin", cwd);
+    const activeId = fileId(repo.id, "Active.cs");
+    const db = { knownFileHashes: async () => new Map([[activeId, hashText(source)]]) } as unknown as KuzuGraphDB;
+
+    const result = await scanAndParseRepo({
+      db, repo, config: configSchema.parse({}), changedOnly: true,
+      activePluginSourceGlobs: ["**/*.cs"], createProgressBar
+    });
+    expect(result.activeFileIds).toEqual([activeId]);
+    expect(result.parsedFiles).toEqual([]);
+    parserRegistry.unregisterLanguage("csharp");
+  });
+
   it("wraps parse failures with phase, repo, and file context", async () => {
     parserRegistry.register({
       name: "test:failing-parser",

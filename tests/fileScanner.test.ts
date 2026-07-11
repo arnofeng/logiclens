@@ -113,6 +113,58 @@ describe("file scanner", () => {
 
     expect(files.map((file) => file.relativePath)).toEqual(["dubbo.xml"]);
   });
+
+  it("applies normal safety filters to active plugin source globs", async () => {
+    parserRegistry.register({
+      name: "test:csharp-source-filter",
+      language: "csharp",
+      extensions: [".cs"],
+      parse() { throw new Error("not used"); }
+    });
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-plugin-source-filters-"));
+    await fs.mkdir(path.join(cwd, "dist"));
+    await fs.writeFile(path.join(cwd, ".gitignore"), "ignored.cs\n", "utf8");
+    await fs.writeFile(path.join(cwd, "kept.cs"), "class Kept {}", "utf8");
+    await fs.writeFile(path.join(cwd, "ignored.cs"), "class Ignored {}", "utf8");
+    await fs.writeFile(path.join(cwd, "dist", "excluded.cs"), "class Excluded {}", "utf8");
+    await fs.writeFile(path.join(cwd, "generated.g.cs"), "class Generated {}", "utf8");
+    await fs.writeFile(path.join(cwd, "binary.cs"), Buffer.from([0, 1, 2]));
+
+    const files = await scanRepoFiles(cwd, configSchema.parse({}), {
+      activePluginSourceGlobs: ["**/*.cs"]
+    });
+    expect(files.map((file) => file.relativePath)).toEqual(["kept.cs"]);
+    parserRegistry.unregisterLanguage("csharp");
+  });
+
+  it("treats a custom include as a scope restriction for plugin sources", async () => {
+    parserRegistry.register({ name: "test:csharp-scope", language: "csharp", extensions: [".cs"], parse() { throw new Error("not used"); } });
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-plugin-source-scope-"));
+    await fs.mkdir(path.join(cwd, "src"));
+    await fs.writeFile(path.join(cwd, "src", "Included.cs"), "class Included {}", "utf8");
+    await fs.writeFile(path.join(cwd, "Outside.cs"), "class Outside {}", "utf8");
+    const files = await scanRepoFiles(cwd, configSchema.parse({ include: ["src/**"] }), { activePluginSourceGlobs: ["**/*.cs"] });
+    expect(files.map((file) => file.relativePath)).toEqual(["src/Included.cs"]);
+    parserRegistry.unregisterLanguage("csharp");
+  });
+
+  it("does not scan an explicitly included extension through another repo's scoped parser", async () => {
+    const ownerParser = {
+      name: "test:owner-only",
+      language: "owner-only",
+      scopeRepoId: "repo:owner",
+      extensions: [".foreign"],
+      parse() { throw new Error("not used"); }
+    };
+    parserRegistry.register(ownerParser);
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-foreign-scoped-parser-"));
+    await fs.writeFile(path.join(cwd, "leak.foreign"), "should not parse", "utf8");
+
+    const files = await scanRepoFiles(cwd, configSchema.parse({ include: ["**/*.foreign"] }), { repoId: "repo:other" });
+
+    expect(files).toEqual([]);
+    parserRegistry.unregister(ownerParser);
+  });
 });
 
 describe("isGeneratedFile", () => {

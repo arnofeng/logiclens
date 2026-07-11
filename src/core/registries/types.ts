@@ -33,6 +33,7 @@ export interface LanguageParser {
   name: string;
   language: string;
   extensions: string[];
+  scopeRepoId?: string;
   parse(input: ParseInput): Promise<ParsedGraphFile> | ParsedGraphFile;
 }
 
@@ -50,6 +51,7 @@ export interface ContractExtractorDeps {
 
 export interface ContractExtractor {
   name: string;
+  scopeRepoId?: string;
   languages?: string[];
   frameworks?: string[];
   needs?: ContractExtractorDeps;
@@ -59,6 +61,7 @@ export interface ContractExtractor {
 
 export interface FrameworkDetector {
   name: string;
+  scopeRepoId?: string;
   detect(repo: RepoNode, parsedFiles: ParsedGraphFile[]): Promise<DetectedFramework[]> | DetectedFramework[];
 }
 

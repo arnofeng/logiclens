@@ -91,6 +91,7 @@ async function scanParseRepos(input: {
       changedOnly,
       maxFiles: options.maxFiles,
       additionalIndexFiles: ctx.additionalIndexFilesByRepo.get(repo.path),
+      activePluginSourceGlobs: ctx.activePluginSourceGlobsByRepo.get(repo.path),
       createProgressBar: createProgressBar(ctx)
     }));
   }
@@ -408,6 +409,7 @@ export async function runPerRepoIndex(input: {
       changedOnly: options.changedOnly,
       maxFiles: options.maxFiles,
       additionalIndexFiles: ctx.additionalIndexFilesByRepo.get(repo.path),
+      activePluginSourceGlobs: ctx.activePluginSourceGlobsByRepo.get(repo.path),
       createProgressBar: createProgressBar(ctx)
     });
     const parsedFiles = scanParse.parsedFiles;

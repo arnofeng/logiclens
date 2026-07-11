@@ -9,9 +9,22 @@ import { defaultConfig, writeConfig } from "../src/config/loadConfig.js";
 import { buildFreshnessMetadata, buildFreshnessNotice, buildFreshnessWarning } from "../src/interfaces/mcp/server.js";
 import { SingleProcessIndexQueue } from "../src/core/indexing/scheduler.js";
 import { BRAND, BRAND_PATHS } from "../src/shared/branding.js";
+import { parserRegistry } from "../src/core/registries/registry.js";
 
 async function makeTempWorkspace(): Promise<string> {
   return await fs.mkdtemp(path.join(os.tmpdir(), "test-watch-test-"));
+}
+
+async function installWatchFixturePlugin(repoDir: string): Promise<void> {
+  const pluginDir = path.join(repoDir, ".logiclens", "plugins", "fixture-csharp");
+  await fs.mkdir(pluginDir, { recursive: true });
+  const manifest = {
+    name: "watch-fixture-csharp", version: "0.0.1", logiclensPluginApiVersion: "0.1.0",
+    capabilities: ["language"], entry: "./index.js",
+    languages: [{ id: "csharp", extensions: [".cs"], detect: { extensions: [".cs"], markers: ["fixture.csproj"] } }]
+  };
+  await fs.writeFile(path.join(pluginDir, "plugin.json"), JSON.stringify(manifest), "utf8");
+  await fs.writeFile(path.join(pluginDir, "index.js"), `export default { manifest: ${JSON.stringify(manifest)}, languages: [{ id: "csharp", extensions: [".cs"], parse() { return {}; } }] };`, "utf8");
 }
 
 describe(`${BRAND.displayName} File Watcher Subsystem`, () => {
@@ -153,9 +166,46 @@ describe(`${BRAND.displayName} File Watcher Subsystem`, () => {
       await fs.writeFile(path.join(tempDir, "pom.xml"), "<project />");
       expect(await matcher.match("pom.xml")).toBe(true);
     });
+
+    it("matches active plugin source create, modify, and delete candidates without matching markers", async () => {
+      const tempDir = await makeTempWorkspace();
+      const matcher = new FileMatcher(tempDir, defaultConfig().include, defaultConfig().exclude, ["**/*.cs"]);
+      await matcher.init();
+      await fs.writeFile(path.join(tempDir, "Created.cs"), "class Created {}", "utf8");
+      expect(await matcher.match("Created.cs")).toBe(true);
+      await fs.writeFile(path.join(tempDir, "Created.cs"), "class Modified {}", "utf8");
+      expect(await matcher.match("Created.cs")).toBe(true);
+      await fs.rm(path.join(tempDir, "Created.cs"));
+      expect(await matcher.match("Created.cs")).toBe(true);
+      await fs.writeFile(path.join(tempDir, "fixture.csproj"), "<Project />", "utf8");
+      expect(await matcher.match("fixture.csproj")).toBe(false);
+    });
   });
 
   describe("FileWatcher Instance Integration", () => {
+    it("queues active plugin source create, modify, and delete events", async () => {
+      const cwd = await makeTempWorkspace();
+      const repoDir = path.join(cwd, "my-repo");
+      await fs.mkdir(repoDir);
+      await installWatchFixturePlugin(repoDir);
+      await writeConfig({ ...defaultConfig(), repos: [{ name: "my-repo", path: "./my-repo" }] }, cwd);
+      const client = await createClient({ cwd });
+      const watcher = new FileWatcher(client, { debounceMs: 1000 });
+      expect(await watcher.start()).toBe(true);
+      expect(parserRegistry.resolve({ language: "csharp" })).toBeUndefined();
+
+      await fs.writeFile(path.join(repoDir, "created.cs"), "class Created {}", "utf8");
+      await watcher.ingestEventForTests("my-repo", "created.cs");
+      await fs.writeFile(path.join(repoDir, "modified.cs"), "class Modified {}", "utf8");
+      await watcher.ingestEventForTests("my-repo", "modified.cs");
+      await fs.writeFile(path.join(repoDir, "deleted.cs"), "class Deleted {}", "utf8");
+      await fs.rm(path.join(repoDir, "deleted.cs"));
+      await watcher.ingestEventForTests("my-repo", "deleted.cs");
+
+      expect(watcher.getPendingFiles().map((file) => file.path).sort()).toEqual(["created.cs", "deleted.cs", "modified.cs"]);
+      watcher.stop();
+      await client.close();
+    });
     it("can start/stop cleanly and track pending files", async () => {
       const cwd = await makeTempWorkspace();
       const repoDir = path.join(cwd, "my-repo");

@@ -1,69 +1,92 @@
 import type { ContractExtractor, EmbeddingProvider, FrameworkDetector, LanguageParser, ReferenceResolver } from "./types.js";
 
 export class ParserRegistry {
-  private byLanguage = new Map<string, LanguageParser>();
-  private byExtension = new Map<string, LanguageParser>();
-  private extensionOverridesByLanguage = new Map<string, Map<string, LanguageParser | undefined>>();
+  private languageStacks = new Map<string, LanguageParser[]>();
+  private scopedLanguageStacks = new Map<string, LanguageParser[]>();
+  private extensionStacks = new Map<string, LanguageParser[]>();
 
   register(parser: LanguageParser): void {
-    this.byLanguage.set(parser.language, parser);
+    const languageMap = parser.scopeRepoId ? this.scopedLanguageStacks : this.languageStacks;
+    const languageKey = parser.scopeRepoId
+      ? scopedLanguageKey(parser.scopeRepoId, parser.language)
+      : parser.language;
+    pushParser(languageMap, languageKey, parser);
     for (const extension of parser.extensions) {
       const normalized = normalizeExtension(extension);
-      const previous = this.byExtension.get(normalized);
-      if (previous?.language !== parser.language) {
-        const overrides = this.extensionOverridesByLanguage.get(parser.language) ?? new Map<string, LanguageParser | undefined>();
-        if (!overrides.has(normalized)) {
-          overrides.set(normalized, previous);
-          this.extensionOverridesByLanguage.set(parser.language, overrides);
-        }
-      }
-      this.byExtension.set(normalized, parser);
+      pushParser(this.extensionStacks, normalized, parser);
     }
   }
 
-  resolve(input: { language?: string; relativePath?: string }): LanguageParser | undefined {
+  resolve(input: { language?: string; relativePath?: string; repoId?: string }): LanguageParser | undefined {
     if (input.language) {
-      const parser = this.byLanguage.get(input.language);
+      if (input.repoId) {
+        const scoped = topParser(this.scopedLanguageStacks.get(scopedLanguageKey(input.repoId, input.language)));
+        if (scoped) return scoped;
+      }
+      const parser = topParser(this.languageStacks.get(input.language));
       if (parser) return parser;
     }
     if (!input.relativePath) return undefined;
-    const candidates = [...this.byExtension.entries()].sort((a, b) => b[0].length - a[0].length);
-    for (const [extension, parser] of candidates) {
-      if (input.relativePath.endsWith(extension)) return parser;
+    const candidates = [...this.extensionStacks.entries()].sort((a, b) => b[0].length - a[0].length);
+    for (const [extension, stack] of candidates) {
+      if (!input.relativePath.endsWith(extension)) continue;
+      const parser = [...stack].reverse().find((candidate) =>
+        candidate.scopeRepoId ? candidate.scopeRepoId === input.repoId : true
+      );
+      if (parser) return parser;
     }
     return undefined;
   }
 
   languages(): string[] {
-    return [...this.byLanguage.keys()].sort();
+    return [...new Set([
+      ...[...this.languageStacks.values()].flat().map((parser) => parser.language),
+      ...[...this.scopedLanguageStacks.values()].flat().map((parser) => parser.language)
+    ])].sort();
   }
 
   parsers(): LanguageParser[] {
-    return [...new Map(this.byLanguage.entries()).values()];
+    return [...new Set([
+      ...[...this.languageStacks.values()].flat(),
+      ...[...this.scopedLanguageStacks.values()].flat()
+    ])];
+  }
+
+  unregister(parser: LanguageParser): void {
+    const languageMap = parser.scopeRepoId ? this.scopedLanguageStacks : this.languageStacks;
+    const languageKey = parser.scopeRepoId
+      ? scopedLanguageKey(parser.scopeRepoId, parser.language)
+      : parser.language;
+    removeParser(languageMap, languageKey, parser);
+    for (const extension of parser.extensions.map(normalizeExtension)) {
+      removeParser(this.extensionStacks, extension, parser);
+    }
   }
 
   unregisterLanguage(language: string, expected?: LanguageParser): void {
-    const current = this.byLanguage.get(language);
-    if (expected && current && current !== expected) return;
-    const parser = current ?? expected;
-    const overrides = this.extensionOverridesByLanguage.get(language);
-    if (!parser && !overrides) return;
-    if (!current || current === parser) this.byLanguage.delete(language);
-    const extensions = new Set([
-      ...(parser?.extensions ?? []).map(normalizeExtension),
-      ...(overrides?.keys() ?? [])
-    ]);
-    for (const normalized of extensions) {
-      if (this.byExtension.get(normalized)?.language !== language) continue;
-      const previous = overrides?.get(normalized);
-      if (previous && this.byLanguage.get(previous.language) === previous) {
-        this.byExtension.set(normalized, previous);
-      } else {
-        this.byExtension.delete(normalized);
-      }
-    }
-    this.extensionOverridesByLanguage.delete(language);
+    const parser = expected ?? topParser(this.languageStacks.get(language));
+    if (parser) this.unregister(parser);
   }
+}
+
+function scopedLanguageKey(repoId: string, language: string): string {
+  return `${repoId}\0${language}`;
+}
+
+function pushParser(map: Map<string, LanguageParser[]>, key: string, parser: LanguageParser): void {
+  const stack = (map.get(key) ?? []).filter((candidate) => candidate !== parser);
+  stack.push(parser);
+  map.set(key, stack);
+}
+
+function removeParser(map: Map<string, LanguageParser[]>, key: string, parser: LanguageParser): void {
+  const stack = map.get(key)?.filter((candidate) => candidate !== parser) ?? [];
+  if (stack.length > 0) map.set(key, stack);
+  else map.delete(key);
+}
+
+function topParser(stack: readonly LanguageParser[] | undefined): LanguageParser | undefined {
+  return stack?.[stack.length - 1];
 }
 
 export class EmbeddingProviderRegistry {

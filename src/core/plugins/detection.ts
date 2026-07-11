@@ -35,6 +35,7 @@ export type AvailablePlugin = {
   sourceKind: PluginSourceKind;
   baseDir?: string;
   entryPath?: string;
+  ownerRepoPath?: string;
 };
 
 export type RepoPathSnapshot = {
@@ -173,6 +174,38 @@ export function detectionGlobsForPlugins(
   return [...globs].sort();
 }
 
+export function pluginsAvailableToRepo(
+  plugins: readonly AvailablePlugin[],
+  repoPath: string
+): AvailablePlugin[] {
+  const resolvedRepoPath = path.resolve(repoPath);
+  return plugins.filter((plugin) =>
+    plugin.sourceKind !== "project" ||
+    (plugin.ownerRepoPath !== undefined && path.resolve(plugin.ownerRepoPath) === resolvedRepoPath)
+  );
+}
+
+export function sourceGlobsForActiveLanguages(
+  plugins: readonly AvailablePlugin[],
+  activeLanguages: ReadonlySet<string>
+): string[] {
+  const globs = new Set<string>();
+  for (const plugin of plugins) {
+    if (plugin.sourceKind === "bundled") continue;
+    for (const language of plugin.manifest.languages ?? []) {
+      if (!activeLanguages.has(language.id)) continue;
+      const extensions = new Set(language.extensions.map(normalizeExtension));
+      for (const extension of extensions) globs.add(`**/*${extension}`);
+      for (const glob of language.detect?.globs ?? []) {
+        if (isSafeSourceGlob(glob) && [...extensions].some((extension) => globTargetsExtension(glob, extension))) {
+          globs.add(glob);
+        }
+      }
+    }
+  }
+  return [...globs].sort();
+}
+
 export async function detectJavaSignals(snapshots: readonly RepoPathSnapshot[]): Promise<LanguageDetection> {
   let hasSourceFiles = false;
   let hasBuildMarkers = false;
@@ -230,6 +263,17 @@ function isMarkerMatch(relativePath: string, markers: ReadonlySet<string>): bool
 function normalizeExtension(extension: string): string {
   const trimmed = extension.trim();
   return trimmed.startsWith(".") ? trimmed : `.${trimmed}`;
+}
+
+function globTargetsExtension(glob: string, extension: string): boolean {
+  const normalized = glob.trim().toLowerCase();
+  return normalized.endsWith(extension.toLowerCase()) ||
+    normalized.endsWith(`${extension.toLowerCase()}` + "}");
+}
+
+function isSafeSourceGlob(glob: string): boolean {
+  const normalized = toPosixPath(glob.trim());
+  return normalized.length > 0 && !path.posix.isAbsolute(normalized) && !normalized.split("/").includes("..");
 }
 
 async function fileHasDubboXml(repoPath: string, relativePath: string): Promise<boolean> {

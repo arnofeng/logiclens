@@ -9,15 +9,225 @@ import { clearRegisteredPluginCapabilities, registerLoadedPlugins } from "../src
 import { autoDetectAndRegisterPlugins } from "../src/core/plugins/register.js";
 import { detectActiveLanguages, builtinLanguagePluginManifests, scanRepoPathSnapshot } from "../src/core/plugins/detection.js";
 import { registerCommonBuiltins, resetJavaBuiltinCapabilities } from "../src/core/plugins/bootstrap.js";
-import { ContractExtractorRegistry, FrameworkDetectorRegistry, contractExtractorRegistry, frameworkDetectorRegistry, parserRegistry } from "../src/core/registries/registry.js";
+import { ContractExtractorRegistry, FrameworkDetectorRegistry, ParserRegistry, contractExtractorRegistry, frameworkDetectorRegistry, parserRegistry } from "../src/core/registries/registry.js";
 import { parseSourceFile, registerBuiltinParsers } from "../src/core/parsing/parserRegistry.js";
 import { getLoadedLanguageGrammar, LANGUAGE_DEFINITIONS } from "../src/core/parsing/languages/registry.js";
 import { discoverLogicLensPlugin, loadDiscoveredLogicLensPlugins, validatePlugin } from "@logiclens/plugin-runtime";
 import { LOGICLENS_PLUGIN_API_VERSION, definePlugin } from "@logiclens/plugin-sdk";
 import { joinHttpPaths, normalizeRouteTemplate } from "@logiclens/plugin-sdk/utils";
 import { defaultConfig } from "../src/config/loadConfig.js";
+import { scanAndParseRepo } from "../src/core/indexing/scanParse.js";
+import { repoId } from "../src/shared/path.js";
+
+async function installFixtureLanguagePlugin(repo: string): Promise<void> {
+  const pluginDir = path.join(repo, ".logiclens", "plugins", "fixture-csharp");
+  await fs.mkdir(pluginDir, { recursive: true });
+  const manifest = {
+    name: "fixture-csharp",
+    version: "0.0.1",
+    logiclensPluginApiVersion: LOGICLENS_PLUGIN_API_VERSION,
+    capabilities: ["language"],
+    entry: "./index.js",
+    languages: [{
+      id: "csharp",
+      extensions: [".cs"],
+      detect: { extensions: [".cs"], markers: ["fixture.csproj", "fixture.sln"] }
+    }]
+  };
+  await fs.writeFile(path.join(pluginDir, "plugin.json"), JSON.stringify(manifest), "utf8");
+  await fs.writeFile(path.join(pluginDir, "index.js"), `
+    globalThis.__logiclensFixtureCsharpLoads = (globalThis.__logiclensFixtureCsharpLoads ?? 0) + 1;
+    export default {
+      manifest: ${JSON.stringify(manifest)},
+      languages: [{ id: "csharp", extensions: [".cs"], parse(input) {
+        return { symbols: [{ kind: "class", name: "Fixture", startLine: 1, endLine: 1 }] };
+      }}]
+    };
+  `, "utf8");
+}
+
+async function installScopedFixturePlugin(repo: string, label: string): Promise<void> {
+  const pluginDir = path.join(repo, ".logiclens", "plugins", `fixture-${label}`);
+  await fs.mkdir(pluginDir, { recursive: true });
+  const manifest = {
+    name: `fixture-${label}`,
+    version: "0.0.1",
+    logiclensPluginApiVersion: LOGICLENS_PLUGIN_API_VERSION,
+    capabilities: ["language", "fact-extractor", "framework-detector"],
+    entry: "./index.js",
+    languages: [{ id: "csharp", extensions: [".cs"], detect: { extensions: [".cs"] } }]
+  };
+  await fs.writeFile(path.join(pluginDir, "plugin.json"), JSON.stringify(manifest), "utf8");
+  await fs.writeFile(path.join(pluginDir, "index.js"), `
+    export default {
+      manifest: ${JSON.stringify(manifest)},
+      languages: [{ id: "csharp", extensions: [".cs"], parse() {
+        return { symbols: [{ kind: "class", name: "${label}", startLine: 1, endLine: 1 }] };
+      }}],
+      factExtractors: [{ name: "fixture:extractor", extract(ctx) {
+        globalThis.__logiclensScopedExtracts ??= {};
+        globalThis.__logiclensScopedExtracts["${label}"] = {
+          repos: ctx.repos.map((repo) => repo.id), files: ctx.files.all().map((file) => file.repoId)
+        };
+      }}],
+      frameworkDetectors: [{ name: "fixture:detector", detect(ctx) {
+        globalThis.__logiclensScopedDetections ??= {};
+        globalThis.__logiclensScopedDetections["${label}"] = (globalThis.__logiclensScopedDetections["${label}"] ?? []).concat(ctx.repos.map((repo) => repo.id));
+      }}]
+    };
+  `, "utf8");
+}
 
 describe("plugin architecture foundation", () => {
+  it("never falls back to a foreign scoped parser and restores extension override stacks", () => {
+    const registry = new ParserRegistry();
+    const parser = (name: string, language: string, scopeRepoId?: string) => ({
+      name, language, scopeRepoId, extensions: [".ts"], parse() { throw new Error("not used"); }
+    });
+    const builtin = parser("builtin:typescript", "typescript");
+    const ownerFirst = parser("plugin:first", "first", "repo:a");
+    const ownerSecond = parser("plugin:second", "second", "repo:a");
+    registry.register(builtin);
+    registry.register(ownerFirst);
+
+    expect(registry.resolve({ repoId: "repo:a", relativePath: "x.ts" })).toBe(ownerFirst);
+    expect(registry.resolve({ repoId: "repo:b", relativePath: "x.ts" })).toBe(builtin);
+    registry.register(ownerSecond);
+    expect(registry.resolve({ repoId: "repo:a", relativePath: "x.ts" })).toBe(ownerSecond);
+    registry.unregister(ownerSecond);
+    expect(registry.resolve({ repoId: "repo:a", relativePath: "x.ts" })).toBe(ownerFirst);
+    registry.unregister(ownerFirst);
+    expect(registry.resolve({ repoId: "repo:a", relativePath: "x.ts" })).toBe(builtin);
+    registry.unregister(ownerFirst);
+    expect(registry.resolve({ repoId: "repo:a", relativePath: "x.ts" })).toBe(builtin);
+
+    const scopedOnly = new ParserRegistry();
+    scopedOnly.register(ownerFirst);
+    expect(scopedOnly.resolve({ repoId: "repo:b", relativePath: "x.ts" })).toBeUndefined();
+    expect(scopedOnly.resolve({ relativePath: "x.ts" })).toBeUndefined();
+  });
+
+  it("keeps Batch 1 production plumbing free of fixture-language knowledge", async () => {
+    const productionFiles = [
+      "src/core/plugins/detection.ts",
+      "src/core/plugins/register.ts",
+      "src/core/indexing/context.ts",
+      "src/core/indexing/run.ts",
+      "src/core/indexing/scanParse.ts",
+      "src/core/workspace/fileScanner.ts",
+      "src/features/watch/watcher.ts"
+    ];
+    const source = (await Promise.all(productionFiles.map((file) => fs.readFile(path.resolve(file), "utf8")))).join("\n");
+    expect(source).not.toMatch(/csharp|\.csproj|\.sln|(?:["'`])\.cs(?:["'`])/i);
+  });
+
+  it("activates, scans, parses, scopes, and removes a manifest-defined source language", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-plugin-source-"));
+    const activeRepo = path.join(cwd, "active");
+    const inactiveRepo = path.join(cwd, "inactive");
+    await fs.mkdir(activeRepo);
+    await fs.mkdir(inactiveRepo);
+    await installFixtureLanguagePlugin(activeRepo);
+    await installFixtureLanguagePlugin(inactiveRepo);
+    await fs.writeFile(path.join(activeRepo, "Order.cs"), "public class Fixture {}", "utf8");
+    await fs.writeFile(path.join(activeRepo, "fixture.csproj"), "<Project />", "utf8");
+    await fs.writeFile(path.join(inactiveRepo, "README.md"), "# no evidence", "utf8");
+    const config = {
+      ...defaultConfig(),
+      repos: [{ name: "active", path: activeRepo }, { name: "inactive", path: inactiveRepo }]
+    };
+    expect(config.include).not.toContain("**/*.cs");
+
+    const beforeLoads = Number((globalThis as Record<string, unknown>).__logiclensFixtureCsharpLoads ?? 0);
+    const bootstrap = await autoDetectAndRegisterPlugins({ config, cwd, repoConfigs: config.repos });
+    expect(Number((globalThis as Record<string, unknown>).__logiclensFixtureCsharpLoads ?? 0)).toBe(beforeLoads + 1);
+    expect(bootstrap.activePluginSourceGlobsByRepo.get(activeRepo)).toEqual(["**/*.cs"]);
+    expect(bootstrap.activePluginSourceGlobsByRepo.get(inactiveRepo)).toBeUndefined();
+
+    const repo = {
+      id: repoId("active"), name: "active", path: activeRepo, remoteUrl: "", branch: "", commitSha: "",
+      language: "csharp", indexedAt: new Date().toISOString()
+    };
+    const result = await scanAndParseRepo({
+      repo,
+      config,
+      activePluginSourceGlobs: bootstrap.activePluginSourceGlobsByRepo.get(activeRepo),
+      createProgressBar: () => ({ tick() {}, complete() {} })
+    });
+    expect(result.parsedFiles.map((file) => file.path)).toEqual(["Order.cs"]);
+    const parsed = result.parsedFiles[0];
+    expect(parsed && "symbols" in parsed ? parsed.symbols[0]?.name : undefined).toBe("Fixture");
+
+    await fs.rm(path.join(activeRepo, "Order.cs"));
+    await fs.rm(path.join(activeRepo, "fixture.csproj"));
+    const repeated = await autoDetectAndRegisterPlugins({ config, cwd, repoConfigs: config.repos });
+    expect(repeated.activePluginSourceGlobsByRepo.get(activeRepo)).toBeUndefined();
+    expect(parserRegistry.resolve({ language: "csharp" })).toBeUndefined();
+  });
+
+  it("does not activate a project plugin from source evidence in another repository", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-project-plugin-scope-"));
+    const ownerRepo = path.join(cwd, "owner");
+    const otherRepo = path.join(cwd, "other");
+    await fs.mkdir(ownerRepo);
+    await fs.mkdir(otherRepo);
+    await installFixtureLanguagePlugin(ownerRepo);
+    await fs.writeFile(path.join(otherRepo, "Foreign.cs"), "class Foreign {}", "utf8");
+    const config = {
+      ...defaultConfig(),
+      repos: [{ name: "owner", path: ownerRepo }, { name: "other", path: otherRepo }]
+    };
+    const beforeLoads = Number((globalThis as Record<string, unknown>).__logiclensFixtureCsharpLoads ?? 0);
+
+    const bootstrap = await autoDetectAndRegisterPlugins({ config, cwd, repoConfigs: config.repos });
+
+    expect(Number((globalThis as Record<string, unknown>).__logiclensFixtureCsharpLoads ?? 0)).toBe(beforeLoads);
+    expect(bootstrap.activePluginSourceGlobsByRepo.get(ownerRepo)).toBeUndefined();
+    expect(bootstrap.activePluginSourceGlobsByRepo.get(otherRepo)).toBeUndefined();
+    expect(bootstrap.availablePluginSourceGlobsByRepo.get(ownerRepo)).toEqual(["**/*.cs"]);
+    expect(bootstrap.availablePluginSourceGlobsByRepo.get(otherRepo)).toBeUndefined();
+    expect(parserRegistry.resolve({ language: "csharp" })).toBeUndefined();
+  });
+
+  it("keeps project parser, extractor, and detector capabilities scoped to their owner repositories", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-project-capability-scope-"));
+    const repoAPath = path.join(cwd, "repo-a");
+    const repoBPath = path.join(cwd, "repo-b");
+    await fs.mkdir(repoAPath);
+    await fs.mkdir(repoBPath);
+    await installScopedFixturePlugin(repoAPath, "ParserA");
+    await installScopedFixturePlugin(repoBPath, "ParserB");
+    await fs.writeFile(path.join(repoAPath, "Source.cs"), "class Source {}", "utf8");
+    await fs.writeFile(path.join(repoBPath, "Source.cs"), "class Source {}", "utf8");
+    const config = { ...defaultConfig(), repos: [{ name: "repo-a", path: repoAPath }, { name: "repo-b", path: repoBPath }] };
+    await autoDetectAndRegisterPlugins({ config, cwd, repoConfigs: config.repos });
+    const repoA = { id: repoId("repo-a"), name: "repo-a", path: repoAPath, remoteUrl: "", branch: "", commitSha: "", language: "csharp", indexedAt: "now" };
+    const repoB = { id: repoId("repo-b"), name: "repo-b", path: repoBPath, remoteUrl: "", branch: "", commitSha: "", language: "csharp", indexedAt: "now" };
+    const parsedA = await parseSourceFile({ repoId: repoA.id, absolutePath: path.join(repoAPath, "Source.cs"), relativePath: "Source.cs", language: "csharp" });
+    const parsedB = await parseSourceFile({ repoId: repoB.id, absolutePath: path.join(repoBPath, "Source.cs"), relativePath: "Source.cs", language: "csharp" });
+    expect("symbols" in parsedA ? parsedA.symbols[0]?.name : undefined).toBe("ParserA");
+    expect("symbols" in parsedB ? parsedB.symbols[0]?.name : undefined).toBe("ParserB");
+
+    (globalThis as Record<string, unknown>).__logiclensScopedExtracts = {};
+    const scopedExtractors = contractExtractorRegistry.extractors().filter((extractor) => extractor.scopeRepoId);
+    expect(scopedExtractors).toHaveLength(2);
+    for (const extractor of scopedExtractors) {
+      await extractor.extract({ repos: [repoA, repoB], parsedFiles: [parsedA, parsedB] }, new ExtractionBuilder());
+    }
+    expect((globalThis as any).__logiclensScopedExtracts).toEqual({
+      ParserA: { repos: [repoA.id], files: [repoA.id] },
+      ParserB: { repos: [repoB.id], files: [repoB.id] }
+    });
+
+    (globalThis as Record<string, unknown>).__logiclensScopedDetections = {};
+    const scopedDetectors = frameworkDetectorRegistry.detectors().filter((detector) => detector.scopeRepoId);
+    expect(scopedDetectors).toHaveLength(2);
+    for (const detector of scopedDetectors) {
+      await detector.detect(repoA, [parsedA]);
+      await detector.detect(repoB, [parsedB]);
+    }
+    expect((globalThis as any).__logiclensScopedDetections).toEqual({ ParserA: [repoA.id], ParserB: [repoB.id] });
+  });
   it("publishes plugin APIs as workspace packages only", async () => {
     const packageJson = JSON.parse(await fs.readFile(path.resolve("package.json"), "utf8")) as {
       exports?: Record<string, { types?: string; default?: string }>;

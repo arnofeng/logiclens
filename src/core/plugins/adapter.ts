@@ -26,16 +26,17 @@ import { hashText } from "../../shared/hash.js";
 import { normalizePublicFacts } from "./publicFactNormalizer.js";
 import type { PublicContractFact } from "./publicFacts.js";
 
-export function adaptFactExtractor(pluginExtractor: FactExtractorPlugin): ContractExtractor {
+export function adaptFactExtractor(pluginExtractor: FactExtractorPlugin, scopeRepoId?: string): ContractExtractor {
   return {
-    name: pluginExtractor.name,
+    name: scopedCapabilityName(pluginExtractor.name, scopeRepoId),
+    scopeRepoId,
     languages: pluginExtractor.languages,
     frameworks: pluginExtractor.frameworks,
     extract(context: ExtractContext, collector: FactCollector) {
       const emitted: PluginContractFact[] = [];
       const pluginContext = createPluginContext({
-        repos: context.repos,
-        parsedFiles: context.parsedFiles,
+        repos: scopeRepos(context.repos, scopeRepoId),
+        parsedFiles: scopeFiles(context.parsedFiles, scopeRepoId),
         emit: createEmitApi(emitted)
       });
       return Promise.resolve(pluginExtractor.extract(pluginContext))
@@ -46,11 +47,11 @@ export function adaptFactExtractor(pluginExtractor: FactExtractorPlugin): Contra
           const emitted: PluginContractFact[] = [];
           const pluginContext: PluginPostExtractContext = {
             ...createPluginContext({
-              repos: context.repos,
-              parsedFiles: context.parsedFiles,
+              repos: scopeRepos(context.repos, scopeRepoId),
+              parsedFiles: scopeFiles(context.parsedFiles, scopeRepoId),
               emit: createEmitApi(emitted)
             }),
-            facts: createFactView(context.mergedFacts)
+            facts: createFactView(context.mergedFacts, scopeRepoId)
           };
           return Promise.resolve(pluginExtractor.postExtract!(pluginContext))
             .then(() => normalizePublicFacts(toPublicFacts(emitted), collector));
@@ -59,12 +60,13 @@ export function adaptFactExtractor(pluginExtractor: FactExtractorPlugin): Contra
   };
 }
 
-export function adaptLanguageParser(language: LanguagePlugin): LanguageParser | undefined {
+export function adaptLanguageParser(language: LanguagePlugin, scopeRepoId?: string): LanguageParser | undefined {
   if (!language.parse) return undefined;
   return {
-    name: `plugin:${language.id}`,
+    name: scopedCapabilityName(`plugin:${language.id}`, scopeRepoId),
     language: language.id,
     extensions: language.extensions,
+    scopeRepoId,
     async parse(input) {
       const result = await language.parse!({
         repoId: input.repoId,
@@ -139,10 +141,12 @@ export function adaptLanguageParser(language: LanguagePlugin): LanguageParser | 
   };
 }
 
-export function adaptFrameworkDetector(pluginDetector: FrameworkDetectorPlugin): FrameworkDetector {
+export function adaptFrameworkDetector(pluginDetector: FrameworkDetectorPlugin, scopeRepoId?: string): FrameworkDetector {
   return {
-    name: pluginDetector.name,
+    name: scopedCapabilityName(pluginDetector.name, scopeRepoId),
+    scopeRepoId,
     async detect(repo: RepoNode, parsedFiles: ParsedGraphFile[]): Promise<DetectedFramework[]> {
+      if (scopeRepoId && repo.id !== scopeRepoId) return [];
       const emitted: PluginContractFact[] = [];
       const pluginContext = createPluginContext({
         repos: [repo],
@@ -210,8 +214,10 @@ function createFileCollection(files: PluginFileView[]): PluginFileCollection {
   });
 }
 
-function createFactView(facts: ExtractedFacts): PluginFactView {
-  const all = facts.contractSpecs.flatMap((spec): PluginContractFact[] => {
+function createFactView(facts: ExtractedFacts, scopeRepoId?: string): PluginFactView {
+  const all = facts.contractSpecs
+    .filter((spec) => !scopeRepoId || spec.repoId === scopeRepoId)
+    .flatMap((spec): PluginContractFact[] => {
     const evidenceNode = facts.evidence.find((item) => item.id === spec.evidenceId);
     const baseEvidence = {
       filePath: evidenceNode?.filePath ?? "",
@@ -289,6 +295,18 @@ function createFactView(facts: ExtractedFacts): PluginFactView {
     frameworks: () => all.filter((fact): fact is PluginFrameworkFact => fact.kind === "framework"),
     all: () => all
   };
+}
+
+function scopedCapabilityName(name: string, scopeRepoId?: string): string {
+  return scopeRepoId ? `${name}@${scopeRepoId}` : name;
+}
+
+function scopeRepos(repos: readonly RepoNode[], scopeRepoId?: string): RepoNode[] {
+  return scopeRepoId ? repos.filter((repo) => repo.id === scopeRepoId) : [...repos];
+}
+
+function scopeFiles(files: readonly ParsedGraphFile[], scopeRepoId?: string): ParsedGraphFile[] {
+  return scopeRepoId ? files.filter((file) => file.repoId === scopeRepoId) : [...files];
 }
 
 function toPluginRepoView(repo: RepoNode): PluginRepoView {

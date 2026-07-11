@@ -312,10 +312,10 @@ export async function parseSourceFile(input: {
   const normalizedPath = input.relativePath.split(path.sep).join("/");
   const id = fileId(input.repoId, normalizedPath);
   const hash = hashText(source);
-  let parser = parserRegistry.resolve({ language: input.language, relativePath: normalizedPath });
+  let parser = parserRegistry.resolve({ language: input.language, relativePath: normalizedPath, repoId: input.repoId });
   if (!parser) {
     await registerBuiltinParsers(new Set([input.language]));
-    parser = parserRegistry.resolve({ language: input.language, relativePath: normalizedPath });
+    parser = parserRegistry.resolve({ language: input.language, relativePath: normalizedPath, repoId: input.repoId });
   }
   if (!parser) throw new Error(`No parser registered for ${input.language} (${normalizedPath}).`);
   return parser.parse({

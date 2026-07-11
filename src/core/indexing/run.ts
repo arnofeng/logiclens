@@ -37,7 +37,8 @@ export async function runIndexing(
     options,
     logger,
     writeMode: planning.writeMode,
-    additionalIndexFilesByRepo: pluginBootstrap.additionalIndexFilesByRepo
+    additionalIndexFilesByRepo: pluginBootstrap.additionalIndexFilesByRepo,
+    activePluginSourceGlobsByRepo: pluginBootstrap.activePluginSourceGlobsByRepo
   });
   const totals: IndexCounters = { filesScanned: 0, filesChanged: 0 };
 

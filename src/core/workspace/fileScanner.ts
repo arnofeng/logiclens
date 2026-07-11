@@ -3,9 +3,11 @@ import fs from "node:fs/promises";
 import fg from "fast-glob";
 import ignore from "ignore";
 import type { AppConfig } from "../../config/schema.js";
+import { defaultInclude } from "../../config/schema.js";
 import { parserRegistry } from "../registries/registry.js";
 import { toPosixPath } from "../../shared/path.js";
 import { isGeneratedFile } from "../../shared/generatedFile.js";
+import { brandedWorkspaceDirNames } from "../../shared/branding.js";
 
 export type ScannedFile = {
   absolutePath: string;
@@ -13,8 +15,8 @@ export type ScannedFile = {
   language: string;
 };
 
-function languageForPath(relativePath: string): string | undefined {
-  return parserRegistry.resolve({ relativePath })?.language;
+function languageForPath(relativePath: string, repoId?: string): string | undefined {
+  return parserRegistry.resolve({ relativePath, repoId })?.language;
 }
 
 async function isBinaryFile(absolutePath: string): Promise<boolean> {
@@ -54,7 +56,11 @@ async function filterAsync<T>(arr: T[], predicate: (item: T) => Promise<boolean>
 export async function scanRepoFiles(
   repoPath: string,
   config: AppConfig,
-  options: { additionalPaths?: readonly string[] } = {}
+  options: {
+    additionalPaths?: readonly string[];
+    activePluginSourceGlobs?: readonly string[];
+    repoId?: string;
+  } = {}
 ): Promise<ScannedFile[]> {
   const ig = ignore();
   ig.add(config.exclude.map((entry) => entry.replace(/^\*\*\//, "")));
@@ -72,12 +78,25 @@ export async function scanRepoFiles(
     dot: true,
     ignore: config.exclude
   });
+  const pluginEntries = await fg([...(options.activePluginSourceGlobs ?? [])], {
+    cwd: repoPath,
+    absolute: false,
+    onlyFiles: true,
+    dot: true,
+    ignore: config.exclude
+  });
+  const includeIsUserRestricted = JSON.stringify(config.include) !== JSON.stringify(defaultInclude);
+  const includeScope = ignore().add(config.include);
+  const scopedPluginEntries = includeIsUserRestricted
+    ? pluginEntries.filter((relativePath) => includeScope.ignores(toPosixPath(relativePath)))
+    : pluginEntries;
 
   const additionalPaths = (options.additionalPaths ?? [])
     .map(toPosixPath)
     .filter(isSafeRelativePath);
-  const posixEntries = [...new Set([...entries.map(toPosixPath), ...additionalPaths])]
+  const posixEntries = [...new Set([...entries.map(toPosixPath), ...scopedPluginEntries.map(toPosixPath), ...additionalPaths])]
     .sort()
+    .filter((relativePath) => !brandedWorkspaceDirNames().some((dir) => relativePath === dir || relativePath.startsWith(`${dir}/`)))
     .filter((relativePath) => !ig.ignores(relativePath))
     // Skip auto-generated files (protobuf stubs, gRPC scaffolding, mocks, minified bundles)
     // so they don't pollute contract evidence with scaffolding noise.
@@ -85,7 +104,7 @@ export async function scanRepoFiles(
 
   const candidateEntries: { relativePath: string; language: string }[] = [];
   for (const relativePath of posixEntries) {
-    const lang = languageForPath(relativePath);
+    const lang = languageForPath(relativePath, options.repoId);
     if (lang) {
       candidateEntries.push({ relativePath, language: lang });
     }

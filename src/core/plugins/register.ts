@@ -19,8 +19,10 @@ import {
   detectJavaSignals,
   detectActiveLanguages,
   pluginsForActiveLanguages,
+  pluginsAvailableToRepo,
   projectPluginDir,
   scanRepoPathSnapshot,
+  sourceGlobsForActiveLanguages,
   type AvailablePlugin
 } from "./detection.js";
 import {
@@ -30,14 +32,17 @@ import {
   resetJavaBuiltinCapabilities
 } from "./bootstrap.js";
 import { BRAND } from "../../shared/branding.js";
+import type { LanguageParser } from "../registries/types.js";
 
 export type PluginBootstrapResult = {
   loadedPlugins: LoadedLogicLensPlugin[];
   additionalIndexFilesByRepo: ReadonlyMap<string, readonly string[]>;
+  activePluginSourceGlobsByRepo: ReadonlyMap<string, readonly string[]>;
+  availablePluginSourceGlobsByRepo: ReadonlyMap<string, readonly string[]>;
 };
 
 const registeredPluginState = {
-  languages: new Set<string>(),
+  parsers: new Set<LanguageParser>(),
   extractors: new Set<string>(),
   detectors: new Set<string>()
 };
@@ -75,11 +80,22 @@ export async function autoDetectAndRegisterPlugins(input: {
     config: input.config,
     warn: input.warn
   });
-  const detectionGlobs = detectionGlobsForPlugins(available, [...input.config.include, "**/*.xml"]);
   const snapshots = await Promise.all(
-    repos.map((repo) => scanRepoPathSnapshot(repo.path, input.config, detectionGlobs))
+    repos.map((repo) => {
+      const repoPlugins = pluginsAvailableToRepo(available, repo.path);
+      const detectionGlobs = detectionGlobsForPlugins(repoPlugins, [...input.config.include, "**/*.xml"]);
+      return scanRepoPathSnapshot(repo.path, input.config, detectionGlobs);
+    })
   );
-  const activeLanguages = detectActiveLanguages({ plugins: available, snapshots });
+  const repoPluginStates = snapshots.map((snapshot) => {
+    const plugins = pluginsAvailableToRepo(available, snapshot.repoPath);
+    return {
+      snapshot,
+      plugins,
+      activeLanguages: detectActiveLanguages({ plugins, snapshots: [snapshot] })
+    };
+  });
+  const activeLanguages = new Set(repoPluginStates.flatMap((state) => [...state.activeLanguages]));
   const javaSignals = await detectJavaSignals(snapshots);
   if (javaSignals.hasSourceFiles || javaSignals.hasBuildMarkers || javaSignals.hasDubboXml) {
     activeLanguages.add("java");
@@ -89,8 +105,9 @@ export async function autoDetectAndRegisterPlugins(input: {
   registerJavaBuiltinsForSignals(javaSignals);
   await registerBuiltinParsersForActiveLanguages(activeLanguages, javaSignals);
 
-  const loadable = pluginsForActiveLanguages(available, activeLanguages)
-    .filter((plugin) => plugin.entryPath);
+  const loadable = [...new Set(repoPluginStates.flatMap((state) =>
+    pluginsForActiveLanguages(state.plugins, state.activeLanguages)
+  ))].filter((plugin) => plugin.entryPath);
   const loaded = await loadDiscoveredLogicLensPlugins(loadable.map(toDiscovered), {
     cwd: input.cwd,
     failFast: input.config.plugins?.failFast,
@@ -98,12 +115,36 @@ export async function autoDetectAndRegisterPlugins(input: {
   });
   const genericLegacy = await loadLegacyGenericPlugins(input);
   const allLoaded = [...loaded, ...genericLegacy];
-  registerLoadedPlugins(allLoaded, { clearFirst: false });
+  for (const loadedPlugin of loaded) {
+    const availablePlugin = available.find((plugin) => plugin.source === loadedPlugin.source);
+    const scopeRepoId = availablePlugin?.sourceKind === "project" && availablePlugin.ownerRepoPath
+      ? repos.find((repo) => path.resolve(repo.path) === path.resolve(availablePlugin.ownerRepoPath!))?.id
+      : undefined;
+    registerLoadedPlugins([loadedPlugin], { clearFirst: false, scopeRepoId });
+  }
+  registerLoadedPlugins(genericLegacy, { clearFirst: false });
 
   if (activeLanguages.size > 0) {
     input.log?.(`Detected language plugins: ${[...activeLanguages].sort().join(", ")}`);
   }
   const additionalIndexFilesByRepo = new Map<string, string[]>();
+  const loadedSources = new Set(loaded.map((plugin) => plugin.source));
+  const loadedAvailable = available.filter((plugin) => loadedSources.has(plugin.source));
+  const activePluginSourceGlobsByRepo = new Map<string, string[]>();
+  const availablePluginSourceGlobsByRepo = new Map<string, string[]>();
+  for (const state of repoPluginStates) {
+    const loadedRepoPlugins = pluginsAvailableToRepo(loadedAvailable, state.snapshot.repoPath);
+    const sourceGlobs = sourceGlobsForActiveLanguages(loadedRepoPlugins, state.activeLanguages);
+    if (sourceGlobs.length > 0) activePluginSourceGlobsByRepo.set(state.snapshot.repoPath, sourceGlobs);
+    const availableLanguages = new Set(state.plugins.flatMap((plugin) =>
+      (plugin.manifest.languages ?? []).map((language) => language.id)
+    ));
+    const candidateGlobs = sourceGlobsForActiveLanguages(
+      state.plugins.filter((plugin) => plugin.entryPath),
+      availableLanguages
+    );
+    if (candidateGlobs.length > 0) availablePluginSourceGlobsByRepo.set(state.snapshot.repoPath, candidateGlobs);
+  }
   for (const file of javaSignals.dubboXmlFiles) {
     const paths = additionalIndexFilesByRepo.get(file.repoPath) ?? [];
     paths.push(file.relativePath);
@@ -111,30 +152,32 @@ export async function autoDetectAndRegisterPlugins(input: {
   }
   return {
     loadedPlugins: allLoaded,
-    additionalIndexFilesByRepo
+    additionalIndexFilesByRepo,
+    activePluginSourceGlobsByRepo,
+    availablePluginSourceGlobsByRepo
   };
 }
 
 export function registerLoadedPlugins(
   loaded: readonly LoadedLogicLensPlugin[],
-  options: { clearFirst?: boolean } = {}
+  options: { clearFirst?: boolean; scopeRepoId?: string } = {}
 ): void {
   if (options.clearFirst ?? true) clearRegisteredPluginCapabilities();
   for (const { plugin } of loaded) {
     for (const language of plugin.languages ?? []) {
-      const parser = adaptLanguageParser(language);
+      const parser = adaptLanguageParser(language, options.scopeRepoId);
       if (parser) {
         parserRegistry.register(parser);
-        registeredPluginState.languages.add(parser.language);
+        registeredPluginState.parsers.add(parser);
       }
     }
     for (const extractor of plugin.factExtractors ?? []) {
-      const adapted = adaptFactExtractor(extractor);
+      const adapted = adaptFactExtractor(extractor, options.scopeRepoId);
       contractExtractorRegistry.register(adapted);
       registeredPluginState.extractors.add(adapted.name);
     }
     for (const detector of plugin.frameworkDetectors ?? []) {
-      const adapted = adaptFrameworkDetector(detector);
+      const adapted = adaptFrameworkDetector(detector, options.scopeRepoId);
       frameworkDetectorRegistry.register(adapted);
       registeredPluginState.detectors.add(adapted.name);
     }
@@ -142,10 +185,10 @@ export function registerLoadedPlugins(
 }
 
 export function clearRegisteredPluginCapabilities(): void {
-  for (const language of registeredPluginState.languages) parserRegistry.unregisterLanguage(language);
+  for (const parser of registeredPluginState.parsers) parserRegistry.unregister(parser);
   for (const extractor of registeredPluginState.extractors) contractExtractorRegistry.unregister(extractor);
   for (const detector of registeredPluginState.detectors) frameworkDetectorRegistry.unregister(detector);
-  registeredPluginState.languages.clear();
+  registeredPluginState.parsers.clear();
   registeredPluginState.extractors.clear();
   registeredPluginState.detectors.clear();
 }
@@ -156,11 +199,13 @@ async function discoverAvailablePlugins(input: {
   config: AppConfig;
   warn?: (message: string) => void;
 }): Promise<AvailablePlugin[]> {
-  const projectDirs = (await Promise.all(input.repoPaths.map((repoPath) => childPluginDirs(projectPluginDir(repoPath))))).flat();
+  const projectPlugins = (await Promise.all(input.repoPaths.map(async (repoPath) =>
+    discoverDirs(await childPluginDirs(projectPluginDir(repoPath)), "project", input.warn, repoPath)
+  ))).flat();
   const globalDirs = await childPluginDirs(path.join(os.homedir(), BRAND.configDirName, "plugins"));
   const legacyDirs = input.config.plugins?.enabled.filter(isPathLikeDirectorySpecifier) ?? [];
   const discovered: AvailablePlugin[] = [
-    ...(await discoverDirs(projectDirs, "project", input.warn)),
+    ...projectPlugins,
     ...(await discoverDirs(globalDirs, "global", input.warn)),
     ...(await discoverDirs(legacyDirs.map((specifier) => path.resolve(input.cwd, specifier)), "legacy", input.warn)),
     ...builtinLanguagePluginManifests
@@ -178,7 +223,8 @@ async function childPluginDirs(parent: string): Promise<string[]> {
 async function discoverDirs(
   dirs: readonly string[],
   sourceKind: AvailablePlugin["sourceKind"],
-  warn?: (message: string) => void
+  warn?: (message: string) => void,
+  ownerRepoPath?: string
 ): Promise<AvailablePlugin[]> {
   const plugins: AvailablePlugin[] = [];
   for (const dir of dirs) {
@@ -189,7 +235,8 @@ async function discoverDirs(
         source: discovered.source,
         sourceKind,
         baseDir: discovered.baseDir,
-        entryPath: discovered.entryPath
+        entryPath: discovered.entryPath,
+        ownerRepoPath
       });
     } catch (error) {
       warn?.(`Failed to discover LogicLens plugin "${dir}": ${error instanceof Error ? error.message : String(error)}`);
@@ -201,7 +248,10 @@ async function discoverDirs(
 function dedupeByManifestName(plugins: readonly AvailablePlugin[]): AvailablePlugin[] {
   const byName = new Map<string, AvailablePlugin>();
   for (const plugin of plugins) {
-    if (!byName.has(plugin.manifest.name)) byName.set(plugin.manifest.name, plugin);
+    const key = plugin.sourceKind === "project"
+      ? `${plugin.manifest.name}\0${plugin.ownerRepoPath ?? ""}`
+      : plugin.manifest.name;
+    if (!byName.has(key)) byName.set(key, plugin);
   }
   return [...byName.values()];
 }
