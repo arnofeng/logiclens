@@ -2,13 +2,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PluginCallView, PluginEventFact, PluginGrpcMethodFact, PluginSchemaFact, PluginSymbolView } from "@logiclens/plugin-sdk";
-import { parseCSharp } from "../packages/plugin-csharp/src/parser.js";
-import { csharpGrpcExtractor } from "../packages/plugin-csharp/src/grpcFacts.js";
-import { csharpEventExtractor } from "../packages/plugin-csharp/src/eventFacts.js";
-import { csharpSchemaExtractor } from "../packages/plugin-csharp/src/schemaFacts.js";
+import { parseCSharp } from "../src/parser.js";
+import { csharpGrpcExtractor } from "../src/grpcFacts.js";
+import { csharpEventExtractor } from "../src/eventFacts.js";
+import { csharpSchemaExtractor } from "../src/schemaFacts.js";
 
 async function context(sourceInput?: string, filePath = "AdditionalContracts.cs") {
-  const source = sourceInput ?? await fs.readFile(path.resolve("tests/fixtures/plugin-csharp", filePath), "utf8");
+  const source = sourceInput ?? await fs.readFile(path.resolve(import.meta.dirname, "fixtures", filePath), "utf8");
   const parsed = await parseCSharp({ repoId: "repo:csharp", absolutePath: path.resolve(filePath), relativePath: filePath, language: "csharp", source });
   const symbols: PluginSymbolView[] = (parsed.symbols ?? []).map((symbol, index) => ({ id: `symbol:${index}`, filePath,
     name: symbol.name, kind: symbol.kind, qualifiedName: symbol.qualifiedName ?? symbol.name, startLine: symbol.startLine,

@@ -2,10 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PluginHttpEndpointFact, PluginSymbolView } from "@logiclens/plugin-sdk";
-import { parseCSharp } from "../packages/plugin-csharp/src/parser.js";
-import { csharpHttpExtractor } from "../packages/plugin-csharp/src/httpFacts.js";
+import { parseCSharp } from "../src/parser.js";
+import { csharpHttpExtractor } from "../src/httpFacts.js";
 
-const fixture = path.resolve("tests/fixtures/plugin-csharp/AspNetHttp.cs");
+const fixture = path.resolve(import.meta.dirname, "fixtures/AspNetHttp.cs");
 
 async function run(inputSources?: Array<{ path: string; source: string }>) {
   const sources = inputSources ?? [{ path: "AspNetHttp.cs", source: await fs.readFile(fixture, "utf8") }];

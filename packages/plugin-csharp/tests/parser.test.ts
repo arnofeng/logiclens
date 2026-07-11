@@ -2,12 +2,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PluginParseInput } from "@logiclens/plugin-sdk";
-import { createCSharpParser } from "../packages/plugin-csharp/src/parser.js";
+import { createCSharpParser } from "../src/parser.js";
 
 describe("C# parser facts", () => {
   it("extracts qualified symbols, imports, calls, annotations, and literals deterministically", async () => {
-    const relativePath = "tests/fixtures/plugin-csharp/ParserFacts.cs";
-    const source = await fs.readFile(path.resolve(relativePath), "utf8");
+    const relativePath = "ParserFacts.cs";
+    const source = await fs.readFile(path.resolve(import.meta.dirname, "fixtures", relativePath), "utf8");
     const input: PluginParseInput = { repoId: "repo:test", absolutePath: path.resolve(relativePath), relativePath, language: "csharp", source };
     const parse = createCSharpParser();
     const result = await parse(input);

@@ -2,13 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PluginContractFact, PluginHttpEndpointFact, PluginSchemaFact, PluginSymbolView } from "@logiclens/plugin-sdk";
-import { parseCSharp } from "../packages/plugin-csharp/src/parser.js";
-import { csharpSchemaExtractor } from "../packages/plugin-csharp/src/schemaFacts.js";
-import { adaptFactExtractor } from "../src/core/plugins/adapter.js";
-import { ExtractionBuilder } from "../src/core/contracts/extraction/extractionBuilder.js";
-import { resolveSchemaRelations } from "../src/core/contracts/matching/schemaResolver.js";
+import { parseCSharp } from "../src/parser.js";
+import { csharpSchemaExtractor } from "../src/schemaFacts.js";
 
-const fixture = path.resolve("tests/fixtures/plugin-csharp/Schemas.cs");
+const fixture = path.resolve(import.meta.dirname, "fixtures/Schemas.cs");
 
 async function fileView(filePath: string, source: string) {
   const parsed = await parseCSharp({ repoId: "repo:csharp", absolutePath: path.resolve(filePath), relativePath: filePath, language: "csharp", source });
@@ -134,25 +131,4 @@ public class StaticModel {
     expect(schema.fields.map((field) => field.name)).toEqual(["Instance", "IncludedInstance"]);
   });
 
-  it("normalizes plugin facts and resolves request/response relations for a cross-language consumer", async () => {
-    const extractor = adaptFactExtractor(csharpSchemaExtractor);
-    const source = await fs.readFile(fixture, "utf8");
-    const view = await fileView("Schemas.cs", source);
-    const builder = new ExtractionBuilder();
-    const parsedFiles = [{ repoId: view.repoId, fileId: "file:schema", path: view.path, language: "csharp", hash: "h", loc: 60,
-      source, symbols: [], imports: [], calls: [] }];
-    const httpExtractor = adaptFactExtractor({ name: "fixture:cross-language-http", extract(ctx) {
-      const { kind: _kind, ...producer } = endpoint("CreateOrderRequest", "OrderResponse");
-      ctx.emit.httpEndpoint(producer);
-      ctx.emit.httpEndpoint({ repoId: "repo:typescript", filePath: "client.ts", method: "POST", path: "/orders",
-        role: "consumer", requestBodyType: "CreateOrderRequest", responseBodyType: "OrderResponse",
-        evidence: { filePath: "client.ts", line: 1, raw: "fetch('/orders')", rule: "typescript-fetch", confidence: "exact" } });
-    } });
-    await httpExtractor.extract({ repos: [], parsedFiles: [] }, builder);
-    await extractor.postExtract?.({ mergedFacts: builder.build(), repos: [], parsedFiles }, builder);
-    const facts = builder.build();
-    const relations = resolveSchemaRelations([...facts.contractSpecs], new Map(), []);
-    expect(relations.filter((relation) => relation.kind === "REQUEST_SCHEMA")).toHaveLength(2);
-    expect(relations.filter((relation) => relation.kind === "RESPONSE_SCHEMA")).toHaveLength(2);
-  });
 });

@@ -1,4 +1,4 @@
-import { readdirSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -27,7 +27,13 @@ function runVitest(args: string[]): void {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-const testFiles = collectTestFiles(path.join(root, "tests"))
+const packageTestDirectories = readdirSync(path.join(root, "packages"), { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => path.join(root, "packages", entry.name, "tests"))
+  .filter(existsSync);
+
+const testFiles = [path.join(root, "tests"), ...packageTestDirectories]
+  .flatMap(collectTestFiles)
   .filter((file) => file !== "tests/bulkWriter.test.ts")
   .sort();
 

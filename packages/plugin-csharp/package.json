@@ -5,12 +5,16 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "test": "vitest run --pool forks --maxWorkers=1",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit"
   },
   "dependencies": {
     "@logiclens/plugin-sdk": "workspace:*",
     "tree-sitter": "^0.21.1",
     "tree-sitter-c-sharp": "0.23.1"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.9"
   },
   "exports": {
     ".": {

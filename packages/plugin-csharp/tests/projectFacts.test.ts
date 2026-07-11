@@ -3,10 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PluginFrameworkFact, PluginPackageUsageFact } from "@logiclens/plugin-sdk";
-import { collectProjectMetadata, parseProjectMetadata, PROJECT_SCAN_LIMITS } from "../packages/plugin-csharp/src/projectMetadata.js";
-import { csharpFrameworkDetector, csharpPackageExtractor } from "../packages/plugin-csharp/src/projectFacts.js";
+import { collectProjectMetadata, parseProjectMetadata, PROJECT_SCAN_LIMITS } from "../src/projectMetadata.js";
+import { csharpFrameworkDetector, csharpPackageExtractor } from "../src/projectFacts.js";
 
-const fixture = path.resolve("tests/fixtures/plugin-csharp/project-metadata");
+const fixture = path.resolve(import.meta.dirname, "fixtures/project-metadata");
 
 function context(repoPath: string) {
   const packages: PluginPackageUsageFact[] = [];
