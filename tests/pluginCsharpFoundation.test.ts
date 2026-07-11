@@ -32,7 +32,7 @@ describe("C# plugin foundation", () => {
     const plugin = loaded[0]!.plugin;
     expect(() => validatePlugin(plugin, "csharp-test", discovered.manifest)).not.toThrow();
     expect(plugin.languages?.map((language) => language.id)).toEqual(["csharp"]);
-    expect(plugin.factExtractors?.map((extractor) => extractor.name)).toEqual(["csharp:project-package-usage"]);
+    expect(plugin.factExtractors?.map((extractor) => extractor.name)).toEqual(["csharp:project-package-usage", "csharp-aspnet-http"]);
     expect(plugin.frameworkDetectors?.map((detector) => detector.name)).toEqual(["csharp:project-frameworks"]);
   });
 

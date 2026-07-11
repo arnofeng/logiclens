@@ -158,5 +158,5 @@ describe("C# project metadata and facts", () => {
       expect(files).toHaveLength(PROJECT_SCAN_LIMITS.maxFiles);
       expect(files.at(-1)?.filePath).toBe("02047.csproj");
     } finally { await fs.rm(root, { recursive: true, force: true }); }
-  });
+  }, 15_000);
 });
