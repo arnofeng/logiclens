@@ -127,8 +127,7 @@ describe("plugin architecture foundation", () => {
     const inactiveRepo = path.join(cwd, "inactive");
     await fs.mkdir(activeRepo);
     await fs.mkdir(inactiveRepo);
-    await installFixtureLanguagePlugin(activeRepo);
-    await installFixtureLanguagePlugin(inactiveRepo);
+    await installFixtureLanguagePlugin(cwd);
     await fs.writeFile(path.join(activeRepo, "Order.cs"), "public class Fixture {}", "utf8");
     await fs.writeFile(path.join(activeRepo, "fixture.csproj"), "<Project />", "utf8");
     await fs.writeFile(path.join(inactiveRepo, "README.md"), "# no evidence", "utf8");
@@ -165,13 +164,13 @@ describe("plugin architecture foundation", () => {
     expect(parserRegistry.resolve({ language: "csharp" })).toBeUndefined();
   });
 
-  it("does not activate a project plugin from source evidence in another repository", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-project-plugin-scope-"));
+  it("makes a workspace plugin available to every matching repository", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-workspace-plugin-scope-"));
     const ownerRepo = path.join(cwd, "owner");
     const otherRepo = path.join(cwd, "other");
     await fs.mkdir(ownerRepo);
     await fs.mkdir(otherRepo);
-    await installFixtureLanguagePlugin(ownerRepo);
+    await installFixtureLanguagePlugin(cwd);
     await fs.writeFile(path.join(otherRepo, "Foreign.cs"), "class Foreign {}", "utf8");
     const config = {
       ...defaultConfig(),
@@ -181,22 +180,21 @@ describe("plugin architecture foundation", () => {
 
     const bootstrap = await autoDetectAndRegisterPlugins({ config, cwd, repoConfigs: config.repos });
 
-    expect(Number((globalThis as Record<string, unknown>).__logiclensFixtureCsharpLoads ?? 0)).toBe(beforeLoads);
+    expect(Number((globalThis as Record<string, unknown>).__logiclensFixtureCsharpLoads ?? 0)).toBe(beforeLoads + 1);
     expect(bootstrap.activePluginSourceGlobsByRepo.get(ownerRepo)).toBeUndefined();
-    expect(bootstrap.activePluginSourceGlobsByRepo.get(otherRepo)).toBeUndefined();
+    expect(bootstrap.activePluginSourceGlobsByRepo.get(otherRepo)).toEqual(["**/*.cs"]);
     expect(bootstrap.availablePluginSourceGlobsByRepo.get(ownerRepo)).toEqual(["**/*.cs"]);
-    expect(bootstrap.availablePluginSourceGlobsByRepo.get(otherRepo)).toBeUndefined();
-    expect(parserRegistry.resolve({ language: "csharp" })).toBeUndefined();
+    expect(bootstrap.availablePluginSourceGlobsByRepo.get(otherRepo)).toEqual(["**/*.cs"]);
+    expect(parserRegistry.resolve({ language: "csharp" })).toBeDefined();
   });
 
-  it("keeps project parser, extractor, and detector capabilities scoped to their owner repositories", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-project-capability-scope-"));
+  it("registers workspace plugin capabilities without repository ownership", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-workspace-capability-scope-"));
     const repoAPath = path.join(cwd, "repo-a");
     const repoBPath = path.join(cwd, "repo-b");
     await fs.mkdir(repoAPath);
     await fs.mkdir(repoBPath);
-    await installScopedFixturePlugin(repoAPath, "ParserA");
-    await installScopedFixturePlugin(repoBPath, "ParserB");
+    await installScopedFixturePlugin(cwd, "WorkspaceParser");
     await fs.writeFile(path.join(repoAPath, "Source.cs"), "class Source {}", "utf8");
     await fs.writeFile(path.join(repoBPath, "Source.cs"), "class Source {}", "utf8");
     const config = { ...defaultConfig(), repos: [{ name: "repo-a", path: repoAPath }, { name: "repo-b", path: repoBPath }] };
@@ -205,28 +203,27 @@ describe("plugin architecture foundation", () => {
     const repoB = { id: repoId("repo-b"), name: "repo-b", path: repoBPath, remoteUrl: "", branch: "", commitSha: "", language: "csharp", indexedAt: "now" };
     const parsedA = await parseSourceFile({ repoId: repoA.id, absolutePath: path.join(repoAPath, "Source.cs"), relativePath: "Source.cs", language: "csharp" });
     const parsedB = await parseSourceFile({ repoId: repoB.id, absolutePath: path.join(repoBPath, "Source.cs"), relativePath: "Source.cs", language: "csharp" });
-    expect("symbols" in parsedA ? parsedA.symbols[0]?.name : undefined).toBe("ParserA");
-    expect("symbols" in parsedB ? parsedB.symbols[0]?.name : undefined).toBe("ParserB");
+    expect("symbols" in parsedA ? parsedA.symbols[0]?.name : undefined).toBe("WorkspaceParser");
+    expect("symbols" in parsedB ? parsedB.symbols[0]?.name : undefined).toBe("WorkspaceParser");
 
     (globalThis as Record<string, unknown>).__logiclensScopedExtracts = {};
-    const scopedExtractors = contractExtractorRegistry.extractors().filter((extractor) => extractor.scopeRepoId);
-    expect(scopedExtractors).toHaveLength(2);
-    for (const extractor of scopedExtractors) {
+    const pluginExtractors = contractExtractorRegistry.extractors().filter((extractor) => extractor.name === "fixture:extractor");
+    expect(pluginExtractors).toHaveLength(1);
+    for (const extractor of pluginExtractors) {
       await extractor.extract({ repos: [repoA, repoB], parsedFiles: [parsedA, parsedB] }, new ExtractionBuilder());
     }
     expect((globalThis as any).__logiclensScopedExtracts).toEqual({
-      ParserA: { repos: [repoA.id], files: [repoA.id] },
-      ParserB: { repos: [repoB.id], files: [repoB.id] }
+      WorkspaceParser: { repos: [repoA.id, repoB.id], files: [repoA.id, repoB.id] }
     });
 
     (globalThis as Record<string, unknown>).__logiclensScopedDetections = {};
-    const scopedDetectors = frameworkDetectorRegistry.detectors().filter((detector) => detector.scopeRepoId);
-    expect(scopedDetectors).toHaveLength(2);
-    for (const detector of scopedDetectors) {
+    const pluginDetectors = frameworkDetectorRegistry.detectors().filter((detector) => detector.name === "fixture:detector");
+    expect(pluginDetectors).toHaveLength(1);
+    for (const detector of pluginDetectors) {
       await detector.detect(repoA, [parsedA]);
       await detector.detect(repoB, [parsedB]);
     }
-    expect((globalThis as any).__logiclensScopedDetections).toEqual({ ParserA: [repoA.id], ParserB: [repoB.id] });
+    expect((globalThis as any).__logiclensScopedDetections).toEqual({ WorkspaceParser: [repoA.id, repoB.id] });
   });
   it("publishes plugin APIs as workspace packages only", async () => {
     const packageJson = JSON.parse(await fs.readFile(path.resolve("package.json"), "utf8")) as {
@@ -618,7 +615,7 @@ describe("plugin architecture foundation", () => {
     const active = detectActiveLanguages({
       plugins: [{
         source: "test:java-glob",
-        sourceKind: "project",
+        sourceKind: "workspace",
         manifest: {
           name: "java-glob",
           version: "0.0.1",

@@ -15,8 +15,8 @@ async function makeTempWorkspace(): Promise<string> {
   return await fs.mkdtemp(path.join(os.tmpdir(), "test-watch-test-"));
 }
 
-async function installWatchFixturePlugin(repoDir: string): Promise<void> {
-  const pluginDir = path.join(repoDir, ".logiclens", "plugins", "fixture-csharp");
+async function installWatchFixturePlugin(workspaceRoot: string): Promise<void> {
+  const pluginDir = path.join(workspaceRoot, ".logiclens", "plugins", "fixture-csharp");
   await fs.mkdir(pluginDir, { recursive: true });
   const manifest = {
     name: "watch-fixture-csharp", version: "0.0.1", logiclensPluginApiVersion: "0.1.0",
@@ -187,7 +187,7 @@ describe(`${BRAND.displayName} File Watcher Subsystem`, () => {
       const cwd = await makeTempWorkspace();
       const repoDir = path.join(cwd, "my-repo");
       await fs.mkdir(repoDir);
-      await installWatchFixturePlugin(repoDir);
+      await installWatchFixturePlugin(cwd);
       await writeConfig({ ...defaultConfig(), repos: [{ name: "my-repo", path: "./my-repo" }] }, cwd);
       const client = await createClient({ cwd });
       const watcher = new FileWatcher(client, { debounceMs: 1000 });

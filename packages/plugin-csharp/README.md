@@ -10,7 +10,7 @@
 Make sure the LogicLens CLI is installed and the target repository has been added to a LogicLens workspace. Then install the plugin for that repository:
 
 ```bash
-logiclens plugin install @logiclens/plugin-csharp --repo <repo>
+logiclens plugin install @logiclens/plugin-csharp
 ```
 
 Then index the repository to activate its C# capabilities:
@@ -62,9 +62,9 @@ EF entities are not database schemas in this release. `DbSet<T>`, `DbContext`, `
 
 ## Installation scopes
 
-For the shared discovery rules, global/project scope, updates, removal, and troubleshooting, see the LogicLens [Plugin Guide](../../docs/plugins.md). Plugin authors should also read the [Plugin SDK Reference](../../docs/plugin-sdk.md).
+For the shared discovery rules, workspace/global scope, updates, removal, and troubleshooting, see the LogicLens [Plugin Guide](../../docs/plugins.md). Plugin authors should also read the [Plugin SDK Reference](../../docs/plugin-sdk.md).
 
-Use `--repo <repo>` for one configured repository or `--global` to make the plugin available to all repositories indexed by the current user.
+The default installation is scoped to the current LogicLens workspace. Use `--global` to make the plugin available to all workspaces indexed by the current user.
 
 Published package acceptance requires `plugin.json`, compiled `dist`, this README, `tree-sitter ^0.21.1`, `tree-sitter-c-sharp 0.23.1`, and an API-compatible `@logiclens/plugin-sdk`. The manifest and exported plugin target plugin API `0.1.0`.
 

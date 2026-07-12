@@ -21,6 +21,17 @@ export async function initCommand(cwd = process.cwd()): Promise<void> {
   }
 
   await fs.mkdir(path.join(cwd, BRAND_PATHS.graph), { recursive: true });
+  const workspaceGitignore = path.join(cwd, BRAND.configDirName, ".gitignore");
+  const gitignoreTemplate = `graph/
+tmp/
+plugins/
+logs/
+semantic-index.json
+mcp.pid
+`;
+  await fs.writeFile(workspaceGitignore, gitignoreTemplate, { encoding: "utf8", flag: "wx" }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "EEXIST") throw error;
+  });
 
   if (!existingConfig) {
     const template = `# ${BRAND.displayName} Configuration File

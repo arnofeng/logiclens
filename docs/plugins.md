@@ -9,16 +9,16 @@ For plugin authoring and the complete TypeScript API, see the [Plugin SDK Refere
 Use the plugin management CLI for npm packages, local directories, and npm package tarballs:
 
 ```bash
-# Project scope
-logiclens plugin install @logiclens/plugin-csharp --repo service-a
-logiclens plugin install ../my-plugin --repo service-a
-logiclens plugin install ./my-plugin.tgz --repo service-a
+# Workspace scope (default)
+logiclens plugin install @logiclens/plugin-csharp
+logiclens plugin install ../my-plugin
+logiclens plugin install ./my-plugin.tgz
 
 # User scope
 logiclens plugin install @logiclens/plugin-csharp --global
 ```
 
-If the workspace has one configured repository, or the current directory is a configured repository, `--repo` may be omitted. In a multi-repository workspace where the target cannot be inferred, LogicLens requires `--repo <name>` or `--global`. Use `--force` to atomically replace an existing plugin with the same manifest name.
+The default scope is the LogicLens workspace containing `.logiclens/config.yaml`. Use `--global` to install for the current user instead. Use `--force` to atomically replace an existing plugin with the same manifest name.
 
 LogicLens installs the plugin and its production dependencies, then validates it before activation. Plugin installation may run npm lifecycle scripts, including native grammar builds, so install only plugins you trust.
 
@@ -26,9 +26,9 @@ Useful management commands:
 
 ```bash
 logiclens plugin list --all
-logiclens plugin list --repo service-a --json
+logiclens plugin list --json
 logiclens plugin doctor --all
-logiclens plugin remove @logiclens/plugin-csharp --repo service-a
+logiclens plugin remove @logiclens/plugin-csharp
 ```
 
 `list` shows installed plugins and their status. `doctor` performs a full validation and exits non-zero when it finds an invalid or duplicate plugin; use it only with plugins you trust. `remove` requires confirmation unless `--yes` is supplied.
@@ -39,15 +39,15 @@ A plugin installation is a directory containing `plugin.json` and a compiled Jav
 
 | Scope | Directory | Availability |
 |---|---|---|
-| Project | `<repository>/.logiclens/plugins/<plugin-name>/` | Only the repository that contains the plugin |
+| Workspace | `<workspace>/.logiclens/plugins/<plugin-name>/` | Repositories configured by this LogicLens workspace |
 | Global | `~/.logiclens/plugins/<plugin-name>/` | Every repository indexed by the current user |
 
 For manual installation, copy or extract the complete published plugin directory into one of these locations, including `plugin.json`, `package.json`, compiled output, and production dependencies.
 
-For a project-local installation:
+For a workspace installation:
 
 ```text
-my-service/
+my-logiclens-workspace/
 ├── .logiclens/
 │   └── plugins/
 │       └── csharp/
@@ -71,7 +71,7 @@ On Windows, the equivalent global directory is `%USERPROFILE%\.logiclens\plugins
 
 When indexing starts, LogicLens matches installed plugins to repositories using their declared file extensions, marker files, and globs. Matching plugins contribute their language parser, contract extractors, and framework detectors to the indexing run.
 
-A project plugin applies to its selected repository. A global plugin is available to every configured repository.
+Workspace and global plugins are available for automatic detection in every configured repository. A language plugin activates only for repositories matching its declared extensions, markers, or detection globs.
 
 Language detection automatically adds manifest extensions and detection globs to the scan, and an active plugin adds its source extensions to indexing. Normal `exclude` rules and `.gitignore` still apply.
 

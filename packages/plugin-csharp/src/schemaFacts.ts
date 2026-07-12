@@ -7,6 +7,7 @@ import type {
   PluginSchemaField,
   PluginSymbolView
 } from "@logiclens/plugin-sdk";
+import { csharpParseBufferSize } from "./parseBuffer.js";
 
 type Point = { row: number; column: number };
 type SyntaxNode = {
@@ -22,7 +23,7 @@ type SyntaxNode = {
   hasError?: boolean;
 };
 type Tree = { rootNode: SyntaxNode };
-type ParserInstance = { setLanguage(language: unknown): void; parse(source: string): Tree };
+type ParserInstance = { setLanguage(language: unknown): void; parse(source: string, oldTree?: Tree, options?: { bufferSize?: number }): Tree };
 type ParserConstructor = new () => ParserInstance;
 
 type Candidate = {
@@ -278,7 +279,7 @@ function symbolId(symbols: readonly PluginSymbolView[], node: SyntaxNode, declar
 
 async function candidates(file: PluginFileView, endpointRefs: Set<string>): Promise<Candidate[]> {
   if (!file.source) return [];
-  const root = (await parser()).parse(file.source).rootNode;
+  const root = (await parser()).parse(file.source, undefined, { bufferSize: csharpParseBufferSize(file.source) }).rootNode;
   const fileNamespace = root.namedChildren.find((child) => child.type === "file_scoped_namespace_declaration")
     ?.childForFieldName("name")?.text ?? "";
   const result: Candidate[] = [];

@@ -1,4 +1,5 @@
 import path from "node:path";
+import fs from "node:fs/promises";
 import type { AppConfig } from "../../config/schema.js";
 import { writeGraphFactsBatch } from "../graph-model/batchWriter.js";
 import { writeGraphFactsWithKuzuAppendCopy, writeGraphFactsWithKuzuBulk, writeGraphFactsWithKuzuBulkUpsert } from "../graph-model/bulkWriter.js";
@@ -364,6 +365,8 @@ export async function runGraphWritePhase(input: {
         const fallbackFailureStatus = await cleanupFailedBatch(fallbackWriteError, "fallback-failed");
         throw markGraphWriteFailure(fallbackWriteError, { graphWriteAtomicity: atomicityMode, graphWriteStatus: fallbackFailureStatus });
       }
+    } finally {
+      await removeEmptyStagingDirectories(stagingRoot, warn);
     }
 
     return {
@@ -380,4 +383,17 @@ export async function runGraphWritePhase(input: {
   });
 
   return result.result;
+}
+
+async function removeEmptyStagingDirectories(stagingRoot: string, warn: (message: string) => void): Promise<void> {
+  for (const directory of [stagingRoot, path.dirname(stagingRoot)]) {
+    try {
+      await fs.rmdir(directory);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ENOTEMPTY" && code !== "EEXIST") {
+        warn(`Failed to remove empty graph staging directory "${directory}": ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
 }

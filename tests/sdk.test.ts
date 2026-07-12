@@ -22,6 +22,9 @@ describe("SDK Client", () => {
     // Check files created
     const configExists = await fs.stat(path.join(cwd, BRAND.configDirName, BRAND.configFileName)).then(() => true).catch(() => false);
     expect(configExists).toBe(true);
+    expect(await fs.readFile(path.join(cwd, BRAND.configDirName, ".gitignore"), "utf8")).toBe(
+      "graph/\ntmp/\nplugins/\nlogs/\nsemantic-index.json\nmcp.pid\n"
+    );
   });
 
   it("does not overwrite an existing config when re-running init", async () => {
@@ -33,6 +36,17 @@ describe("SDK Client", () => {
     await initCommand(cwd);
 
     expect(await fs.readFile(configFile, "utf8")).toContain("custom-system");
+  });
+
+  it("does not overwrite an existing workspace gitignore", async () => {
+    const cwd = await makeTempWorkspace();
+    await initCommand(cwd);
+    const gitignoreFile = path.join(cwd, BRAND.configDirName, ".gitignore");
+    await fs.writeFile(gitignoreFile, "custom-rule\n", "utf8");
+
+    await initCommand(cwd);
+
+    expect(await fs.readFile(gitignoreFile, "utf8")).toBe("custom-rule\n");
   });
 
   it("uninitializes a workspace and cleans up files", async () => {

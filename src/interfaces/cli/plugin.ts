@@ -2,20 +2,18 @@ import { createInterface } from "node:readline/promises";
 import fs from "node:fs/promises";
 import { stdin, stdout } from "node:process";
 import path from "node:path";
-import { loadConfig } from "../../config/loadConfig.js";
 import { BRAND, configFileCandidates } from "../../shared/branding.js";
 import {
   globalPluginScope,
   inspectInstalledPlugins,
   installPlugin,
-  projectPluginScopes,
   removePlugin,
-  resolveProjectPluginScope,
+  workspacePluginScope,
   type InstalledPluginRecord,
   type PluginScope
 } from "../../core/plugins/management.js";
 
-export type PluginScopeOptions = { repo?: string; global?: boolean; all?: boolean };
+export type PluginScopeOptions = { global?: boolean; all?: boolean };
 
 export async function pluginInstallCommand(
   source: string,
@@ -74,16 +72,15 @@ export async function pluginRemoveCommand(
 async function singleScope(options: PluginScopeOptions, cwd: string): Promise<PluginScope> {
   if (options.global) return globalPluginScope();
   const workspaceRoot = await findPluginWorkspaceRoot(cwd);
-  return resolveProjectPluginScope(await loadConfig(workspaceRoot), workspaceRoot, options.repo, cwd);
+  return workspacePluginScope(workspaceRoot);
 }
 
 async function selectedScopes(options: PluginScopeOptions, cwd: string): Promise<PluginScope[]> {
   assertScopeOptions(options, true);
   if (options.global) return [globalPluginScope()];
   const workspaceRoot = await findPluginWorkspaceRoot(cwd);
-  const config = await loadConfig(workspaceRoot);
-  if (options.all) return [...projectPluginScopes(config, workspaceRoot), globalPluginScope()];
-  return [resolveProjectPluginScope(config, workspaceRoot, options.repo, cwd)];
+  if (options.all) return [workspacePluginScope(workspaceRoot), globalPluginScope()];
+  return [workspacePluginScope(workspaceRoot)];
 }
 
 async function findPluginWorkspaceRoot(cwd: string): Promise<string> {
@@ -99,9 +96,8 @@ async function findPluginWorkspaceRoot(cwd: string): Promise<string> {
 }
 
 function assertScopeOptions(options: PluginScopeOptions, allowAll: boolean): void {
-  if (options.global && options.repo) throw new Error("--global and --repo cannot be used together.");
   if (options.all && !allowAll) throw new Error("--all is not supported by this command.");
-  if (options.all && (options.global || options.repo)) throw new Error("--all cannot be combined with --global or --repo.");
+  if (options.all && options.global) throw new Error("--all cannot be combined with --global.");
 }
 
 function printRecords(records: InstalledPluginRecord[], json: boolean, diagnostics: boolean): void {
@@ -120,5 +116,5 @@ function printRecords(records: InstalledPluginRecord[], json: boolean, diagnosti
 }
 
 function scopeLabel(record: InstalledPluginRecord): string {
-  return record.scope === "project" ? `project:${record.repo}` : "global";
+  return record.scope;
 }

@@ -5,6 +5,7 @@ import type {
   PluginHttpEndpointFact,
   PluginSymbolView
 } from "@logiclens/plugin-sdk";
+import { csharpParseBufferSize } from "./parseBuffer.js";
 
 type Point = { row: number; column: number };
 type SyntaxNode = {
@@ -20,7 +21,7 @@ type SyntaxNode = {
   hasError?: boolean;
 };
 type Tree = { rootNode: SyntaxNode };
-type ParserInstance = { setLanguage(language: unknown): void; parse(source: string): Tree };
+type ParserInstance = { setLanguage(language: unknown): void; parse(source: string, oldTree?: Tree, options?: { bufferSize?: number }): Tree };
 type ParserConstructor = new () => ParserInstance;
 
 type Endpoint = Omit<PluginHttpEndpointFact, "kind" | "repoId" | "filePath" | "sourceSymbolId"> & {
@@ -549,7 +550,7 @@ function symbolId(symbols: readonly PluginSymbolView[], endpoint: Endpoint): str
 
 async function analyze(file: PluginFileView): Promise<Endpoint[]> {
   if (!file.source) return [];
-  const root = (await parser()).parse(file.source).rootNode;
+  const root = (await parser()).parse(file.source, undefined, { bufferSize: csharpParseBufferSize(file.source) }).rootNode;
   const constants = collectConstants(root);
   return [...controllerEndpoints(root, constants), ...minimalEndpoints(root, constants), ...consumerEndpoints(root, constants)];
 }

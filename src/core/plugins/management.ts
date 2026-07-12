@@ -4,16 +4,14 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { discoverLogicLensPlugin, loadDiscoveredLogicLensPlugins } from "@logiclens/plugin-runtime";
-import type { AppConfig } from "../../config/schema.js";
 import { BRAND } from "../../shared/branding.js";
 
-export type ProjectPluginScope = { kind: "project"; repoName: string; root: string };
-export type PluginScope = ProjectPluginScope | { kind: "global"; root: string };
+export type PluginScope = { kind: "workspace" | "global"; root: string };
 export type PluginInstallSource = { kind: "directory" | "tarball" | "npm"; value: string };
 export type PluginHealthStatus = "valid" | "invalid";
-export type PluginInstallMetadata = { source: string; resolvedVersion: string; scope: "project" | "global"; installedAt: string };
+export type PluginInstallMetadata = { source: string; resolvedVersion: string; scope: "workspace" | "global"; installedAt: string };
 export type InstalledPluginRecord = {
-  name: string; version: string; scope: "project" | "global"; repo?: string; source?: string;
+  name: string; version: string; scope: "workspace" | "global"; source?: string;
   status: PluginHealthStatus; path: string; error?: string;
 };
 export type CommandRunner = (command: string, args: readonly string[], options: { cwd: string }) => Promise<string>;
@@ -40,28 +38,8 @@ export function globalPluginScope(homeDir = os.homedir()): PluginScope {
   return { kind: "global", root: path.join(homeDir, BRAND.configDirName, "plugins") };
 }
 
-export function projectPluginScopes(config: AppConfig, cwd: string): ProjectPluginScope[] {
-  return config.repos.map((repo) => ({
-    kind: "project" as const, repoName: repo.name,
-    root: path.join(path.resolve(cwd, repo.path), BRAND.configDirName, "plugins")
-  }));
-}
-
-export function resolveProjectPluginScope(config: AppConfig, workspaceRoot: string, repoName?: string, invocationCwd = workspaceRoot): PluginScope {
-  const scopes = projectPluginScopes(config, workspaceRoot);
-  if (repoName) {
-    const match = scopes.find((scope) => scope.repoName === repoName);
-    if (!match) throw new Error(`Repository "${repoName}" is not configured.`);
-    return match;
-  }
-  const resolvedCwd = path.resolve(invocationCwd);
-  const cwdMatch = [...scopes]
-    .sort((left, right) => repoRoot(right).length - repoRoot(left).length)
-    .find((scope) => isPathInside(repoRoot(scope), resolvedCwd));
-  if (cwdMatch) return cwdMatch;
-  if (scopes.length === 1) return scopes[0]!;
-  if (scopes.length === 0) throw new Error("No repositories are configured. Use --global or add a repository first.");
-  throw new Error("Multiple repositories are configured; specify --repo <name> or use --global.");
+export function workspacePluginScope(workspaceRoot: string): PluginScope {
+  return { kind: "workspace", root: path.join(workspaceRoot, BRAND.configDirName, "plugins") };
 }
 
 export async function installPlugin(
@@ -118,7 +96,7 @@ export async function installPlugin(
       throw error;
     }
     return { name: discovered.manifest.name, version: discovered.manifest.version, scope: scope.kind,
-      repo: scope.kind === "project" ? scope.repoName : undefined, source, status: "valid", path: destination };
+      source, status: "valid", path: destination };
   } finally { await fs.rm(staging, { recursive: true, force: true }).catch(() => undefined); }
 }
 
@@ -141,8 +119,7 @@ export async function inspectInstalledPlugins(
         const metadata = await readJson(path.join(pluginPath, INSTALL_METADATA), true) as PluginInstallMetadata | undefined;
         source = metadata?.source;
       } catch (caught) { error = caught instanceof Error ? caught.message : String(caught); }
-      records.push({ name, version, scope: scope.kind, repo: scope.kind === "project" ? scope.repoName : undefined,
-        source, status: error ? "invalid" : "valid", path: pluginPath, error });
+      records.push({ name, version, scope: scope.kind, source, status: error ? "invalid" : "valid", path: pluginPath, error });
     }
   }
   const counts = new Map<string, number>();
@@ -226,7 +203,6 @@ function runNpm(run: CommandRunner, args: readonly string[], cwd: string): Promi
   const invocation = npmInvocation(args);
   return run(invocation.command, invocation.args, { cwd });
 }
-function repoRoot(scope: ProjectPluginScope): string { return path.dirname(path.dirname(scope.root)); }
 function isPathInside(root: string, target: string): boolean {
   const relative = path.relative(path.resolve(root), path.resolve(target));
   return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`));

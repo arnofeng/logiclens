@@ -101,32 +101,28 @@ program.command("frameworks").description("List detected frameworks and enabled 
 const plugin = program.command("plugin").description(`Install, inspect, diagnose, and remove ${BRAND.displayName} plugins`);
 plugin.command("install")
   .argument("<source>", "npm package specifier, local directory, or .tgz archive")
-  .option("--repo <name>", "Install for a configured repository")
   .option("--global", "Install for the current user")
   .option("--force", "Replace an existing plugin with the same name")
   .description("Install and validate a plugin")
-  .action((source: string, options: { repo?: string; global?: boolean; force?: boolean }) => pluginInstallCommand(source, options));
+  .action((source: string, options: { global?: boolean; force?: boolean }) => pluginInstallCommand(source, options));
 plugin.command("list")
-  .option("--repo <name>", "List plugins for a configured repository")
   .option("--global", "List user-level plugins")
-  .option("--all", "List all project and user-level plugins")
+  .option("--all", "List workspace and user-level plugins")
   .option("--json", "Output JSON")
   .description("List installed plugins")
-  .action(async (options: { repo?: string; global?: boolean; all?: boolean; json?: boolean }) => { await pluginListCommand(options); });
+  .action(async (options: { global?: boolean; all?: boolean; json?: boolean }) => { await pluginListCommand(options); });
 plugin.command("doctor")
-  .option("--repo <name>", "Diagnose plugins for a configured repository")
   .option("--global", "Diagnose user-level plugins")
-  .option("--all", "Diagnose all project and user-level plugins")
+  .option("--all", "Diagnose workspace and user-level plugins")
   .option("--json", "Output JSON")
   .description("Validate installed plugins and report errors")
-  .action(async (options: { repo?: string; global?: boolean; all?: boolean; json?: boolean }) => { await pluginDoctorCommand(options); });
+  .action(async (options: { global?: boolean; all?: boolean; json?: boolean }) => { await pluginDoctorCommand(options); });
 plugin.command("remove")
   .argument("<name>", "Plugin manifest name")
-  .option("--repo <name>", "Remove from a configured repository")
   .option("--global", "Remove from the user-level plugin directory")
   .option("--yes", "Skip the confirmation prompt")
   .description("Remove an installed plugin")
-  .action((name: string, options: { repo?: string; global?: boolean; yes?: boolean }) => pluginRemoveCommand(name, options));
+  .action((name: string, options: { global?: boolean; yes?: boolean }) => pluginRemoveCommand(name, options));
 program
   .command("mcp")
   .option("-p, --path <path>", "Workspace root path")

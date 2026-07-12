@@ -27,7 +27,7 @@ export type DetectPluginManifest = {
   [key: string]: unknown;
 };
 
-export type PluginSourceKind = "project" | "global" | "bundled" | "legacy";
+export type PluginSourceKind = "workspace" | "global" | "bundled" | "legacy";
 
 export type AvailablePlugin = {
   manifest: DetectPluginManifest;
@@ -35,7 +35,6 @@ export type AvailablePlugin = {
   sourceKind: PluginSourceKind;
   baseDir?: string;
   entryPath?: string;
-  ownerRepoPath?: string;
 };
 
 export type RepoPathSnapshot = {
@@ -176,13 +175,9 @@ export function detectionGlobsForPlugins(
 
 export function pluginsAvailableToRepo(
   plugins: readonly AvailablePlugin[],
-  repoPath: string
+  _repoPath: string
 ): AvailablePlugin[] {
-  const resolvedRepoPath = path.resolve(repoPath);
-  return plugins.filter((plugin) =>
-    plugin.sourceKind !== "project" ||
-    (plugin.ownerRepoPath !== undefined && path.resolve(plugin.ownerRepoPath) === resolvedRepoPath)
-  );
+  return [...plugins];
 }
 
 export function sourceGlobsForActiveLanguages(
@@ -297,6 +292,6 @@ function globMatches(relativePath: string, glob: string): boolean {
   return new RegExp(`^${escaped}$`).test(relativePath);
 }
 
-export function projectPluginDir(repoPath: string): string {
-  return path.join(repoPath, BRAND.configDirName, "plugins");
+export function workspacePluginDir(workspaceRoot: string): string {
+  return path.join(workspaceRoot, BRAND.configDirName, "plugins");
 }

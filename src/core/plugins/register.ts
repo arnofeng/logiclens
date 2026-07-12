@@ -20,7 +20,7 @@ import {
   detectActiveLanguages,
   pluginsForActiveLanguages,
   pluginsAvailableToRepo,
-  projectPluginDir,
+  workspacePluginDir,
   scanRepoPathSnapshot,
   sourceGlobsForActiveLanguages,
   type AvailablePlugin
@@ -76,7 +76,6 @@ export async function autoDetectAndRegisterPlugins(input: {
   const repos = input.repoConfigs.map((repo) => toRepoNode(repo, input.cwd));
   const available = await discoverAvailablePlugins({
     cwd: input.cwd,
-    repoPaths: repos.map((repo) => repo.path),
     config: input.config,
     warn: input.warn
   });
@@ -116,11 +115,7 @@ export async function autoDetectAndRegisterPlugins(input: {
   const genericLegacy = await loadLegacyGenericPlugins(input);
   const allLoaded = [...loaded, ...genericLegacy];
   for (const loadedPlugin of loaded) {
-    const availablePlugin = available.find((plugin) => plugin.source === loadedPlugin.source);
-    const scopeRepoId = availablePlugin?.sourceKind === "project" && availablePlugin.ownerRepoPath
-      ? repos.find((repo) => path.resolve(repo.path) === path.resolve(availablePlugin.ownerRepoPath!))?.id
-      : undefined;
-    registerLoadedPlugins([loadedPlugin], { clearFirst: false, scopeRepoId });
+    registerLoadedPlugins([loadedPlugin], { clearFirst: false });
   }
   registerLoadedPlugins(genericLegacy, { clearFirst: false });
 
@@ -195,17 +190,18 @@ export function clearRegisteredPluginCapabilities(): void {
 
 async function discoverAvailablePlugins(input: {
   cwd: string;
-  repoPaths: readonly string[];
   config: AppConfig;
   warn?: (message: string) => void;
 }): Promise<AvailablePlugin[]> {
-  const projectPlugins = (await Promise.all(input.repoPaths.map(async (repoPath) =>
-    discoverDirs(await childPluginDirs(projectPluginDir(repoPath)), "project", input.warn, repoPath)
-  ))).flat();
+  const workspacePlugins = await discoverDirs(
+    await childPluginDirs(workspacePluginDir(input.cwd)),
+    "workspace",
+    input.warn
+  );
   const globalDirs = await childPluginDirs(path.join(os.homedir(), BRAND.configDirName, "plugins"));
   const legacyDirs = input.config.plugins?.enabled.filter(isPathLikeDirectorySpecifier) ?? [];
   const discovered: AvailablePlugin[] = [
-    ...projectPlugins,
+    ...workspacePlugins,
     ...(await discoverDirs(globalDirs, "global", input.warn)),
     ...(await discoverDirs(legacyDirs.map((specifier) => path.resolve(input.cwd, specifier)), "legacy", input.warn)),
     ...builtinLanguagePluginManifests
@@ -223,8 +219,7 @@ async function childPluginDirs(parent: string): Promise<string[]> {
 async function discoverDirs(
   dirs: readonly string[],
   sourceKind: AvailablePlugin["sourceKind"],
-  warn?: (message: string) => void,
-  ownerRepoPath?: string
+  warn?: (message: string) => void
 ): Promise<AvailablePlugin[]> {
   const plugins: AvailablePlugin[] = [];
   for (const dir of dirs) {
@@ -235,8 +230,7 @@ async function discoverDirs(
         source: discovered.source,
         sourceKind,
         baseDir: discovered.baseDir,
-        entryPath: discovered.entryPath,
-        ownerRepoPath
+        entryPath: discovered.entryPath
       });
     } catch (error) {
       warn?.(`Failed to discover LogicLens plugin "${dir}": ${error instanceof Error ? error.message : String(error)}`);
@@ -248,9 +242,7 @@ async function discoverDirs(
 function dedupeByManifestName(plugins: readonly AvailablePlugin[]): AvailablePlugin[] {
   const byName = new Map<string, AvailablePlugin>();
   for (const plugin of plugins) {
-    const key = plugin.sourceKind === "project"
-      ? `${plugin.manifest.name}\0${plugin.ownerRepoPath ?? ""}`
-      : plugin.manifest.name;
+    const key = plugin.manifest.name;
     if (!byName.has(key)) byName.set(key, plugin);
   }
   return [...byName.values()];

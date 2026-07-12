@@ -110,7 +110,7 @@ indexing:
 ### Plugins (`plugins`)
 
 - `plugins.failFast`: When `true`, abort discovery/loading on the first plugin error. The default `false` logs a warning and continues.
-- `plugins.enabled`: Compatibility setting for existing configurations. Install plugins with `logiclens plugin install <source> --repo <name>` or `--global`.
+- `plugins.enabled`: Compatibility setting for existing configurations. Install plugins with `logiclens plugin install <source>` or `--global`.
 
 Plugin language detection automatically includes the extensions, markers, and globs declared by installed plugins. Root `exclude` rules and `.gitignore` still apply. See the [Plugin Guide](plugins.md) and [Plugin SDK Reference](plugin-sdk.md).
 

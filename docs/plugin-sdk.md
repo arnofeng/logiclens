@@ -188,7 +188,7 @@ Before installing or publishing a plugin:
 1. Compile the ESM entry and declarations.
 2. Ensure the published directory contains `plugin.json`, compiled output, runtime dependencies, and README.
 3. Keep `plugin.json` and the exported manifest synchronized.
-4. Install the packed artifact with `logiclens plugin install ./plugin.tgz --repo <fixture-repo>`.
+4. Install the packed artifact with `logiclens plugin install ./plugin.tgz`.
 5. Run `logiclens index` with `plugins.failFast: true`, then inspect `logiclens frameworks`, `logiclens contracts`, and `logiclens quality` as applicable.
 6. Test absent markers, excluded files, malformed source, and multiple repositories as well as the happy path.
 

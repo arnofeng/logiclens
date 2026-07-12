@@ -8,6 +8,7 @@ import type {
   PluginParsedSymbol,
   PluginParseResult
 } from "@logiclens/plugin-sdk";
+import { csharpParseBufferSize } from "./parseBuffer.js";
 
 type Point = { row: number; column: number };
 type SyntaxNode = {
@@ -24,7 +25,7 @@ type SyntaxNode = {
 type Tree = { rootNode: SyntaxNode };
 type ParserInstance = {
   setLanguage(language: unknown): void;
-  parse(source: string): Tree;
+  parse(source: string, oldTree?: Tree, options?: { bufferSize?: number }): Tree;
 };
 type ParserConstructor = new () => ParserInstance;
 type ModuleLoader = (specifier: string) => Promise<unknown>;
@@ -234,7 +235,7 @@ export function createCSharpParser(moduleLoader: ModuleLoader = (specifier) => i
   }
 
   return async function parse(input: PluginParseInput): Promise<PluginParseResult> {
-    const tree = (await load()).parse(input.source);
+    const tree = (await load()).parse(input.source, undefined, { bufferSize: csharpParseBufferSize(input.source) });
     if (tree.rootNode.type !== "compilation_unit") throw new Error(`Unexpected C# syntax tree root: ${tree.rootNode.type}`);
     return extract(tree.rootNode);
   };

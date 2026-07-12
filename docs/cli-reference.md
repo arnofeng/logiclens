@@ -475,32 +475,31 @@ Install, inspect, diagnose, and remove external LogicLens plugins. Run `logiclen
 
 ```bash
 # npm package, local directory, or npm package tarball
-logiclens plugin install @logiclens/plugin-csharp --repo service-a
+logiclens plugin install @logiclens/plugin-csharp
 logiclens plugin install ../my-plugin --global
-logiclens plugin install ./my-plugin.tgz --repo service-a
+logiclens plugin install ./my-plugin.tgz
 
 logiclens plugin list --all
 logiclens plugin doctor --all
-logiclens plugin remove @logiclens/plugin-csharp --repo service-a --yes
+logiclens plugin remove @logiclens/plugin-csharp --yes
 ```
 
 #### `plugin install <source>`
 
 | Option | Description |
 |---|---|
-| `--repo <name>` | Install for one configured repository. |
 | `--global` | Install under the current user's `~/.logiclens/plugins/`. |
 | `--force` | Atomically replace a plugin with the same manifest name. |
 
-Without an explicit scope, LogicLens selects the repository matching the current directory or the only configured repository. Multi-repository workspaces must specify `--repo` or `--global`. npm lifecycle scripts may run while production dependencies are installed; install only trusted plugins.
+Without an explicit scope, LogicLens installs under the current workspace's `.logiclens/plugins/`. Language detection determines which configured repositories activate the plugin. npm lifecycle scripts may run while production dependencies are installed; install only trusted plugins.
 
 #### `plugin list` and `plugin doctor`
 
-Both commands accept `--repo <name>`, `--global`, `--all`, and `--json`. `list` reports installed versions, sources, paths, and `valid`/`invalid` status. `doctor` performs full validation, reports errors, and exits non-zero when an invalid or duplicate plugin is found. Run `doctor` only for plugins you trust.
+Both commands accept `--global`, `--all`, and `--json`. `list` reports installed versions, sources, paths, and `valid`/`invalid` status. `doctor` performs full validation, reports errors, and exits non-zero when an invalid or duplicate plugin is found. Run `doctor` only for plugins you trust.
 
 #### `plugin remove <name>`
 
-Accepts `--repo <name>` or `--global`. Removal prompts for confirmation; pass `--yes` for CI or other non-interactive use. Restart `watch` or MCP and re-index after installing, replacing, or removing a plugin.
+Accepts `--global`; otherwise removes from the current workspace. Removal prompts for confirmation; pass `--yes` for CI or other non-interactive use. Restart `watch` or MCP and re-index after installing, replacing, or removing a plugin.
 
 See the [Plugin Guide](plugins.md) for package requirements and security details.
 

@@ -8,10 +8,9 @@ import {
   globalPluginScope,
   inspectInstalledPlugins,
   installPlugin,
-  projectPluginScopes,
   removePlugin,
-  resolveProjectPluginScope,
   safePluginDirectoryName,
+  workspacePluginScope,
   type CommandRunner
 } from "../src/core/plugins/management.js";
 import { defaultConfig } from "../src/config/loadConfig.js";
@@ -49,13 +48,9 @@ describe("plugin management", () => {
     expect(() => safePluginDirectoryName("../")).toThrow(/Invalid plugin name/);
   });
 
-  it("resolves project and global scopes deterministically", async () => {
+  it("resolves workspace and global scopes deterministically", async () => {
     const root = await temporaryRoot();
-    const config = { ...defaultConfig(), repos: [{ name: "one", path: "repos/one" }, { name: "two", path: "repos/two" }] };
-    expect(projectPluginScopes(config, root)).toHaveLength(2);
-    expect(resolveProjectPluginScope(config, root, "two")).toMatchObject({ kind: "project", repoName: "two" });
-    expect(() => resolveProjectPluginScope(config, root)).toThrow(/Multiple repositories/);
-    expect(resolveProjectPluginScope(config, root, undefined, path.join(root, "repos", "two", "src"))).toMatchObject({ repoName: "two" });
+    expect(workspacePluginScope(root)).toEqual({ kind: "workspace", root: path.join(root, ".logiclens", "plugins") });
     expect(globalPluginScope(root).root).toBe(path.join(root, ".logiclens", "plugins"));
   });
 
@@ -100,7 +95,7 @@ describe("plugin management", () => {
     expect((await fs.readdir(scopeA.root)).filter((name) => !name.startsWith(".install-"))).toEqual([]);
 
     const pluginA = path.join(scopeA.root, "same");
-    const scopeB = { kind: "project" as const, repoName: "repo", root: path.join(root, "b") };
+    const scopeB = { kind: "workspace" as const, root: path.join(root, "b") };
     const pluginB = path.join(scopeB.root, "same");
     await fixturePlugin(pluginA, "same"); await fixturePlugin(pluginB, "same");
     const records = await inspectInstalledPlugins([scopeA, scopeB]);

@@ -114,6 +114,12 @@ describe("C# plugin foundation", () => {
     expect(result.facts?.annotations?.map((annotation) => annotation.name)).toContain("Marker");
   });
 
+  it("expands the native parser buffer for generated C# files larger than 32 KiB", async () => {
+    const source = `class Generated { const string Snapshot = "${"x".repeat(40 * 1024)}"; }`;
+    const result = await createCSharpParser()(parseInput(source));
+    expect(result.symbols?.map((symbol) => symbol.name)).toContain("Generated");
+  });
+
   it("leaves builtin languages and default include free of C# additions", async () => {
     const defaultConfigSource = await fs.readFile(path.resolve("src/config/schema.ts"), "utf8");
     const builtinSource = await fs.readFile(path.resolve("src/core/plugins/detection.ts"), "utf8");
