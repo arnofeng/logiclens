@@ -46,6 +46,7 @@ logiclens <command> --help
 | [`quality`](#logiclens-quality-action) | Audit and govern relation/contract quality |
 | [`rebuild-relations`](#logiclens-rebuild-relations) | Rebuild cross-repository dependency edges |
 | [`frameworks`](#logiclens-frameworks) | List detected frameworks |
+| [`plugin`](#logiclens-plugin) | Install, list, diagnose, and remove plugins |
 | [`mcp`](#logiclens-mcp) | Start MCP server |
 | [`watch`](#logiclens-watch) | Start file watcher for auto-indexing |
 | [`install`](#logiclens-install) | Install MCP into AI agents |
@@ -141,6 +142,8 @@ logiclens add-repos ../all-services --index --changed-only
 ### `logiclens index`
 
 Index configured repositories, parse source code, and build the semantic dependency graph.
+
+Before parsing, this command detects and activates installed plugins that match each repository. See the [Plugin Guide](plugins.md).
 
 ```bash
 logiclens index
@@ -454,11 +457,52 @@ logiclens quality --alias my-service --target-repo service-a
 
 List detected frameworks for each repository.
 
+Plugin framework detectors run as part of indexing. Run `logiclens index` after installing or updating a plugin, then use this command to view the detected frameworks.
+
 ```bash
 logiclens frameworks
 ```
 
 **Output**: Detected frameworks per repository (language, confidence, evidence).
+
+---
+
+## Plugin Management
+
+### `logiclens plugin`
+
+Install, inspect, diagnose, and remove external LogicLens plugins. Run `logiclens index` after installation to activate matching language plugins.
+
+```bash
+# npm package, local directory, or npm package tarball
+logiclens plugin install @logiclens/plugin-csharp --repo service-a
+logiclens plugin install ../my-plugin --global
+logiclens plugin install ./my-plugin.tgz --repo service-a
+
+logiclens plugin list --all
+logiclens plugin doctor --all
+logiclens plugin remove @logiclens/plugin-csharp --repo service-a --yes
+```
+
+#### `plugin install <source>`
+
+| Option | Description |
+|---|---|
+| `--repo <name>` | Install for one configured repository. |
+| `--global` | Install under the current user's `~/.logiclens/plugins/`. |
+| `--force` | Atomically replace a plugin with the same manifest name. |
+
+Without an explicit scope, LogicLens selects the repository matching the current directory or the only configured repository. Multi-repository workspaces must specify `--repo` or `--global`. npm lifecycle scripts may run while production dependencies are installed; install only trusted plugins.
+
+#### `plugin list` and `plugin doctor`
+
+Both commands accept `--repo <name>`, `--global`, `--all`, and `--json`. `list` reports installed versions, sources, paths, and `valid`/`invalid` status. `doctor` performs full validation, reports errors, and exits non-zero when an invalid or duplicate plugin is found. Run `doctor` only for plugins you trust.
+
+#### `plugin remove <name>`
+
+Accepts `--repo <name>` or `--global`. Removal prompts for confirmation; pass `--yes` for CI or other non-interactive use. Restart `watch` or MCP and re-index after installing, replacing, or removing a plugin.
+
+See the [Plugin Guide](plugins.md) for package requirements and security details.
 
 ---
 
@@ -487,6 +531,8 @@ logiclens mcp --path /path/to/workspace
 ### `logiclens watch`
 
 Start a file watcher that automatically indexes repository changes.
+
+Restart the watcher after installing, replacing, or removing a plugin. The watcher automatically includes active plugin source extensions while respecting `exclude` and `.gitignore` rules.
 
 ```bash
 logiclens watch

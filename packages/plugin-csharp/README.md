@@ -1,6 +1,25 @@
 # @logiclens/plugin-csharp
 
-External C# language plugin for LogicLens. This foundation release registers `.cs` as its only parseable source extension. The manifest's `.csproj`, `.sln`, `Directory.Build.props`, and `Directory.Packages.props` globs are project-detection evidence only.
+`@logiclens/plugin-csharp` is the official C# language plugin for [LogicLens](https://github.com/arnofeng/logiclens). It extends the LogicLens host with C# parsing, ASP.NET Core HTTP contract extraction, schema extraction, gRPC and messaging facts, package metadata, and framework detection.
+
+> [!IMPORTANT]
+> This package runs as a LogicLens plugin and requires a compatible LogicLens host environment. LogicLens discovers the plugin, supplies repository context, runs its parser and extractors, and writes the resulting facts to the code graph.
+
+## Recommended installation
+
+Make sure the LogicLens CLI is installed and the target repository has been added to a LogicLens workspace. Then install the plugin for that repository:
+
+```bash
+logiclens plugin install @logiclens/plugin-csharp --repo <repo>
+```
+
+Then index the repository to activate its C# capabilities:
+
+```bash
+logiclens index --repo <repo>
+```
+
+The plugin parses `.cs` files. `.csproj`, `.sln`, `Directory.Build.props`, and `Directory.Packages.props` files are used to detect C# projects and extract project metadata.
 
 ## Parser compatibility
 
@@ -41,11 +60,11 @@ Messaging rules are isolated by framework. The first release recognizes typed Co
 
 EF entities are not database schemas in this release. `DbSet<T>`, `DbContext`, `[Key]`, table/column attributes, and navigation properties do not by themselves select a schema. An entity is emitted only if existing HTTP/DTO/serialization rules independently identify it. No database fact kind is added. Public semantic relations do not express a sufficiently precise EF mapping without inventing contract identities, so EF relations remain out of scope.
 
-## Installation and activation
+## Installation scopes
 
-Install an unpacked package directory under either `<repository>/.logiclens/plugins/<name>/` or the user directory `~/.logiclens/plugins/<name>/`. It must contain `plugin.json`, `dist/`, `package.json`, and installed production dependencies. Project plugins are repository-scoped; user plugins are available for detection in every repository. A `.cs`, `.csproj`, `.sln`, `Directory.Build.props`, or `Directory.Packages.props` signal activates the plugin, while only `.cs` is parsed. Default configuration indexes `.cs` without a root `include` override.
+For the shared discovery rules, global/project scope, updates, removal, and troubleshooting, see the LogicLens [Plugin Guide](../../docs/plugins.md). Plugin authors should also read the [Plugin SDK Reference](../../docs/plugin-sdk.md).
 
-Bare npm specifiers in `plugins.enabled` remain legacy compatibility only. Language plugins loaded that way are deliberately not registered because activation is detection-driven; do not use this mode for new C# installations.
+Use `--repo <repo>` for one configured repository or `--global` to make the plugin available to all repositories indexed by the current user.
 
 Published package acceptance requires `plugin.json`, compiled `dist`, this README, `tree-sitter ^0.21.1`, `tree-sitter-c-sharp 0.23.1`, and an API-compatible `@logiclens/plugin-sdk`. The manifest and exported plugin target plugin API `0.1.0`.
 

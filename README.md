@@ -24,6 +24,7 @@
 - [🔍 CLI Usage Examples](#-cli-usage-examples)
 - [🤖 MCP Integration (AI Coding Agents)](#-mcp-integration-ai-coding-agents)
 - [🧠 SDK (Programmatic Access)](#-sdk-programmatic-access)
+- [Plugin System](#plugin-system)
 - [⚙️ Configuration](#️-configuration)
 - [👍 Current Language and Framework Support](#-current-language-and-framework-support)
 - [🧑‍💻 Contributing](#contributing)
@@ -277,6 +278,22 @@ try {
 
 ---
 
+## Plugin System
+
+LogicLens plugins add external languages, contract extractors, and framework detectors. Install from npm, a local directory, or a package tarball; plugins are validated before they become visible:
+
+```bash
+logiclens plugin install @logiclens/plugin-csharp --repo service-a
+logiclens plugin list --all
+logiclens plugin doctor --all
+```
+
+Use `--global` instead of `--repo` for a user-level installation. `logiclens index`, `watch`, SDK indexing, and MCP indexing discover installed plugins and activate them automatically when their manifest's language rules match the repository.
+
+After installation, run `logiclens index` to detect and activate the plugin for matching repositories. See the [Plugin Guide](docs/plugins.md) for installation, activation, removal, and troubleshooting, and the [Plugin SDK Reference](docs/plugin-sdk.md) to build a plugin. The external [C# plugin](packages/plugin-csharp/README.md) is the reference implementation.
+
+---
+
 ## ⚙️ Configuration
 
 `logiclens init` creates `.logiclens/config.yaml`. This file is the source of truth for repository lists, indexing behavior, graph storage, semantic retrieval, LLM providers, MCP safety policies, and watcher behavior.
@@ -334,6 +351,7 @@ Built-in framework and contract extraction currently mainly covers:
 | Go | Go modules, generic Go parsing, Gin detection. |
 | Documentation | Markdown/MDX sections that can be linked to code and impact output. |
 | Config | YAML, TOML, properties, and environment/config-style contract evidence. |
+| C# plugin | External `@logiclens/plugin-csharp`: C# parsing plus ASP.NET HTTP, schema, event, gRPC, package, and framework facts. See the [plugin guide](docs/plugins.md). |
 
 More languages, frameworks, and generated client patterns will be supported over time.
 

@@ -11,7 +11,8 @@ const allowedFiles = new Set([
   "src/index.ts",
   "src/interfaces/sdk/client.ts",
   "src/core/plugins/adapter.ts",
-  "src/core/plugins/register.ts"
+  "src/core/plugins/register.ts",
+  "src/core/plugins/management.ts"
 ]);
 const blockedPattern = new RegExp([
   BRAND.displayName,
