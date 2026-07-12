@@ -118,6 +118,119 @@ export async function createOrder() {
     const keys = bundle.contracts.filter((c) => c.kind === "api").map((c) => c.key);
     expect(keys).toContain("POST:/api/orders");
   });
+
+  it("extracts GET from a constructed custom client", async () => {
+    const bundle = await extractFromSource(`
+export async function fetchAppraisals() {
+  return new Request().get("/api/pc/appraise/page");
+}`);
+    const contracts = bundle.contracts.filter((c) => c.kind === "api" && c.key === "GET:/api/pc/appraise/page");
+    expect(contracts).toHaveLength(1);
+    expect(bundle.evidence.some((e) => e.raw.includes("new Request().get"))).toBe(true);
+  });
+
+  it("extracts POST from a factory-created client", async () => {
+    const bundle = await extractFromSource(`
+export async function createOrder(body: unknown) {
+  return createClient().post("/api/orders", body);
+}`);
+    expect(bundle.contracts.some((c) => c.kind === "api" && c.key === "POST:/api/orders")).toBe(true);
+  });
+
+  it("extracts a method from a static subscript call", async () => {
+    const bundle = await extractFromSource(`
+export async function updateOrder(body: unknown) {
+  return client["put"]("/api/orders/1", body);
+}`);
+    expect(bundle.contracts.some((c) => c.kind === "api" && c.key === "PUT:/api/orders/1")).toBe(true);
+  });
+
+  it("extracts method and URL from member request object notation", async () => {
+    const bundle = await extractFromSource(`
+export async function deleteOrder() {
+  return client.request({ method: "DELETE", url: "/api/orders/1" });
+}`);
+    expect(bundle.contracts.some((c) => c.kind === "api" && c.key === "DELETE:/api/orders/1")).toBe(true);
+  });
+
+  it("extracts constants from subscript request object notation", async () => {
+    const bundle = await extractFromSource(`
+const API_PATH = "/api/orders/1";
+export async function patchOrder() {
+  return client["request"]({ method: "patch", url: API_PATH });
+}`);
+    expect(bundle.contracts.some((c) => c.kind === "api" && c.key === "PATCH:/api/orders/1")).toBe(true);
+  });
+
+  it("produces a methodless contract from member request with a path argument", async () => {
+    const bundle = await extractFromSource(`
+export async function fetchOrders() {
+  return client.request("/api/orders");
+}`);
+    expect(bundle.contracts.some((c) => c.kind === "api" && c.key === "/api/orders")).toBe(true);
+  });
+
+  it.each(["head", "options"])("extracts the %s HTTP method", async (method) => {
+    const bundle = await extractFromSource(`
+export async function inspectOrders() {
+  return customClient.${method}("/api/orders");
+}`);
+    expect(bundle.contracts.some((c) => c.kind === "api" && c.key === `${method.toUpperCase()}:/api/orders`)).toBe(true);
+  });
+
+  it("does not extract non-path arguments from unknown clients", async () => {
+    const bundle = await extractFromSource(`
+export function readValues(id: string) {
+  cache.get("user");
+  map.delete("order");
+  return service.get(id);
+}`);
+    expect(bundle.contracts.filter((c) => c.kind === "api")).toHaveLength(0);
+    expect(bundle.evidence.filter((e) => e.rule === "dynamic-unresolved")).toHaveLength(0);
+  });
+
+  it("does not record unresolved evidence for an unhinted dynamic local lookup", async () => {
+    const bundle = await extractFromSource(`
+export function readValue(id: string) {
+  return service.get(id);
+}`);
+    expect(bundle.contracts.filter((c) => c.kind === "api")).toHaveLength(0);
+    expect(bundle.evidence.filter((e) => e.rule === "dynamic-unresolved")).toHaveLength(0);
+  });
+
+  it("records unresolved evidence when an unknown constructed client has a dynamic URL", async () => {
+    const bundle = await extractFromSource(`
+export function invoke(endpoint: string) {
+  return new Request().get(endpoint);
+}`);
+    expect(bundle.contracts.filter((c) => c.kind === "api")).toHaveLength(0);
+    expect(bundle.evidence.filter((e) => e.rule === "dynamic-unresolved")).toHaveLength(1);
+  });
+
+  it("does not extract a dynamic subscript method", async () => {
+    const bundle = await extractFromSource(`
+export function invoke(method: string) {
+  return client[method]("/api/orders");
+}`);
+    expect(bundle.contracts.filter((c) => c.kind === "api")).toHaveLength(0);
+  });
+
+  it("degrades an unknown client dynamic URL to unresolved evidence", async () => {
+    const bundle = await extractFromSource(`
+export function invoke(url: string) {
+  return customClient.get(url);
+}`);
+    expect(bundle.contracts.filter((c) => c.kind === "api")).toHaveLength(0);
+    expect(bundle.evidence.filter((e) => e.rule === "dynamic-unresolved")).toHaveLength(1);
+  });
+
+  it("produces a methodless contract for a dynamic request-object method", async () => {
+    const bundle = await extractFromSource(`
+export function invoke(method: string) {
+  return client.request({ method, url: "/api/orders" });
+}`);
+    expect(bundle.contracts.some((c) => c.kind === "api" && c.key === "/api/orders")).toBe(true);
+  });
 });
 
 describe("JS HTTP Client Extractor HttpEndpointSpec production", () => {

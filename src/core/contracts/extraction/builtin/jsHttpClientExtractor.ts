@@ -21,21 +21,23 @@ import {
 
 const IMPORTED_HTTP_MODULE_RE = /^(axios|ky|umi-request|request|@?\/?request|.*\/request|.*\/http)$/i;
 const API_FUNCTION_RE = /^api(?:Get|Post|Put|Patch|Delete|Request)$/;
-const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "request"]);
+const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "head", "options", "request"]);
 
 type HttpCall = {
   node: Parser.SyntaxNode;
   raw: string;
   functionName?: string;
   objectPath?: string;
+  receiverText?: string;
   methodName?: string;
   urlNode?: Parser.SyntaxNode;
   rule: "http-client-api-consumer" | "http-client-object-url-consumer";
   httpMethod?: string;
+  knownClient: boolean;
 };
 
 function importedHttpClientNames(file: Pick<ParsedFile, "imports">): Set<string> {
-  const names = new Set(["axios", "request", "service", "http", "httpClient", "apiClient"]);
+  const names = new Set(["axios", "request", "http", "httpClient", "apiClient"]);
   for (const importRef of file.imports) {
     if (!IMPORTED_HTTP_MODULE_RE.test(importRef.module)) continue;
     for (const binding of importRef.bindings ?? []) {
@@ -80,6 +82,44 @@ function inferMethodFromFetchOptions(args: Parser.SyntaxNode[]): string | undefi
   return value ? value.toUpperCase() : undefined;
 }
 
+function memberInvocation(fn: Parser.SyntaxNode): {
+  methodName?: string;
+  objectPath?: string;
+  receiverText?: string;
+} | undefined {
+  if (fn.type === "member_expression") {
+    const object = fn.childForFieldName("object");
+    return {
+      methodName: fn.childForFieldName("property")?.text.toLowerCase(),
+      objectPath: object ? staticPropertyPath(object) : undefined,
+      receiverText: object?.text
+    };
+  }
+  if (fn.type === "subscript_expression") {
+    const object = fn.childForFieldName("object");
+    const index = fn.childForFieldName("index");
+    return {
+      methodName: index ? stringLiteralValue(index)?.toLowerCase() : undefined,
+      objectPath: object ? staticPropertyPath(object) : undefined,
+      receiverText: object?.text
+    };
+  }
+  return undefined;
+}
+
+function methodAndUrlFromRequestObject(firstArg: Parser.SyntaxNode | undefined): {
+  httpMethod?: string;
+  urlNode?: Parser.SyntaxNode;
+} {
+  if (firstArg?.type !== "object") return { urlNode: firstArg };
+  const methodNode = objectPropertyValue(firstArg, "method");
+  const method = methodNode ? stringLiteralValue(methodNode)?.toUpperCase() : undefined;
+  return {
+    httpMethod: method && HTTP_METHODS.has(method.toLowerCase()) && method !== "REQUEST" ? method : undefined,
+    urlNode: objectPropertyValue(firstArg, "url")
+  };
+}
+
 function collectHttpCalls(root: Parser.SyntaxNode, knownClients: Set<string>): HttpCall[] {
   const calls: HttpCall[] = [];
   walkAst(root, (node) => {
@@ -107,26 +147,33 @@ function collectHttpCalls(root: Parser.SyntaxNode, knownClients: Set<string>): H
         functionName: fn.text,
         urlNode: objectUrl ?? firstArg,
         rule: objectUrl ? "http-client-object-url-consumer" : "http-client-api-consumer",
-        httpMethod
+        httpMethod,
+        knownClient: isKnownHttpInvocation({ functionName: fn.text }, knownClients)
       };
-    } else if (fn.type === "member_expression") {
-      const property = fn.childForFieldName("property")?.text;
-      const object = fn.childForFieldName("object");
+    } else {
+      const invocation = memberInvocation(fn);
+      if (!invocation?.methodName || !HTTP_METHODS.has(invocation.methodName)) return;
       const firstArg = args[0];
-      const httpMethod = property && HTTP_METHODS.has(property) && property !== "request"
-        ? property.toUpperCase()
-        : undefined;
+      const requestShape = invocation.methodName === "request"
+        ? methodAndUrlFromRequestObject(firstArg)
+        : { httpMethod: invocation.methodName.toUpperCase(), urlNode: firstArg };
+      const knownClient = isKnownHttpInvocation({
+        objectPath: invocation.objectPath,
+        methodName: invocation.methodName
+      }, knownClients);
       call = {
         node,
         raw: node.text,
-        objectPath: object ? staticPropertyPath(object) : undefined,
-        methodName: property,
-        urlNode: firstArg,
+        objectPath: invocation.objectPath,
+        receiverText: invocation.receiverText,
+        methodName: invocation.methodName,
+        urlNode: requestShape.urlNode,
         rule: "http-client-api-consumer",
-        httpMethod
+        httpMethod: requestShape.httpMethod,
+        knownClient
       };
     }
-    if (call && isKnownHttpInvocation(call, knownClients)) calls.push(call);
+    if (call && (call.knownClient || Boolean(call.methodName && HTTP_METHODS.has(call.methodName)))) calls.push(call);
   });
   return calls;
 }
@@ -150,6 +197,16 @@ function pushDynamicUnresolvedEvidence(input: {
   }));
 }
 
+function shouldRecordUnresolvedHttpCall(call: HttpCall, resolvedValue: string | undefined, dynamic: boolean): boolean {
+  // A statically resolved non-path value is positive evidence that this is a
+  // local get/delete-style operation, not an unresolved HTTP request.
+  if (resolvedValue !== undefined && !dynamic) return false;
+  if (call.knownClient) return true;
+  const receiverLooksHttp = /api|http|client|request/i.test(call.receiverText ?? call.objectPath ?? "");
+  const argumentLooksLikeUrl = /url|uri|path/i.test(call.urlNode?.text ?? "");
+  return receiverLooksHttp || argumentLooksLikeUrl;
+}
+
 function isApiPathLiteral(node: Parser.SyntaxNode): string | undefined {
   const value = stringLiteralValue(node);
   return value?.startsWith("/api/") ? value : undefined;
@@ -166,18 +223,13 @@ function isInsideKnownHttpCall(node: Parser.SyntaxNode, knownClients: Set<string
   return false;
 }
 
-function isInsideUnknownHttpLikeMemberCall(node: Parser.SyntaxNode, knownClients: Set<string>): boolean {
+function isInsideDynamicSubscriptCall(node: Parser.SyntaxNode): boolean {
   let current: Parser.SyntaxNode | null = node.parent;
   while (current) {
     if (current.type === "call_expression") {
       const fn = current.childForFieldName("function");
-      if (fn?.type === "member_expression") {
-        const method = fn.childForFieldName("property")?.text;
-        const objectPath = fn.childForFieldName("object") ? staticPropertyPath(fn.childForFieldName("object")!) : undefined;
-        const rootObject = objectPath?.split(".")[0] ?? "";
-        return Boolean(method && HTTP_METHODS.has(method) && !knownClients.has(rootObject) && !knownClients.has(objectPath ?? ""));
-      }
-      return false;
+      const index = fn?.type === "subscript_expression" ? fn.childForFieldName("index") : undefined;
+      return fn?.type === "subscript_expression" && (!index || !stringLiteralValue(index));
     }
     current = current.parent;
   }
@@ -202,21 +254,23 @@ export const jsHttpClientExtractor = compatExtractor({
         const symbol = findContainingSymbol(file.symbols, call.node);
         if (!symbol || !call.urlNode) continue;
         const offset = symbolOffset(file, symbol, call.node);
+        seenPathOffsets.add(call.urlNode.startIndex);
         const resolved = resolveAstExpression(call.urlNode, constants);
         if (!resolved.value?.startsWith("/")) {
-          pushDynamicUnresolvedEvidence({
-            collector,
-            file,
-            symbol,
-            offset,
-            raw: call.raw,
-            reason: call.rule === "http-client-object-url-consumer"
-              ? "HTTP object url is not a resolvable static path"
-              : "HTTP call argument is not a resolvable static path"
-          });
+          if (shouldRecordUnresolvedHttpCall(call, resolved.value, resolved.dynamic)) {
+            pushDynamicUnresolvedEvidence({
+              collector,
+              file,
+              symbol,
+              offset,
+              raw: call.raw,
+              reason: call.rule === "http-client-object-url-consumer"
+                ? "HTTP object url is not a resolvable static path"
+                : "HTTP call argument is not a resolvable static path"
+            });
+          }
           continue;
         }
-        seenPathOffsets.add(call.urlNode.startIndex);
         pushApiContractFromPath({
           collector,
           file,
@@ -226,7 +280,9 @@ export const jsHttpClientExtractor = compatExtractor({
           offset,
           raw: call.raw,
           rule: call.rule,
-          confidence: call.httpMethod ? confidenceFor("probable-http-client") : confidenceFor("method-unknown-fallback"),
+          confidence: call.httpMethod
+            ? confidenceFor(call.knownClient ? "probable-http-client" : "probable-http-route")
+            : confidenceFor("method-unknown-fallback"),
           method: call.httpMethod,
           framework: "js-http-client"
         });
@@ -234,7 +290,7 @@ export const jsHttpClientExtractor = compatExtractor({
 
       walkAst(ast.tree.rootNode, (node) => {
         const apiPath = isApiPathLiteral(node);
-        if (!apiPath || seenPathOffsets.has(node.startIndex) || isInsideKnownHttpCall(node, knownHttpClients) || isInsideUnknownHttpLikeMemberCall(node, knownHttpClients)) return;
+        if (!apiPath || seenPathOffsets.has(node.startIndex) || isInsideKnownHttpCall(node, knownHttpClients) || isInsideDynamicSubscriptCall(node)) return;
         const symbol = findContainingSymbol(file.symbols, node);
         if (!symbol) return;
         const isLikelyProducerFile = /controller|route|server|api/i.test(file.path + " " + symbol.qualifiedName);

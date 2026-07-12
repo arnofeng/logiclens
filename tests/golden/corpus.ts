@@ -49,6 +49,7 @@ export const goldenExpectations: GoldenCorpusExpectations = {
     { kind: "api", key: "/grpc/orderservice/getorderstream" },
     { kind: "api", key: "GET:/api/go/orders" },
     { kind: "api", key: "GET:/api/go/users" },
+    { kind: "api", key: "GET:/api/local/cache" },
     { kind: "api", key: "POST:/api3/merchant/backstage/service/clientapplication/querycappbybosid" },
     { kind: "api", key: "GET:/api/python/orders" },
     { kind: "api", key: "GET:/api/python/users" },
@@ -83,6 +84,7 @@ export const goldenExpectations: GoldenCorpusExpectations = {
     { repo: "service-a", role: "shared", kind: "schema", key: "orderschema" },
     { repo: "service-b", role: "consumer", kind: "api", key: "/api/order/{id}" },
     { repo: "service-b", role: "consumer", kind: "api", key: "GET:/api/order/{id}" },
+    { repo: "service-b", role: "consumer", kind: "api", key: "GET:/api/local/cache" },
     { repo: "service-b", role: "consumer", kind: "api", key: "/grpc/orderservice/getorderstream" },
     { repo: "service-b", role: "consumer", kind: "api", key: "POST:/api3/merchant/backstage/service/clientapplication/querycappbybosid" },
     { repo: "service-b", role: "consumer", kind: "api", key: "POST:/mall/mgr/entireorder/list" },
@@ -127,7 +129,6 @@ export const goldenExpectations: GoldenCorpusExpectations = {
   ],
   absentContracts: [
     { kind: "api", key: "/config", reason: "local config reads must not be promoted to API dependencies" },
-    { kind: "api", key: "/api/local/cache", reason: "same-named local utility methods must not be promoted to HTTP API dependencies" },
     { kind: "api", key: "/api/python/local-cache", reason: "same-named local Python utility methods must not be promoted to HTTP API dependencies" },
     { kind: "api", key: "/api/go/local-cache", reason: "same-named local Go utility methods must not be promoted to HTTP API dependencies" },
     { kind: "api", key: "/api/order/${id}", reason: "template/parameter variants should canonicalize to /api/order/{id}" },
