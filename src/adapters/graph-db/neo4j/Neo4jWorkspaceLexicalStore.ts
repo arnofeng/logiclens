@@ -45,6 +45,10 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
     throw unavailable("schema_failed", { operation: "ensureSchema" });
   }
 
+  async commitVersions(): Promise<void> {
+    throw unavailable("write_failed", { operation: "commitVersions" });
+  }
+
   async upsertDocuments(documents: readonly LexicalDocument[]): Promise<void> {
     throw unavailable("write_failed", {
       operation: "upsertDocuments",

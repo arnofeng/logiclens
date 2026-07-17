@@ -37,6 +37,7 @@ function fakeGraphDb(): GraphDB {
 function fakeLexicalStore(): WorkspaceLexicalStore {
   return {
     ensureSchema: vi.fn(),
+    commitVersions: vi.fn(),
     upsertDocuments: vi.fn(),
     reconcileRepoDocuments: vi.fn(),
     cleanupBatch: vi.fn(),

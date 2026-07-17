@@ -95,6 +95,7 @@ describe("Neo4j lexical provider registration", () => {
     const store = registration.bindLexical!(Object.create(Neo4jGraphDB.prototype) as GraphDB);
     const calls = [
       ["schema_failed", "ensureSchema", store.ensureSchema()],
+      ["write_failed", "commitVersions", store.commitVersions()],
       ["write_failed", "upsertDocuments", store.upsertDocuments([])],
       ["reconcile_failed", "reconcileRepoDocuments", store.reconcileRepoDocuments({
         workspaceId: "workspace:1", repoId: "repo:1", batchId: "batch:1", activeDocumentIds: []

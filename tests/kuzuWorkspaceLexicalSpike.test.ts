@@ -1,80 +1,97 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import kuzu, { type Connection } from "kuzu";
 import { afterEach, describe, expect, it } from "vitest";
+import { KuzuGraphDB } from "../src/adapters/graph-db/kuzu/KuzuGraphDB.js";
+import { KuzuWorkspaceLexicalStore } from "../src/adapters/graph-db/kuzu/KuzuWorkspaceLexicalStore.js";
 import { mrrAtK, recallAtK, refusalAccuracy } from "../src/core/retrieval/evaluation.js";
 import type { LexicalHit, LexicalSearchOptions } from "../src/core/retrieval/types.js";
 import { runWorkspaceLexicalConformance, type LexicalProviderHarness } from "./retrieval/providerConformance.js";
 import { WORKSPACE_CORPUS } from "./retrieval/workspaceCorpus.js";
-import { queryTerms, workspaceSpikeDocuments } from "./retrieval/workspaceLexicalSpikeFixtures.js";
+import { workspaceSpikeDocuments } from "./retrieval/workspaceLexicalSpikeFixtures.js";
 
 const WORKSPACE_ID = "workspace:spike";
-
-async function rows(result: kuzu.QueryResult | kuzu.QueryResult[]): Promise<Array<Record<string, unknown>>> {
-  return (await Promise.all((Array.isArray(result) ? result : [result]).map((entry) => entry.getAll()))).flat() as Array<Record<string, unknown>>;
-}
 
 class KuzuHarness implements LexicalProviderHarness {
   readonly provider = "kuzu-0.11.3";
   private directory = "";
-  private db?: kuzu.Database;
+  private db?: KuzuGraphDB;
+  private store?: KuzuWorkspaceLexicalStore;
   private nativeCalls = 0;
-
-  private async connection(): Promise<Connection> {
-    if (!this.db) throw new Error("Kuzu database is closed");
-    const connection = new kuzu.Connection(this.db);
-    await connection.init();
-    return connection;
-  }
+  private previousCloseMode?: string;
 
   async prepare(): Promise<void> {
+    this.previousCloseMode = process.env.LOGICLENS_KUZU_CLOSE_MODE;
+    process.env.LOGICLENS_KUZU_CLOSE_MODE = "explicit";
     this.directory = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-kuzu-fts-"));
-    this.db = new kuzu.Database(path.join(this.directory, "spike.kuzu"), 0, true, false, 137438953472);
-    await this.db.init();
-    const conn = await this.connection();
-    try {
-      await conn.query("LOAD EXTENSION FTS;");
-      await conn.query("CREATE NODE TABLE LexicalDocument(id STRING, canonicalId STRING, workspaceId STRING, repoId STRING, kind STRING, searchableText STRING, active BOOL, renderRef STRING, PRIMARY KEY(id));");
-      await conn.query("CALL CREATE_FTS_INDEX('LexicalDocument', 'workspace_lexical', ['searchableText']);");
-    } finally { await conn.close(); }
+    this.db = await KuzuGraphDB.open(path.join(this.directory, "spike.kuzu"));
+    this.store = new KuzuWorkspaceLexicalStore(this.db);
+    await this.store.ensureSchema();
   }
 
   async write(): Promise<void> {
-    const documents = await workspaceSpikeDocuments(WORKSPACE_ID);
-    documents.push({ id: "document:foreign:payment-ledger", canonicalId: "foreign:payment-ledger", workspaceId: "workspace:foreign", repoId: "repo:foreign", kind: "file", title: "payment ledger", searchableText: "payment ledger foreignonlymarker", tokens: [], active: true, sourceHash: "foreign", batchId: "foreign", renderRef: "fixture:foreign:payment-ledger" });
-    const conn = await this.connection();
-    try {
-      for (const document of documents) {
-        const statement = await conn.prepare("CREATE (:LexicalDocument {id: $id, canonicalId: $canonicalId, workspaceId: $workspaceId, repoId: $repoId, kind: $kind, searchableText: $searchableText, active: $active, renderRef: $renderRef});");
-        if (!statement.isSuccess()) throw new Error(statement.getErrorMessage());
-        await conn.execute(statement, { id: document.id, canonicalId: document.canonicalId, workspaceId: document.workspaceId, repoId: document.repoId, kind: document.kind, searchableText: document.searchableText, active: document.active, renderRef: document.renderRef });
-      }
-    } finally { await conn.close(); }
+    if (!this.store) throw new Error("Kuzu lexical store is closed");
+    await this.store.upsertDocuments(await workspaceSpikeDocuments(WORKSPACE_ID));
+    await this.store.upsertDocuments([{
+      id: "document:foreign:payment-ledger",
+      canonicalId: "foreign:payment-ledger",
+      workspaceId: "workspace:foreign",
+      repoId: "repo:foreign",
+      kind: "file",
+      title: "payment ledger",
+      searchableText: "payment ledger foreignonlymarker",
+      tokens: ["payment", "ledger", "foreignonlymarker"],
+      active: true,
+      sourceHash: "foreign",
+      batchId: "foreign",
+      renderRef: "fixture:foreign:payment-ledger"
+    }]);
   }
 
   async search(query: { workspaceId: string; text: string }, options: LexicalSearchOptions): Promise<LexicalHit[]> {
+    if (!this.store) throw new Error("Kuzu lexical store is closed");
     this.nativeCalls++;
-    const conn = await this.connection();
-    try {
-      const statement = await conn.prepare("CALL QUERY_FTS_INDEX('LexicalDocument', 'workspace_lexical', $text) WHERE node.workspaceId = $workspaceId AND node.active = true RETURN node.canonicalId AS canonicalId, node.id AS documentId, node.repoId AS repoId, node.kind AS kind, node.renderRef AS renderRef, score ORDER BY score DESC, documentId ASC LIMIT $topK;");
-      if (!statement.isSuccess()) throw new Error(statement.getErrorMessage());
-      const resultRows = await rows(await conn.execute(statement, { text: queryTerms(query.text), workspaceId: query.workspaceId, topK: options.topK }));
-      return resultRows.map((row, index) => ({ canonicalId: String(row.canonicalId), documentId: String(row.documentId), repoId: String(row.repoId), kind: String(row.kind) as LexicalHit["kind"], rank: index + 1, matchReasons: ["native-fts"], renderRef: String(row.renderRef) }));
-    } finally { await conn.close(); }
+    return [...await this.store.search(query, options)];
   }
 
-  nativeSearchCount(): number { return this.nativeCalls; }
-  async isWorkspaceVisible(workspaceId: string): Promise<boolean> { if (!this.db) return false; const conn = await this.connection(); try { const statement = await conn.prepare("MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.active = true RETURN count(*) AS count;"); if (!statement.isSuccess()) throw new Error(statement.getErrorMessage()); const resultRows = await rows(await conn.execute(statement, { workspaceId })); return Number((resultRows[0] as { count: number }).count) > 0; } finally { await conn.close(); } }
-  async isWorkspaceIsolated(workspaceId: string): Promise<boolean> { const hits = await this.search({ workspaceId, text: "foreignonlymarker" }, { topK: 5 }); return hits.length === 0; }
-  async cleanup(): Promise<void> { const db = this.db; this.db = undefined; if (db) await db.close(); if (this.directory) await fs.rm(this.directory, { recursive: true, force: true }); }
+  nativeSearchCount(): number {
+    return this.nativeCalls;
+  }
+
+  async isWorkspaceVisible(workspaceId: string): Promise<boolean> {
+    if (!this.db) return false;
+    const rows = await this.db.query<{ count: number }>(
+      "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.active = true RETURN count(*) AS count;",
+      { workspaceId }
+    );
+    return Number(rows[0]?.count ?? 0) > 0;
+  }
+
+  async isWorkspaceIsolated(workspaceId: string): Promise<boolean> {
+    const hits = await this.search({ workspaceId, text: "foreignonlymarker" }, { topK: 5 });
+    return hits.length === 0;
+  }
+
+  async cleanup(): Promise<void> {
+    const db = this.db;
+    this.db = undefined;
+    this.store = undefined;
+    if (db) await db.close();
+    if (this.directory) await fs.rm(this.directory, { recursive: true, force: true });
+    if (this.previousCloseMode === undefined) delete process.env.LOGICLENS_KUZU_CLOSE_MODE;
+    else process.env.LOGICLENS_KUZU_CLOSE_MODE = this.previousCloseMode;
+  }
 }
 
 describe("Kuzu workspace lexical conformance spike", () => {
   const harnesses: KuzuHarness[] = [];
-  afterEach(async () => { await Promise.all(harnesses.splice(0).map((harness) => harness.cleanup())); });
-  it("uses one native FTS query per corpus case and keeps workspace results isolated", async () => {
-    const harness = new KuzuHarness(); harnesses.push(harness);
+  afterEach(async () => {
+    await Promise.all(harnesses.splice(0).map((harness) => harness.cleanup()));
+  });
+
+  it("uses the production store for one native FTS query per corpus case and workspace isolation", async () => {
+    const harness = new KuzuHarness();
+    harnesses.push(harness);
     const report = await runWorkspaceLexicalConformance(harness, WORKSPACE_CORPUS, WORKSPACE_ID);
     expect(report.lifecycle).toEqual({ visibleBeforeWrite: false, visibleAfterWrite: true, visibleAfterCleanup: false });
     expect(report.cases.every((entry) => entry.nativeSearchCalls === 1)).toBe(true);

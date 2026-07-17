@@ -36,6 +36,7 @@ export interface LoadDocumentsRequest {
 
 export type WorkspaceLexicalStoreOperation =
   | "ensureSchema"
+  | "commitVersions"
   | "upsertDocuments"
   | "reconcileRepoDocuments"
   | "cleanupBatch"
@@ -78,6 +79,8 @@ export class WorkspaceLexicalStoreError extends Error {
 
 export interface WorkspaceLexicalStore {
   ensureSchema(): Promise<void>;
+  /** Advances projection/tokenizer metadata only after a complete rebuild commits. */
+  commitVersions(): Promise<void>;
   upsertDocuments(documents: readonly LexicalDocument[]): Promise<void>;
   reconcileRepoDocuments(request: Readonly<ReconcileRepoDocumentsRequest>): Promise<void>;
   cleanupBatch(request: Readonly<CleanupBatchRequest>): Promise<void>;

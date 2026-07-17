@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GraphDB } from "../src/core/graph-model/db.js";
-import type { LexicalDocument } from "../src/core/retrieval/types.js";
 
 const adapterState = vi.hoisted(() => ({ open: vi.fn() }));
 
@@ -14,23 +13,6 @@ vi.mock("../src/adapters/graph-db/kuzu/KuzuGraphDB.js", () => {
 async function resolveRegistration() {
   const { getGraphProviderRegistration } = await import("../src/core/graph-model/factory.js");
   return getGraphProviderRegistration("kuzu");
-}
-
-function document(): LexicalDocument {
-  return {
-    id: "document:1",
-    canonicalId: "code:1",
-    workspaceId: "workspace:1",
-    repoId: "repo:1",
-    kind: "code",
-    title: "OrderService",
-    searchableText: "OrderService creates an order",
-    tokens: ["OrderService", "order"],
-    active: true,
-    sourceHash: "hash:1",
-    batchId: "batch:1",
-    renderRef: "src/OrderService.ts:1"
-  };
 }
 
 describe("Kuzu lexical provider registration", () => {
@@ -75,37 +57,21 @@ describe("Kuzu lexical provider registration", () => {
     );
   });
 
-  it("fails every unimplemented lifecycle operation explicitly", async () => {
+  it("wraps adapter failures with the registered lifecycle error boundary", async () => {
     const registration = await resolveRegistration();
     const { KuzuGraphDB } = await import("../src/adapters/graph-db/kuzu/KuzuGraphDB.js");
     const { WorkspaceLexicalStoreError } = await import("../src/core/retrieval/provider.js");
-    const store = registration.bindLexical!(Object.create(KuzuGraphDB.prototype) as GraphDB);
-    const doc = document();
-    const calls = [
-      ["schema_failed", "ensureSchema", store.ensureSchema()],
-      ["write_failed", "upsertDocuments", store.upsertDocuments([doc])],
-      ["reconcile_failed", "reconcileRepoDocuments", store.reconcileRepoDocuments({
-        workspaceId: doc.workspaceId,
-        repoId: doc.repoId,
-        batchId: doc.batchId,
-        activeDocumentIds: [doc.id]
-      })],
-      ["cleanup_failed", "cleanupBatch", store.cleanupBatch({
-        workspaceId: doc.workspaceId,
-        batchId: doc.batchId
-      })],
-      ["search_failed", "search", store.search({ workspaceId: doc.workspaceId, text: "order" }, { topK: 5 })],
-      ["load_failed", "loadDocuments", store.loadDocuments({ workspaceId: doc.workspaceId, documentIds: [doc.id] })],
-      ["health_check_failed", "health", store.health(doc.workspaceId)]
-    ] as const;
+    const db = Object.assign(Object.create(KuzuGraphDB.prototype), {
+      query: vi.fn().mockRejectedValue(new Error("adapter unavailable"))
+    }) as GraphDB;
+    const store = registration.bindLexical!(db);
+    const call = store.ensureSchema();
 
-    for (const [code, operation, call] of calls) {
-      await expect(call).rejects.toMatchObject({
-        name: "WorkspaceLexicalStoreError",
-        code,
-        context: expect.objectContaining({ operation })
-      });
-      await expect(call).rejects.toBeInstanceOf(WorkspaceLexicalStoreError);
-    }
+    await expect(call).rejects.toMatchObject({
+      name: "WorkspaceLexicalStoreError",
+      code: "schema_failed",
+      context: { operation: "ensureSchema" }
+    });
+    await expect(call).rejects.toBeInstanceOf(WorkspaceLexicalStoreError);
   });
 });

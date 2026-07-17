@@ -22,6 +22,7 @@ import type {
 
 const fakeStore: WorkspaceLexicalStore = {
   async ensureSchema(): Promise<void> {},
+  async commitVersions(): Promise<void> {},
   async upsertDocuments(documents: readonly LexicalDocument[]): Promise<void> {
     void documents;
   },
@@ -58,6 +59,7 @@ const fakeStore: WorkspaceLexicalStore = {
 describe("workspace lexical provider contracts", () => {
   it("defines exact method parameters and Promise return types", () => {
     expectTypeOf<Parameters<WorkspaceLexicalStore["ensureSchema"]>>().toEqualTypeOf<[]>();
+    expectTypeOf<Parameters<WorkspaceLexicalStore["commitVersions"]>>().toEqualTypeOf<[]>();
     expectTypeOf<Parameters<WorkspaceLexicalStore["upsertDocuments"]>>().toEqualTypeOf<[
       readonly LexicalDocument[]
     ]>();
@@ -77,6 +79,7 @@ describe("workspace lexical provider contracts", () => {
     expectTypeOf<Parameters<WorkspaceLexicalStore["health"]>>().toEqualTypeOf<[string]>();
 
     expectTypeOf<ReturnType<WorkspaceLexicalStore["ensureSchema"]>>().toEqualTypeOf<Promise<void>>();
+    expectTypeOf<ReturnType<WorkspaceLexicalStore["commitVersions"]>>().toEqualTypeOf<Promise<void>>();
     expectTypeOf<ReturnType<WorkspaceLexicalStore["upsertDocuments"]>>().toEqualTypeOf<Promise<void>>();
     expectTypeOf<ReturnType<WorkspaceLexicalStore["reconcileRepoDocuments"]>>().toEqualTypeOf<Promise<void>>();
     expectTypeOf<ReturnType<WorkspaceLexicalStore["cleanupBatch"]>>().toEqualTypeOf<Promise<void>>();
