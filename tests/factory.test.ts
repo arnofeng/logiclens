@@ -1,109 +1,198 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
-import { registerGraphProvider, createGraphDB, type GraphDBFactory } from "../src/core/graph-model/factory.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { GraphDB } from "../src/core/graph-model/db.js";
+import type {
+  GraphDBFactory,
+  GraphProviderRegistration
+} from "../src/core/graph-model/factory.js";
 
-// Mock the kuzu register module to avoid loading native drivers
-vi.mock("../src/adapters/graph-db/kuzu/register.js", () => ({ registerGraphProvider: vi.fn() }));
-
-// Mock Neo4jGraphDB to avoid loading the neo4j driver
-vi.mock("../src/adapters/graph-db/neo4j/Neo4jGraphDB.js", () => ({
-  Neo4jGraphDB: { open: vi.fn() }
+const adapterState = vi.hoisted(() => ({
+  kuzuLoads: 0,
+  neo4jLoads: 0,
+  kuzuOpen: vi.fn(),
+  neo4jOpen: vi.fn()
 }));
 
-// Capture providers registered by real register modules
-const registered: Record<string, { open: (config: any) => Promise<any> }> = {};
-vi.mock("../src/core/graph-model/factory.js", () => ({
-  registerGraphProvider: vi.fn((name: string, provider: any) => { registered[name] = provider; }),
-  createGraphDB: vi.fn()
-}));
+vi.mock("../src/adapters/graph-db/kuzu/KuzuGraphDB.js", () => {
+  adapterState.kuzuLoads += 1;
+  return { KuzuGraphDB: { open: adapterState.kuzuOpen } };
+});
 
-// Trigger the real neo4j register module's side-effect, which calls
-// registerGraphProvider (our mock above) and captures the open handler.
-await import("../src/adapters/graph-db/neo4j/register.js");
+vi.mock("../src/adapters/graph-db/neo4j/Neo4jGraphDB.js", () => {
+  adapterState.neo4jLoads += 1;
+  return { Neo4jGraphDB: { open: adapterState.neo4jOpen } };
+});
 
-describe("graph factory", () => {
+const fakeDb = { close: vi.fn() } as unknown as GraphDB;
+
+function registration(factory?: GraphDBFactory): GraphProviderRegistration {
+  return {
+    factory: factory ?? { open: vi.fn().mockResolvedValue(fakeDb) },
+    capabilities: {}
+  };
+}
+
+async function loadFactory() {
+  return import("../src/core/graph-model/factory.js");
+}
+
+describe("graph provider registry", () => {
   beforeEach(() => {
-    vi.mocked(createGraphDB).mockReset();
-    vi.mocked(createGraphDB).mockImplementation(async (name: string, config: any) => {
-      const provider = registered[name];
-      if (!provider) throw new Error(`Unknown graph provider: ${name}`);
-      return provider.open(config);
-    });
+    vi.resetModules();
+    adapterState.kuzuOpen.mockReset();
+    adapterState.neo4jOpen.mockReset();
   });
 
-  it("throws for unknown provider", async () => {
-    await expect(createGraphDB("unknown-provider", {})).rejects.toThrow(
-      /Unknown graph provider: unknown-provider/
+  it("registers and creates an arbitrary non-empty custom provider", async () => {
+    const { createGraphDB, registerGraphProvider } = await loadFactory();
+    const open = vi.fn().mockResolvedValue(fakeDb);
+    registerGraphProvider("custom/provider:v1", registration({ open }));
+
+    await expect(createGraphDB("custom/provider:v1", { path: "/tmp/test" })).resolves.toBe(fakeDb);
+    expect(open).toHaveBeenCalledWith({ path: "/tmp/test" });
+  });
+
+  it.each(["", " ", "\t\r\n"])("rejects an empty or whitespace provider ID", async (provider) => {
+    const { registerGraphProvider } = await loadFactory();
+    expect(() => registerGraphProvider(provider, registration())).toThrow(
+      "Graph provider ID must contain at least one non-whitespace character"
     );
   });
 
-  it("registerGraphProvider registers a factory that createGraphDB can use", async () => {
-    const mockDb = { close: vi.fn() } as any;
-    const mockFactory: GraphDBFactory = {
-      open: vi.fn().mockResolvedValue(mockDb)
-    };
-    registerGraphProvider("test-provider", mockFactory);
-
-    const db = await createGraphDB("test-provider", { path: "/tmp/test" });
-    expect(db).toBe(mockDb);
-    expect(mockFactory.open).toHaveBeenCalledWith({ path: "/tmp/test" });
+  it("rejects duplicate registrations deterministically", async () => {
+    const { registerGraphProvider } = await loadFactory();
+    registerGraphProvider("duplicate", registration());
+    expect(() => registerGraphProvider("duplicate", registration())).toThrow(
+      "Graph provider already registered: duplicate"
+    );
   });
 
-  it("passes all config fields (url, username, password) to the factory", async () => {
-    const mockDb = { close: vi.fn() } as any;
-    const mockFactory: GraphDBFactory = {
-      open: vi.fn().mockResolvedValue(mockDb)
+  it("rejects capability and binder mismatches", async () => {
+    const { registerGraphProvider } = await loadFactory();
+    const nativeFullText = {
+      scope: "workspace" as const,
+      updateConsistency: "transactional" as const,
+      supportsFieldBoost: false,
+      supportsPrefix: false
     };
-    registerGraphProvider("test-neo4j", mockFactory);
 
-    const config = { url: "bolt://localhost:7687", username: "neo4j", password: "secret" };
-    await createGraphDB("test-neo4j", config);
-    expect(mockFactory.open).toHaveBeenCalledWith(config);
+    expect(() => registerGraphProvider("capability-only", {
+      ...registration(),
+      capabilities: { nativeFullText }
+    })).toThrow(/nativeFullText capability and bindLexical must be provided together/);
+
+    expect(() => registerGraphProvider("binder-only", {
+      ...registration(),
+      bindLexical: vi.fn()
+    })).toThrow(/nativeFullText capability and bindLexical must be provided together/);
+  });
+
+  it("returns registrations through the asynchronous resolver", async () => {
+    const { getGraphProviderRegistration, registerGraphProvider } = await loadFactory();
+    const expected = registration();
+    registerGraphProvider("resolved", expected);
+    await expect(getGraphProviderRegistration("resolved")).resolves.toBe(expected);
+  });
+
+  it("reports an unknown provider with a stably sorted registry", async () => {
+    const { getGraphProviderRegistration, registerGraphProvider } = await loadFactory();
+    registerGraphProvider("z-provider", registration());
+    registerGraphProvider("a-provider", registration());
+
+    await expect(getGraphProviderRegistration("missing-provider")).rejects.toThrow(
+      "Unknown graph provider: missing-provider. Registered: a-provider, z-provider"
+    );
+  });
+
+  it("does not load either built-in adapter for a registered custom provider", async () => {
+    const loadsBefore = { kuzu: adapterState.kuzuLoads, neo4j: adapterState.neo4jLoads };
+    const { createGraphDB, registerGraphProvider } = await loadFactory();
+    registerGraphProvider("external", registration());
+    await createGraphDB("external", {});
+
+    expect(adapterState.kuzuLoads).toBe(loadsBefore.kuzu);
+    expect(adapterState.neo4jLoads).toBe(loadsBefore.neo4j);
+  });
+
+  it("does not load built-in adapters for an unknown third-party provider", async () => {
+    const loadsBefore = { kuzu: adapterState.kuzuLoads, neo4j: adapterState.neo4jLoads };
+    const { getGraphProviderRegistration } = await loadFactory();
+    await expect(getGraphProviderRegistration("third-party")).rejects.toThrow(/Unknown graph provider/);
+    expect(adapterState.kuzuLoads).toBe(loadsBefore.kuzu);
+    expect(adapterState.neo4jLoads).toBe(loadsBefore.neo4j);
+  });
+
+  it("loads Kuzu only when Kuzu is requested", async () => {
+    const loadsBefore = { kuzu: adapterState.kuzuLoads, neo4j: adapterState.neo4jLoads };
+    const { getGraphProviderRegistration } = await loadFactory();
+    const resolved = await getGraphProviderRegistration("kuzu");
+
+    expect(resolved.capabilities).toEqual({});
+    expect(resolved.bindLexical).toBeUndefined();
+    expect(adapterState.kuzuLoads).toBe(loadsBefore.kuzu + 1);
+    expect(adapterState.neo4jLoads).toBe(loadsBefore.neo4j);
+  });
+
+  it("loads Neo4j only when Neo4j is requested", async () => {
+    const loadsBefore = { kuzu: adapterState.kuzuLoads, neo4j: adapterState.neo4jLoads };
+    const { getGraphProviderRegistration } = await loadFactory();
+    const resolved = await getGraphProviderRegistration("neo4j");
+
+    expect(resolved.capabilities).toEqual({});
+    expect(resolved.bindLexical).toBeUndefined();
+    expect(adapterState.neo4jLoads).toBe(loadsBefore.neo4j + 1);
+    expect(adapterState.kuzuLoads).toBe(loadsBefore.kuzu);
+  });
+
+  it("reports a built-in module that completes without registering", async () => {
+    vi.doMock("../src/adapters/graph-db/kuzu/register.js", () => ({}));
+    try {
+      const { getGraphProviderRegistration } = await loadFactory();
+      await expect(getGraphProviderRegistration("kuzu")).rejects.toThrow(
+        "Built-in graph provider failed to register: kuzu"
+      );
+    } finally {
+      vi.doUnmock("../src/adapters/graph-db/kuzu/register.js");
+    }
   });
 });
 
-describe("neo4j register validation (real open handler)", () => {
-  it("captures the open handler from the real register module", () => {
-    expect(registered["neo4j"]).toBeDefined();
-    expect(typeof registered["neo4j"].open).toBe("function");
+describe("Neo4j registration", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    adapterState.neo4jOpen.mockReset().mockResolvedValue(fakeDb);
   });
 
+  async function neo4jFactory(): Promise<GraphDBFactory> {
+    const { getGraphProviderRegistration } = await loadFactory();
+    return (await getGraphProviderRegistration("neo4j")).factory;
+  }
+
   it("rejects username without password", async () => {
-    await expect(registered["neo4j"].open({ username: "neo4j" })).rejects.toThrow(
+    await expect((await neo4jFactory()).open({ username: "neo4j" })).rejects.toThrow(
       /Neo4j configuration requires both username and password/
     );
   });
 
   it("rejects password without username", async () => {
-    await expect(registered["neo4j"].open({ password: "secret" })).rejects.toThrow(
+    await expect((await neo4jFactory()).open({ password: "secret" })).rejects.toThrow(
       /Neo4j configuration requires both username and password/
     );
   });
 
-  it("accepts both username and password", async () => {
-    const { Neo4jGraphDB } = await import("../src/adapters/graph-db/neo4j/Neo4jGraphDB.js");
-    vi.mocked(Neo4jGraphDB.open).mockResolvedValueOnce({ close: vi.fn() } as any);
-    await expect(registered["neo4j"].open({ username: "neo4j", password: "secret" })).resolves.toBeDefined();
+  it("uses the default URL and default credentials", async () => {
+    await (await neo4jFactory()).open({});
+    expect(adapterState.neo4jOpen).toHaveBeenCalledWith("bolt://localhost:7687", undefined);
   });
 
-  it("accepts neither username nor password (defaults)", async () => {
-    const { Neo4jGraphDB } = await import("../src/adapters/graph-db/neo4j/Neo4jGraphDB.js");
-    vi.mocked(Neo4jGraphDB.open).mockResolvedValueOnce({ close: vi.fn() } as any);
-    await expect(registered["neo4j"].open({})).resolves.toBeDefined();
-  });
-
-  it("uses default url when none provided", async () => {
-    const { Neo4jGraphDB } = await import("../src/adapters/graph-db/neo4j/Neo4jGraphDB.js");
-    vi.mocked(Neo4jGraphDB.open).mockClear();
-    vi.mocked(Neo4jGraphDB.open).mockResolvedValueOnce({ close: vi.fn() } as any);
-    await registered["neo4j"].open({});
-    expect(Neo4jGraphDB.open).toHaveBeenCalledWith("bolt://localhost:7687", undefined);
-  });
-
-  it("passes credentials when both username and password are provided", async () => {
-    const { Neo4jGraphDB } = await import("../src/adapters/graph-db/neo4j/Neo4jGraphDB.js");
-    vi.mocked(Neo4jGraphDB.open).mockClear();
-    vi.mocked(Neo4jGraphDB.open).mockResolvedValueOnce({ close: vi.fn() } as any);
-    await registered["neo4j"].open({ username: "neo4j", password: "secret" });
-    expect(Neo4jGraphDB.open).toHaveBeenCalledWith("bolt://localhost:7687", { username: "neo4j", password: "secret" });
+  it("passes an explicit URL and paired credentials", async () => {
+    await (await neo4jFactory()).open({
+      url: "bolt://graph.example:7687",
+      username: "neo4j",
+      password: "secret"
+    });
+    expect(adapterState.neo4jOpen).toHaveBeenCalledWith(
+      "bolt://graph.example:7687",
+      { username: "neo4j", password: "secret" }
+    );
   });
 });
