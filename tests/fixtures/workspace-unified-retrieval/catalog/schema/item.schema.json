@@ -1,0 +1,1 @@
+{"$id":"catalog-item","type":"object","required":["catalog_item_id"],"properties":{"catalog_item_id":{"type":"string"}}}
