@@ -8,6 +8,10 @@ export const repoConfigSchema = z.object({
 
 const optionalUrlString = z.preprocess((value) => value === "" ? undefined : value, z.string().url().optional());
 const optionalSecretString = z.preprocess((value) => value === "" ? undefined : value, z.string().optional());
+const providerIdSchema = z.string().refine(
+  (provider) => provider.trim().length > 0,
+  "Provider ID must contain at least one non-whitespace character"
+);
 
 const providerRetrySchema = z.object({
   maxRetries: z.number().int().nonnegative().default(2),
@@ -66,12 +70,18 @@ export const configSchema = z.object({
   include: z.array(z.string()).default(defaultInclude),
   exclude: z.array(z.string()).default(defaultExclude),
   graph: z.object({
-    provider: z.enum(["kuzu", "neo4j"]).default("kuzu"),
+    provider: providerIdSchema.default("kuzu"),
     path: z.string().default(BRAND_PATHS.graph),
     url: z.string().optional(),
     username: optionalSecretString,
     password: optionalSecretString
   }).default({ provider: "kuzu", path: BRAND_PATHS.graph }),
+  retrieval: z.object({
+    lexical: z.object({
+      provider: providerIdSchema.default("auto"),
+      scope: z.literal("workspace").default("workspace")
+    }).default({ provider: "auto", scope: "workspace" })
+  }).default({ lexical: { provider: "auto", scope: "workspace" } }),
   llm: z.object({
     provider: z.literal("openai").default("openai"),
     apiKey: optionalSecretString,

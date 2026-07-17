@@ -9,10 +9,222 @@ import { uninitCommand } from "../src/interfaces/cli/uninit.js";
 import { addRepoCommand } from "../src/interfaces/cli/addRepo.js";
 import { loadConfig } from "../src/config/loadConfig.js";
 import { BRAND, BRAND_PATHS, brandedTempDirPrefix } from "../src/shared/branding.js";
+import type { GraphDB } from "../src/core/graph-model/db.js";
+import {
+  registerGraphProvider,
+  type GraphProviderRegistration
+} from "../src/core/graph-model/factory.js";
+import type { WorkspaceLexicalStore } from "../src/core/retrieval/provider.js";
 
 async function makeTempWorkspace(): Promise<string> {
   return await fs.mkdtemp(path.join(os.tmpdir(), brandedTempDirPrefix("sdk-test")));
 }
+
+const nativeFullText = {
+  scope: "workspace" as const,
+  updateConsistency: "transactional" as const,
+  supportsFieldBoost: false,
+  supportsPrefix: false
+};
+
+function fakeGraphDb(): GraphDB {
+  return {
+    initSchema: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined)
+  } as unknown as GraphDB;
+}
+
+function fakeLexicalStore(): WorkspaceLexicalStore {
+  return {
+    ensureSchema: vi.fn(),
+    upsertDocuments: vi.fn(),
+    reconcileRepoDocuments: vi.fn(),
+    cleanupBatch: vi.fn(),
+    search: vi.fn(),
+    loadDocuments: vi.fn(),
+    health: vi.fn()
+  } as unknown as WorkspaceLexicalStore;
+}
+
+function lexicalRegistration(
+  db: GraphDB,
+  bindLexical = vi.fn(() => fakeLexicalStore())
+): GraphProviderRegistration {
+  return {
+    factory: { open: vi.fn().mockResolvedValue(db) },
+    capabilities: { nativeFullText },
+    bindLexical
+  };
+}
+
+function resolveLexicalStore(client: Awaited<ReturnType<typeof createClient>>): Promise<WorkspaceLexicalStore> {
+  return (client as unknown as {
+    resolveLexicalStore(): Promise<WorkspaceLexicalStore>;
+  }).resolveLexicalStore();
+}
+
+describe("SDK lexical provider resolution", () => {
+  it("uses the graph provider registration in auto mode", async () => {
+    const db = fakeGraphDb();
+    const store = fakeLexicalStore();
+    const bindLexical = vi.fn(() => store);
+    registerGraphProvider("sdk-auto-graph", lexicalRegistration(db, bindLexical));
+    const client = await createClient({
+      config: {
+        ...defaultConfig(),
+        graph: { ...defaultConfig().graph, provider: "sdk-auto-graph" }
+      }
+    });
+
+    await expect(resolveLexicalStore(client)).resolves.toBe(store);
+    expect(bindLexical).toHaveBeenCalledWith(db);
+    await client.close();
+  });
+
+  it("does not resolve an unrelated provider in auto mode", async () => {
+    const graphDb = fakeGraphDb();
+    const unrelatedBinder = vi.fn(() => fakeLexicalStore());
+    registerGraphProvider("sdk-auto-selected", lexicalRegistration(graphDb));
+    registerGraphProvider("sdk-auto-unrelated", lexicalRegistration(fakeGraphDb(), unrelatedBinder));
+    const client = await createClient({
+      config: {
+        ...defaultConfig(),
+        graph: { ...defaultConfig().graph, provider: "sdk-auto-selected" }
+      }
+    });
+
+    await resolveLexicalStore(client);
+    expect(unrelatedBinder).not.toHaveBeenCalled();
+    await client.close();
+  });
+
+  it("uses an explicit companion provider and binds the current graph DB", async () => {
+    const graphDb = fakeGraphDb();
+    const companionStore = fakeLexicalStore();
+    const companionBinder = vi.fn(() => companionStore);
+    registerGraphProvider("sdk-companion-graph", {
+      factory: { open: vi.fn().mockResolvedValue(graphDb) },
+      capabilities: {}
+    });
+    registerGraphProvider(
+      "sdk-explicit-companion",
+      lexicalRegistration(fakeGraphDb(), companionBinder)
+    );
+    const client = await createClient({
+      config: {
+        ...defaultConfig(),
+        graph: { ...defaultConfig().graph, provider: "sdk-companion-graph" },
+        retrieval: {
+          lexical: { provider: "sdk-explicit-companion", scope: "workspace" }
+        }
+      }
+    });
+
+    await expect(resolveLexicalStore(client)).resolves.toBe(companionStore);
+    expect(companionBinder).toHaveBeenCalledWith(graphDb);
+    await client.close();
+  });
+
+  it("rejects an unknown explicit provider without opening or falling back to the graph provider", async () => {
+    const graphDb = fakeGraphDb();
+    const graphRegistration = lexicalRegistration(graphDb);
+    registerGraphProvider("sdk-unknown-fallback-graph", graphRegistration);
+    const client = await createClient({
+      config: {
+        ...defaultConfig(),
+        graph: { ...defaultConfig().graph, provider: "sdk-unknown-fallback-graph" },
+        retrieval: {
+          lexical: { provider: "sdk-missing-companion", scope: "workspace" }
+        }
+      }
+    });
+
+    await expect(resolveLexicalStore(client)).rejects.toThrow(
+      /Unknown graph provider: sdk-missing-companion/
+    );
+    expect(graphRegistration.factory.open).not.toHaveBeenCalled();
+    expect(graphRegistration.bindLexical).not.toHaveBeenCalled();
+    await client.close();
+  });
+
+  it("fails clearly when the provider lacks native full-text support", async () => {
+    const graphDb = fakeGraphDb();
+    registerGraphProvider("sdk-no-native-full-text-graph", {
+      factory: { open: vi.fn().mockResolvedValue(graphDb) },
+      capabilities: {}
+    });
+    const client = await createClient({
+      config: {
+        ...defaultConfig(),
+        graph: { ...defaultConfig().graph, provider: "sdk-no-native-full-text-graph" }
+      }
+    });
+
+    await expect(resolveLexicalStore(client)).rejects.toThrow(
+      'Lexical provider "sdk-no-native-full-text-graph" does not declare nativeFullText capability'
+    );
+    await client.close();
+  });
+
+  it("fails clearly when the provider binder is unavailable", async () => {
+    const registration = lexicalRegistration(fakeGraphDb());
+    registerGraphProvider("sdk-missing-binder", registration);
+    registration.bindLexical = undefined;
+    const client = await createClient({
+      config: {
+        ...defaultConfig(),
+        graph: { ...defaultConfig().graph, provider: "sdk-missing-binder" }
+      }
+    });
+
+    await expect(resolveLexicalStore(client)).rejects.toThrow(
+      'Lexical provider "sdk-missing-binder" does not provide bindLexical'
+    );
+    await client.close();
+  });
+
+  it("rejects a lexical provider with an incompatible capability scope", async () => {
+    const registration = {
+      ...lexicalRegistration(fakeGraphDb()),
+      capabilities: {
+        nativeFullText: { ...nativeFullText, scope: "repository" }
+      }
+    } as unknown as GraphProviderRegistration;
+    registerGraphProvider("sdk-incompatible-scope", registration);
+    const client = await createClient({
+      config: {
+        ...defaultConfig(),
+        graph: { ...defaultConfig().graph, provider: "sdk-incompatible-scope" }
+      }
+    });
+
+    await expect(resolveLexicalStore(client)).rejects.toThrow(
+      'Lexical provider "sdk-incompatible-scope" does not support configured scope "workspace" (supports "repository")'
+    );
+    await client.close();
+  });
+
+  it("preserves binder errors without degrading to another provider", async () => {
+    const binderError = new Error("companion binder failed");
+    const bindLexical = vi.fn(() => {
+      throw binderError;
+    });
+    registerGraphProvider(
+      "sdk-binder-error",
+      lexicalRegistration(fakeGraphDb(), bindLexical)
+    );
+    const client = await createClient({
+      config: {
+        ...defaultConfig(),
+        graph: { ...defaultConfig().graph, provider: "sdk-binder-error" }
+      }
+    });
+
+    await expect(resolveLexicalStore(client)).rejects.toBe(binderError);
+    expect(bindLexical).toHaveBeenCalledTimes(1);
+    await client.close();
+  });
+});
 
 describe("SDK Client", () => {
   it("scaffolds a workspace via the init command", async () => {

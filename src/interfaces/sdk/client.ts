@@ -4,7 +4,11 @@ import { repoId } from "../../shared/path.js";
 import { loadConfig, defaultConfig } from "../../config/loadConfig.js";
 import type { AppConfig } from "../../config/schema.js";
 import type { GraphDB, Stats } from "../../core/graph-model/db.js";
-import { createGraphDB } from "../../core/graph-model/factory.js";
+import {
+  createGraphDB,
+  getGraphProviderRegistration
+} from "../../core/graph-model/factory.js";
+import type { WorkspaceLexicalStore } from "../../core/retrieval/provider.js";
 import { registerBuiltinEmbeddingProviders } from "../../adapters/embeddings/builtinProviders.js";
 import {
   listDependencies,
@@ -172,6 +176,33 @@ export class AppClient {
       this.dbInstance = undefined;
       throw error;
     }
+  }
+
+  private async resolveLexicalStore(): Promise<WorkspaceLexicalStore> {
+    const configuredProvider = this.config.retrieval.lexical.provider;
+    const providerId = configuredProvider === "auto"
+      ? this.config.graph.provider
+      : configuredProvider;
+    const registration = await getGraphProviderRegistration(providerId);
+    const capability = registration.capabilities.nativeFullText;
+
+    if (!capability) {
+      throw new Error(
+        `Lexical provider "${providerId}" does not declare nativeFullText capability`
+      );
+    }
+    if (!registration.bindLexical) {
+      throw new Error(`Lexical provider "${providerId}" does not provide bindLexical`);
+    }
+    if (capability.scope !== this.config.retrieval.lexical.scope) {
+      throw new Error(
+        `Lexical provider "${providerId}" does not support configured scope ` +
+        `"${this.config.retrieval.lexical.scope}" (supports "${capability.scope}")`
+      );
+    }
+
+    const db = await this.getDb();
+    return registration.bindLexical(db);
   }
 
   /**
