@@ -78,6 +78,70 @@ async function installScopedFixturePlugin(repo: string, label: string): Promise<
   `, "utf8");
 }
 
+async function readProductionSources(roots: readonly string[]): Promise<Array<{ file: string; source: string }>> {
+  const files: string[] = [];
+  async function visit(directory: string): Promise<void> {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      const target = path.join(directory, entry.name);
+      if (entry.isDirectory()) await visit(target);
+      else if (entry.isFile() && /\.(?:ts|tsx|js|mjs|cjs)$/.test(entry.name)) files.push(target);
+    }
+  }
+  for (const root of roots) await visit(path.resolve(root));
+  return Promise.all(files.sort().map(async (file) => ({
+    file: path.relative(process.cwd(), file),
+    source: await fs.readFile(file, "utf8")
+  })));
+}
+
+type ProductionSource = { file: string; source: string };
+
+const PROVIDER_SOURCE_BOUNDARIES = [
+  {
+    provider: "Kuzu",
+    allowedRoot: "src/adapters/graph-db/kuzu/",
+    markers: [
+      ["FTS extension DDL", /LOAD\s+EXTENSION\s+FTS/i],
+      ["FTS index DDL", /CREATE_FTS_INDEX/i],
+      ["FTS query procedure", /QUERY_FTS_INDEX/i],
+      ["raw-score normalization", /(?:normalizeKuzu(?:Raw)?Score|kuzuRawScoreTo(?:Rank|Score))/i]
+    ]
+  },
+  {
+    provider: "Neo4j",
+    allowedRoot: "src/adapters/graph-db/neo4j/",
+    markers: [
+      ["full-text index DDL", /CREATE\s+FULLTEXT\s+INDEX/i],
+      ["full-text query procedure", /db\.index\.fulltext\.queryNodes/i],
+      ["raw-score normalization", /(?:normalizeNeo4j(?:Raw)?Score|neo4jRawScoreTo(?:Rank|Score))/i]
+    ]
+  }
+] as const;
+
+const GRAPH_ADAPTER_ROOTS = PROVIDER_SOURCE_BOUNDARIES.map(({ allowedRoot }) => allowedRoot);
+const PROVIDER_RAW_SCORE_MARKER = /(?:normalizeProvider(?:Raw)?Score|(?:rawScore|providerScore)To(?:Rank|Score)|(?:Number|parseFloat)\(\s*(?:row\.)?(?:rawScore|providerScore)\s*\))/i;
+
+function findProviderSourceBoundaryViolations(sources: readonly ProductionSource[]): string[] {
+  const violations: string[] = [];
+  for (const { file, source } of sources) {
+    const normalizedFile = file.replaceAll("\\", "/");
+    for (const { provider, allowedRoot, markers } of PROVIDER_SOURCE_BOUNDARIES) {
+      for (const [name, marker] of markers) {
+        if (marker.test(source) && !normalizedFile.startsWith(allowedRoot)) {
+          violations.push(`${normalizedFile}: ${provider} ${name} must stay under ${allowedRoot}`);
+        }
+      }
+    }
+    if (
+      PROVIDER_RAW_SCORE_MARKER.test(source)
+      && !GRAPH_ADAPTER_ROOTS.some((allowedRoot) => normalizedFile.startsWith(allowedRoot))
+    ) {
+      violations.push(`${normalizedFile}: provider raw-score normalization must stay in a graph provider adapter`);
+    }
+  }
+  return violations;
+}
+
 describe("plugin architecture foundation", () => {
   it("never falls back to a foreign scoped parser and restores extension override stacks", () => {
     const registry = new ParserRegistry();
@@ -119,6 +183,34 @@ describe("plugin architecture foundation", () => {
     ];
     const source = (await Promise.all(productionFiles.map((file) => fs.readFile(path.resolve(file), "utf8")))).join("\n");
     expect(source).not.toMatch(/csharp|\.csproj|\.sln|(?:["'`])\.cs(?:["'`])/i);
+  });
+
+  it("keeps provider-specific full-text implementation details inside each owning graph adapter", async () => {
+    const sources = await readProductionSources(["src"]);
+    expect(findProviderSourceBoundaryViolations(sources)).toEqual([]);
+  });
+
+  it("reports provider details placed outside or across graph adapter boundaries", () => {
+    const violations = findProviderSourceBoundaryViolations([
+      { file: "src/core/retrieval/kuzuQuery.ts", source: "CALL QUERY_FTS_INDEX('LexicalDocument', 'workspace', $text)" },
+      { file: "src/adapters/graph-db/neo4j/MisplacedKuzu.ts", source: "LOAD EXTENSION FTS;" },
+      { file: "src/adapters/graph-db/kuzu/MisplacedNeo4j.ts", source: "CALL db.index.fulltext.queryNodes($index, $text)" },
+      { file: "src/shared/providerScore.ts", source: "const rank = rawScoreToRank(rawScore);" }
+    ]);
+
+    expect(violations).toEqual([
+      "src/core/retrieval/kuzuQuery.ts: Kuzu FTS query procedure must stay under src/adapters/graph-db/kuzu/",
+      "src/adapters/graph-db/neo4j/MisplacedKuzu.ts: Kuzu FTS extension DDL must stay under src/adapters/graph-db/kuzu/",
+      "src/adapters/graph-db/kuzu/MisplacedNeo4j.ts: Neo4j full-text query procedure must stay under src/adapters/graph-db/neo4j/",
+      "src/shared/providerScore.ts: provider raw-score normalization must stay in a graph provider adapter"
+    ]);
+  });
+
+  it("accepts provider details only in their owning graph adapter", () => {
+    expect(findProviderSourceBoundaryViolations([
+      { file: "src/adapters/graph-db/kuzu/KuzuLexical.ts", source: "CALL QUERY_FTS_INDEX('LexicalDocument', 'workspace', $text); const rank = rawScoreToRank(rawScore);" },
+      { file: "src/adapters/graph-db/neo4j/Neo4jLexical.ts", source: "CALL db.index.fulltext.queryNodes($index, $text); const rank = providerScoreToRank(providerScore);" }
+    ])).toEqual([]);
   });
 
   it("activates, scans, parses, scopes, and removes a manifest-defined source language", async () => {

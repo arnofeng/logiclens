@@ -126,8 +126,8 @@ describe("graph provider registry", () => {
     const { getGraphProviderRegistration } = await loadFactory();
     const resolved = await getGraphProviderRegistration("kuzu");
 
-    expect(resolved.capabilities).toEqual({});
-    expect(resolved.bindLexical).toBeUndefined();
+    expect(resolved.capabilities.nativeFullText).toMatchObject({ scope: "workspace" });
+    expect(resolved.bindLexical).toBeTypeOf("function");
     expect(adapterState.kuzuLoads).toBe(loadsBefore.kuzu + 1);
     expect(adapterState.neo4jLoads).toBe(loadsBefore.neo4j);
   });
@@ -137,8 +137,8 @@ describe("graph provider registry", () => {
     const { getGraphProviderRegistration } = await loadFactory();
     const resolved = await getGraphProviderRegistration("neo4j");
 
-    expect(resolved.capabilities).toEqual({});
-    expect(resolved.bindLexical).toBeUndefined();
+    expect(resolved.capabilities.nativeFullText).toMatchObject({ scope: "workspace" });
+    expect(resolved.bindLexical).toBeTypeOf("function");
     expect(adapterState.neo4jLoads).toBe(loadsBefore.neo4j + 1);
     expect(adapterState.kuzuLoads).toBe(loadsBefore.kuzu);
   });
