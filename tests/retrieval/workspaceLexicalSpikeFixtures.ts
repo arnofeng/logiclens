@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildGraphFactsBatch } from "../../src/core/graph-model/facts.js";
 import type { LexicalDocument, LexicalDocumentKind } from "../../src/core/retrieval/types.js";
+import { tokenizeLexicalText } from "../../src/core/retrieval/tokenizer.js";
 import { parseSourceFile } from "../../src/core/parsing/parserRegistry.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "workspace-unified-retrieval");
@@ -15,22 +16,7 @@ const cjkStopTokens = new Set(["什么", "哪个", "哪里", "如何", "服务",
 
 /** Test-only symmetric normalization for Unicode prose, identifiers and paths. */
 export function lexicalTokens(text: string): string[] {
-  const normalized = text.normalize("NFKC");
-  const tokens = new Set<string>();
-  for (const value of normalized.match(/[\p{L}\p{N}._/-]+/gu) ?? []) {
-    tokens.add(value.toLocaleLowerCase());
-    const expanded = value.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[._/-]+/g, " ").split(/\s+/);
-    for (const part of expanded) if (part) tokens.add(part.toLocaleLowerCase());
-    if (/[._/-]/.test(value)) {
-      tokens.add(value.toLocaleLowerCase());
-      tokens.add(`ident_${value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, "_")}`);
-    }
-  }
-  for (const run of normalized.match(/[\p{Script=Han}]+/gu) ?? []) {
-    for (let index = 0; index < run.length; index++) tokens.add(`cjk_${run[index]}`);
-    for (let index = 0; index < run.length - 1; index++) tokens.add(`cjk_${run.slice(index, index + 2)}`);
-  }
-  return [...tokens].sort();
+  return tokenizeLexicalText(text);
 }
 
 function textFor(value: unknown): string {
