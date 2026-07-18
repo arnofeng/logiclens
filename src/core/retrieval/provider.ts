@@ -5,6 +5,8 @@ import type {
   LexicalQuery,
   LexicalSearchOptions
 } from "./types.js";
+import type { GraphDB } from "../graph-model/db.js";
+import { getGraphProviderRegistration, type GraphProviderId } from "../graph-model/factory.js";
 
 export interface NativeLexicalCapabilities {
   scope: "workspace";
@@ -88,4 +90,31 @@ export interface WorkspaceLexicalStore {
   search(query: Readonly<LexicalQuery>, options: Readonly<LexicalSearchOptions>): Promise<readonly LexicalHit[]>;
   loadDocuments(request: Readonly<LoadDocumentsRequest>): Promise<readonly LexicalDocument[]>;
   health(workspaceId: string): Promise<LexicalIndexHealth>;
+}
+
+export async function resolveWorkspaceLexicalStore(input: {
+  db: GraphDB | (() => Promise<GraphDB>);
+  graphProvider: GraphProviderId;
+  lexicalProvider: GraphProviderId | "auto";
+  scope: NativeLexicalCapabilities["scope"];
+}): Promise<WorkspaceLexicalStore> {
+  const providerId = input.lexicalProvider === "auto"
+    ? input.graphProvider
+    : input.lexicalProvider;
+  const registration = await getGraphProviderRegistration(providerId);
+  const capability = registration.capabilities.nativeFullText;
+  if (!capability) {
+    throw new Error(`Lexical provider "${providerId}" does not declare nativeFullText capability`);
+  }
+  if (!registration.bindLexical) {
+    throw new Error(`Lexical provider "${providerId}" does not provide bindLexical`);
+  }
+  if (capability.scope !== input.scope) {
+    throw new Error(
+      `Lexical provider "${providerId}" does not support configured scope ` +
+      `"${input.scope}" (supports "${capability.scope}")`
+    );
+  }
+  const db = typeof input.db === "function" ? await input.db() : input.db;
+  return registration.bindLexical(db);
 }

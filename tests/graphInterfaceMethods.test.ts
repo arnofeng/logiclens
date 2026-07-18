@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, expectTypeOf, it, vi, beforeEach } from "vitest";
 import type { GraphDB, ActiveAliasOverride } from "../src/core/graph-model/db.js";
 import type { RepoNode, ParsedGraphFile } from "../src/core/parsing/types.js";
 
@@ -54,7 +54,7 @@ function createMockDb(overrides: Partial<GraphDB> = {}): GraphDB {
     addSectionDocumentsCode: vi.fn(), addSectionReferencesFile: vi.fn(),
     clearRepoDependencies: vi.fn(), clearRepoIndexedArtifacts: vi.fn(),
     beginGraphWriteBatch: vi.fn(), commitGraphWriteBatch: vi.fn(),
-    failGraphWriteBatch: vi.fn(), recoverIncompleteGraphWriteBatches: vi.fn(),
+    failGraphWriteBatch: vi.fn(), updateGraphWriteBatch: vi.fn(), recoverIncompleteGraphWriteBatches: vi.fn(),
     cleanupGraphWriteBatch: vi.fn(), markRepoArtifactsStale: vi.fn(),
     upsertIndexState: vi.fn(), knownFileHashes: vi.fn(), repoCount: vi.fn(),
     listRepos: vi.fn().mockResolvedValue([]),
@@ -96,6 +96,14 @@ describe("listActiveAliasOverrides integration in upsertParsedFiles", () => {
     expect(buildGraphFactsBatch).toHaveBeenCalledWith(
       expect.objectContaining({ aliasOverrides: [] })
     );
+  });
+});
+
+describe("GraphDB journal contract", () => {
+  it("requires persistent graph-write stage updates", () => {
+    expectTypeOf<GraphDB["updateGraphWriteBatch"]>().toEqualTypeOf<(
+      input: { batchId: string; updatedAt: string; completedStage: string }
+    ) => Promise<void>>();
   });
 });
 

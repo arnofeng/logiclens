@@ -60,6 +60,7 @@ export type GraphWriteBatchJournal = {
   repoNames: string[];
   writerMode: string;
   atomicityMode: GraphWriteAtomicityMode;
+  workspaceId?: string;
   status: GraphWriteBatchStatus;
   startedAt: string;
   updatedAt: string;
@@ -126,9 +127,14 @@ export interface GraphDB {
   clearRepoDependencies(repoIds?: string[]): Promise<void>;
   clearRepoIndexedArtifacts(repoId: string): Promise<void>;
   beginGraphWriteBatch(journal: Omit<GraphWriteBatchJournal, "status" | "updatedAt"> & { updatedAt?: string }): Promise<void>;
+  updateGraphWriteBatch(input: { batchId: string; updatedAt: string; completedStage: string }): Promise<void>;
   commitGraphWriteBatch(input: { batchId: string; updatedAt: string; completedStage?: string }): Promise<void>;
   failGraphWriteBatch(input: { batchId: string; updatedAt: string; error: string; completedStage?: string; awaitingCleanup?: boolean }): Promise<void>;
-  recoverIncompleteGraphWriteBatches(input: { repoIds?: string[]; updatedAt: string }): Promise<GraphWriteBatchJournal[]>;
+  recoverIncompleteGraphWriteBatches(input: {
+    repoIds?: string[];
+    updatedAt: string;
+    cleanupBatch?: (journal: GraphWriteBatchJournal) => Promise<void>;
+  }): Promise<GraphWriteBatchJournal[]>;
   cleanupGraphWriteBatch(batchId: string): Promise<void>;
   markRepoArtifactsStale(input: { repoId: string; activeFileIds: string[]; batchId: string; indexedAt: string }): Promise<number>;
   upsertIndexState(state: { repoId: string; repoName: string; lastBatchId: string; lastIndexedAt: string; lastCommitSha: string; filesScanned: number; filesChanged: number; filesStale: number; status: string; error?: string; graphWriteAtomicity?: GraphWriteAtomicityMode; graphWriteStatus?: GraphWriteBatchStatus }): Promise<void>;

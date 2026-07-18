@@ -10,7 +10,7 @@ export const schemaStatements = [
   "CREATE NODE TABLE IF NOT EXISTS Operation(id STRING, verb STRING, entityName STRING, description STRING, PRIMARY KEY(id));",
   "CREATE NODE TABLE IF NOT EXISTS Workflow(id STRING, name STRING, description STRING, PRIMARY KEY(id));",
   "CREATE NODE TABLE IF NOT EXISTS IndexState(id STRING, repoId STRING, repoName STRING, lastBatchId STRING, lastIndexedAt STRING, lastCommitSha STRING, filesScanned INT64, filesChanged INT64, filesStale INT64, status STRING, error STRING, graphWriteAtomicity STRING, graphWriteStatus STRING, PRIMARY KEY(id));",
-  "CREATE NODE TABLE IF NOT EXISTS GraphWriteBatch(id STRING, batchId STRING, repoIds STRING, repoNames STRING, writerMode STRING, atomicityMode STRING, status STRING, startedAt STRING, updatedAt STRING, completedStage STRING, error STRING, PRIMARY KEY(id));",
+  "CREATE NODE TABLE IF NOT EXISTS GraphWriteBatch(id STRING, batchId STRING, repoIds STRING, repoNames STRING, writerMode STRING, atomicityMode STRING, workspaceId STRING, status STRING, startedAt STRING, updatedAt STRING, completedStage STRING, error STRING, PRIMARY KEY(id));",
   "CREATE NODE TABLE IF NOT EXISTS RelationFeedback(id STRING, evidenceId STRING, action STRING, reason STRING, createdAt STRING, PRIMARY KEY(id));",
   "CREATE NODE TABLE IF NOT EXISTS AliasOverride(id STRING, alias STRING, targetRepoId STRING, reason STRING, createdAt STRING, active BOOL, PRIMARY KEY(id));",
   "CREATE NODE TABLE IF NOT EXISTS Contract(id STRING, kind STRING, key STRING, name STRING, description STRING, PRIMARY KEY(id));",

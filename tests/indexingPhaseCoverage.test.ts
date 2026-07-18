@@ -8,8 +8,11 @@ import { runFactBuildPhase } from "../src/core/indexing/graphWrite.js";
 import { runFullCopyBulkIndex, sumCounts } from "../src/core/indexing/orchestrator.js";
 import { planIndexRun } from "../src/core/indexing/planning.js";
 import { runLlmSummaryPhase } from "../src/core/indexing/summaries.js";
-import type { IndexRunContext } from "../src/core/indexing/context.js";
+import { createIndexRunContext, type IndexRunContext } from "../src/core/indexing/context.js";
 import type { RepoNode } from "../src/core/parsing/types.js";
+import type { WorkspaceLexicalStore } from "../src/core/retrieval/provider.js";
+import { registerGraphProvider } from "../src/core/graph-model/factory.js";
+import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
 
 const repo: RepoNode = {
   id: "repo:phase-service",
@@ -39,6 +42,59 @@ function dbWithRepoCount(count: number): KuzuGraphDB {
 }
 
 describe("indexing phase coverage", () => {
+  it("binds one lexical store to the current db and derives workspace identity only from systemName", async () => {
+    const db = dbWithRepoCount(0);
+    const store = {} as WorkspaceLexicalStore;
+    const bindLexical = vi.fn(() => store);
+    registerGraphProvider("index-context-auto", {
+      factory: { open: vi.fn() },
+      capabilities: { nativeFullText: { scope: "workspace", updateConsistency: "synchronous", supportsFieldBoost: false, supportsPrefix: false } },
+      bindLexical
+    });
+    const config = configSchema.parse({ systemName: "  ＬＯＧＩＣ Café  ", graph: { provider: "index-context-auto" } });
+    const ctx = await createIndexRunContext({
+      db, cwd: "C:/one", config, options: {}, logger: {}, writeMode: "auto",
+      additionalIndexFilesByRepo: new Map(), activePluginSourceGlobsByRepo: new Map()
+    });
+    expect(ctx.workspaceId).toBe(deriveWorkspaceId("  ＬＯＧＩＣ Café  "));
+    expect(ctx.lexicalStore).toBe(store);
+    expect(bindLexical).toHaveBeenCalledTimes(1);
+    expect(bindLexical).toHaveBeenCalledWith(db);
+  });
+
+  it("keeps workspace identity stable across cwd and indexing entry modes", async () => {
+    const db = dbWithRepoCount(0);
+    registerGraphProvider("index-context-paths", {
+      factory: { open: vi.fn() },
+      capabilities: { nativeFullText: { scope: "workspace", updateConsistency: "synchronous", supportsFieldBoost: false, supportsPrefix: false } },
+      bindLexical: () => ({} as WorkspaceLexicalStore)
+    });
+    const base = configSchema.parse({ systemName: "Cafe\u0301", graph: { provider: "index-context-paths" } });
+    const contexts = await Promise.all([
+      ["C:/batched", "auto", {}],
+      ["D:/full-copy", "bulk", {}],
+      ["E:/per-repo", "merge", { repo: "service-a" }],
+      ["F:/changed", "auto", { changedOnly: true }]
+    ].map(async ([cwd, writeMode, options]) => createIndexRunContext({
+      db, cwd: cwd as string, config: base, options: options as {}, logger: {}, writeMode: writeMode as IndexRunContext["writeMode"],
+      additionalIndexFilesByRepo: new Map(), activePluginSourceGlobsByRepo: new Map()
+    })));
+    expect(new Set(contexts.map((ctx) => ctx.workspaceId))).toEqual(new Set([deriveWorkspaceId("CAFÉ")]));
+  });
+
+  it("uses an explicit lexical provider registration with the indexing db", async () => {
+    const db = dbWithRepoCount(0);
+    const bindLexical = vi.fn(() => ({} as WorkspaceLexicalStore));
+    registerGraphProvider("index-context-graph", { factory: { open: vi.fn() }, capabilities: {} });
+    registerGraphProvider("index-context-explicit", {
+      factory: { open: vi.fn() },
+      capabilities: { nativeFullText: { scope: "workspace", updateConsistency: "transactional", supportsFieldBoost: true, supportsPrefix: true } },
+      bindLexical
+    });
+    const config = configSchema.parse({ graph: { provider: "index-context-graph" }, retrieval: { lexical: { provider: "index-context-explicit", scope: "workspace" } } });
+    await createIndexRunContext({ db, cwd: process.cwd(), config, options: {}, logger: {}, writeMode: "auto", additionalIndexFilesByRepo: new Map(), activePluginSourceGlobsByRepo: new Map() });
+    expect(bindLexical).toHaveBeenCalledWith(db);
+  });
   it("plans automatic batched full indexing for large repo sets", async () => {
     const planning = await planIndexRun({
       db: dbWithRepoCount(0),
@@ -187,6 +243,8 @@ describe("indexing phase coverage", () => {
         config,
         logger: { createProgressBar: () => ({ tick: () => {}, update: () => {}, complete: () => {}, reporter: () => () => {} }) },
         writeMode: "bulk",
+        workspaceId: "workspace:test",
+        lexicalStore: {} as WorkspaceLexicalStore,
         additionalIndexFilesByRepo: new Map(),
         activePluginSourceGlobsByRepo: new Map(),
         llm: { summaryLevel: "off" },

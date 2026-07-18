@@ -31,7 +31,8 @@ export async function runIndexing(
     warn: (message) => logger.warn?.(message),
     log: (message) => logger.log?.(message)
   });
-  const ctx = createIndexRunContext({
+  const ctx = await createIndexRunContext({
+    db,
     cwd,
     config,
     options,

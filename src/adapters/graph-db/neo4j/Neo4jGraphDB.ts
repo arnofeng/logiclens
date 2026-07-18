@@ -367,7 +367,7 @@ export class Neo4jGraphDB implements GraphDB {
   async beginGraphWriteBatch(journal: Omit<GraphWriteBatchJournal, "status" | "updatedAt"> & { updatedAt?: string }): Promise<void> {
     const updatedAt = journal.updatedAt ?? journal.startedAt;
     await this.query(
-      "MERGE (b:GraphWriteBatch {id: $id}) ON CREATE SET b.batchId=$batchId, b.repoIds=$repoIds, b.repoNames=$repoNames, b.writerMode=$writerMode, b.atomicityMode=$atomicityMode, b.status=$status, b.startedAt=$startedAt, b.updatedAt=$updatedAt, b.completedStage=$completedStage, b.error=$error ON MATCH SET b.batchId=$batchId, b.repoIds=$repoIds, b.repoNames=$repoNames, b.writerMode=$writerMode, b.atomicityMode=$atomicityMode, b.status=$status, b.startedAt=$startedAt, b.updatedAt=$updatedAt, b.completedStage=$completedStage, b.error=$error;",
+      "MERGE (b:GraphWriteBatch {id: $id}) ON CREATE SET b.batchId=$batchId, b.repoIds=$repoIds, b.repoNames=$repoNames, b.writerMode=$writerMode, b.atomicityMode=$atomicityMode, b.workspaceId=$workspaceId, b.status=$status, b.startedAt=$startedAt, b.updatedAt=$updatedAt, b.completedStage=$completedStage, b.error=$error ON MATCH SET b.batchId=$batchId, b.repoIds=$repoIds, b.repoNames=$repoNames, b.writerMode=$writerMode, b.atomicityMode=$atomicityMode, b.workspaceId=$workspaceId, b.status=$status, b.startedAt=$startedAt, b.updatedAt=$updatedAt, b.completedStage=$completedStage, b.error=$error;",
       {
         id: `graph-write:${journal.batchId}`,
         batchId: journal.batchId,
@@ -375,6 +375,7 @@ export class Neo4jGraphDB implements GraphDB {
         repoNames: JSON.stringify(journal.repoNames),
         writerMode: journal.writerMode,
         atomicityMode: journal.atomicityMode,
+        workspaceId: journal.workspaceId ?? "",
         status: "started",
         startedAt: journal.startedAt,
         updatedAt,
@@ -404,27 +405,52 @@ export class Neo4jGraphDB implements GraphDB {
     );
   }
 
-  async recoverIncompleteGraphWriteBatches(input: { repoIds?: string[]; updatedAt: string }): Promise<GraphWriteBatchJournal[]> {
+  async recoverIncompleteGraphWriteBatches(input: { repoIds?: string[]; updatedAt: string; cleanupBatch?: (journal: GraphWriteBatchJournal) => Promise<void> }): Promise<GraphWriteBatchJournal[]> {
     const rows = await this.query<{
       batchId: string;
       repoIds: string;
       repoNames: string;
       writerMode: string;
       atomicityMode: GraphWriteAtomicityMode;
+      workspaceId?: string | null;
       status: GraphWriteBatchStatus;
       startedAt: string;
       updatedAt: string;
       completedStage: string;
       error: string;
     }>(
-      "MATCH (b:GraphWriteBatch) WHERE b.status = 'started' OR b.status = 'awaiting-cleanup' RETURN b.batchId AS batchId, b.repoIds AS repoIds, b.repoNames AS repoNames, b.writerMode AS writerMode, b.atomicityMode AS atomicityMode, b.status AS status, b.startedAt AS startedAt, b.updatedAt AS updatedAt, b.completedStage AS completedStage, b.error AS error;"
+      "MATCH (b:GraphWriteBatch) WHERE b.status = 'started' OR b.status = 'awaiting-cleanup' RETURN b.batchId AS batchId, b.repoIds AS repoIds, b.repoNames AS repoNames, b.writerMode AS writerMode, b.atomicityMode AS atomicityMode, b.workspaceId AS workspaceId, b.status AS status, b.startedAt AS startedAt, b.updatedAt AS updatedAt, b.completedStage AS completedStage, b.error AS error;"
     );
     const repoFilter = input.repoIds && input.repoIds.length > 0 ? new Set(input.repoIds) : undefined;
     const journals = rows
       .map((row) => decodeJournalRow(row))
       .filter((journal) => !repoFilter || journal.repoIds.some((repoId) => repoFilter.has(repoId)));
     for (const journal of journals) {
-      await this.cleanupGraphWriteBatch(journal.batchId);
+      const cleanupErrors: string[] = [];
+      try {
+        await this.cleanupGraphWriteBatch(journal.batchId);
+      } catch (error) {
+        cleanupErrors.push(`graph: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      if (journal.workspaceId && !input.cleanupBatch) {
+        cleanupErrors.push("lexical: cleanup callback is required for a workspace-scoped journal");
+      } else {
+        try {
+          await input.cleanupBatch?.(journal);
+        } catch (error) {
+          cleanupErrors.push(`lexical: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      if (cleanupErrors.length > 0) {
+        await this.failGraphWriteBatch({
+          batchId: journal.batchId,
+          updatedAt: input.updatedAt,
+          error: cleanupErrors.join("; "),
+          completedStage: "recovery-cleanup-failed",
+          awaitingCleanup: true
+        });
+        throw new Error(`Failed to recover graph write batch ${journal.batchId}: ${cleanupErrors.join("; ")}`);
+      }
       await this.query(
         "MATCH (b:GraphWriteBatch {id: $id}) SET b.status=$status, b.updatedAt=$updatedAt, b.completedStage=$completedStage, b.error=$error;",
         {
@@ -516,6 +542,13 @@ export class Neo4jGraphDB implements GraphDB {
 
   async upsertIndexState(state: { repoId: string; repoName: string; lastBatchId: string; lastIndexedAt: string; lastCommitSha: string; filesScanned: number; filesChanged: number; filesStale: number; status: string; error?: string; graphWriteAtomicity?: GraphWriteAtomicityMode; graphWriteStatus?: GraphWriteBatchStatus }): Promise<void> {
     await this.crud.upsertIndexState(state);
+  }
+
+  async updateGraphWriteBatch(input: { batchId: string; updatedAt: string; completedStage: string }): Promise<void> {
+    await this.query(
+      "MATCH (b:GraphWriteBatch {id: $id}) SET b.updatedAt=$updatedAt, b.completedStage=$completedStage;",
+      { id: `graph-write:${input.batchId}`, updatedAt: input.updatedAt, completedStage: input.completedStage }
+    );
   }
 
   async knownFileHashes(repoIdValue: string): Promise<Map<string, string>> {
@@ -715,6 +748,7 @@ export function decodeJournalRow(row: {
   repoNames: string;
   writerMode: string;
   atomicityMode: GraphWriteAtomicityMode;
+  workspaceId?: string | null;
   status: GraphWriteBatchStatus;
   startedAt: string;
   updatedAt: string;
@@ -727,6 +761,7 @@ export function decodeJournalRow(row: {
     repoNames: decodeList(row.repoNames),
     writerMode: row.writerMode,
     atomicityMode: row.atomicityMode,
+    workspaceId: row.workspaceId || undefined,
     status: row.status,
     startedAt: row.startedAt,
     updatedAt: row.updatedAt,

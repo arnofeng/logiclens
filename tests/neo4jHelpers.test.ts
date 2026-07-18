@@ -163,6 +163,22 @@ describe("Neo4j decodeJournalRow", () => {
     expect(result.completedStage).toBeUndefined();
   });
 
+  it("reads legacy journal rows without workspace identity", () => {
+    const result = decodeJournalRow({
+      batchId: "batch:legacy",
+      repoIds: '["repo:a"]',
+      repoNames: '["service-a"]',
+      writerMode: "merge",
+      atomicityMode: "journaled-recoverable",
+      status: "started",
+      startedAt: "2024-01-01T00:00:00Z",
+      updatedAt: "2024-01-01T00:00:00Z",
+      completedStage: "graph-written",
+      error: ""
+    });
+    expect(result.workspaceId).toBeUndefined();
+  });
+
   it("sets error to undefined when empty", () => {
     const row = {
       batchId: "batch:3",

@@ -1,5 +1,8 @@
 import type { AppConfig } from "../../config/schema.js";
 import type { RepoNode } from "../parsing/types.js";
+import type { GraphDB } from "../graph-model/db.js";
+import { resolveWorkspaceLexicalStore, type WorkspaceLexicalStore } from "../retrieval/provider.js";
+import { deriveWorkspaceId } from "../workspace/identity.js";
 import type { IndexLogger, IndexOptions } from "./types.js";
 
 export type IndexWriteMode = NonNullable<IndexOptions["writeMode"]>;
@@ -9,6 +12,8 @@ export type IndexRunContext = {
   config: AppConfig;
   logger: IndexLogger;
   writeMode: IndexWriteMode;
+  workspaceId: string;
+  lexicalStore: WorkspaceLexicalStore;
   additionalIndexFilesByRepo: ReadonlyMap<string, readonly string[]>;
   activePluginSourceGlobsByRepo: ReadonlyMap<string, readonly string[]>;
   llm: {
@@ -35,7 +40,8 @@ export type IndexBatchPlan = {
   repos: RepoNode[];
 };
 
-export function createIndexRunContext(input: {
+export async function createIndexRunContext(input: {
+  db: GraphDB;
   cwd: string;
   config: AppConfig;
   options: IndexOptions;
@@ -43,13 +49,22 @@ export function createIndexRunContext(input: {
   writeMode: IndexWriteMode;
   additionalIndexFilesByRepo: ReadonlyMap<string, readonly string[]>;
   activePluginSourceGlobsByRepo: ReadonlyMap<string, readonly string[]>;
-}): IndexRunContext {
-  const { cwd, config, options: _options, logger, writeMode, additionalIndexFilesByRepo, activePluginSourceGlobsByRepo } = input;
+}): Promise<IndexRunContext> {
+  const { db, cwd, config, options: _options, logger, writeMode, additionalIndexFilesByRepo, activePluginSourceGlobsByRepo } = input;
+  const workspaceId = deriveWorkspaceId(config.systemName);
+  const lexicalStore = await resolveWorkspaceLexicalStore({
+    db,
+    graphProvider: config.graph.provider,
+    lexicalProvider: config.retrieval.lexical.provider,
+    scope: config.retrieval.lexical.scope
+  });
   return {
     cwd,
     config,
     logger,
     writeMode,
+    workspaceId,
+    lexicalStore,
     additionalIndexFilesByRepo,
     activePluginSourceGlobsByRepo,
     llm: {

@@ -60,18 +60,22 @@ describe("graph write journal", () => {
         repoNames: ["journal"],
         writerMode: "bulk-upsert",
         atomicityMode: "journaled-recoverable",
+        workspaceId: "workspace:journal",
         startedAt: "2026-06-22T00:00:00.000Z"
       });
 
       const before = await db.stats();
       expect(before.files).toBe(1);
 
+      const lexicalCleanup: Array<{ workspaceId?: string; batchId: string }> = [];
       const recovered = await db.recoverIncompleteGraphWriteBatches({
         repoIds: ["repo:journal"],
-        updatedAt: "2026-06-22T00:01:00.000Z"
+        updatedAt: "2026-06-22T00:01:00.000Z",
+        cleanupBatch: async (journal) => { lexicalCleanup.push({ workspaceId: journal.workspaceId, batchId: journal.batchId }); }
       });
 
       expect(recovered.map((journal) => journal.batchId)).toEqual([batchId]);
+      expect(lexicalCleanup).toEqual([{ workspaceId: "workspace:journal", batchId }]);
       const after = await db.stats();
       expect(after.files).toBe(0);
       const states = await db.query<{ status: string; completedStage: string }>(
@@ -107,6 +111,71 @@ describe("graph write journal", () => {
 
       expect(recovered).toEqual([]);
       expect((await db.stats()).files).toBe(1);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("keeps awaiting-cleanup when lexical recovery fails and retries both sides next run", async () => {
+    const { db } = await tempGraph();
+    try {
+      const batchId = "batch:journal-lexical-retry";
+      await db.upsertRepo(repo());
+      await db.upsertFile(file(batchId));
+      await db.beginGraphWriteBatch({
+        batchId,
+        repoIds: ["repo:journal"],
+        repoNames: ["journal"],
+        writerMode: "merge",
+        atomicityMode: "journaled-recoverable",
+        workspaceId: "workspace:journal",
+        startedAt: "2026-06-22T00:00:00.000Z",
+        completedStage: "graph-written"
+      });
+      let lexicalAttempts = 0;
+      await expect(db.recoverIncompleteGraphWriteBatches({
+        updatedAt: "2026-06-22T00:01:00.000Z",
+        cleanupBatch: async () => { lexicalAttempts++; throw new Error("lexical cleanup failed"); }
+      })).rejects.toThrow("lexical cleanup failed");
+      const awaiting = await db.query<{ status: string; completedStage: string }>(
+        "MATCH (b:GraphWriteBatch) WHERE b.batchId = $batchId RETURN b.status AS status, b.completedStage AS completedStage;",
+        { batchId }
+      );
+      expect(awaiting[0]).toEqual({ status: "awaiting-cleanup", completedStage: "recovery-cleanup-failed" });
+
+      await db.recoverIncompleteGraphWriteBatches({
+        updatedAt: "2026-06-22T00:02:00.000Z",
+        cleanupBatch: async () => { lexicalAttempts++; }
+      });
+      expect(lexicalAttempts).toBe(2);
+      expect((await db.stats()).files).toBe(0);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("requires lexical cleanup to recover a workspace-scoped journal", async () => {
+    const { db } = await tempGraph();
+    try {
+      const batchId = "batch:journal-missing-lexical-cleanup";
+      await db.beginGraphWriteBatch({
+        batchId,
+        repoIds: ["repo:journal"],
+        repoNames: ["journal"],
+        writerMode: "merge",
+        atomicityMode: "journaled-recoverable",
+        workspaceId: "workspace:journal",
+        startedAt: "2026-06-22T00:00:00.000Z",
+        completedStage: "lexical-written"
+      });
+      await expect(db.recoverIncompleteGraphWriteBatches({
+        updatedAt: "2026-06-22T00:01:00.000Z"
+      })).rejects.toThrow("cleanup callback is required");
+      const states = await db.query<{ status: string; completedStage: string }>(
+        "MATCH (b:GraphWriteBatch) WHERE b.batchId = $batchId RETURN b.status AS status, b.completedStage AS completedStage;",
+        { batchId }
+      );
+      expect(states[0]).toEqual({ status: "awaiting-cleanup", completedStage: "recovery-cleanup-failed" });
     } finally {
       await db.close();
     }

@@ -12,6 +12,7 @@ import { runIndexPhase } from "./phases.js";
 import { shouldSummarizeGraphWithLlm, summarizeGraphWithProgress } from "./summaries.js";
 import type { ProgressReporter } from "../../shared/progress.js";
 import { BRAND_PATHS } from "../../shared/branding.js";
+import type { WorkspaceLexicalStore } from "../retrieval/provider.js";
 
 export type GraphWriterMode = "bulk-copy" | "append-copy" | "bulk-upsert" | "merge";
 
@@ -266,8 +267,13 @@ export async function runGraphWritePhase(input: {
   createProgressBar: (label: string, total: number) => ProgressBarLike;
   log: (message: string) => void;
   warn: (message: string) => void;
+  lexical?: {
+    store: WorkspaceLexicalStore;
+    workspaceId: string;
+    write: () => Promise<unknown>;
+  };
 }): Promise<GraphWriteResult> {
-  const { db, cwd, selection, facts, repos, parsedFiles, config, llmSummaryLevel, openAiApiKey, openAiBaseUrl, label, repoName, createProgressBar, log, warn } = input;
+  const { db, cwd, selection, facts, repos, parsedFiles, config, llmSummaryLevel, openAiApiKey, openAiBaseUrl, label, repoName, createProgressBar, log, warn, lexical } = input;
   const result = await runIndexPhase({
     phase: "graph-write",
     repoName,
@@ -276,11 +282,21 @@ export async function runGraphWritePhase(input: {
   }, async () => {
     let fallback = false;
     let fallbackError: string | undefined;
+    let graphWriteCompleted = false;
     const stagingRoot = path.resolve(cwd, BRAND_PATHS.batchStaging);
     const repoIds = repos.map((repo) => repo.id);
     const repoNames = repos.map((repo) => repo.name);
     const atomicityMode = graphWriteAtomicityMode(selection.mode);
-    const recovered = await db.recoverIncompleteGraphWriteBatches({ repoIds, updatedAt: new Date().toISOString() });
+    const recovered = await db.recoverIncompleteGraphWriteBatches({
+      repoIds,
+      updatedAt: new Date().toISOString(),
+      cleanupBatch: lexical
+        ? (journal) => lexical.store.cleanupBatch({
+          workspaceId: journal.workspaceId ?? lexical.workspaceId,
+          batchId: journal.batchId
+        })
+        : undefined
+    });
     for (const journal of recovered) {
       warn(`Recovered incomplete graph writer batch repo=${journal.repoNames.join(",")} batchId=${journal.batchId} writer=${journal.writerMode}`);
     }
@@ -292,22 +308,58 @@ export async function runGraphWritePhase(input: {
       repoNames,
       writerMode: selection.mode,
       atomicityMode,
+      workspaceId: lexical?.workspaceId,
       startedAt: new Date().toISOString(),
       completedStage: "begin"
     });
     async function cleanupFailedBatch(error: unknown, completedStage: string): Promise<GraphWriteBatchStatus> {
-      await db.failGraphWriteBatch({ batchId: facts.batchId, updatedAt: new Date().toISOString(), error: errorMessage(error), completedStage, awaitingCleanup: true });
+      const cleanupErrors: string[] = [];
+      try {
+        await db.failGraphWriteBatch({ batchId: facts.batchId, updatedAt: new Date().toISOString(), error: errorMessage(error), completedStage, awaitingCleanup: true });
+      } catch (journalError) {
+        cleanupErrors.push(`journal: ${errorMessage(journalError)}`);
+      }
       try {
         await db.cleanupGraphWriteBatch(facts.batchId);
-        await db.failGraphWriteBatch({ batchId: facts.batchId, updatedAt: new Date().toISOString(), error: errorMessage(error), completedStage: `${completedStage}-cleanup-complete` });
-        return "failed";
       } catch (cleanupError) {
-        // If cleanup itself fails, preserve the journal as awaiting-cleanup so
-        // the next graph-write phase can recover it before making new results
-        // visible for the same repo scope.
-        await db.failGraphWriteBatch({ batchId: facts.batchId, updatedAt: new Date().toISOString(), error: errorMessage(cleanupError), completedStage: `${completedStage}-cleanup-failed`, awaitingCleanup: true });
-        return "awaiting-cleanup";
+        cleanupErrors.push(`graph: ${errorMessage(cleanupError)}`);
       }
+      try {
+        await lexical?.store.cleanupBatch({ workspaceId: lexical.workspaceId, batchId: facts.batchId });
+      } catch (cleanupError) {
+        cleanupErrors.push(`lexical: ${errorMessage(cleanupError)}`);
+      }
+      const providerCleanupFailed = cleanupErrors.some((cleanupError) => !cleanupError.startsWith("journal:"));
+      if (!providerCleanupFailed) {
+        try {
+          await db.failGraphWriteBatch({ batchId: facts.batchId, updatedAt: new Date().toISOString(), error: errorMessage(error), completedStage: `${completedStage}-cleanup-complete` });
+          return "failed";
+        } catch {
+          return "awaiting-cleanup";
+        }
+      }
+      try {
+        await db.failGraphWriteBatch({
+          batchId: facts.batchId,
+          updatedAt: new Date().toISOString(),
+          error: `${errorMessage(error)}; cleanup: ${cleanupErrors.join("; ")}`,
+          completedStage: `${completedStage}-cleanup-failed`,
+          awaitingCleanup: true
+        });
+      } catch {}
+      return "awaiting-cleanup";
+    }
+
+    async function finishSuccessfulGraphWrite(stagePrefix = ""): Promise<void> {
+      const graphStage = stagePrefix ? `${stagePrefix}-graph-written` : "graph-written";
+      const lexicalStage = stagePrefix ? `${stagePrefix}-lexical-written` : "lexical-written";
+      await db.updateGraphWriteBatch({ batchId: facts.batchId, updatedAt: new Date().toISOString(), completedStage: graphStage });
+      graphWriteCompleted = true;
+      if (lexical) {
+        await lexical.write();
+        await db.updateGraphWriteBatch({ batchId: facts.batchId, updatedAt: new Date().toISOString(), completedStage: lexicalStage });
+      }
+      await db.commitGraphWriteBatch({ batchId: facts.batchId, updatedAt: new Date().toISOString(), completedStage: stagePrefix ? `${stagePrefix}-commit` : "commit" });
     }
 
     try {
@@ -339,10 +391,11 @@ export async function runGraphWritePhase(input: {
           await generateAndUpdateSummaries({ db, repos, parsedFiles, crossRepo: facts.crossRepo, config, llmSummaryLevel, openAiApiKey, openAiBaseUrl, label, createProgressBar });
         }
       }
-      await db.commitGraphWriteBatch({ batchId: facts.batchId, updatedAt: new Date().toISOString(), completedStage: "commit" });
+      await finishSuccessfulGraphWrite();
     } catch (error) {
-      const writeFailureStatus = await cleanupFailedBatch(error, "write-failed");
-      if (!selection.fallbackToMerge) {
+      const failedAfterGraphWrite = graphWriteCompleted;
+      const writeFailureStatus = await cleanupFailedBatch(error, failedAfterGraphWrite ? "lexical-write-failed" : "graph-write-failed");
+      if (failedAfterGraphWrite || writeFailureStatus !== "failed" || !selection.fallbackToMerge) {
         throw markGraphWriteFailure(error, { graphWriteAtomicity: atomicityMode, graphWriteStatus: writeFailureStatus });
       }
       fallback = true;
@@ -354,15 +407,20 @@ export async function runGraphWritePhase(input: {
         repoNames,
         writerMode: "merge",
         atomicityMode,
+        workspaceId: lexical?.workspaceId,
         startedAt: new Date().toISOString(),
         completedStage: "fallback-begin",
         error: fallbackError
       });
+      graphWriteCompleted = false;
       try {
         await writeWithMerge({ db, batchId: facts.batchId, repos, parsedFiles, config, llmSummaryLevel, openAiApiKey, openAiBaseUrl });
-        await db.commitGraphWriteBatch({ batchId: facts.batchId, updatedAt: new Date().toISOString(), completedStage: "fallback-commit" });
+        await finishSuccessfulGraphWrite("fallback");
       } catch (fallbackWriteError) {
-        const fallbackFailureStatus = await cleanupFailedBatch(fallbackWriteError, "fallback-failed");
+        const fallbackFailureStatus = await cleanupFailedBatch(
+          fallbackWriteError,
+          graphWriteCompleted ? "fallback-lexical-write-failed" : "fallback-graph-write-failed"
+        );
         throw markGraphWriteFailure(fallbackWriteError, { graphWriteAtomicity: atomicityMode, graphWriteStatus: fallbackFailureStatus });
       }
     } finally {
