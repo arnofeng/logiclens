@@ -175,6 +175,12 @@ export class KuzuGraphDB implements GraphDB {
     await this.ensureColumn("Repo", "summary", "STRING");
     await this.ensureColumn("IndexState", "graphWriteAtomicity", "STRING");
     await this.ensureColumn("IndexState", "graphWriteStatus", "STRING");
+    await this.ensureColumn("IndexState", "lexicalDocumentCount", "INT64");
+    await this.ensureColumn("IndexState", "lexicalProjectionSchemaVersion", "STRING");
+    await this.ensureColumn("IndexState", "lexicalTokenizerVersion", "STRING");
+    await this.ensureColumn("IndexState", "lexicalIndexStatus", "STRING");
+    await this.ensureColumn("IndexState", "lexicalProjectionDurationMs", "INT64");
+    await this.ensureColumn("IndexState", "lexicalWriteDurationMs", "INT64");
     await this.ensureColumn("GraphWriteBatch", "workspaceId", "STRING");
     for (const tableName of ["File", "Code", "Section", "Evidence"]) {
       await this.ensureColumn(tableName, "batchId", "STRING");

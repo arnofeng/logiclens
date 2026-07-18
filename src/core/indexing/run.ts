@@ -6,6 +6,7 @@ import { createIndexRunContext } from "./context.js";
 import { runBatchedFullIndex, runDependencyRebuild, runFullCopyBulkIndex, runPerRepoIndex, type IndexCounters } from "./orchestrator.js";
 import type { IndexLogger, IndexOptions, IndexResult } from "./types.js";
 import { autoDetectAndRegisterPlugins } from "../plugins/register.js";
+import { refreshSucceededIndexStateLexicalMetrics } from "./stateCommit.js";
 
 import { chunk } from "../../shared/chunk.js";
 
@@ -42,6 +43,9 @@ export async function runIndexing(
     activePluginSourceGlobsByRepo: pluginBootstrap.activePluginSourceGlobsByRepo
   });
   const totals: IndexCounters = { filesScanned: 0, filesChanged: 0 };
+  let lexicalProjectionDurationMs = 0;
+  let lexicalWriteDurationMs = 0;
+  const successfulRepoIds: string[] = [];
 
   // The command layer now only chooses the indexing route and aggregates the
   // public IndexResult. Scanning, parsing, graph writes, semantic writes, stale
@@ -53,6 +57,9 @@ export async function runIndexing(
     const repoBatches = chunk(planning.repoConfigs, planning.batchSize);
     const result = await runBatchedFullIndex({ db, ctx, repoBatches, options: { ...options, batchSize: planning.batchSize }, initialRepoCount: planning.initialRepoCount });
     addCounters(totals, result);
+    lexicalProjectionDurationMs += result.lexicalProjectionDurationMs;
+    lexicalWriteDurationMs += result.lexicalWriteDurationMs;
+    successfulRepoIds.push(...result.repos.map((repo) => repo.id));
     const rebuildStarted = Date.now();
     await runDependencyRebuild({ db, ctx });
     const dependencyRebuildMs = Date.now() - rebuildStarted;
@@ -60,13 +67,20 @@ export async function runIndexing(
   } else if (planning.runPath === "full-copy-bulk") {
     if (options.changedOnly) throw new Error("Bulk write mode currently supports full empty-graph imports only; use merge mode for --changed-only.");
     if (planning.writeMode === "bulk" && planning.initialRepoCount > 0) throw new Error("Bulk write mode supports empty graph imports only; use --write-mode auto, bulk-upsert, or merge for existing graphs.");
-    addCounters(totals, await runFullCopyBulkIndex({ db, ctx, planning, options }));
+    const result = await runFullCopyBulkIndex({ db, ctx, planning, options });
+    addCounters(totals, result);
+    lexicalProjectionDurationMs += result.lexicalProjectionDurationMs;
+    lexicalWriteDurationMs += result.lexicalWriteDurationMs;
+    successfulRepoIds.push(...result.repos.map((repo) => repo.id));
   } else {
     const indexedRepoIds: string[] = [];
     const jobs = await runIndexQueue(planning.repoConfigs, { concurrency: config.indexing.concurrency, retries: 1 }, async (repoConfig) => {
       const result = await runPerRepoIndex({ db, ctx, repoConfig, options });
       addCounters(totals, result);
+      lexicalProjectionDurationMs += result.lexicalProjectionDurationMs;
+      lexicalWriteDurationMs += result.lexicalWriteDurationMs;
       indexedRepoIds.push(...result.repos.map((repo) => repo.id));
+      successfulRepoIds.push(...result.repos.map((repo) => repo.id));
     }, (repoConfig) => `repo:${repoConfig.name}`);
     const failedJobs = jobs.filter((job) => job.status === "failed");
     if (failedJobs.length > 0) {
@@ -87,6 +101,22 @@ export async function runIndexing(
     await runDependencyRebuild({ db, ctx, repoIds: options.repo ? indexedRepoIds : undefined });
   }
 
+  // Compatibility metadata advances only after the complete workspace rebuild
+  // (including the final cross-repo relation rebuild) has succeeded. Batched
+  // indexing therefore commits versions once per run, never once per batch.
+  if (!options.changedOnly && !options.repo) await ctx.lexicalStore.commitVersions();
+
+  const lexicalHealth = await ctx.lexicalStore.health(ctx.workspaceId);
+  await refreshSucceededIndexStateLexicalMetrics({
+    db,
+    repoIds: successfulRepoIds,
+    lexicalDocumentCount: lexicalHealth.metrics.documentCount,
+    lexicalProjectionSchemaVersion: lexicalHealth.projectionSchemaVersion,
+    lexicalTokenizerVersion: lexicalHealth.tokenizerVersion,
+    lexicalIndexStatus: lexicalHealth.status,
+    lexicalProjectionDurationMs,
+    lexicalWriteDurationMs
+  });
   const stats = await db.stats();
   return {
     filesScanned: totals.filesScanned,
@@ -96,7 +126,13 @@ export async function runIndexing(
     callEdges: stats.callEdges,
     importEdges: stats.importEdges,
     entities: stats.entities,
-    durationMs: Date.now() - started
+    durationMs: Date.now() - started,
+    lexicalDocumentCount: lexicalHealth.metrics.documentCount,
+    lexicalProjectionSchemaVersion: lexicalHealth.projectionSchemaVersion,
+    lexicalTokenizerVersion: lexicalHealth.tokenizerVersion,
+    lexicalIndexStatus: lexicalHealth.status,
+    lexicalProjectionDurationMs,
+    lexicalWriteDurationMs
   };
 }
 

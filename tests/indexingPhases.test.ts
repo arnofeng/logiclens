@@ -46,6 +46,7 @@ function fakeStore() {
     commitVersions: vi.fn().mockResolvedValue(undefined),
     upsertDocuments: vi.fn().mockResolvedValue(undefined),
     reconcileRepoDocuments: vi.fn().mockResolvedValue(undefined),
+    reconcileRepoFileDocuments: vi.fn().mockResolvedValue(undefined),
     cleanupBatch: vi.fn().mockResolvedValue(undefined),
     search: vi.fn().mockResolvedValue([]),
     loadDocuments: vi.fn().mockResolvedValue([]),
@@ -132,15 +133,16 @@ describe("indexing phases", () => {
     });
   });
 
-  it("writes lexical documents in stable ensure/upsert/reconcile/health order", async () => {
+  it("writes lexical documents without repeating schema DDL inside the journal boundary", async () => {
     const store = fakeStore();
     const calls: string[] = [];
-    for (const method of ["ensureSchema", "upsertDocuments", "reconcileRepoDocuments", "health"] as const) {
+    for (const method of ["upsertDocuments", "reconcileRepoDocuments", "health"] as const) {
       (store[method] as ReturnType<typeof vi.fn>).mockImplementation(async () => { calls.push(method); return method === "health" ? health : undefined; });
     }
     const projected = await runLexicalProjectionPhase({ facts: facts(), workspaceId: "workspace:a" });
     const result = await runLexicalWritePhase({ store, workspaceId: "workspace:a", batchId: "batch:lexical", repos: [repo], documents: projected.documents });
-    expect(calls).toEqual(["ensureSchema", "upsertDocuments", "reconcileRepoDocuments", "health"]);
+    expect(calls).toEqual(["upsertDocuments", "reconcileRepoDocuments", "health"]);
+    expect(store.ensureSchema).not.toHaveBeenCalled();
     expect(result).toMatchObject({ documentCount: 1, reconciledRepoIds: [repo.id], indexStatus: "unhealthy", indexReasons: ["index_populating"] });
     expect(store.commitVersions).not.toHaveBeenCalled();
   });
@@ -187,15 +189,15 @@ describe("indexing phases", () => {
     expect(store.health).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["ensureSchema", "upsertDocuments", "reconcileRepoDocuments", "health"] as const)(
+  it.each(["upsertDocuments", "reconcileRepoDocuments", "health"] as const)(
     "wraps a %s failure and does not continue to later lexical steps",
     async (failedMethod) => {
       const store = fakeStore();
-      const providerError = new WorkspaceLexicalStoreError("write_failed", { operation: failedMethod === "ensureSchema" ? "ensureSchema" : failedMethod });
+      const providerError = new WorkspaceLexicalStoreError("write_failed", { operation: failedMethod });
       store[failedMethod].mockRejectedValueOnce(providerError);
       const projected = await runLexicalProjectionPhase({ facts: facts(), workspaceId: "workspace:a" });
       await expect(runLexicalWritePhase({ store, workspaceId: "workspace:a", batchId: "batch:lexical", repos: [repo], documents: projected.documents })).rejects.toMatchObject({ cause: providerError });
-      const order = ["ensureSchema", "upsertDocuments", "reconcileRepoDocuments", "health"] as const;
+      const order = ["upsertDocuments", "reconcileRepoDocuments", "health"] as const;
       for (const later of order.slice(order.indexOf(failedMethod) + 1)) expect(store[later]).not.toHaveBeenCalled();
     }
   );

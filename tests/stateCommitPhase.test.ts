@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { GraphDB } from "../src/core/graph-model/db.js";
 import type { RepoNode } from "../src/core/parsing/types.js";
-import { runIndexStateCommitPhase } from "../src/core/indexing/stateCommit.js";
+import { refreshSucceededIndexStateLexicalMetrics, runIndexStateCommitPhase } from "../src/core/indexing/stateCommit.js";
 import { runSemanticWritePhase, runStaleMarkPhase } from "../src/core/indexing/semanticWrite.js";
 import type { AppConfig } from "../src/config/schema.js";
 
@@ -91,6 +91,76 @@ describe("index state commit phase", () => {
       graphWriteAtomicity: "journaled-recoverable",
       graphWriteStatus: "committed"
     }));
+  });
+
+  it("records provider health versions, workspace snapshot count, and millisecond timings", async () => {
+    const upsertIndexState = vi.fn();
+    const db = { upsertIndexState } as unknown as GraphDB;
+    await runIndexStateCommitPhase({
+      db,
+      repo,
+      batchId: "batch:lexical-state",
+      indexedAt: "2026-06-22T00:00:00.000Z",
+      filesScanned: 2,
+      filesChanged: 1,
+      filesStale: 0,
+      status: "succeeded",
+      lexicalProjectionDurationMs: 7,
+      lexical: {
+        phase: "lexical-write",
+        durationMs: 11,
+        documentCount: 3,
+        reconciledRepoIds: [repo.id],
+        providerHealth: {
+          providerVersion: "provider-real",
+          projectionSchemaVersion: "schema-real",
+          tokenizerVersion: "tokenizer-real",
+          status: "healthy",
+          reasons: [],
+          metrics: { documentCount: 19, indexSizeBytes: 400 }
+        },
+        projectionSchemaVersion: "schema-real",
+        tokenizerVersion: "tokenizer-real",
+        indexStatus: "healthy",
+        indexReasons: []
+      }
+    });
+
+    expect(upsertIndexState).toHaveBeenCalledWith(expect.objectContaining({
+      lexicalDocumentCount: 19,
+      lexicalProjectionSchemaVersion: "schema-real",
+      lexicalTokenizerVersion: "tokenizer-real",
+      lexicalIndexStatus: "healthy",
+      lexicalProjectionDurationMs: 7,
+      lexicalWriteDurationMs: 11
+    }));
+  });
+
+  it("refreshes every successful repo from one final post-version-commit workspace snapshot", async () => {
+    const query = vi.fn().mockResolvedValue([]);
+    const db = { query } as unknown as GraphDB;
+    await refreshSucceededIndexStateLexicalMetrics({
+      db,
+      repoIds: ["repo:early", "repo:late", "repo:early"],
+      lexicalDocumentCount: 42,
+      lexicalProjectionSchemaVersion: "schema-current",
+      lexicalTokenizerVersion: "tokenizer-current",
+      lexicalIndexStatus: "healthy",
+      lexicalProjectionDurationMs: 17,
+      lexicalWriteDurationMs: 23
+    });
+
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(query.mock.calls[0]![0]).toContain("s.status = 'succeeded'");
+    expect(query.mock.calls[0]![1]).toEqual({
+      repoIds: ["repo:early", "repo:late"],
+      lexicalDocumentCount: 42,
+      lexicalProjectionSchemaVersion: "schema-current",
+      lexicalTokenizerVersion: "tokenizer-current",
+      lexicalIndexStatus: "healthy",
+      lexicalProjectionDurationMs: 17,
+      lexicalWriteDurationMs: 23
+    });
   });
 });
 

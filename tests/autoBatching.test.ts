@@ -10,7 +10,7 @@ describe("index auto batching", () => {
     registerGraphProvider("auto-batching-test", {
       factory: { open: async () => mockDb },
       capabilities: { nativeFullText: { scope: "workspace", updateConsistency: "synchronous", supportsFieldBoost: false, supportsPrefix: false } },
-      bindLexical: () => ({} as WorkspaceLexicalStore)
+      bindLexical: () => ({ ensureSchema: async () => {} } as WorkspaceLexicalStore)
     });
     const config = {
       ...defaultConfig(),

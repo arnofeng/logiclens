@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { shouldWatchRepo, shouldEnableWatcher, __resetWslCacheForTests } from "../src/features/watch/policy.js";
 import { FileMatcher, FileWatcher, WatchRepoIndex, planRecursiveWatchRoots } from "../src/features/watch/watcher.js";
@@ -10,6 +12,8 @@ import { buildFreshnessMetadata, buildFreshnessNotice, buildFreshnessWarning } f
 import { SingleProcessIndexQueue } from "../src/core/indexing/scheduler.js";
 import { BRAND, BRAND_PATHS } from "../src/shared/branding.js";
 import { parserRegistry } from "../src/core/registries/registry.js";
+
+const execFileAsync = promisify(execFile);
 
 async function makeTempWorkspace(): Promise<string> {
   return await fs.mkdtemp(path.join(os.tmpdir(), "test-watch-test-"));
@@ -25,6 +29,14 @@ async function installWatchFixturePlugin(workspaceRoot: string): Promise<void> {
   };
   await fs.writeFile(path.join(pluginDir, "plugin.json"), JSON.stringify(manifest), "utf8");
   await fs.writeFile(path.join(pluginDir, "index.js"), `export default { manifest: ${JSON.stringify(manifest)}, languages: [{ id: "csharp", extensions: [".cs"], parse() { return {}; } }] };`, "utf8");
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 10000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error(`Timed out after ${timeoutMs}ms waiting for watcher state.`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 }
 
 describe(`${BRAND.displayName} File Watcher Subsystem`, () => {
@@ -183,6 +195,26 @@ describe(`${BRAND.displayName} File Watcher Subsystem`, () => {
   });
 
   describe("FileWatcher Instance Integration", () => {
+    it("propagates create, modify, rename, delete, and paused-repo isolation into lexical search", async () => {
+      const cwd = await makeTempWorkspace();
+      try {
+        const { stdout } = await execFileAsync(process.execPath, [
+          path.resolve("node_modules/tsx/dist/cli.mjs"),
+          path.resolve("tests/helpers/watchLexicalScenario.ts"),
+          cwd
+        ], {
+          cwd: path.resolve("."),
+          env: { ...process.env, LOGICLENS_KUZU_CLOSE_MODE: "managed" },
+          timeout: 60000
+        });
+        expect(stdout).toContain("watch lexical scenario passed");
+      } finally {
+        // The child process owns Kuzu. Its exit releases the managed native
+        // handle before this parent removes the complete temporary workspace.
+        await fs.rm(cwd, { recursive: true, force: true });
+      }
+    }, 70000);
+
     it("queues active plugin source create, modify, and delete events", async () => {
       const cwd = await makeTempWorkspace();
       const repoDir = path.join(cwd, "my-repo");
@@ -375,13 +407,20 @@ describe(`${BRAND.displayName} File Watcher Subsystem`, () => {
       await writeConfig({ ...defaultConfig(), repos: [{ name: "my-repo", path: "./my-repo" }] }, cwd);
 
       const client = await createClient({ cwd });
-      const watcher = new FileWatcher(client, { debounceMs: 1000 });
+      const indexCalls: unknown[] = [];
+      client.index = (async (options: unknown) => {
+        indexCalls.push(options);
+        return {};
+      }) as typeof client.index;
+      const watcher = new FileWatcher(client, { debounceMs: 20 });
       expect(await watcher.start()).toBe(true);
 
       await watcher.ingestEventForTests("my-repo", "hello.ts");
       await watcher.ingestEventForTests("my-repo", "hello.ts");
 
       expect(watcher.getPendingFiles()).toHaveLength(1);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(indexCalls).toEqual([{ repo: "my-repo", changedOnly: true, writeMode: "merge", queueSource: "watch", queueLabel: "watch:my-repo" }]);
       watcher.stop();
       await client.close();
     });

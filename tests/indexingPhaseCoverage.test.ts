@@ -41,10 +41,14 @@ function dbWithRepoCount(count: number): KuzuGraphDB {
   } as unknown as KuzuGraphDB;
 }
 
+function schemaReadyStore(): WorkspaceLexicalStore {
+  return { ensureSchema: vi.fn().mockResolvedValue(undefined) } as unknown as WorkspaceLexicalStore;
+}
+
 describe("indexing phase coverage", () => {
   it("binds one lexical store to the current db and derives workspace identity only from systemName", async () => {
     const db = dbWithRepoCount(0);
-    const store = {} as WorkspaceLexicalStore;
+    const store = schemaReadyStore();
     const bindLexical = vi.fn(() => store);
     registerGraphProvider("index-context-auto", {
       factory: { open: vi.fn() },
@@ -60,6 +64,7 @@ describe("indexing phase coverage", () => {
     expect(ctx.lexicalStore).toBe(store);
     expect(bindLexical).toHaveBeenCalledTimes(1);
     expect(bindLexical).toHaveBeenCalledWith(db);
+    expect(store.ensureSchema).toHaveBeenCalledOnce();
   });
 
   it("keeps workspace identity stable across cwd and indexing entry modes", async () => {
@@ -67,7 +72,7 @@ describe("indexing phase coverage", () => {
     registerGraphProvider("index-context-paths", {
       factory: { open: vi.fn() },
       capabilities: { nativeFullText: { scope: "workspace", updateConsistency: "synchronous", supportsFieldBoost: false, supportsPrefix: false } },
-      bindLexical: () => ({} as WorkspaceLexicalStore)
+      bindLexical: () => schemaReadyStore()
     });
     const base = configSchema.parse({ systemName: "Cafe\u0301", graph: { provider: "index-context-paths" } });
     const contexts = await Promise.all([
@@ -84,7 +89,7 @@ describe("indexing phase coverage", () => {
 
   it("uses an explicit lexical provider registration with the indexing db", async () => {
     const db = dbWithRepoCount(0);
-    const bindLexical = vi.fn(() => ({} as WorkspaceLexicalStore));
+    const bindLexical = vi.fn(() => schemaReadyStore());
     registerGraphProvider("index-context-graph", { factory: { open: vi.fn() }, capabilities: {} });
     registerGraphProvider("index-context-explicit", {
       factory: { open: vi.fn() },
@@ -244,7 +249,7 @@ describe("indexing phase coverage", () => {
         logger: { createProgressBar: () => ({ tick: () => {}, update: () => {}, complete: () => {}, reporter: () => () => {} }) },
         writeMode: "bulk",
         workspaceId: "workspace:test",
-        lexicalStore: {} as WorkspaceLexicalStore,
+        lexicalStore: { cleanupBatch: vi.fn().mockResolvedValue(undefined) } as unknown as WorkspaceLexicalStore,
         additionalIndexFilesByRepo: new Map(),
         activePluginSourceGlobsByRepo: new Map(),
         llm: { summaryLevel: "off" },

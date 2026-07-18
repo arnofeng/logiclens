@@ -3,11 +3,13 @@ import {
   type CleanupBatchRequest,
   type LoadDocumentsRequest,
   type ReconcileRepoDocumentsRequest,
+  type ReconcileRepoFileDocumentsRequest,
   type WorkspaceLexicalStore,
   type WorkspaceLexicalStoreErrorCode,
   type WorkspaceLexicalStoreErrorContext
 } from "../../../core/retrieval/provider.js";
 import { tokenizeLexicalText } from "../../../core/retrieval/tokenizer.js";
+import { parseRenderRef } from "../../../core/retrieval/renderRef.js";
 import {
   LEXICAL_DOCUMENT_KINDS,
   LEXICAL_PROJECTION_SCHEMA_VERSION,
@@ -54,6 +56,7 @@ const DOCUMENT_COLUMNS = [
   ["sourceHash", "STRING"],
   ["batchId", "STRING"],
   ["renderRef", "STRING"],
+  ["fileId", "STRING"],
   ["ftsText", "STRING"],
   ["ftsSizeBytes", "INT64"]
 ] as const;
@@ -99,6 +102,7 @@ type DocumentRow = {
   sourceHash: string;
   batchId: string;
   renderRef: string;
+  fileId?: string | null;
   ftsText?: string | null;
   ftsSizeBytes?: number | bigint | null;
 };
@@ -124,7 +128,7 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
           "CREATE NODE TABLE LexicalDocument(" +
           "id STRING, canonicalId STRING, workspaceId STRING, repoId STRING, kind STRING, " +
           "title STRING, qualifiedName STRING, path STRING, searchableText STRING, tokens STRING[], " +
-          "active BOOL, sourceHash STRING, batchId STRING, renderRef STRING, ftsText STRING, " +
+          "active BOOL, sourceHash STRING, batchId STRING, renderRef STRING, fileId STRING, ftsText STRING, " +
           "ftsSizeBytes INT64, PRIMARY KEY(id));"
         );
       } else {
@@ -156,6 +160,7 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
       // commit before an interrupted backfill transaction, so column presence
       // alone is not evidence that every legacy document has been migrated.
       await this.migrateFtsSizes();
+      await this.migrateFileIds();
       await this.ensureSingleWorkspaceIndex();
       await this.db.transaction(async () => {
         await this.db.query(
@@ -232,7 +237,7 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
             "SET n.canonicalId = $canonicalId, n.workspaceId = $workspaceId, n.repoId = $repoId, " +
             "n.kind = $kind, n.title = $title, n.qualifiedName = $qualifiedName, n.path = $path, " +
             "n.searchableText = $searchableText, n.tokens = $tokens, n.active = $active, " +
-            "n.sourceHash = $sourceHash, n.batchId = $batchId, n.renderRef = $renderRef, " +
+            "n.sourceHash = $sourceHash, n.batchId = $batchId, n.renderRef = $renderRef, n.fileId = $fileId, " +
             "n.ftsText = $ftsText, n.ftsSizeBytes = $ftsSizeBytes;",
             documentParameters(document)
           );
@@ -283,6 +288,40 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
     } catch (error) {
       throw wrap("reconcile_failed", context, error);
     }
+  }
+
+  async reconcileRepoFileDocuments(request: Readonly<ReconcileRepoFileDocumentsRequest>): Promise<void> {
+    const context = { operation: "reconcileRepoDocuments", workspaceId: request.workspaceId, repoId: request.repoId, batchId: request.batchId } as const;
+    try {
+      const activeFileIds = uniqueStrings(request.activeFileIds, "activeFileIds");
+      const staleCondition = activeFileIds.length === 0 ? "" : " AND NOT (n.fileId IN $activeFileIds)";
+      const reconcileParams: Record<string, GraphValue> = { workspaceId: request.workspaceId, repoId: request.repoId };
+      if (activeFileIds.length > 0) reconcileParams.activeFileIds = activeFileIds;
+      await this.db.transaction(async () => {
+        const rows = await this.db.query<DeactivationStatsRow>(
+          "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.repoId = $repoId AND n.active = true AND n.fileId IS NOT NULL" + staleCondition + " RETURN count(*) AS documentCount, sum(n.ftsSizeBytes) AS indexSizeBytes;",
+          reconcileParams
+        );
+        await this.db.query(
+          "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.repoId = $repoId AND n.active = true AND n.fileId IS NOT NULL" + staleCondition + " SET n.active = false, n.batchId = $batchId;",
+          { ...reconcileParams, batchId: request.batchId }
+        );
+        await this.adjustWorkspaceStats(request.workspaceId, -numeric(rows[0]?.documentCount), -numeric(rows[0]?.indexSizeBytes));
+      });
+    } catch (error) { throw wrap("reconcile_failed", context, error); }
+  }
+
+  private async migrateFileIds(): Promise<void> {
+    const rows = await this.db.query<Pick<DocumentRow, "id" | "workspaceId" | "repoId" | "kind" | "canonicalId" | "renderRef" | "fileId">>(
+      "MATCH (n:LexicalDocument) WHERE n.fileId IS NULL RETURN n.id AS id, n.workspaceId AS workspaceId, n.repoId AS repoId, n.kind AS kind, n.canonicalId AS canonicalId, n.renderRef AS renderRef, n.fileId AS fileId;"
+    );
+    const migrated = rows.map((row) => ({ id: row.id, fileId: fileIdFromIdentity(row) }))
+      .filter((row): row is { id: string; fileId: string } => row.fileId !== null);
+    await this.db.transaction(async () => {
+      for (const row of migrated) {
+        await this.db.query("MATCH (n:LexicalDocument {id: $id}) SET n.fileId = $fileId;", row);
+      }
+    });
   }
 
   async cleanupBatch(request: Readonly<CleanupBatchRequest>): Promise<void> {
@@ -615,9 +654,22 @@ function documentParameters(document: LexicalDocument): Record<string, GraphValu
     sourceHash: document.sourceHash,
     batchId: document.batchId,
     renderRef: document.renderRef,
+    fileId: fileIdFromRenderRef(document),
     ftsText,
     ftsSizeBytes: Buffer.byteLength(ftsText, "utf8")
   };
+}
+
+function fileIdFromRenderRef(document: LexicalDocument): string | null {
+  return fileIdFromIdentity(document);
+}
+
+function fileIdFromIdentity(document: { workspaceId: string; repoId: string; kind: string; canonicalId: string; renderRef: string }): string | null {
+  const parsed = parseRenderRef(document.renderRef, document.workspaceId);
+  if (parsed.repoId !== document.repoId || parsed.kind !== document.kind || parsed.canonicalId !== document.canonicalId) {
+    throw new TypeError(`Render reference identity does not match lexical document ${document.canonicalId}.`);
+  }
+  return parsed.fileId ?? null;
 }
 
 function indexedText(document: LexicalDocument): string {

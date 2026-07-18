@@ -1,9 +1,10 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildGraphFactsBatch } from "../../src/core/graph-model/facts.js";
-import type { LexicalDocument, LexicalDocumentKind } from "../../src/core/retrieval/types.js";
+import type { LexicalDocument } from "../../src/core/retrieval/types.js";
 import { tokenizeLexicalText } from "../../src/core/retrieval/tokenizer.js";
 import { parseSourceFile } from "../../src/core/parsing/parserRegistry.js";
+import { projectLexicalDocuments } from "../../src/core/retrieval/projection.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "workspace-unified-retrieval");
 const sources = [
@@ -19,33 +20,13 @@ export function lexicalTokens(text: string): string[] {
   return tokenizeLexicalText(text);
 }
 
-function textFor(value: unknown): string {
-  const raw = JSON.stringify(value);
-  return `${raw} ${lexicalTokens(raw).join(" ")}`;
-}
-
 /** Projects parsed fixture facts into deliberately small, test-only lexical documents. */
 export async function workspaceSpikeDocuments(workspaceId: string): Promise<LexicalDocument[]> {
   const parsedFiles = await Promise.all(sources.map(([repoId, relativePath, language, repo]) => parseSourceFile({ repoId, relativePath, language, absolutePath: path.join(root, repo, relativePath) })));
   const repos = ["api", "catalog", "worker"].map((name) => ({ id: `repo:${name}`, name, path: path.join(root, name), remoteUrl: "", branch: "", commitSha: "", language: "", indexedAt: "" }));
   const facts = await buildGraphFactsBatch({ batchId: "workspace-spike", indexedAt: "fixture", repos, parsedFiles, semantic: false });
-  const groups: Array<[LexicalDocumentKind, Array<{ id: string; repoId?: string }>]> = [
-    ["file", facts.files], ["code", facts.code], ["section", facts.sections], ["contract", facts.contracts]
-  ];
-  return groups.flatMap(([kind, items]) => items.map((item) => ({
-    id: `document:${item.id}`,
-    canonicalId: item.id,
-    workspaceId,
-    repoId: item.repoId ?? "repo:contracts",
-    kind,
-    title: item.id,
-    searchableText: `${item.id} ${textFor(item)}`,
-    tokens: lexicalTokens(`${item.id} ${textFor(item)}`),
-    active: true,
-    sourceHash: "fixture",
-    batchId: "workspace-spike",
-    renderRef: `fixture:${item.repoId ?? "repo:contracts"}:${item.id}`
-  }))).sort((a, b) => a.id.localeCompare(b.id));
+  return projectLexicalDocuments(facts, workspaceId)
+    .filter((document) => ["file", "code", "section", "contract"].includes(document.kind));
 }
 
 export function queryTerms(text: string): string {

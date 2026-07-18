@@ -58,6 +58,10 @@ export async function createIndexRunContext(input: {
     lexicalProvider: config.retrieval.lexical.provider,
     scope: config.retrieval.lexical.scope
   });
+  // Kuzu FTS DDL is only valid in auto-commit mode. Prepare the shared
+  // workspace schema before any graph transaction begins; document writes
+  // remain inside the graph-write journal boundary.
+  await lexicalStore.ensureSchema();
   return {
     cwd,
     config,

@@ -267,13 +267,14 @@ export async function runGraphWritePhase(input: {
   createProgressBar: (label: string, total: number) => ProgressBarLike;
   log: (message: string) => void;
   warn: (message: string) => void;
+  skipGraphWrite?: boolean;
   lexical?: {
     store: WorkspaceLexicalStore;
     workspaceId: string;
     write: () => Promise<unknown>;
   };
 }): Promise<GraphWriteResult> {
-  const { db, cwd, selection, facts, repos, parsedFiles, config, llmSummaryLevel, openAiApiKey, openAiBaseUrl, label, repoName, createProgressBar, log, warn, lexical } = input;
+  const { db, cwd, selection, facts, repos, parsedFiles, config, llmSummaryLevel, openAiApiKey, openAiBaseUrl, label, repoName, createProgressBar, log, warn, lexical, skipGraphWrite = false } = input;
   const result = await runIndexPhase({
     phase: "graph-write",
     repoName,
@@ -324,10 +325,12 @@ export async function runGraphWritePhase(input: {
       } catch (cleanupError) {
         cleanupErrors.push(`graph: ${errorMessage(cleanupError)}`);
       }
-      try {
-        await lexical?.store.cleanupBatch({ workspaceId: lexical.workspaceId, batchId: facts.batchId });
-      } catch (cleanupError) {
-        cleanupErrors.push(`lexical: ${errorMessage(cleanupError)}`);
+      if (lexical) {
+        try {
+          await lexical.store.cleanupBatch({ workspaceId: lexical.workspaceId, batchId: facts.batchId });
+        } catch (cleanupError) {
+          cleanupErrors.push(`lexical: ${errorMessage(cleanupError)}`);
+        }
       }
       const providerCleanupFailed = cleanupErrors.some((cleanupError) => !cleanupError.startsWith("journal:"));
       if (!providerCleanupFailed) {
@@ -364,7 +367,9 @@ export async function runGraphWritePhase(input: {
 
     try {
       const doSummaries = shouldSummarizeGraphWithLlm(llmSummaryLevel);
-      if (selection.mode === "merge") {
+      if (skipGraphWrite) {
+        await finishSuccessfulGraphWrite();
+      } else if (selection.mode === "merge") {
         // Neo4j: use UNWIND-based batch writer - 50-100x faster than the
         // one-by-one merge writer because it reduces ~40 000 individual
         // transactions to about 30.
@@ -391,7 +396,7 @@ export async function runGraphWritePhase(input: {
           await generateAndUpdateSummaries({ db, repos, parsedFiles, crossRepo: facts.crossRepo, config, llmSummaryLevel, openAiApiKey, openAiBaseUrl, label, createProgressBar });
         }
       }
-      await finishSuccessfulGraphWrite();
+      if (!skipGraphWrite) await finishSuccessfulGraphWrite();
     } catch (error) {
       const failedAfterGraphWrite = graphWriteCompleted;
       const writeFailureStatus = await cleanupFailedBatch(error, failedAfterGraphWrite ? "lexical-write-failed" : "graph-write-failed");

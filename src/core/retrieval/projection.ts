@@ -177,6 +177,17 @@ function deterministicUnique<T extends { id: string }>(items: T[], label: string
     });
 }
 
+function assertNoConflictingSources<T>(items: readonly T[], keyOf: (item: T) => string): void {
+  const seen = new Map<string, string>();
+  for (const item of items) {
+    const key = keyOf(item);
+    const serialized = JSON.stringify(item);
+    const previous = seen.get(key);
+    if (previous !== undefined && previous !== serialized) throw new Error(`Lexical document id collision: ${key}.`);
+    seen.set(key, serialized);
+  }
+}
+
 function deduplicateDocuments(documents: LexicalDocument[]): LexicalDocument[] {
   const grouped = new Map<string, LexicalDocument[]>();
   for (const document of documents) {
@@ -331,6 +342,8 @@ function makeLocatedDocument(input: {
     startLine: input.line
   });
   const searchableText = truncateText(input.searchableText, MAX_LEXICAL_SEARCHABLE_TEXT_LENGTH);
+  const sourceFileHash = fileLocations(input.facts).get(input.fileId)?.file.hash;
+  if (!sourceFileHash) throw new Error(`Located lexical document is missing its source file hash: ${input.fileId}.`);
   return {
     id: lexicalDocumentId(input.workspaceId, input.repoId, input.kind, input.canonicalId, input.sourceDiscriminator),
     canonicalId: input.canonicalId,
@@ -343,7 +356,10 @@ function makeLocatedDocument(input: {
     searchableText,
     tokens: tokenizeLexicalText(searchableText),
     active: input.active,
-    sourceHash: projectionFingerprint(input.kind, [...input.fingerprintFields, renderRef]),
+    // Source-backed projections use the parsed file hash plus stable identity.
+    // This keeps full and batched runs byte-identical even when a batch-local
+    // aggregate description contains fewer cross-repo aliases.
+    sourceHash: projectionFingerprint(input.kind, [input.canonicalId, input.repoId, input.fileId, sourceFileHash, input.sourceDiscriminator ?? "", renderRef]),
     batchId: input.batchId,
     renderRef
   };
@@ -476,7 +492,9 @@ export function projectContractSpecDocuments(facts: GraphFactsBatch, workspaceId
 function entityDocumentsFromMentions(facts: GraphFactsBatch, workspaceId: string, entities: Map<string, EntityNode>, files: Map<string, FileLocation>): LexicalDocument[] {
   const code = new Map(deterministicUnique(facts.code ?? [], "code symbol").map((symbol) => [symbol.id, symbol]));
   const sections = new Map(deterministicUnique(facts.sections ?? [], "section").map((section) => [section.id, section]));
-  return (facts.mentions ?? []).flatMap((mention: MentionEdge) => {
+  const mentions = facts.mentions ?? [];
+  assertNoConflictingSources(mentions, (mention) => `${mention.sourceKind}:${mention.fromId}:${mention.entityId}`);
+  return mentions.flatMap((mention: MentionEdge) => {
     const entity = entities.get(mention.entityId);
     const source = mention.sourceKind === "code" ? code.get(mention.fromId) : sections.get(mention.fromId);
     const location = source ? files.get(source.fileId) : undefined;
@@ -541,7 +559,9 @@ export function projectOperationDocuments(facts: GraphFactsBatch, workspaceId: s
   const operations = new Map(deterministicUnique(facts.operations ?? [], "operation").map((operation) => [operation.id, operation]));
   const files = fileLocations(facts);
   const evidence = evidenceById(facts, files);
-  return deduplicateDocuments((facts.operationRepos ?? []).flatMap((edge) => {
+  const operationRepos = facts.operationRepos ?? [];
+  assertNoConflictingSources(operationRepos, (edge) => `${edge.operationId}:${edge.repoId}:${edge.role}:${edge.evidenceId}`);
+  return deduplicateDocuments(operationRepos.flatMap((edge) => {
     const operation = operations.get(edge.operationId);
     const proof = evidence.get(edge.evidenceId);
     const location = proof ? evidenceLocation(proof, files) : undefined;
@@ -572,7 +592,9 @@ export function projectWorkflowDocuments(facts: GraphFactsBatch, workspaceId: st
   const operations = new Map(deterministicUnique(facts.operations ?? [], "operation").map((operation) => [operation.id, operation]));
   const files = fileLocations(facts);
   const evidence = evidenceById(facts, files);
-  return deduplicateDocuments((facts.workflowOperations ?? []).flatMap((edge) => {
+  const workflowOperations = facts.workflowOperations ?? [];
+  assertNoConflictingSources(workflowOperations, (edge) => `${edge.workflowId}:${edge.operationId}:${edge.step}:${edge.evidenceId}`);
+  return deduplicateDocuments(workflowOperations.flatMap((edge) => {
     const workflow = workflows.get(edge.workflowId);
     const operation = operations.get(edge.operationId);
     const proof = evidence.get(edge.evidenceId);
@@ -602,7 +624,9 @@ export function projectWorkflowDocuments(facts: GraphFactsBatch, workspaceId: st
 export function projectPackageDocuments(facts: GraphFactsBatch, workspaceId: string): LexicalDocument[] {
   const files = fileLocations(facts);
   const evidence = evidenceById(facts, files);
-  return deduplicateDocuments((facts.packageUsages ?? []).flatMap((usage) => {
+  const packageUsages = facts.packageUsages ?? [];
+  assertNoConflictingSources(packageUsages, (usage) => `${usage.packageContractId}:${usage.repoId}:${usage.evidenceId}`);
+  return deduplicateDocuments(packageUsages.flatMap((usage) => {
     const proof = evidence.get(usage.evidenceId);
     const location = proof ? evidenceLocation(proof, files) : undefined;
     if (!proof || !location || usage.repoId !== proof.repoId) return [];

@@ -132,26 +132,35 @@ export class Neo4jGraphDB implements GraphDB {
   private activeTx: any = null;
   private txDepth = 0;
   private readonly crud: CypherCrud;
+  private readonly databaseName?: string;
 
-  private constructor(driver: Driver) {
+  private constructor(driver: Driver, databaseName?: string) {
     this.driver = driver;
+    this.databaseName = databaseName;
     this.crud = createCypherCrud(this);
   }
 
-  static async open(url: string, credentials?: { username: string; password: string }): Promise<Neo4jGraphDB> {
+  static async open(url: string, credentials?: { username: string; password: string; database?: string }): Promise<Neo4jGraphDB> {
+    const databaseName = credentials?.database?.trim();
+    if (credentials?.database !== undefined && !databaseName) {
+      throw new TypeError("Neo4j database name must not be empty or whitespace-only when explicitly configured.");
+    }
     const auth = credentials
       ? neo4j.auth.basic(credentials.username, credentials.password)
       : neo4j.auth.basic("neo4j", "neo4j");
     const driver = neo4j.driver(url, auth);
     // Verify connectivity
     await driver.verifyConnectivity();
-    return new Neo4jGraphDB(driver);
+    return new Neo4jGraphDB(driver, databaseName);
   }
 
   private getSession(mode: "READ" | "WRITE" = "WRITE"): Session {
     if (this.closed) throw new Error("Graph database is closed");
     const defaultAccessMode = mode === "READ" ? neo4j.session.READ : neo4j.session.WRITE;
-    return this.driver.session({ defaultAccessMode });
+    return this.driver.session({
+      defaultAccessMode,
+      ...(this.databaseName ? { database: this.databaseName } : {})
+    });
   }
 
   async initSchema(systemName = "default-system"): Promise<void> {

@@ -1,11 +1,13 @@
 import type { GraphValue } from "../../../core/graph-model/db.js";
 import { withTransaction } from "../../../core/graph-model/db.js";
 import { tokenizeLexicalText } from "../../../core/retrieval/tokenizer.js";
+import { parseRenderRef } from "../../../core/retrieval/renderRef.js";
 import {
   WorkspaceLexicalStoreError,
   type CleanupBatchRequest,
   type LoadDocumentsRequest,
   type ReconcileRepoDocumentsRequest,
+  type ReconcileRepoFileDocumentsRequest,
   type WorkspaceLexicalStore,
   type WorkspaceLexicalStoreErrorCode,
   type WorkspaceLexicalStoreErrorContext
@@ -66,6 +68,15 @@ interface ExistingDocumentRow {
 interface DocumentRow extends Omit<LexicalDocument, "qualifiedName" | "path"> {
   qualifiedName: string | null;
   path: string | null;
+}
+
+interface LegacyFileIdentityRow {
+  id: string;
+  workspaceId: string;
+  repoId: string;
+  kind: LexicalDocumentKind;
+  canonicalId: string;
+  renderRef: string;
 }
 
 interface IndexRow {
@@ -132,6 +143,7 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
       });
 
       await this.migratePayloadSizes();
+      await this.migrateFileIds();
       if (await this.metadataValue(STATS_METADATA_KEY) !== NEO4J_LEXICAL_STATS_SCHEMA_VERSION) {
         await this.rebuildWorkspaceStats();
       }
@@ -198,7 +210,7 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
             "n.qualifiedName = document.qualifiedName, n.path = document.path, " +
             "n.searchableText = document.searchableText, n.tokens = document.tokens, " +
             "n.active = document.active, n.sourceHash = document.sourceHash, " +
-            "n.batchId = document.batchId, n.renderRef = document.renderRef, " +
+            "n.batchId = document.batchId, n.renderRef = document.renderRef, n.fileId = document.fileId, " +
             "n.ftsText = document.ftsText, n.ftsSizeBytes = document.ftsSizeBytes " +
             "RETURN count(n) AS written",
             { documents: rows }
@@ -244,6 +256,34 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
       });
     } catch (error) {
       throw wrap("reconcile_failed", context, error);
+    }
+  }
+
+  async reconcileRepoFileDocuments(request: Readonly<ReconcileRepoFileDocumentsRequest>): Promise<void> {
+    const context = { operation: "reconcileRepoDocuments", workspaceId: request.workspaceId, repoId: request.repoId, batchId: request.batchId } as const;
+    try {
+      const activeFileIds = uniqueStrings(request.activeFileIds, "activeFileIds");
+      await withTransaction(this.db, async () => {
+        const rows = await this.db.query<{ documentCount: number; indexSizeBytes: number | null }>(
+          "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.repoId = $repoId AND n.active = true AND n.fileId IS NOT NULL AND NOT (n.fileId IN $activeFileIds) WITH collect(n) AS stale, count(n) AS documentCount, coalesce(sum(n.ftsSizeBytes), 0) AS indexSizeBytes FOREACH (n IN stale | SET n.active = false, n.batchId = $batchId) RETURN documentCount, indexSizeBytes",
+          { workspaceId: request.workspaceId, repoId: request.repoId, batchId: request.batchId, activeFileIds }
+        );
+        await this.adjustWorkspaceStats(request.workspaceId, -numeric(rows[0]?.documentCount), -numeric(rows[0]?.indexSizeBytes));
+      });
+    } catch (error) { throw wrap("reconcile_failed", context, error); }
+  }
+
+  private async migrateFileIds(): Promise<void> {
+    const rows = await this.db.query<LegacyFileIdentityRow>(
+      "MATCH (n:LexicalDocument) WHERE n.fileId IS NULL RETURN n.id AS id, n.workspaceId AS workspaceId, n.repoId AS repoId, n.kind AS kind, n.canonicalId AS canonicalId, n.renderRef AS renderRef"
+    );
+    const migrated = rows.map((row) => ({ id: row.id, fileId: fileIdFromIdentity(row) }))
+      .filter((row): row is { id: string; fileId: string } => row.fileId !== null);
+    if (migrated.length > 0) {
+      await this.db.query(
+        "UNWIND $documents AS document MATCH (n:LexicalDocument {id: document.id}) SET n.fileId = document.fileId",
+        { documents: migrated }
+      );
     }
   }
 
@@ -558,9 +598,22 @@ function documentParameters(document: LexicalDocument): Record<string, GraphValu
     sourceHash: document.sourceHash,
     batchId: document.batchId,
     renderRef: document.renderRef,
+    fileId: fileIdFromRenderRef(document),
     ftsText,
     ftsSizeBytes: Buffer.byteLength(ftsText, "utf8")
   };
+}
+
+function fileIdFromRenderRef(document: LexicalDocument): string | null {
+  return fileIdFromIdentity(document);
+}
+
+function fileIdFromIdentity(document: { workspaceId: string; repoId: string; kind: string; canonicalId: string; renderRef: string }): string | null {
+  const parsed = parseRenderRef(document.renderRef, document.workspaceId);
+  if (parsed.repoId !== document.repoId || parsed.kind !== document.kind || parsed.canonicalId !== document.canonicalId) {
+    throw new TypeError(`Render reference identity does not match lexical document ${document.canonicalId}.`);
+  }
+  return parsed.fileId ?? null;
 }
 
 function indexedText(document: LexicalDocument): string {

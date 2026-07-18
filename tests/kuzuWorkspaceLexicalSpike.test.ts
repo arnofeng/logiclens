@@ -9,6 +9,7 @@ import type { LexicalHit, LexicalSearchOptions } from "../src/core/retrieval/typ
 import { runWorkspaceLexicalConformance, type LexicalProviderHarness } from "./retrieval/providerConformance.js";
 import { WORKSPACE_CORPUS } from "./retrieval/workspaceCorpus.js";
 import { workspaceSpikeDocuments } from "./retrieval/workspaceLexicalSpikeFixtures.js";
+import { createRenderRef } from "../src/core/retrieval/renderRef.js";
 
 const WORKSPACE_ID = "workspace:spike";
 
@@ -34,17 +35,18 @@ class KuzuHarness implements LexicalProviderHarness {
     await this.store.upsertDocuments(await workspaceSpikeDocuments(WORKSPACE_ID));
     await this.store.upsertDocuments([{
       id: "document:foreign:payment-ledger",
-      canonicalId: "foreign:payment-ledger",
+      canonicalId: "file:foreign:payment-ledger",
       workspaceId: "workspace:foreign",
       repoId: "repo:foreign",
       kind: "file",
       title: "payment ledger",
+      path: "foreign/payment-ledger.txt",
       searchableText: "payment ledger foreignonlymarker",
       tokens: ["payment", "ledger", "foreignonlymarker"],
       active: true,
       sourceHash: "foreign",
       batchId: "foreign",
-      renderRef: "fixture:foreign:payment-ledger"
+      renderRef: createRenderRef({ workspaceId: "workspace:foreign", repoId: "repo:foreign", kind: "file", canonicalId: "file:foreign:payment-ledger", fileId: "file:foreign:payment-ledger", path: "foreign/payment-ledger.txt" })
     }]);
   }
 

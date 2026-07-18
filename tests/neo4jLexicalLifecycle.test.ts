@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { GraphValue } from "../src/core/graph-model/db.js";
 import { WorkspaceLexicalStoreError } from "../src/core/retrieval/provider.js";
+import { createRenderRef } from "../src/core/retrieval/renderRef.js";
 import {
   LEXICAL_PROJECTION_SCHEMA_VERSION,
   TOKENIZER_VERSION,
@@ -44,7 +45,7 @@ function storeWith(db: MockNeo4jGraphDB): Neo4jWorkspaceLexicalStore {
 }
 
 function document(overrides: Partial<LexicalDocument> = {}): LexicalDocument {
-  return {
+  const result: LexicalDocument = {
     id: "lexical:one",
     canonicalId: "code:one",
     workspaceId: WORKSPACE,
@@ -58,9 +59,18 @@ function document(overrides: Partial<LexicalDocument> = {}): LexicalDocument {
     active: true,
     sourceHash: "hash:one",
     batchId: "batch:one",
-    renderRef: "render:one",
+    renderRef: "",
     ...overrides
   };
+  result.renderRef = overrides.renderRef ?? createRenderRef({
+    workspaceId: result.workspaceId,
+    repoId: result.repoId,
+    kind: result.kind,
+    canonicalId: result.canonicalId,
+    fileId: `file:${result.repoId}:one`,
+    path: result.path ?? "src/orders/OrderService.ts"
+  });
+  return result;
 }
 
 function onlineIndex(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {

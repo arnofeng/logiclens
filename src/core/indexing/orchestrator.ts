@@ -8,6 +8,8 @@ import type { IndexRunContext } from "./context.js";
 import type { IndexPlanningResult } from "./planning.js";
 import { scanAndParseRepo, type ScanParseRepoResult } from "./scanParse.js";
 import { getGraphWriteFailureDetails, runFactBuildPhase, runGraphWritePhase, selectGraphWriter, type GraphWriteResult } from "./graphWrite.js";
+import { runLexicalProjectionPhase, type LexicalProjectionResult } from "./lexicalProjection.js";
+import { runLexicalWritePhase, type LexicalWriteResult } from "./lexicalWrite.js";
 import { runLlmSummaryPhase, type SummaryFailureState } from "./summaries.js";
 import { runIndexStateCommitPhase } from "./stateCommit.js";
 import { runRelationRebuildPhase, runSemanticWritePhase, runStaleMarkPhase } from "./semanticWrite.js";
@@ -28,6 +30,8 @@ export type IndexCounters = {
 export type IndexPathResult = IndexCounters & {
   repos: RepoNode[];
   batchId: string;
+  lexicalProjectionDurationMs: number;
+  lexicalWriteDurationMs: number;
 };
 
 type BatchCounts = Map<string, { scanned: number; changed: number }>;
@@ -108,9 +112,12 @@ async function runGraphPipeline(input: {
   label: string;
   stageLabel?: string;
   repoName?: string;
+  reconcileLexicalRepos?: boolean;
+  activeFileIdsByRepo?: ReadonlyMap<string, readonly string[]>;
+  lexicalReconcileOnly?: boolean;
   selection: ReturnType<typeof selectGraphWriter>;
-}): Promise<GraphWriteResult> {
-  const { db, ctx, batchId, indexedAt, repos, parsedFiles, label, stageLabel, repoName, selection } = input;
+}): Promise<GraphPipelineResult> {
+  const { db, ctx, batchId, indexedAt, repos, parsedFiles, label, stageLabel, repoName, selection, reconcileLexicalRepos, activeFileIdsByRepo, lexicalReconcileOnly = false } = input;
   const logPrefix = stageLabel ?? (repoName ? undefined : "");
   // Keep fact construction and graph writes as one reusable phase bundle so
   // full, batched, and per-repo paths share the same writer semantics.
@@ -127,7 +134,15 @@ async function runGraphPipeline(input: {
   });
   logStage(ctx, repoName ? `Facts build ${repoName}` : logPrefix ? `${logPrefix} facts build` : "Facts build", factsStarted);
 
+  const lexicalProjection = await runLexicalProjectionPhase({
+    facts: lexicalReconcileOnly ? { ...factBuild.facts, repos: [] } : factBuild.facts,
+    workspaceId: ctx.workspaceId,
+    repoName,
+    repoId: repos.length === 1 ? repos[0]?.id : undefined
+  });
+
   const writeStarted = Date.now();
+  let lexicalWrite: LexicalWriteResult | undefined;
   const graphWrite = await runGraphWritePhase({
     db,
     cwd: ctx.cwd,
@@ -143,11 +158,36 @@ async function runGraphPipeline(input: {
     repoName,
     createProgressBar: createProgressBar(ctx),
     log: log(ctx),
-    warn: warn(ctx)
+    warn: warn(ctx),
+    skipGraphWrite: lexicalReconcileOnly,
+    lexical: {
+      store: ctx.lexicalStore,
+      workspaceId: ctx.workspaceId,
+      write: async () => {
+        lexicalWrite = await runLexicalWritePhase({
+          store: ctx.lexicalStore,
+          workspaceId: ctx.workspaceId,
+          batchId,
+          repos,
+          documents: lexicalProjection.documents,
+          repoName,
+          repoId: repos.length === 1 ? repos[0]?.id : undefined,
+          reconcileRepos: reconcileLexicalRepos,
+          activeFileIdsByRepo
+        });
+      }
+    }
   });
+  if (!lexicalWrite) throw new Error("Graph write completed without executing its lexical write callback.");
   logStage(ctx, repoName ? `Graph write ${repoName}` : logPrefix ? `${logPrefix} graph write` : "Graph write", writeStarted);
-  return graphWrite;
+  return { graphWrite, lexicalProjection, lexicalWrite };
 }
+
+export type GraphPipelineResult = {
+  graphWrite: GraphWriteResult;
+  lexicalProjection: LexicalProjectionResult;
+  lexicalWrite: LexicalWriteResult;
+};
 
 async function runSemanticPipeline(input: {
   ctx: IndexRunContext;
@@ -205,9 +245,9 @@ async function commitSucceededRepos(input: {
   indexedAt: string;
   summaryFailures: SummaryFailuresByRepo;
   semanticWarning?: string;
-  graphWrite?: GraphWriteResult;
+  graphPipeline?: GraphPipelineResult;
 }): Promise<void> {
-  const { db, repos, counts, batchId, indexedAt, summaryFailures, semanticWarning, graphWrite } = input;
+  const { db, repos, counts, batchId, indexedAt, summaryFailures, semanticWarning, graphPipeline } = input;
   for (const repo of repos) {
     const repoCounts = counts.get(repo.id) ?? { scanned: 0, changed: 0 };
     await runIndexStateCommitPhase({
@@ -221,8 +261,10 @@ async function commitSucceededRepos(input: {
       status: "succeeded",
       summaryFailures: summaryFailures.get(repo.id),
       semanticWarning,
-      graphWriteAtomicity: graphWrite?.atomicityMode,
-      graphWriteStatus: graphWrite?.journalStatus
+      graphWriteAtomicity: graphPipeline?.graphWrite.atomicityMode,
+      graphWriteStatus: graphPipeline?.graphWrite.journalStatus,
+      lexical: graphPipeline?.lexicalWrite,
+      lexicalProjectionDurationMs: graphPipeline?.lexicalProjection.durationMs
     });
   }
 }
@@ -267,6 +309,8 @@ export async function runBatchedFullIndex(input: {
   const indexedRepos: RepoNode[] = [];
   let filesScanned = 0;
   let filesChanged = 0;
+  let lexicalProjectionDurationMs = 0;
+  let lexicalWriteDurationMs = 0;
   let graphIsEmpty = initialRepoCount === 0;
 
   // Batched full indexing is the only path that switches from bulk-copy to
@@ -299,10 +343,10 @@ export async function runBatchedFullIndex(input: {
       // so that a partial failure rolls back the entire batch atomically.
       // Inner withTransaction calls inside graph/stale/state phases are
       // nested no-ops (Neo4j + Kuzu both support txDepth now).
-      let graphWrite: GraphWriteResult | undefined;
+      let graphPipeline: GraphPipelineResult | undefined;
       let semanticWarning: string | undefined;
       await withTransaction(db, async () => {
-        graphWrite = await runGraphPipeline({
+        graphPipeline = await runGraphPipeline({
           db,
           ctx,
           batchId,
@@ -313,10 +357,13 @@ export async function runBatchedFullIndex(input: {
           stageLabel: batchLabel,
           selection: selectGraphWriter({ writeMode: ctx.writeMode, batchedFull: true, graphIsEmpty: graphIsEmpty && batchIndex === 0, provider: ctx.config.graph.provider })
         });
+        lexicalProjectionDurationMs += graphPipeline.lexicalProjection.durationMs;
+        lexicalWriteDurationMs += graphPipeline.lexicalWrite.durationMs;
         graphIsEmpty = false;
         semanticWarning = await runSemanticPipeline({ ctx, batchId, repos: batchRepos, parsedFiles, label: `batch ${batchNumber}/${repoBatches.length}` });
-        await commitSucceededRepos({ db, repos: batchRepos, counts: perRepoCounts, batchId, indexedAt, summaryFailures, semanticWarning, graphWrite });
+        await commitSucceededRepos({ db, repos: batchRepos, counts: perRepoCounts, batchId, indexedAt, summaryFailures, semanticWarning, graphPipeline });
       });
+      if (!graphPipeline) throw new Error(`Batch ${batchNumber} completed without a graph pipeline result.`);
 
       log(ctx)(`${batchLabel} complete: repos=${batchRepos.length} filesScanned=${batchCounts.filesScanned} filesChanged=${batchCounts.filesChanged} duration=${((Date.now() - batchStarted) / 1000).toFixed(2)}s`);
     } catch (error) {
@@ -330,7 +377,7 @@ export async function runBatchedFullIndex(input: {
     }
   }
 
-  return { filesScanned, filesChanged, repos: indexedRepos, batchId: createBatchId("batched-full") };
+  return { filesScanned, filesChanged, repos: indexedRepos, batchId: createBatchId("batched-full"), lexicalProjectionDurationMs, lexicalWriteDurationMs };
 }
 
 export async function runFullCopyBulkIndex(input: {
@@ -356,11 +403,11 @@ export async function runFullCopyBulkIndex(input: {
     logStage(ctx, "Scan/parse/summarize", scanStarted);
     // Wrap graph writes + semantic + dependency rebuild + state commits
     // in a single transaction so the entire bulk-copy run is atomic.
-    let graphWrite: GraphWriteResult | undefined;
+    let graphPipeline: GraphPipelineResult | undefined;
     let semanticWarning: string | undefined;
     let rebuilt = 0;
     await withTransaction(db, async () => {
-      graphWrite = await runGraphPipeline({
+      graphPipeline = await runGraphPipeline({
         db,
         ctx,
         batchId,
@@ -373,9 +420,15 @@ export async function runFullCopyBulkIndex(input: {
       semanticWarning = await runSemanticPipeline({ ctx, batchId, repos, parsedFiles, label: "all repos" });
       rebuilt = await runRelationRebuildPhase({ db, batchId: createBatchId("deps"), log: log(ctx) });
       logStage(ctx, `Dependency rebuild (${rebuilt} edges)`, Date.now());
-      await commitSucceededRepos({ db, repos, counts: perRepoCounts, batchId, indexedAt, summaryFailures, semanticWarning, graphWrite });
+      await commitSucceededRepos({ db, repos, counts: perRepoCounts, batchId, indexedAt, summaryFailures, semanticWarning, graphPipeline });
     });
-    return { ...counts, repos, batchId };
+    return {
+      ...counts,
+      repos,
+      batchId,
+      lexicalProjectionDurationMs: graphPipeline?.lexicalProjection.durationMs ?? 0,
+      lexicalWriteDurationMs: graphPipeline?.lexicalWrite.durationMs ?? 0
+    };
   } catch (error) {
     try {
       await db.cleanupGraphWriteBatch(batchId);
@@ -421,11 +474,11 @@ export async function runPerRepoIndex(input: {
     // Nested withTransaction calls inside graph/stale/state phases are no-ops
     // because Neo4jGraphDB supports nested transactions via txDepth.
     let semanticWarning: string | undefined;
-    let graphWrite: GraphWriteResult | undefined;
+    let graphPipeline: GraphPipelineResult | undefined;
     let filesStale = 0;
     await withTransaction(db, async () => {
-      if (parsedFiles.length > 0) {
-        graphWrite = await runGraphPipeline({
+      {
+        graphPipeline = await runGraphPipeline({
           db,
           ctx,
           batchId,
@@ -434,9 +487,14 @@ export async function runPerRepoIndex(input: {
           parsedFiles,
           label: repo.name,
           repoName: repo.name,
+          reconcileLexicalRepos: !options.changedOnly,
+          activeFileIdsByRepo: options.changedOnly ? new Map([[repo.id, scanParse.activeFileIds]]) : undefined,
+          lexicalReconcileOnly: Boolean(options.changedOnly && parsedFiles.length === 0),
           selection: selectGraphWriter({ writeMode: ctx.writeMode, changedOnly: options.changedOnly, provider: ctx.config.graph.provider })
         });
-        semanticWarning = await runSemanticPipeline({ ctx, batchId, repos: [repo], parsedFiles, label: repo.name, repoName: repo.name });
+        if (parsedFiles.length > 0 || !options.changedOnly) {
+          semanticWarning = await runSemanticPipeline({ ctx, batchId, repos: [repo], parsedFiles, label: repo.name, repoName: repo.name });
+        }
       }
 
       const staleStarted = Date.now();
@@ -453,12 +511,21 @@ export async function runPerRepoIndex(input: {
         status: "succeeded",
         summaryFailures,
         semanticWarning,
-        graphWriteAtomicity: graphWrite?.atomicityMode,
-        graphWriteStatus: graphWrite?.journalStatus
+        graphWriteAtomicity: graphPipeline?.graphWrite.atomicityMode,
+        graphWriteStatus: graphPipeline?.graphWrite.journalStatus,
+        lexical: graphPipeline?.lexicalWrite,
+        lexicalProjectionDurationMs: graphPipeline?.lexicalProjection.durationMs
       });
     });
 
-    return { filesScanned: scanParse.filesScanned, filesChanged: scanParse.filesChanged, repos: [repo], batchId };
+    return {
+      filesScanned: scanParse.filesScanned,
+      filesChanged: scanParse.filesChanged,
+      repos: [repo],
+      batchId,
+      lexicalProjectionDurationMs: graphPipeline?.lexicalProjection.durationMs ?? 0,
+      lexicalWriteDurationMs: graphPipeline?.lexicalWrite.durationMs ?? 0
+    };
   } catch (error) {
     // The outer withTransaction already rolled back graph writes.  Cleanup is
     // best-effort: deactivate any data that may have been partially committed

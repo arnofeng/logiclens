@@ -137,7 +137,7 @@ export interface GraphDB {
   }): Promise<GraphWriteBatchJournal[]>;
   cleanupGraphWriteBatch(batchId: string): Promise<void>;
   markRepoArtifactsStale(input: { repoId: string; activeFileIds: string[]; batchId: string; indexedAt: string }): Promise<number>;
-  upsertIndexState(state: { repoId: string; repoName: string; lastBatchId: string; lastIndexedAt: string; lastCommitSha: string; filesScanned: number; filesChanged: number; filesStale: number; status: string; error?: string; graphWriteAtomicity?: GraphWriteAtomicityMode; graphWriteStatus?: GraphWriteBatchStatus }): Promise<void>;
+  upsertIndexState(state: { repoId: string; repoName: string; lastBatchId: string; lastIndexedAt: string; lastCommitSha: string; filesScanned: number; filesChanged: number; filesStale: number; status: string; error?: string; graphWriteAtomicity?: GraphWriteAtomicityMode; graphWriteStatus?: GraphWriteBatchStatus; lexicalDocumentCount?: number; lexicalProjectionSchemaVersion?: string; lexicalTokenizerVersion?: string; lexicalIndexStatus?: string; lexicalProjectionDurationMs?: number; lexicalWriteDurationMs?: number }): Promise<void>;
   /** Returns a map of known file IDs to their content hashes for a given repo. */
   knownFileHashes(repoId: string): Promise<Map<string, string>>;
   /** Returns the total number of Repo nodes in the graph. */

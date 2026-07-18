@@ -8,6 +8,7 @@ import {
   type LoadDocumentsRequest,
   type NativeLexicalCapabilities,
   type ReconcileRepoDocumentsRequest,
+  type ReconcileRepoFileDocumentsRequest,
   type WorkspaceLexicalStore,
   type WorkspaceLexicalStoreErrorCode,
   type WorkspaceLexicalStoreErrorContext
@@ -27,6 +28,9 @@ const fakeStore: WorkspaceLexicalStore = {
     void documents;
   },
   async reconcileRepoDocuments(request: Readonly<ReconcileRepoDocumentsRequest>): Promise<void> {
+    void request;
+  },
+  async reconcileRepoFileDocuments(request: Readonly<ReconcileRepoFileDocumentsRequest>): Promise<void> {
     void request;
   },
   async cleanupBatch(request: Readonly<CleanupBatchRequest>): Promise<void> {
@@ -66,6 +70,9 @@ describe("workspace lexical provider contracts", () => {
     expectTypeOf<Parameters<WorkspaceLexicalStore["reconcileRepoDocuments"]>>().toEqualTypeOf<[
       Readonly<ReconcileRepoDocumentsRequest>
     ]>();
+    expectTypeOf<Parameters<WorkspaceLexicalStore["reconcileRepoFileDocuments"]>>().toEqualTypeOf<[
+      Readonly<ReconcileRepoFileDocumentsRequest>
+    ]>();
     expectTypeOf<Parameters<WorkspaceLexicalStore["cleanupBatch"]>>().toEqualTypeOf<[
       Readonly<CleanupBatchRequest>
     ]>();
@@ -82,6 +89,7 @@ describe("workspace lexical provider contracts", () => {
     expectTypeOf<ReturnType<WorkspaceLexicalStore["commitVersions"]>>().toEqualTypeOf<Promise<void>>();
     expectTypeOf<ReturnType<WorkspaceLexicalStore["upsertDocuments"]>>().toEqualTypeOf<Promise<void>>();
     expectTypeOf<ReturnType<WorkspaceLexicalStore["reconcileRepoDocuments"]>>().toEqualTypeOf<Promise<void>>();
+    expectTypeOf<ReturnType<WorkspaceLexicalStore["reconcileRepoFileDocuments"]>>().toEqualTypeOf<Promise<void>>();
     expectTypeOf<ReturnType<WorkspaceLexicalStore["cleanupBatch"]>>().toEqualTypeOf<Promise<void>>();
     expectTypeOf<ReturnType<WorkspaceLexicalStore["search"]>>().toEqualTypeOf<Promise<readonly LexicalHit[]>>();
     expectTypeOf<ReturnType<WorkspaceLexicalStore["loadDocuments"]>>().toEqualTypeOf<Promise<readonly LexicalDocument[]>>();

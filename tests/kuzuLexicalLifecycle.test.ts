@@ -1,8 +1,9 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceLexicalStoreError } from "../src/core/retrieval/provider.js";
+import { createRenderRef } from "../src/core/retrieval/renderRef.js";
 import {
   LEXICAL_PROJECTION_SCHEMA_VERSION,
   TOKENIZER_VERSION,
@@ -18,7 +19,7 @@ const WORKSPACE = "workspace:lifecycle";
 const FOREIGN_WORKSPACE = "workspace:foreign";
 
 function document(overrides: Partial<LexicalDocument> = {}): LexicalDocument {
-  return {
+  const result: LexicalDocument = {
     id: "lexical:code:one",
     canonicalId: "code:one",
     workspaceId: WORKSPACE,
@@ -32,9 +33,18 @@ function document(overrides: Partial<LexicalDocument> = {}): LexicalDocument {
     active: true,
     sourceHash: "hash:one",
     batchId: "batch:one",
-    renderRef: "render:one",
+    renderRef: "",
     ...overrides
   };
+  result.renderRef = overrides.renderRef ?? createRenderRef({
+    workspaceId: result.workspaceId,
+    repoId: result.repoId,
+    kind: result.kind,
+    canonicalId: result.canonicalId,
+    fileId: `file:${result.repoId}:one`,
+    path: result.path ?? "src/orders/OrderService.ts"
+  });
+  return result;
 }
 
 describe("Kuzu workspace lexical lifecycle", () => {
@@ -42,17 +52,31 @@ describe("Kuzu workspace lexical lifecycle", () => {
   let db: KuzuGraphDB;
   let store: KuzuWorkspaceLexicalStore;
   let previousCloseMode: string | undefined;
+  let schemaInitialized = false;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     previousCloseMode = process.env.LOGICLENS_KUZU_CLOSE_MODE;
+    // Reuse one physical database and close it exactly once. This avoids the
+    // native repeated FTS shutdown issue without leaking seven temp folders.
     process.env.LOGICLENS_KUZU_CLOSE_MODE = "explicit";
     directory = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-kuzu-lexical-"));
     db = await KuzuGraphDB.open(path.join(directory, "graph.kuzu"));
+  });
+
+  beforeEach(async () => {
     store = new KuzuWorkspaceLexicalStore(db);
+    if (schemaInitialized) {
+      await db.query("MATCH (n:LexicalDocument) DELETE n;");
+      await db.query("MATCH (s:LexicalWorkspaceStats) DELETE s;");
+    }
   });
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    schemaInitialized = true;
+  });
+
+  afterAll(async () => {
     await db?.close();
     if (directory) await fs.rm(directory, { recursive: true, force: true });
     if (previousCloseMode === undefined) delete process.env.LOGICLENS_KUZU_CLOSE_MODE;
@@ -60,14 +84,22 @@ describe("Kuzu workspace lexical lifecycle", () => {
   });
 
   it("retries interrupted stats migration and keeps schema and the workspace FTS index idempotent", async () => {
+    const legacyRenderRef = createRenderRef({
+      workspaceId: WORKSPACE,
+      repoId: "repo:legacy",
+      kind: "code",
+      canonicalId: "code:legacy",
+      fileId: "file:legacy",
+      path: "src/legacy.ts"
+    });
     await db.query(
       "CREATE NODE TABLE LexicalDocument(" +
-      "id STRING, workspaceId STRING, searchableText STRING, active BOOL, ftsText STRING, PRIMARY KEY(id));"
+      "id STRING, canonicalId STRING, workspaceId STRING, repoId STRING, kind STRING, renderRef STRING, searchableText STRING, active BOOL, ftsText STRING, PRIMARY KEY(id));"
     );
     await db.query(
-      "CREATE (:LexicalDocument {id: 'legacy:one', workspaceId: $workspaceId, " +
+      "CREATE (:LexicalDocument {id: 'legacy:one', canonicalId: 'code:legacy', workspaceId: $workspaceId, repoId: 'repo:legacy', kind: 'code', renderRef: $renderRef, " +
       "searchableText: 'legacy text', active: true, ftsText: 'legacy text'});",
-      { workspaceId: WORKSPACE }
+      { workspaceId: WORKSPACE, renderRef: legacyRenderRef }
     );
     await db.query(
       "CREATE NODE TABLE LexicalMetadata(key STRING, value STRING, PRIMARY KEY(key));"
@@ -131,7 +163,7 @@ describe("Kuzu workspace lexical lifecycle", () => {
     const columns = await db.query<{ name: string }>("CALL table_info('LexicalDocument') RETURN name;");
     expect(columns.map((column) => column.name)).toEqual(expect.arrayContaining([
       "id", "canonicalId", "workspaceId", "repoId", "kind", "title", "qualifiedName", "path",
-      "searchableText", "tokens", "active", "sourceHash", "batchId", "renderRef", "ftsText", "ftsSizeBytes"
+      "searchableText", "tokens", "active", "sourceHash", "batchId", "renderRef", "fileId", "ftsText", "ftsSizeBytes"
     ]));
     const indexes = await db.query<{
       table_name: string;
@@ -147,9 +179,23 @@ describe("Kuzu workspace lexical lifecycle", () => {
       property_names: ["ftsText"]
     }]);
     expect(lexicalIndexes.some((index) => /repo/i.test(index.index_name))).toBe(false);
+
+    await db.query("MATCH (n:LexicalDocument {id: 'legacy:one'}) SET n.fileId = NULL, n.renderRef = 'corrupted-render-ref';");
+    await expect(store.ensureSchema()).rejects.toMatchObject({
+      code: "schema_failed",
+      context: { operation: "ensureSchema" },
+      cause: { name: "RenderRefError", code: "format_invalid" }
+    });
+    await db.query("MATCH (n:LexicalDocument {id: 'legacy:one'}) SET n.renderRef = $renderRef;", { renderRef: legacyRenderRef });
+    await store.ensureSchema();
+    expect(await db.query<{ fileId: string }>("MATCH (n:LexicalDocument {id: 'legacy:one'}) RETURN n.fileId AS fileId;"))
+      .toEqual([{ fileId: "file:legacy" }]);
+    await store.reconcileRepoFileDocuments({ workspaceId: WORKSPACE, repoId: "repo:legacy", batchId: "batch:legacy-delete", activeFileIds: [] });
+    expect(await db.query<{ active: boolean }>("MATCH (n:LexicalDocument {id: 'legacy:one'}) RETURN n.active AS active;"))
+      .toEqual([{ active: false }]);
   });
 
-  it("handles empty, update, load, conflict, and rollback upsert boundaries", async () => {
+  async function verifyUpsertAndRollbackBoundaries(): Promise<void> {
     const untouched = vi.spyOn(db, "query");
     await expect(store.upsertDocuments([])).resolves.toBeUndefined();
     expect(untouched).not.toHaveBeenCalled();
@@ -165,7 +211,7 @@ describe("Kuzu workspace lexical lifecycle", () => {
       tokens: ["updated", "cjk_搜索", "tokenized", "identifier"],
       active: false,
       sourceHash: "hash:updated",
-      renderRef: "render:updated"
+      renderRef: undefined
     });
     await store.upsertDocuments([created]);
     await store.upsertDocuments([updated]);
@@ -217,7 +263,7 @@ describe("Kuzu workspace lexical lifecycle", () => {
       workspaceId: WORKSPACE,
       documentIds: ["lexical:code:a", "lexical:code:b"]
     })).toEqual([]);
-  });
+  }
 
   it("reconciles only the requested repo and supports stale, delete, empty-set, and retry flows", async () => {
     await store.ensureSchema();
@@ -420,4 +466,6 @@ describe("Kuzu workspace lexical lifecycle", () => {
       context: { operation: "health", workspaceId: WORKSPACE }
     });
   });
+
+  it("handles empty, update, load, conflict, and rollback upsert boundaries", verifyUpsertAndRollbackBoundaries);
 });

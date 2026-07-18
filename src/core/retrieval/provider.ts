@@ -35,6 +35,12 @@ export interface LoadDocumentsRequest {
   workspaceId: string;
   documentIds: readonly string[];
 }
+export interface ReconcileRepoFileDocumentsRequest {
+  workspaceId: string;
+  repoId: string;
+  batchId: string;
+  activeFileIds: readonly string[];
+}
 
 export type WorkspaceLexicalStoreOperation =
   | "ensureSchema"
@@ -85,6 +91,8 @@ export interface WorkspaceLexicalStore {
   commitVersions(): Promise<void>;
   upsertDocuments(documents: readonly LexicalDocument[]): Promise<void>;
   reconcileRepoDocuments(request: Readonly<ReconcileRepoDocumentsRequest>): Promise<void>;
+  /** Marks only file-backed projections stale; repo-level projections are retained. */
+  reconcileRepoFileDocuments(request: Readonly<ReconcileRepoFileDocumentsRequest>): Promise<void>;
   cleanupBatch(request: Readonly<CleanupBatchRequest>): Promise<void>;
   /** Returns provider-neutral hits in global workspace order with ranks starting at one. */
   search(query: Readonly<LexicalQuery>, options: Readonly<LexicalSearchOptions>): Promise<readonly LexicalHit[]>;
