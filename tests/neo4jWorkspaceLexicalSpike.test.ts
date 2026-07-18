@@ -1,11 +1,18 @@
 import crypto from "node:crypto";
 import neo4j, { type Driver, type Session } from "neo4j-driver";
 import { describe, expect, it } from "vitest";
+import type { GraphValue } from "../src/core/graph-model/db.js";
 import { mrrAtK, recallAtK, refusalAccuracy } from "../src/core/retrieval/evaluation.js";
 import type { LexicalHit, LexicalSearchOptions } from "../src/core/retrieval/types.js";
+import { Neo4jWorkspaceLexicalStore } from "../src/adapters/graph-db/neo4j/Neo4jWorkspaceLexicalStore.js";
+import {
+  recordToPlain,
+  toNeo4jParams,
+  type Neo4jGraphDB
+} from "../src/adapters/graph-db/neo4j/Neo4jGraphDB.js";
 import { runWorkspaceLexicalConformance, type LexicalProviderHarness } from "./retrieval/providerConformance.js";
 import { WORKSPACE_CORPUS } from "./retrieval/workspaceCorpus.js";
-import { queryTerms, workspaceSpikeDocuments } from "./retrieval/workspaceLexicalSpikeFixtures.js";
+import { workspaceSpikeDocuments } from "./retrieval/workspaceLexicalSpikeFixtures.js";
 
 const WORKSPACE_ID = "workspace:spike";
 const required = ["LOGICLENS_TEST_NEO4J_URL", "LOGICLENS_TEST_NEO4J_USERNAME", "LOGICLENS_TEST_NEO4J_PASSWORD"] as const;
@@ -18,10 +25,23 @@ class Neo4jHarness implements LexicalProviderHarness {
   private readonly index = `workspace_lexical_${this.suffix}`;
   private readonly database = process.env.LOGICLENS_TEST_NEO4J_DATABASE;
   private readonly driver: Driver;
+  private readonly productionStore: Neo4jWorkspaceLexicalStore;
   private nativeCalls = 0;
 
   constructor() {
     this.driver = neo4j.driver(process.env.LOGICLENS_TEST_NEO4J_URL!, neo4j.auth.basic(process.env.LOGICLENS_TEST_NEO4J_USERNAME!, process.env.LOGICLENS_TEST_NEO4J_PASSWORD!));
+    const queryAdapter = {
+      query: async <T>(cypher: string, params?: Record<string, GraphValue>): Promise<T[]> => {
+        const session = this.session();
+        try {
+          const result = await session.run(cypher, toNeo4jParams(params));
+          return result.records.map((record) => recordToPlain(record) as T);
+        } finally {
+          await session.close();
+        }
+      }
+    } as unknown as Neo4jGraphDB;
+    this.productionStore = new Neo4jWorkspaceLexicalStore(queryAdapter, { indexName: this.index });
   }
 
   private session(): Session { return this.driver.session(this.database ? { database: this.database } : undefined); }
@@ -30,7 +50,7 @@ class Neo4jHarness implements LexicalProviderHarness {
     await this.driver.verifyConnectivity();
     const session = this.session();
     try {
-      await session.run(`CREATE FULLTEXT INDEX ${this.index} IF NOT EXISTS FOR (n:${this.label}) ON EACH [n.searchableText]`);
+      await session.run(`CREATE FULLTEXT INDEX ${this.index} IF NOT EXISTS FOR (n:${this.label}) ON EACH [n.searchableText] OPTIONS { indexConfig: { \`fulltext.analyzer\`: 'standard-no-stop-words', \`fulltext.eventually_consistent\`: false } }`);
       await session.run("CALL db.awaitIndexes(300)");
     } finally { await session.close(); }
   }
@@ -47,11 +67,7 @@ class Neo4jHarness implements LexicalProviderHarness {
 
   async search(query: { workspaceId: string; text: string }, options: LexicalSearchOptions): Promise<LexicalHit[]> {
     this.nativeCalls++;
-    const session = this.session();
-    try {
-      const result = await session.run(`CALL db.index.fulltext.queryNodes($index, $text) YIELD node, score WHERE node.workspaceId = $workspaceId AND node.active = true RETURN node.canonicalId AS canonicalId, node.id AS documentId, node.repoId AS repoId, node.kind AS kind, node.renderRef AS renderRef, score ORDER BY score DESC, documentId ASC LIMIT $topK`, { index: this.index, text: queryTerms(query.text), workspaceId: query.workspaceId, topK: neo4j.int(options.topK) });
-      return result.records.map((record, index) => ({ canonicalId: String(record.get("canonicalId")), documentId: String(record.get("documentId")), repoId: String(record.get("repoId")), kind: String(record.get("kind")) as LexicalHit["kind"], rank: index + 1, matchReasons: ["native-fulltext"], renderRef: String(record.get("renderRef")) }));
-    } finally { await session.close(); }
+    return [...await this.productionStore.search(query, options)];
   }
 
   nativeSearchCount(): number { return this.nativeCalls; }

@@ -83,32 +83,12 @@ describe("Neo4j lexical provider registration", () => {
     expect(supportsNeo4jWorkspaceLexical({ indexTypes: [], procedures: [] })).toBe(false);
   });
 
-  it("rejects incompatible DBs and never reports lifecycle success", async () => {
+  it("rejects incompatible graph database instances", async () => {
     const registration = await resolveRegistration();
     const incompatible = { close: vi.fn() } as unknown as GraphDB;
     expect(() => registration.bindLexical!(incompatible)).toThrow(
       "Neo4j lexical binder requires the current Neo4jGraphDB instance"
     );
 
-    const { Neo4jGraphDB } = await import("../src/adapters/graph-db/neo4j/Neo4jGraphDB.js");
-    const { WorkspaceLexicalStoreError } = await import("../src/core/retrieval/provider.js");
-    const store = registration.bindLexical!(Object.create(Neo4jGraphDB.prototype) as GraphDB);
-    const calls = [
-      ["schema_failed", "ensureSchema", store.ensureSchema()],
-      ["write_failed", "commitVersions", store.commitVersions()],
-      ["write_failed", "upsertDocuments", store.upsertDocuments([])],
-      ["reconcile_failed", "reconcileRepoDocuments", store.reconcileRepoDocuments({
-        workspaceId: "workspace:1", repoId: "repo:1", batchId: "batch:1", activeDocumentIds: []
-      })],
-      ["cleanup_failed", "cleanupBatch", store.cleanupBatch({ workspaceId: "workspace:1", batchId: "batch:1" })],
-      ["search_failed", "search", store.search({ workspaceId: "workspace:1", text: "order" }, { topK: 5 })],
-      ["load_failed", "loadDocuments", store.loadDocuments({ workspaceId: "workspace:1", documentIds: [] })],
-      ["health_check_failed", "health", store.health("workspace:1")]
-    ] as const;
-
-    for (const [code, operation, call] of calls) {
-      await expect(call).rejects.toBeInstanceOf(WorkspaceLexicalStoreError);
-      await expect(call).rejects.toMatchObject({ code, context: expect.objectContaining({ operation }) });
-    }
   });
 });
