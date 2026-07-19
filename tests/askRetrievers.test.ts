@@ -479,6 +479,35 @@ describe("bounded graph retriever", () => {
     await retrieveBoundedGraph({} as GraphDB, plan(), [exact, lexical], { workspaceId: "workspace:test", seedLimit: 1, dependencies });
     expect(selectedIds).toEqual([[exact.canonicalId], [exact.canonicalId]]);
   });
+
+  it("expands deterministically by newly discovered unvisited code ids for bounded hops", async () => {
+    const second: EdgeRow = {
+      ...EDGE,
+      fromCodeId: EDGE.toCodeId,
+      toCodeId: "code:repo:api:src/audit.ts:function:auditOrder:1",
+      fromPath: EDGE.toPath,
+      toPath: "src/audit.ts",
+      fromFile: EDGE.toFile,
+      toFile: "api/src/audit.ts",
+      fromName: EDGE.toName,
+      toName: "auditOrder",
+      raw: "auditOrder()",
+    };
+    const calls: string[][] = [];
+    const callEdgesAround = vi.fn(async (_db: GraphDB, ids: string[]) => {
+      calls.push([...ids]);
+      return ids.includes(CODE_ROW.codeId) ? [EDGE] : [second, EDGE];
+    });
+    const result = await retrieveBoundedGraph({} as GraphDB, plan(), [seed({ canonicalId: CODE_ROW.codeId })], {
+      workspaceId: "workspace:test",
+      graphHops: 5,
+      dependencies: { callEdgesAround, findContractSourceSymbols: vi.fn() },
+    });
+    expect(calls).toEqual([[CODE_ROW.codeId], [EDGE.toCodeId], [second.toCodeId]]);
+    expect(new Set(result.legacyRows.filter((row) => row.kind === "edge").map((row) => JSON.stringify(row.row))).size).toBe(2);
+    expect(result.queryCount).toBe(3);
+    expect(result.candidates.map((candidate) => candidate.canonicalId)).toContain(second.toCodeId);
+  });
 });
 
 describe("optional semantic retriever", () => {

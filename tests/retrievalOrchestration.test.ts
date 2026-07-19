@@ -12,6 +12,7 @@ import { reciprocalRankFusion } from "../src/features/ask/fusion.js";
 import type { QueryPlan } from "../src/features/ask/planner.js";
 import { retrieveForQuestion } from "../src/features/ask/retrieve.js";
 import { emptyRouteResult, RetrieverOperationalError, successfulRouteResult } from "../src/features/ask/retrievers/types.js";
+import { DEFAULT_RETRIEVE_OPTIONS } from "../src/features/ask/options.js";
 
 const HEALTH: LexicalIndexHealth = {
   providerVersion: "test-1", projectionSchemaVersion: "1", tokenizerVersion: "1",
@@ -57,6 +58,37 @@ function store(order: string[]): WorkspaceLexicalStore {
 }
 
 describe("Ask retrieval orchestration", () => {
+  it("applies route switches, topK, graph hops zero, and context budget consistently", async () => {
+    const lexical = vi.fn();
+    const graph = vi.fn();
+    const semantic = vi.fn();
+    const selection = vi.fn(() => ({
+      selectedCandidates: [], rejections: [], estimatedChars: 0, contextCharBudget: 512,
+    }));
+    const sourceLoader = vi.fn(async ({ selectedCandidates }) => ({
+      evidence: selectedCandidates, rejections: [], status: "skipped" as const, queryCount: 0,
+    }));
+    const result = await retrieveForQuestion({} as GraphDB, "Order", {
+      retrieval: { ...DEFAULT_RETRIEVE_OPTIONS, lexical: false, semantic: false, topK: 1, graphHops: 0, contextBudget: 512 },
+      dependencies: {
+        plan,
+        exact: async () => ({
+          exact: successfulRouteResult("exact", [candidate("exact", "code:repo:a:src/a.ts:function:Order:1")], [], 1),
+          contract: emptyRouteResult("contract", "disabled", "route-disabled"),
+          entity: emptyRouteResult("entity", "disabled", "route-disabled"),
+        }),
+        lexical, graph, semantic, selection: selection as never, sourceLoader: sourceLoader as never,
+      },
+    });
+    expect(lexical).not.toHaveBeenCalled();
+    expect(graph).not.toHaveBeenCalled();
+    expect(semantic).not.toHaveBeenCalled();
+    expect(selection).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({ maxCandidates: 1, maxContextChars: 512 }));
+    expect(result.diagnostics.routes.lexical).toMatchObject({ status: "disabled", queryCount: 0 });
+    expect(result.diagnostics.routes.semantic).toMatchObject({ status: "disabled", queryCount: 0 });
+    expect(result.diagnostics.routes.graph).toMatchObject({ status: "disabled", queryCount: 0 });
+  });
+
   it("runs routes in strict order, seeds graph from all preceding routes, and fuses once", async () => {
     const order: string[] = [];
     const exactCandidate = candidate("exact", "code:repo:a:src/a.ts:function:Order:1");

@@ -78,11 +78,13 @@ describe("answerQuestion", () => {
     expect(messages.find((message: { role: string }) => message.role === "system").content).not.toContain("verified orders body");
   });
 
-  it("builds the no-key fallback exclusively from loaded evidence and citations", async () => {
+  it("builds the no-key fallback from safe citation metadata without dumping evidence bodies", async () => {
     const { answerQuestion } = await import("../src/features/ask/answer.js");
     const result = await answerQuestion("orders?", retrieval([evidence("LOADED_ONLY")], { legacySecret: "LEGACY_SECRET" }), "model");
     expect(result).toContain("[C1]");
-    expect(result).toContain("LOADED_ONLY");
+    expect(result).toContain("repo:api/src/orders.ts:4");
+    expect(result).toContain("Diagnostics: outcome=succeeded");
+    expect(result).not.toContain("LOADED_ONLY");
     expect(result).not.toContain("LEGACY_SECRET");
     expect(openAiMock.chatCreate).not.toHaveBeenCalled();
   });

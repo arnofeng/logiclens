@@ -54,19 +54,17 @@ export async function answerQuestion(
     return response.choices[0]?.message?.content ?? "";
   }
 
+  const lexical = retrieval.diagnostics.routes?.lexical;
+  const sourceLoading = retrieval.diagnostics.sourceLoading;
   return [
     `Question type: ${retrieval.questionKind}`,
     `Context budget: ${answerContext.budget.usedChars}/${answerContext.budget.maxContextChars} chars, ${answerContext.budget.includedItems}/${answerContext.budget.totalItems} items included`,
+    `Diagnostics: outcome=${retrieval.outcome} queries=${retrieval.diagnostics.queries?.total ?? 0} lexical=${lexical?.status ?? "disabled"}/${lexical?.queryCount ?? 0} sourceLoading=${sourceLoading?.status ?? "skipped"}/${sourceLoading?.queryCount ?? 0}`,
     "",
     "Verified evidence citations:",
     ...answerContext.citations.map(
       (citation) =>
-        `- [${citation.id}] ${citation.kind} ${citation.repoId}/${citation.filePath}${citation.line ? `:${citation.line}` : ""} ${citation.title} (document=${citation.documentId})`,
-    ),
-    "",
-    "Verified evidence:",
-    ...answerContext.items.map(
-      (item) => `- [${item.citationId}] ${item.content}`,
+        `- [${citation.id}] ${citation.kind} ${citation.repoId}/${citation.filePath}${citation.line ? `:${citation.line}${citation.endLine && citation.endLine !== citation.line ? `-${citation.endLine}` : ""}` : ""} ${citation.title} (document=${citation.documentId})`,
     ),
   ].join("\n");
 }

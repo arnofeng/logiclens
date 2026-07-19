@@ -51,6 +51,23 @@ describe("selected evidence source loader", () => {
     expect(result).toMatchObject({ status: "skipped", queryCount: 0, evidence: [] });
   });
 
+  it("bounds the batch and loaded evidence by the public topK document limit", async () => {
+    const a = fixture("a");
+    const b = fixture("b");
+    const load = vi.fn(async ({ documentIds }) => {
+      expect(documentIds).toEqual([a.document.id]);
+      return [a.document, b.document];
+    });
+    const result = await loadSelectedEvidence({
+      workspaceId: WORKSPACE_ID,
+      selectedCandidates: [a.candidate, b.candidate],
+      maxDocuments: 1,
+      store: store(load),
+    });
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(result.evidence.map(({ document }) => document.id)).toEqual([a.document.id]);
+  });
+
   it("rejects inactive, missing, cross-workspace, malformed, and identity-mismatched evidence independently", async () => {
     const valid = fixture("valid");
     const inactive = fixture("inactive", { active: false });

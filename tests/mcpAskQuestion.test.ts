@@ -1,0 +1,102 @@
+import { describe, expect, it, vi } from "vitest";
+import {
+  ASK_QUESTION_INPUT_SCHEMA,
+  buildFreshnessMetadata,
+  buildFreshnessNotice,
+  handleAskQuestion,
+  projectAskQuestionResponse,
+} from "../src/interfaces/mcp/server.js";
+import type { RetrievalResult } from "../src/features/ask/retrieve.js";
+
+function retrieval(): RetrievalResult {
+  const diagnostics = {
+    routes: Object.fromEntries(["exact", "contract", "entity", "lexical", "graph", "semantic"].map((route) => [route, {
+      status: route === "lexical" ? "succeeded" : "disabled", executed: route === "lexical", queryCount: route === "lexical" ? 1 : 0,
+    }])),
+    timings: Object.fromEntries(["planning", "exactContractEntity", "lexical", "graphExpansion", "semantic", "fusion", "selection", "sourceLoading", "total"].map((stage) => [stage, { status: "completed", durationMs: 1 }])),
+    queries: { total: 2, byRoute: { exact: 0, contract: 0, entity: 0, lexical: 1, graph: 0, semantic: 0 }, dependencies: 0, sourceLoading: 1 },
+    compatibility: { dependencies: { status: "disabled", reason: "not-required", executed: false, queryCount: 0 } },
+    providers: { lexical: { status: "succeeded", providerVersion: "safe" }, semantic: { status: "disabled" } },
+    sourceLoading: { status: "completed", queryCount: 1, rejectionCounts: {} },
+  } as RetrievalResult["diagnostics"];
+  return {
+    questionKind: "general", code: [], sections: [], entities: [], contracts: [], dependencies: [], semantic: [], edges: [],
+    fusedCandidates: [], selectedCandidates: [], selectionRejections: [], sourceLoadRejections: [],
+    loadedEvidence: [{
+      candidate: {
+        canonicalId: "code:repo:api:src/orders.ts:function:createOrder:1", repoId: "repo:api", kind: "code",
+        routes: [{ route: "lexical", rank: 1, documentIds: ["doc:1"] }], provenance: [],
+        matchReasons: ["full-text"], confidence: "discovery", fusionScore: 0.5,
+      },
+      provenance: { route: "lexical", rank: 1, confidence: "discovery", documentId: "doc:1", renderRef: "safe-ref" },
+      parsedRenderRef: {
+        workspaceId: "workspace:test", repoId: "repo:api", kind: "code",
+        canonicalId: "code:repo:api:src/orders.ts:function:createOrder:1", path: "src/orders.ts", startLine: 10, endLine: 20,
+      },
+      document: {
+        id: "doc:1", canonicalId: "code:repo:api:src/orders.ts:function:createOrder:1", workspaceId: "workspace:test",
+        repoId: "repo:api", kind: "code", title: "createOrder", path: "src/orders.ts",
+        searchableText: "SECRET_BODY", tokens: ["SECRET_TOKEN"], active: true,
+        sourceHash: "SECRET_HASH", batchId: "SECRET_BATCH", renderRef: "safe-ref",
+      },
+    }],
+    diagnostics,
+    outcome: "succeeded",
+  } as unknown as RetrievalResult;
+}
+
+describe("MCP ask_question", () => {
+  it("accepts default and all explicit public options", () => {
+    expect(ASK_QUESTION_INPUT_SCHEMA.parse({ question: "orders" })).toEqual({ question: "orders" });
+    expect(ASK_QUESTION_INPUT_SCHEMA.parse({
+      question: " orders ", lexical: false, semantic: false, topK: 100, graphHops: 5, contextBudget: 65_536,
+    })).toEqual({ question: "orders", lexical: false, semantic: false, topK: 100, graphHops: 5, contextBudget: 65_536 });
+  });
+
+  it.each([
+    { question: "x", unknown: true }, { question: "x", topK: 0 }, { question: "x", topK: 101 },
+    { question: "x", graphHops: -1 }, { question: "x", graphHops: 6 },
+    { question: "x", contextBudget: 255 }, { question: "x", contextBudget: 65_537 },
+    { question: "x", topK: 1.5 }, { question: "x", topK: Number.NaN },
+    { question: "x", topK: Number.POSITIVE_INFINITY }, { question: "x", topK: "5" },
+  ])("strictly rejects invalid input %#", (input) => {
+    expect(ASK_QUESTION_INPUT_SCHEMA.safeParse(input).success).toBe(false);
+  });
+
+  it("passes options exactly, retrieves once, and returns only safe selected evidence", async () => {
+    const retrieve = vi.fn(async () => retrieval());
+    const response = await handleAskQuestion({ retrieve } as never, {
+      question: "orders", lexical: false, semantic: false, topK: 3, graphHops: 0, contextBudget: 512,
+    });
+    expect(retrieve).toHaveBeenCalledTimes(1);
+    expect(retrieve).toHaveBeenCalledWith("orders", { lexical: false, semantic: false, topK: 3, graphHops: 0, contextBudget: 512 });
+    expect(response).toMatchObject({
+      outcome: "succeeded",
+      selectedEvidence: [{ documentId: "doc:1", repoId: "repo:api", sourceKind: "code", path: "src/orders.ts", startLine: 10, endLine: 20, confidence: "discovery" }],
+      diagnostics: { queries: { total: 2 }, routes: { lexical: { queryCount: 1 } } },
+    });
+    const serialized = JSON.stringify(response);
+    expect(serialized).not.toMatch(/SECRET_BODY|SECRET_TOKEN|SECRET_HASH|SECRET_BATCH|searchableText|tokens|sourceHash|batchId/u);
+  });
+
+  it("projects disabled provider query counts and remains compatible with freshness notices", () => {
+    const value = retrieval();
+    const disabled = {
+      ...value,
+      diagnostics: {
+        ...value.diagnostics,
+        routes: {
+          ...value.diagnostics.routes,
+          lexical: { status: "disabled", reason: "route-disabled", executed: false, queryCount: 0 },
+          semantic: { status: "disabled", reason: "route-disabled", executed: false, queryCount: 0 },
+        },
+      },
+    } as RetrievalResult;
+    expect(projectAskQuestionResponse(disabled).diagnostics.routes.lexical.queryCount).toBe(0);
+    const metadata = buildFreshnessMetadata({
+      pending: [], watcherActive: false, degradedReason: "watch failed",
+      indexQueue: { running: false, pendingJobs: [] } as never,
+    });
+    expect(buildFreshnessNotice(metadata)).toContain("Freshness: stale");
+  });
+});

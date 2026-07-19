@@ -2,7 +2,29 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { createClient } from "../src/index.js";
+import {
+  DEFAULT_RETRIEVE_OPTIONS,
+  RETRIEVE_OPTION_LIMITS,
+  createClient,
+  normalizeRetrieveOptions,
+} from "../src/index.js";
+import type {
+  AskOptions,
+  CandidateConfidence,
+  CandidateLocation,
+  CandidateProvenance,
+  CandidateRouteMembership,
+  FusedRetrievalCandidate,
+  LoadedEvidence,
+  RagCitation,
+  RetrievalCandidate,
+  RetrievalDiagnostics,
+  RetrievalOutcome,
+  RetrievalResult,
+  RetrieveOptions,
+  SelectionRejectionReason,
+  SourceLoadRejectionReason,
+} from "../src/index.js";
 import { defaultConfig, writeConfig } from "../src/config/loadConfig.js";
 import { initCommand } from "../src/interfaces/cli/init.js";
 import { uninitCommand } from "../src/interfaces/cli/uninit.js";
@@ -63,6 +85,45 @@ function resolveLexicalStore(client: Awaited<ReturnType<typeof createClient>>): 
     resolveLexicalStore(): Promise<WorkspaceLexicalStore>;
   }).resolveLexicalStore();
 }
+
+describe("SDK ask retrieval options", () => {
+  it("exports stable defaults, boundaries, and public response types from the package root", () => {
+    const options: RetrieveOptions = { lexical: false, semantic: false, topK: 3, graphHops: 2, contextBudget: 512 };
+    const askOptions: AskOptions = options;
+    const typeSurface: readonly unknown[] = [] as unknown as readonly [
+      RetrievalResult, RetrievalDiagnostics, RetrievalOutcome, RetrievalCandidate,
+      FusedRetrievalCandidate, CandidateRouteMembership, CandidateProvenance,
+      CandidateLocation, CandidateConfidence, LoadedEvidence, RagCitation,
+      SelectionRejectionReason, SourceLoadRejectionReason,
+    ];
+    expect(normalizeRetrieveOptions(askOptions)).toEqual({
+      lexical: false, semantic: false, topK: 3, graphHops: 2, contextBudget: 512,
+    });
+    expect(DEFAULT_RETRIEVE_OPTIONS).toEqual({
+      lexical: true, semantic: true, topK: 20, graphHops: 1, contextBudget: 16_000,
+    });
+    expect(RETRIEVE_OPTION_LIMITS).toEqual({
+      topK: { min: 1, max: 100 }, graphHops: { min: 0, max: 5 }, contextBudget: { min: 256, max: 65_536 },
+    });
+    expect(typeSurface).toEqual([]);
+  });
+
+  it("does not mutate input and preserves no-options compatibility", () => {
+    const input = Object.freeze({ topK: 7, graphHops: 0 });
+    expect(normalizeRetrieveOptions()).toEqual(DEFAULT_RETRIEVE_OPTIONS);
+    expect(normalizeRetrieveOptions(input)).toEqual({ ...DEFAULT_RETRIEVE_OPTIONS, ...input });
+    expect(input).toEqual({ topK: 7, graphHops: 0 });
+  });
+
+  it.each([
+    [{ topK: 0 }], [{ topK: 101 }], [{ topK: 1.5 }], [{ topK: Number.NaN }],
+    [{ topK: Number.POSITIVE_INFINITY }], [{ topK: "5" }], [{ graphHops: -1 }],
+    [{ graphHops: 6 }], [{ contextBudget: 255 }], [{ contextBudget: 65_537 }],
+    [{ lexical: "false" }], [{ semantic: 0 }], [{ cwd: "." }],
+  ])("rejects invalid or internal options without coercion: %j", (options) => {
+    expect(() => normalizeRetrieveOptions(options as never)).toThrow(TypeError);
+  });
+});
 
 describe("SDK lexical provider resolution", () => {
   it("uses the graph provider registration in auto mode", async () => {

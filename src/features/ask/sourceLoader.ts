@@ -172,6 +172,7 @@ export async function loadSelectedEvidence(
   input: Readonly<{
     workspaceId: string;
     selectedCandidates: readonly FusedRetrievalCandidate[];
+    maxDocuments?: number;
     store?: WorkspaceLexicalStore;
     storeUnavailable?: boolean;
   }>,
@@ -179,10 +180,12 @@ export async function loadSelectedEvidence(
   const rejections: SourceLoadRejection[] = [];
   const loadables: Loadable[] = [];
   const seen = new Set<string>();
-  for (const candidate of input.selectedCandidates) {
+  const maxDocuments = input.maxDocuments ?? Number.POSITIVE_INFINITY;
+  candidateLoop: for (const candidate of input.selectedCandidates) {
     let candidateHadLoadable = false;
     let candidateHadReference = false;
     for (const provenance of candidate.provenance) {
+      if (loadables.length >= maxDocuments) break candidateLoop;
       if (!provenance.documentId || !provenance.renderRef) continue;
       candidateHadReference = true;
       const parsed = parseLoadable(candidate, provenance, input.workspaceId);

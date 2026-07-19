@@ -9,6 +9,12 @@ import { appVersion } from "../../shared/version.js";
 import { BRAND, BRAND_DEFAULTS, BRAND_PATHS, brandedMcpToolName, configFilePath } from "../../shared/branding.js";
 import { startMcpOwnerRpcServer } from "./ownerRpc.js";
 import { z } from "zod";
+import {
+  RETRIEVE_OPTION_LIMITS,
+  type RetrieveOptions,
+} from "../../features/ask/options.js";
+import type { RetrievalDiagnostics } from "../../features/ask/diagnostics.js";
+import type { RetrievalResult } from "../../features/ask/retrieve.js";
 
 type CatchUpState = WatchStatus["catchUp"];
 
@@ -28,6 +34,81 @@ const MCP_RESOURCE_URIS = {
   dependencies: `${BRAND.mcpServerName}://dependencies`,
   contracts: `${BRAND.mcpServerName}://contracts`
 } as const;
+
+const integerOption = (name: keyof typeof RETRIEVE_OPTION_LIMITS) => {
+  const bounds = RETRIEVE_OPTION_LIMITS[name];
+  return z.number().finite().int().min(bounds.min).max(bounds.max).optional();
+};
+
+export const ASK_QUESTION_INPUT_SCHEMA = z.strictObject({
+  question: z.string().trim().min(1).max(1024),
+  lexical: z.boolean().optional(),
+  semantic: z.boolean().optional(),
+  topK: integerOption("topK"),
+  graphHops: integerOption("graphHops"),
+  contextBudget: integerOption("contextBudget"),
+});
+
+export type McpAskQuestionInput = z.infer<typeof ASK_QUESTION_INPUT_SCHEMA>;
+
+export type McpSelectedEvidence = Readonly<{
+  documentId: string;
+  canonicalId: string;
+  repoId: string;
+  sourceKind: string;
+  path: string;
+  startLine?: number;
+  endLine?: number;
+  confidence: string;
+  matchReasons: readonly string[];
+  renderRef: string;
+}>;
+
+export type McpAskQuestionResponse = Readonly<{
+  outcome: RetrievalResult["outcome"];
+  selectedEvidence: readonly McpSelectedEvidence[];
+  diagnostics: RetrievalDiagnostics;
+}>;
+
+export function projectAskQuestionResponse(
+  retrieval: RetrievalResult,
+): McpAskQuestionResponse {
+  const selectedEvidence = retrieval.loadedEvidence.map((evidence) => Object.freeze({
+    documentId: evidence.document.id,
+    canonicalId: evidence.document.canonicalId,
+    repoId: evidence.document.repoId,
+    sourceKind: evidence.document.kind,
+    path: evidence.parsedRenderRef.path!,
+    ...(evidence.parsedRenderRef.startLine ? { startLine: evidence.parsedRenderRef.startLine } : {}),
+    ...(evidence.parsedRenderRef.endLine ? { endLine: evidence.parsedRenderRef.endLine } : {}),
+    confidence: evidence.candidate.confidence,
+    matchReasons: Object.freeze([...evidence.candidate.matchReasons]),
+    renderRef: evidence.document.renderRef,
+  }));
+  const diagnostics: RetrievalDiagnostics = Object.freeze({
+    routes: retrieval.diagnostics.routes,
+    timings: retrieval.diagnostics.timings,
+    queries: retrieval.diagnostics.queries,
+    compatibility: retrieval.diagnostics.compatibility,
+    providers: retrieval.diagnostics.providers,
+    sourceLoading: retrieval.diagnostics.sourceLoading,
+  });
+  return Object.freeze({
+    outcome: retrieval.outcome,
+    selectedEvidence: Object.freeze(selectedEvidence),
+    diagnostics,
+  });
+}
+
+export async function handleAskQuestion(
+  client: Pick<InstanceType<typeof GraphClient>, "retrieve">,
+  input: McpAskQuestionInput,
+): Promise<McpAskQuestionResponse> {
+  const parsed = ASK_QUESTION_INPUT_SCHEMA.parse(input);
+  const { question, ...options } = parsed;
+  const retrieval = await client.retrieve(question, options as RetrieveOptions);
+  return projectAskQuestionResponse(retrieval);
+}
 
 export type FreshnessMetadata = {
   stale: boolean;
@@ -483,15 +564,13 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
     MCP_TOOLS.askQuestion,
     {
       description: `LAST RESORT broad retrieval. Use only when the user asks an exploratory natural-language question and no exact repository, contract, API/event/schema/RPC/GraphQL target, or symbol is known. Accuracy is lower than graph-specific tools. Do not use for dependency lists, contract discovery, contract tracing, or change impact; prefer ${MCP_TOOLS.listDependencies}, ${MCP_TOOLS.listContracts}, ${MCP_TOOLS.trace}, and ${MCP_TOOLS.impactAnalysis}.`,
-      inputSchema: {
-        question: z.string().min(1).max(1024).describe(`Broad natural-language question only. If the question names a contract or change, use ${MCP_TOOLS.trace} or ${MCP_TOOLS.impactAnalysis} instead.`),
-      },
+      inputSchema: ASK_QUESTION_INPUT_SCHEMA,
     },
-    async ({ question }) => {
-      return wrapWithFreshness(MCP_TOOLS.askQuestion, { question }, async () => {
-        const retrieval = await client.retrieve(question);
+    async (input) => {
+      return wrapWithFreshness(MCP_TOOLS.askQuestion, input, async () => {
+        const response = await handleAskQuestion(client, input);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(retrieval, null, 2) }],
+          content: [{ type: "text" as const, text: JSON.stringify(response, null, 2) }],
         };
       });
     }

@@ -18,6 +18,7 @@ import { retrieveBoundedGraph, type GraphLegacyRow } from "./retrievers/graph.js
 import { retrieveWorkspaceLexical } from "./retrievers/lexical.js";
 import { retrieveOptionalSemantic } from "./retrievers/semantic.js";
 import { emptyRouteResult, RetrieverOperationalError, type RetrieverRouteResult } from "./retrievers/types.js";
+import { DEFAULT_RETRIEVE_OPTIONS, type NormalizedRetrieveOptions } from "./options.js";
 
 const ROUTES: readonly RetrievalRoute[] = ["exact", "contract", "entity", "lexical", "graph", "semantic"];
 export { compatibilityEntityTargets };
@@ -35,13 +36,14 @@ export type RetrievalDependencies = Readonly<{
   now?: () => number;
 }>;
 
-export type RetrieveOptions = Readonly<{
+export type RetrieveExecutionOptions = Readonly<{
   cwd?: string;
   config?: AppConfig;
   planningContext?: QueryPlanningContext;
   lexicalStore?: WorkspaceLexicalStore;
   lexicalStoreUnavailable?: boolean;
   dependencies?: RetrievalDependencies;
+  retrieval?: NormalizedRetrieveOptions;
 }>;
 
 export type RetrievalResult = Readonly<{
@@ -107,8 +109,9 @@ function routeDiagnostic(result: RetrieverRouteResult<unknown>) {
   });
 }
 
-export async function retrieveForQuestion(db: GraphDB, question: string, options: RetrieveOptions = {}): Promise<RetrievalResult> {
+export async function retrieveForQuestion(db: GraphDB, question: string, options: RetrieveExecutionOptions = {}): Promise<RetrievalResult> {
   const deps = options.dependencies ?? {};
+  const retrieval = options.retrieval ?? DEFAULT_RETRIEVE_OPTIONS;
   const now = deps.now ?? (() => performance.now());
   const totalStart = now();
   const cwd = options.cwd ?? process.cwd();
@@ -116,7 +119,20 @@ export async function retrieveForQuestion(db: GraphDB, question: string, options
   const repoRoots = options.config?.repos?.map((repo) => path.resolve(cwd, repo.path)) ?? [];
 
   const planningStart = now();
-  const plan: QueryPlan = (deps.plan ?? planQuestion)(question, options.planningContext);
+  const planned: QueryPlan = (deps.plan ?? planQuestion)(question, options.planningContext);
+  const disabledRoutes = new Set<RetrievalRoute>([
+    ...(!retrieval.lexical ? ["lexical" as const] : []),
+    ...(!retrieval.semantic ? ["semantic" as const] : []),
+    ...(retrieval.graphHops === 0 ? ["graph" as const] : []),
+  ]);
+  const plan: QueryPlan = {
+    ...planned,
+    enabledRoutes: planned.enabledRoutes.filter((route) => !disabledRoutes.has(route)),
+    budgets: {
+      ...planned.budgets,
+      lexical: { limit: retrieval.topK },
+    },
+  };
   const planningTiming = completed(duration(planningStart, now()));
 
   const exactStart = now();
@@ -126,7 +142,9 @@ export async function retrieveForQuestion(db: GraphDB, question: string, options
   let lexicalHealth: LexicalIndexHealth | undefined;
   let lexical: RetrieverRouteResult<LexicalHit>;
   const lexicalStart = now();
-  if (!plan.enabledRoutes.includes("lexical")) {
+  if (!retrieval.lexical) {
+    lexical = emptyRouteResult("lexical", "disabled", "route-disabled");
+  } else if (!plan.enabledRoutes.includes("lexical")) {
     lexical = emptyRouteResult("lexical", "disabled", "route-disabled");
   } else if (!plan.normalizedLexicalQuery.trim()) {
     lexical = emptyRouteResult("lexical", "disabled", "query-empty");
@@ -149,19 +167,23 @@ export async function retrieveForQuestion(db: GraphDB, question: string, options
   const lexicalDuration = duration(lexicalStart, now());
 
   const graphStart = now();
-  const graph = await isolateOperational(
-    () => (deps.graph ?? retrieveBoundedGraph)(db, plan, [
-      ...exact.exact.candidates, ...exact.contract.candidates, ...exact.entity.candidates, ...lexical.candidates
-    ], { workspaceId }),
-    (error) => emptyRouteResult<GraphLegacyRow>("graph", "failed", error.reason, { executed: error.attemptedQueryCount > 0, queryCount: error.attemptedQueryCount })
-  );
+  const graph = retrieval.graphHops === 0
+    ? emptyRouteResult<GraphLegacyRow>("graph", "disabled", "route-disabled")
+    : await isolateOperational(
+      () => (deps.graph ?? retrieveBoundedGraph)(db, plan, [
+        ...exact.exact.candidates, ...exact.contract.candidates, ...exact.entity.candidates, ...lexical.candidates
+      ], { workspaceId, graphHops: retrieval.graphHops }),
+      (error) => emptyRouteResult<GraphLegacyRow>("graph", "failed", error.reason, { executed: error.attemptedQueryCount > 0, queryCount: error.attemptedQueryCount })
+    );
   const graphDuration = duration(graphStart, now());
 
   const semanticStart = now();
-  const semantic = await isolateOperational(
-    () => (deps.semantic ?? retrieveOptionalSemantic)(plan, question, options.config, { cwd }),
-    (error) => emptyRouteResult<SemanticSearchResult>("semantic", "failed", error.reason, { executed: error.attemptedQueryCount > 0, queryCount: error.attemptedQueryCount })
-  );
+  const semantic = retrieval.semantic
+    ? await isolateOperational(
+      () => (deps.semantic ?? retrieveOptionalSemantic)(plan, question, options.config, { cwd }),
+      (error) => emptyRouteResult<SemanticSearchResult>("semantic", "failed", error.reason, { executed: error.attemptedQueryCount > 0, queryCount: error.attemptedQueryCount })
+    )
+    : emptyRouteResult<SemanticSearchResult>("semantic", "disabled", "route-disabled");
   const semanticDuration = duration(semanticStart, now());
 
   const fusionStart = now();
@@ -172,7 +194,11 @@ export async function retrieveForQuestion(db: GraphDB, question: string, options
   const fusionTiming = completed(duration(fusionStart, now()));
 
   const selectionStart = now();
-  const selection: SelectionResult = (deps.selection ?? selectCandidates)(fusedCandidates, { workspaceId });
+  const selection: SelectionResult = (deps.selection ?? selectCandidates)(fusedCandidates, {
+    workspaceId,
+    maxCandidates: retrieval.topK,
+    maxContextChars: retrieval.contextBudget,
+  });
   const selectedCandidates = selection.selectedCandidates;
   const selectionTiming = completed(duration(selectionStart, now()));
 
@@ -180,6 +206,7 @@ export async function retrieveForQuestion(db: GraphDB, question: string, options
   const sourceLoading: SourceLoadResult = await (deps.sourceLoader ?? loadSelectedEvidence)({
     workspaceId,
     selectedCandidates,
+    maxDocuments: retrieval.topK,
     store: options.lexicalStore,
     storeUnavailable: options.lexicalStoreUnavailable
   });

@@ -32,6 +32,12 @@ import { retrieveForQuestion, type RetrievalResult } from "../../features/ask/re
 import { createQueryPlanningContext, type QueryPlanningContext } from "../../features/ask/planningContext.js";
 import { loadWorkspacePluginPlanningSnapshot } from "../../core/plugins/register.js";
 import { answerQuestion } from "../../features/ask/answer.js";
+import {
+  normalizeRetrieveOptions,
+  type AskOptions,
+  type NormalizedRetrieveOptions,
+  type RetrieveOptions,
+} from "../../features/ask/options.js";
 import { rebuildRepoDependencies } from "../../core/graph-model/rebuildRelations.js";
 import { discoverGitRepos } from "../../core/workspace/repoDiscovery.js";
 import { toRepoNode } from "../../core/workspace/repoRegistry.js";
@@ -104,6 +110,7 @@ export type AppClientOptions = {
 };
 
 export type ClientOptions = AppClientOptions;
+export type { AskOptions, RetrieveOptions } from "../../features/ask/options.js";
 
 export type AppIndexOptions = IndexOptions & {
   queueSource?: IndexQueueSource;
@@ -606,24 +613,37 @@ export class AppClient {
    * @param question - The user query or question.
    * @returns The structured context retrieval result.
    */
-  async retrieve(question: string): Promise<RetrievalResult> {
+  private async retrieveNormalized(
+    question: string,
+    retrieval: NormalizedRetrieveOptions,
+  ): Promise<RetrievalResult> {
     const db = await this.getDb();
     const planningContext = await this.getQueryPlanningContext();
     let lexicalStore: WorkspaceLexicalStore | undefined;
     let lexicalStoreUnavailable = false;
-    try {
-      lexicalStore = await this.resolveLexicalStore();
-    } catch (error) {
-      if (!(error instanceof WorkspaceLexicalStoreError)) throw error;
-      lexicalStoreUnavailable = true;
+    if (retrieval.lexical) {
+      try {
+        lexicalStore = await this.resolveLexicalStore();
+      } catch (error) {
+        if (!(error instanceof WorkspaceLexicalStoreError)) throw error;
+        lexicalStoreUnavailable = true;
+      }
     }
     return retrieveForQuestion(db, question, {
       cwd: this.cwd,
       config: this.config,
       planningContext,
       lexicalStore,
-      lexicalStoreUnavailable
+      lexicalStoreUnavailable,
+      retrieval,
     });
+  }
+
+  async retrieve(
+    question: string,
+    options?: RetrieveOptions,
+  ): Promise<RetrievalResult> {
+    return this.retrieveNormalized(question, normalizeRetrieveOptions(options));
   }
 
   /**
@@ -632,15 +652,16 @@ export class AppClient {
    * @param question - The question to ask.
    * @returns The LLM-generated or fallback answer.
    */
-  async ask(question: string): Promise<string> {
-    const retrieval = await this.retrieve(question);
+  async ask(question: string, options?: AskOptions): Promise<string> {
+    const normalized = normalizeRetrieveOptions(options);
+    const retrieval = await this.retrieveNormalized(question, normalized);
     return answerQuestion(
       question,
       retrieval,
       this.config.llm.model,
       this.config.llm.apiKey ?? process.env.OPENAI_API_KEY,
       this.config.llm.baseUrl ?? process.env.OPENAI_BASE_URL,
-      {},
+      { maxContextChars: normalized.contextBudget },
       {
         retry: this.config.llm.retry,
         budget: this.config.llm.budget,

@@ -14,8 +14,78 @@ import { defaultConfig } from "../src/config/loadConfig.js";
 import { KuzuWorkspaceLexicalStore, KUZU_WORKSPACE_FTS_INDEX } from "../src/adapters/graph-db/kuzu/KuzuWorkspaceLexicalStore.js";
 import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
 import { parseRenderRef } from "../src/core/retrieval/renderRef.js";
+import { createClient } from "../src/interfaces/sdk/client.js";
 
 describe("local availability", () => {
+  it("indexes and answers through the default local SDK path without network, embeddings, or a companion database", async () => {
+    const originalKey = process.env.OPENAI_API_KEY;
+    const originalBaseUrl = process.env.OPENAI_BASE_URL;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_BASE_URL;
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-local-sdk-e2e-"));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network must not be used"));
+    const searchSpy = vi.spyOn(KuzuWorkspaceLexicalStore.prototype, "search");
+    let client: Awaited<ReturnType<typeof createClient>> | undefined;
+    try {
+      const base = defaultConfig();
+      const config = {
+        ...base,
+        systemName: "local-sdk-e2e",
+        repos: ["service-a", "service-b"].map((name) => ({
+          name,
+          path: path.resolve("tests/fixtures", name).replace(/\\/g, "/"),
+        })),
+        graph: { ...base.graph, provider: "kuzu", path: path.join(dir, "graph") },
+        retrieval: { lexical: { provider: "auto", scope: "workspace" as const } },
+        embedding: { ...base.embedding, provider: "off" as const, level: "off" as const },
+        llm: { ...base.llm, apiKey: undefined, baseUrl: undefined },
+      };
+      client = await createClient({ cwd: dir, config });
+      const indexed = await client.index({ changedOnly: false, writeMode: "auto" });
+      expect(indexed.lexicalDocumentCount).toBeGreaterThan(0);
+
+      let searches = searchSpy.mock.calls.length;
+      const retrieved = await client.retrieve("OrderCreatedEvent");
+      expect(searchSpy.mock.calls.length - searches).toBe(1);
+      expect(retrieved.diagnostics.providers.lexical.status).toBe("succeeded");
+      expect(retrieved.diagnostics.routes.lexical.queryCount).toBe(1);
+      expect(retrieved.diagnostics.queries.sourceLoading).toBe(1);
+      expect(retrieved.selectedCandidates.length).toBeGreaterThan(0);
+      expect(retrieved.loadedEvidence.length).toBeGreaterThan(0);
+      expect(["succeeded", "degraded"]).toContain(retrieved.outcome);
+      expect(retrieved.loadedEvidence.every((evidence) => evidence.document.active)).toBe(true);
+      expect(retrieved.loadedEvidence.every((evidence) =>
+        parseRenderRef(evidence.document.renderRef, deriveWorkspaceId(config.systemName)).workspaceId === deriveWorkspaceId(config.systemName)
+      )).toBe(true);
+
+      searches = searchSpy.mock.calls.length;
+      const answer = await client.ask("OrderCreatedEvent");
+      expect(searchSpy.mock.calls.length - searches).toBe(1);
+      expect(answer).not.toBe("no_reliable_evidence");
+      expect(answer).toContain("[C1]");
+      expect(answer).toMatch(/repo:service-[ab]\/[^\s:]+/u);
+
+      await client.close();
+      client = undefined;
+      client = await createClient({ cwd: dir, config });
+      searches = searchSpy.mock.calls.length;
+      const reopened = await client.retrieve("OrderCreatedEvent");
+      expect(searchSpy.mock.calls.length - searches).toBe(1);
+      expect(reopened.loadedEvidence.length).toBeGreaterThan(0);
+      expect(reopened.diagnostics.routes.lexical.queryCount).toBe(1);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      await client?.close();
+      searchSpy.mockRestore();
+      fetchSpy.mockRestore();
+      await fs.rm(dir, { recursive: true, force: true });
+      if (originalKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = originalKey;
+      if (originalBaseUrl === undefined) delete process.env.OPENAI_BASE_URL;
+      else process.env.OPENAI_BASE_URL = originalBaseUrl;
+    }
+  }, 45_000);
+
   it("publishes graph and one workspace-wide lexical index through runIndexing", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-local-indexing-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));

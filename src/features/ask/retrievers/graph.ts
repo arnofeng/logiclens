@@ -114,7 +114,7 @@ export async function retrieveBoundedGraph(
   db: GraphDB,
   plan: QueryPlan,
   seeds: readonly RetrievalCandidate[],
-  options: { workspaceId: string; seedLimit?: number; dependencies?: GraphRetrieverDependencies }
+  options: { workspaceId: string; seedLimit?: number; graphHops?: number; dependencies?: GraphRetrieverDependencies }
 ): Promise<RetrieverRouteResult<GraphLegacyRow>> {
   if (!plan.enabledRoutes.includes("graph")) {
     return emptyRouteResult("graph", "disabled", "route-disabled");
@@ -153,27 +153,46 @@ export async function retrieveBoundedGraph(
       .map((row) => [row.codeId, row])).values()].slice(0, resultLimit);
   }
 
-  const remainingForEdges = Math.max(0, resultLimit - implementationRows.length);
-  const codeIds = [...new Set([
+  const initialCodeIds = [...new Set([
     ...uniqueSeeds
       .filter((candidate) => candidate.kind === "code" && candidate.canonicalId.startsWith("code:"))
       .map((candidate) => candidate.canonicalId),
     ...implementationRows.map((row) => row.codeId)
   ])].sort();
   let edges: EdgeRow[] = [];
-  if (codeIds.length > 0 && remainingForEdges > 0) {
+  const visitedCodeIds = new Set<string>();
+  let frontier = initialCodeIds;
+  const graphHops = Math.max(0, options.graphHops ?? 1);
+  for (let hop = 0; hop < graphHops && frontier.length > 0; hop += 1) {
+    const seedsForHop = frontier.filter((id) => !visitedCodeIds.has(id)).sort();
+    if (seedsForHop.length === 0) break;
+    seedsForHop.forEach((id) => visitedCodeIds.add(id));
+    const remainingForEdges = Math.max(0, resultLimit - implementationRows.length - edges.length);
+    if (remainingForEdges === 0) break;
     queryCount += 1;
-    edges = await graphProviderQuery(queryCount, () => deps.callEdgesAround(db, codeIds, remainingForEdges));
-    edges = [...new Map(edges.sort((left, right) => edgeKey(left).localeCompare(edgeKey(right))).map((edge) => [edgeKey(edge), edge])).values()]
+    const rows = await graphProviderQuery(queryCount, () => deps.callEdgesAround(db, seedsForHop, remainingForEdges));
+    const knownEdges = new Set(edges.map(edgeKey));
+    const additions = [...new Map(rows
+      .sort((left, right) => edgeKey(left).localeCompare(edgeKey(right)))
+      .map((edge) => [edgeKey(edge), edge])).values()]
+      .filter((edge) => !knownEdges.has(edgeKey(edge)))
       .slice(0, remainingForEdges);
+    edges = [...edges, ...additions];
+    frontier = [...new Set(additions.flatMap((edge) => [edge.fromCodeId, edge.toCodeId])
+      .filter((id): id is string => typeof id === "string")
+      .filter((id) => !visitedCodeIds.has(id)))].sort();
   }
   if (queryCount === 0) return emptyRouteResult("graph", "disabled", "no-queryable-seeds");
 
   const remainingForSections = Math.max(0, resultLimit - implementationRows.length - edges.length);
   let sections: SectionSearchRow[] = [];
-  if (codeIds.length > 0 && remainingForSections > 0 && typeof db.query === "function") {
+  const discoveredCodeIds = [...new Set([
+    ...initialCodeIds,
+    ...edges.flatMap((edge) => [edge.fromCodeId, edge.toCodeId]).filter((id): id is string => Boolean(id)),
+  ])].sort();
+  if (discoveredCodeIds.length > 0 && remainingForSections > 0 && typeof db.query === "function") {
     queryCount += 1;
-    sections = await graphProviderQuery(queryCount, () => deps.sectionsDocumentingCode(db, codeIds, remainingForSections));
+    sections = await graphProviderQuery(queryCount, () => deps.sectionsDocumentingCode(db, discoveredCodeIds, remainingForSections));
     sections = [...new Map(sections.sort((left, right) => left.sectionId.localeCompare(right.sectionId)).map((row) => [row.sectionId, row])).values()]
       .slice(0, remainingForSections);
   }
