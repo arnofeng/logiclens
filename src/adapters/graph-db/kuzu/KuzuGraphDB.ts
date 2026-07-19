@@ -29,6 +29,9 @@ import { schemaStatements, systemId } from "../../../core/graph-model/schema.js"
 import { createCypherCrud, type CypherCrud } from "../../../core/graph-model/cypherCrud.js";
 import { getBrandedEnv } from "../../../shared/branding.js";
 import {
+  GraphDatabaseOperationalError,
+  GraphDatabaseClosedError,
+  type GraphDatabaseErrorClassifier,
   type GraphDB,
   type GraphValue,
   type GraphWriteAtomicityMode,
@@ -41,6 +44,22 @@ import {
   ALL_EVIDENCE_REL_TYPES,
   REJECT_EVIDENCE_REL_TYPES
 } from "../../../core/graph-model/db.js";
+
+/**
+ * Kuzu does not currently expose structured query error codes in its Node API.
+ * Keep this allow-list deliberately narrow: parser, binder, schema, parameter,
+ * conversion, and unknown errors are programming/contract failures.
+ */
+export const classifyKuzuQueryError: GraphDatabaseErrorClassifier = (error) => {
+  if (!(error instanceof Error)) return undefined;
+  const message = error.message.toLowerCase();
+  if (/\b(?:timed?\s*out|timeout)\b/.test(message)) return "timeout";
+  if (/\b(?:connection (?:exception|failed|failure|lost|reset|refused|aborted|closed)|broken pipe|network (?:is )?unreachable)\b/.test(message)) {
+    return "connection";
+  }
+  if (/\b(?:service|database) (?:is )?(?:temporarily )?unavailable\b/.test(message)) return "service-unavailable";
+  return undefined;
+};
 
 async function allRows(result: QueryResult | QueryResult[]): Promise<Record<string, KuzuValue>[]> {
   const results = Array.isArray(result) ? result : [result];
@@ -745,15 +764,23 @@ export class KuzuGraphDB implements GraphDB {
   }
 
   async query<T = Record<string, GraphValue>>(cypher: string, params?: Record<string, GraphValue>): Promise<T[]> {
-    const active = this.activeTransaction();
-    if (active) {
-      return this.queryWithConnection<T>(active.conn, cypher, params);
-    }
-    const conn = await this.createConnection();
     try {
-      return await this.queryWithConnection<T>(conn, cypher, params);
-    } finally {
-      await conn.close();
+      const active = this.activeTransaction();
+      if (active) {
+        return await this.queryWithConnection<T>(active.conn, cypher, params);
+      }
+      const conn = await this.createConnection();
+      try {
+        return await this.queryWithConnection<T>(conn, cypher, params);
+      } finally {
+        await conn.close();
+      }
+    } catch (error) {
+      if (error instanceof GraphDatabaseClosedError) throw error;
+      if (error instanceof GraphDatabaseOperationalError) throw error;
+      const kind = classifyKuzuQueryError(error);
+      if (!kind) throw error;
+      throw new GraphDatabaseOperationalError({ cause: error, kind });
     }
   }
 
@@ -797,7 +824,7 @@ export class KuzuGraphDB implements GraphDB {
   }
 
   private database(): kuzu.Database {
-    if (this.closed || !this.db) throw new Error("Graph database is closed");
+    if (this.closed || !this.db) throw new GraphDatabaseClosedError();
     return this.db;
   }
 

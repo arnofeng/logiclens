@@ -29,8 +29,9 @@ describe("rag helpers", () => {
     const tracedTerms: string[] = [];
     const db = {
       async query(sql: string, params?: Record<string, unknown>) {
-        if (typeof params?.term === "string" && (sql.includes("(e:Entity)") || sql.includes("PARTICIPATES_IN"))) tracedTerms.push(params.term);
-        if (sql.includes("PARTICIPATES_IN") && !sql.includes("WORKFLOW_STEP") && params?.term === "order") {
+        const entityTerms = Array.isArray(params?.values) ? params.values.filter((value): value is string => typeof value === "string") : [];
+        if (entityTerms.length > 0 && (sql.includes("(e:Entity)") || sql.includes("PARTICIPATES_IN"))) tracedTerms.push(...entityTerms);
+        if (sql.includes("PARTICIPATES_IN") && !sql.includes("WORKFLOW_STEP") && entityTerms.includes("order")) {
           return [{
             entityId: "entity:order", entityName: "Order", repoName: "orders", sourceKind: "operation",
             name: "create", filePath: "", line: 0, role: "producer", evidence: "creates orders", confidence: 1

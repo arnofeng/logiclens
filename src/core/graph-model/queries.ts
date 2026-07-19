@@ -1,4 +1,4 @@
-import type { GraphDB, GraphValue, ContractSummaryRow } from "./db.js";
+import { GraphDatabaseOperationalError, type GraphDB, type GraphValue, type ContractSummaryRow } from "./db.js";
 export type { ContractSummaryRow } from "./db.js";
 import { repoId } from "../../shared/path.js";
 import { confidenceBand, type ConfidenceBand } from "../../shared/confidence.js";
@@ -167,6 +167,16 @@ export type CountedQueryResult<Row> = Readonly<{
   rows: Row[];
   queryCount: number;
 }>;
+
+export class CountedGraphQueryError extends GraphDatabaseOperationalError {
+  readonly attemptedQueryCount: number;
+
+  constructor(attemptedQueryCount: number, options?: ErrorOptions) {
+    super(options);
+    this.name = "CountedGraphQueryError";
+    this.attemptedQueryCount = attemptedQueryCount;
+  }
+}
 
 /**
  * Represents a row in an entity trace query result, identifying how an entity relates to a source node.
@@ -455,10 +465,12 @@ export async function traceContractWithQueryCount(
   limit = 100
 ): Promise<CountedQueryResult<ContractTraceRow>> {
   if (limit < 1) return { rows: [], queryCount: 0 };
+  let queryCount = 0;
+  try {
   const key = canonicalContractKey(kind, value);
   const normalizedMethod = method?.trim().toUpperCase();
   const methodKey = normalizedMethod && kind === "api" ? canonicalContractKey(kind, value, normalizedMethod) : undefined;
-  let queryCount = 1;
+  queryCount = 1;
   let contracts = methodKey
     ? await db.query<{ id: string }>(
       "MATCH (c:Contract) WHERE c.kind = $kind AND (c.key = $key OR c.key = $methodKey) RETURN c.id AS id;",
@@ -494,6 +506,10 @@ export async function traceContractWithQueryCount(
     rows: rows.sort((a, b) => a.repoName.localeCompare(b.repoName) || a.role.localeCompare(b.role) || a.line - b.line).slice(0, limit),
     queryCount
   };
+  } catch (error) {
+    if (!(error instanceof GraphDatabaseOperationalError)) throw error;
+    throw new CountedGraphQueryError(queryCount, { cause: error });
+  }
 }
 
 export async function traceContract(db: GraphDB, kind: ContractKind, value: string, method?: string, limit = 100): Promise<ContractTraceRow[]> {
@@ -689,6 +705,8 @@ export async function traceEntitiesExactWithQueryCount(
   limit = 100
 ): Promise<CountedQueryResult<EntityTraceRow>> {
   if (values.length === 0 || limit < 1) return { rows: [], queryCount: 0 };
+  let attemptedQueryCount = 0;
+  try {
   const normalizedValues = [...new Set(values.map((value) => value.normalize("NFC").toLowerCase()))].sort();
   const params = { values: normalizedValues };
   const perQueryLimit = limit;
@@ -736,10 +754,17 @@ export async function traceEntitiesExactWithQueryCount(
        LIMIT ${perQueryLimit};`, params)
   );
   const rows: EntityTraceRow[] = [];
-  for (const query of queries) rows.push(...await query());
+  for (const query of queries) {
+    attemptedQueryCount += 1;
+    rows.push(...await query());
+  }
   return { rows: [...new Map(rows
     .sort((left, right) => entityTraceRowKey(left).localeCompare(entityTraceRowKey(right)))
-    .map((row) => [entityTraceRowKey(row), row])).values()].slice(0, limit), queryCount: queries.length };
+    .map((row) => [entityTraceRowKey(row), row])).values()].slice(0, limit), queryCount: attemptedQueryCount };
+  } catch (error) {
+    if (!(error instanceof GraphDatabaseOperationalError)) throw error;
+    throw new CountedGraphQueryError(attemptedQueryCount, { cause: error });
+  }
 }
 
 export async function traceEntitiesExact(

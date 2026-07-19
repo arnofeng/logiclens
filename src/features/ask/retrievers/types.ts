@@ -1,5 +1,6 @@
 import type { RetrievalCandidate } from "../candidates.js";
 import type { RetrievalRoute } from "../planner.js";
+import type { SemanticSearchMetadata } from "../../../core/semantic/semanticIndex.js";
 
 export type RetrieverRouteStatus = "succeeded" | "disabled" | "unavailable" | "unhealthy" | "failed";
 
@@ -11,7 +12,23 @@ export type RetrieverRouteResult<LegacyRow = never> = Readonly<{
   queryCount: number;
   status: RetrieverRouteStatus;
   reason?: string;
+  providerMetadata?: SemanticSearchMetadata;
 }>;
+
+/** Marks an expected provider/database route failure at the orchestration boundary. */
+export class RetrieverOperationalError extends Error {
+  readonly route: RetrievalRoute;
+  readonly attemptedQueryCount: number;
+  readonly reason: string;
+
+  constructor(route: RetrievalRoute, attemptedQueryCount: number, reason = "route-failed", options?: ErrorOptions) {
+    super(`Retrieval route failed: ${route}`, options);
+    this.name = "RetrieverOperationalError";
+    this.route = route;
+    this.attemptedQueryCount = attemptedQueryCount;
+    this.reason = reason;
+  }
+}
 
 export function emptyRouteResult<LegacyRow>(
   route: RetrievalRoute,
@@ -44,4 +61,12 @@ export function successfulRouteResult<LegacyRow>(
     queryCount,
     status: "succeeded"
   });
+}
+
+export function failedRouteResult<LegacyRow>(
+  route: RetrievalRoute,
+  queryCount: number,
+  reason = "route-failed"
+): RetrieverRouteResult<LegacyRow> {
+  return emptyRouteResult(route, "failed", reason, { executed: queryCount > 0, queryCount });
 }

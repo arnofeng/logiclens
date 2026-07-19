@@ -25,6 +25,9 @@ import type {
 import { systemId } from "../../../core/graph-model/schema.js";
 import { createCypherCrud, type CypherCrud } from "../../../core/graph-model/cypherCrud.js";
 import {
+  GraphDatabaseOperationalError,
+  GraphDatabaseClosedError,
+  type GraphDatabaseErrorClassifier,
   type GraphDB,
   type GraphValue,
   type GraphWriteAtomicityMode,
@@ -37,6 +40,20 @@ import {
   ALL_EVIDENCE_REL_TYPES,
   REJECT_EVIDENCE_REL_TYPES
 } from "../../../core/graph-model/db.js";
+
+type Neo4jCodedError = Error & { code?: unknown };
+
+export const classifyNeo4jQueryError: GraphDatabaseErrorClassifier = (error) => {
+  if (!(error instanceof Error)) return undefined;
+  const code = (error as Neo4jCodedError).code;
+  if (typeof code !== "string") return undefined;
+  if (code === "ServiceUnavailable") return "service-unavailable";
+  if (code === "SessionExpired") return "connection";
+  if (code.startsWith("Neo.TransientError.")) {
+    return /timeout|timedout/i.test(code) ? "timeout" : "transient";
+  }
+  return undefined;
+};
 
 /**
  * Convert a GraphValue to a Neo4j-compatible value.
@@ -155,7 +172,7 @@ export class Neo4jGraphDB implements GraphDB {
   }
 
   private getSession(mode: "READ" | "WRITE" = "WRITE"): Session {
-    if (this.closed) throw new Error("Graph database is closed");
+    if (this.closed) throw new GraphDatabaseClosedError();
     const defaultAccessMode = mode === "READ" ? neo4j.session.READ : neo4j.session.WRITE;
     return this.driver.session({
       defaultAccessMode,
@@ -670,7 +687,14 @@ export class Neo4jGraphDB implements GraphDB {
 
   async query<T = Record<string, GraphValue>>(cypher: string, params?: Record<string, GraphValue>): Promise<T[]> {
     if (this.activeTx) {
-      const result = await this.activeTx.run(cypher, toNeo4jParams(params));
+      let result;
+      try {
+        result = await this.activeTx.run(cypher, toNeo4jParams(params));
+      } catch (error) {
+        const kind = classifyNeo4jQueryError(error);
+        if (!kind) throw error;
+        throw new GraphDatabaseOperationalError({ cause: error, kind });
+      }
       return result.records.map((record: any) => recordToPlain(record) as T);
     }
     // Non-transactional path: each query gets its own session with the
@@ -680,7 +704,14 @@ export class Neo4jGraphDB implements GraphDB {
     const mode = this.isReadQuery(cypher) ? "READ" : "WRITE";
     const session = this.getSession(mode);
     try {
-      const result = await session.run(cypher, toNeo4jParams(params));
+      let result;
+      try {
+        result = await session.run(cypher, toNeo4jParams(params));
+      } catch (error) {
+        const kind = classifyNeo4jQueryError(error);
+        if (!kind) throw error;
+        throw new GraphDatabaseOperationalError({ cause: error, kind });
+      }
       return result.records.map((record: any) => recordToPlain(record) as T);
     } finally {
       await session.close();

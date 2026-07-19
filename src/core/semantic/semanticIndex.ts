@@ -1,6 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { ChromaClient, type Metadata } from "chromadb";
+import {
+  ChromaClient,
+  ChromaConnectionError,
+  ChromaRateLimitError,
+  ChromaServerError,
+  type Metadata
+} from "chromadb";
 import type { EmbeddingLevel, AppConfig } from "../../config/schema.js";
 import { BRAND_PATHS } from "../../shared/branding.js";
 import type { ParsedDocument, ParsedFile, ParsedGraphFile, RepoNode } from "../parsing/types.js";
@@ -29,10 +35,44 @@ export type SemanticSearchResult = SemanticRecord & {
   score: number;
 };
 
+export type SemanticSearchMetadata = Readonly<{
+  primaryProvider: string;
+  effectiveProvider: string;
+  fallbackUsed: boolean;
+  fallbackReason?: "primary-empty" | "primary-search-failed";
+  primaryStatus: "succeeded" | "failed";
+}>;
+
+export type SemanticSearchExecution = Readonly<{
+  rows: readonly SemanticSearchResult[];
+  metadata: SemanticSearchMetadata;
+  attemptedSearchCount: number;
+}>;
+
+/** A semantic provider call failure safe for route-level degradation. */
+export class SemanticProviderOperationalError extends Error {
+  readonly attemptedSearchCount: number;
+  readonly metadata?: SemanticSearchMetadata;
+
+  constructor(options?: ErrorOptions & { attemptedSearchCount?: number; metadata?: SemanticSearchMetadata }) {
+    super("Semantic provider search failed", options);
+    this.name = "SemanticProviderOperationalError";
+    this.attemptedSearchCount = options?.attemptedSearchCount ?? 1;
+    this.metadata = options?.metadata;
+  }
+}
+
+export function isChromaOperationalError(error: unknown): boolean {
+  return error instanceof ChromaConnectionError
+    || error instanceof ChromaServerError
+    || error instanceof ChromaRateLimitError;
+}
+
 export interface SemanticIndex {
   records(): Promise<SemanticRecord[]>;
   upsert(records: SemanticRecord[]): Promise<void>;
   search(query: string, options?: { embeddingProvider?: EmbeddingProvider; limit?: number; providerPolicy?: ProviderPolicy }): Promise<SemanticSearchResult[]>;
+  searchWithMetadata?(query: string, options?: { embeddingProvider?: EmbeddingProvider; limit?: number; providerPolicy?: ProviderPolicy }): Promise<SemanticSearchExecution>;
 }
 
 export type SemanticIndexFallbackEvent = {
@@ -110,7 +150,13 @@ export class JsonSemanticIndex implements SemanticIndex {
   async search(query: string, options: { embeddingProvider?: EmbeddingProvider; limit?: number; providerPolicy?: ProviderPolicy } = {}): Promise<SemanticSearchResult[]> {
     const records = await this.read();
     const runtime = options.embeddingProvider ? createProviderCallRuntime(options.providerPolicy) : undefined;
-    const queryEmbedding = options.embeddingProvider ? await options.embeddingProvider.embedText(query, runtime) : undefined;
+    let queryEmbedding: EmbeddingVector | undefined;
+    try {
+      queryEmbedding = options.embeddingProvider ? await options.embeddingProvider.embedText(query, runtime) : undefined;
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      throw new SemanticProviderOperationalError({ cause: error });
+    }
     const terms = query.toLowerCase().split(/[^a-z0-9_\u4e00-\u9fa5]+/).filter(Boolean);
     const scored = records.map((record) => {
       const vectorScore = queryEmbedding && record.embedding ? cosineSimilarity(queryEmbedding, record.embedding) : 0;
@@ -202,14 +248,26 @@ export class ChromaSemanticIndex implements SemanticIndex {
 
   async search(query: string, options: { embeddingProvider?: EmbeddingProvider; limit?: number; providerPolicy?: ProviderPolicy } = {}): Promise<SemanticSearchResult[]> {
     const runtime = options.embeddingProvider ? createProviderCallRuntime(options.providerPolicy) : undefined;
-    const queryEmbedding = options.embeddingProvider ? await options.embeddingProvider.embedText(query, runtime) : undefined;
+    let queryEmbedding: EmbeddingVector | undefined;
+    try {
+      queryEmbedding = options.embeddingProvider ? await options.embeddingProvider.embedText(query, runtime) : undefined;
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      throw new SemanticProviderOperationalError({ cause: error });
+    }
     if (!queryEmbedding) return [];
-    const collection = await this.collectionHandle();
-    const result = await collection.query<ChromaMetadata>({
-      queryEmbeddings: [queryEmbedding],
-      nResults: options.limit ?? 10,
-      include: ["documents", "metadatas", "distances"]
-    });
+    let result;
+    try {
+      const collection = await this.collectionHandle();
+      result = await collection.query<ChromaMetadata>({
+        queryEmbeddings: [queryEmbedding],
+        nResults: options.limit ?? 10,
+        include: ["documents", "metadatas", "distances"]
+      });
+    } catch (error) {
+      if (!isChromaOperationalError(error)) throw error;
+      throw new SemanticProviderOperationalError({ cause: error });
+    }
     const ids = result.ids[0] ?? [];
     const documents = result.documents[0] ?? [];
     const metadatas = result.metadatas[0] ?? [];
@@ -237,7 +295,8 @@ export class FallbackSemanticIndex implements SemanticIndex {
   constructor(
     private readonly primary: SemanticIndex,
     private readonly fallback: SemanticIndex,
-    private readonly cwd = process.cwd()
+    private readonly cwd = process.cwd(),
+    private readonly providers: Readonly<{ primary: string; fallback: string }> = { primary: "primary", fallback: "fallback" }
   ) {}
 
   consumeFallbackEvents(): SemanticIndexFallbackEvent[] {
@@ -269,14 +328,75 @@ export class FallbackSemanticIndex implements SemanticIndex {
   }
 
   async search(query: string, options: { embeddingProvider?: EmbeddingProvider; limit?: number; providerPolicy?: ProviderPolicy } = {}): Promise<SemanticSearchResult[]> {
+    return [...(await this.searchWithMetadata(query, options)).rows];
+  }
+
+  async searchWithMetadata(query: string, options: { embeddingProvider?: EmbeddingProvider; limit?: number; providerPolicy?: ProviderPolicy } = {}): Promise<SemanticSearchExecution> {
     try {
       const rows = await this.primary.search(query, options);
-      if (rows.length > 0) return rows;
+      if (rows.length > 0) {
+        return Object.freeze({
+          rows: Object.freeze([...rows]),
+          attemptedSearchCount: 1,
+          metadata: Object.freeze({
+            primaryProvider: this.providers.primary,
+            effectiveProvider: this.providers.primary,
+            fallbackUsed: false,
+            primaryStatus: "succeeded"
+          })
+        });
+      }
     } catch (error) {
+      if (!(error instanceof SemanticProviderOperationalError)) throw error;
       this.recordFallback("search", error);
       await writeErrorLog("semantic-index:search", error, this.cwd);
+      const metadata: SemanticSearchMetadata = Object.freeze({
+        primaryProvider: this.providers.primary,
+        effectiveProvider: this.providers.fallback,
+        fallbackUsed: true,
+        fallbackReason: "primary-search-failed",
+        primaryStatus: "failed"
+      });
+      let rows: SemanticSearchResult[];
+      try {
+        rows = await this.fallback.search(query, options);
+      } catch (fallbackError) {
+        if (!(fallbackError instanceof SemanticProviderOperationalError)) throw fallbackError;
+        throw new SemanticProviderOperationalError({
+          cause: fallbackError,
+          attemptedSearchCount: 2,
+          metadata
+        });
+      }
+      return Object.freeze({
+        rows: Object.freeze([...rows]),
+        attemptedSearchCount: 2,
+        metadata
+      });
     }
-    return this.fallback.search(query, options);
+    const metadata: SemanticSearchMetadata = Object.freeze({
+      primaryProvider: this.providers.primary,
+      effectiveProvider: this.providers.fallback,
+      fallbackUsed: true,
+      fallbackReason: "primary-empty",
+      primaryStatus: "succeeded"
+    });
+    let rows: SemanticSearchResult[];
+    try {
+      rows = await this.fallback.search(query, options);
+    } catch (fallbackError) {
+      if (!(fallbackError instanceof SemanticProviderOperationalError)) throw fallbackError;
+      throw new SemanticProviderOperationalError({
+        cause: fallbackError,
+        attemptedSearchCount: 2,
+        metadata
+      });
+    }
+    return Object.freeze({
+      rows: Object.freeze([...rows]),
+      attemptedSearchCount: 2,
+      metadata
+    });
   }
 }
 
@@ -290,7 +410,7 @@ export function defaultSemanticIndex(cwd = process.cwd(), config?: Pick<AppConfi
       tenant: config.semantic.chroma.tenant,
       database: config.semantic.chroma.database
     });
-    return new FallbackSemanticIndex(chroma, json, cwd);
+    return new FallbackSemanticIndex(chroma, json, cwd, { primary: "chroma", fallback: "json" });
   }
   return json;
 }

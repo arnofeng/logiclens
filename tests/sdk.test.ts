@@ -145,6 +145,9 @@ describe("SDK lexical provider resolution", () => {
     );
     expect(graphRegistration.factory.open).not.toHaveBeenCalled();
     expect(graphRegistration.bindLexical).not.toHaveBeenCalled();
+    await expect(client.retrieve("orders")).rejects.toThrow(/Unknown graph provider: sdk-missing-companion/);
+    expect(graphRegistration.factory.open).toHaveBeenCalledTimes(1);
+    expect(graphRegistration.bindLexical).not.toHaveBeenCalled();
     await client.close();
   });
 
@@ -164,6 +167,7 @@ describe("SDK lexical provider resolution", () => {
     await expect(resolveLexicalStore(client)).rejects.toThrow(
       'Lexical provider "sdk-no-native-full-text-graph" does not declare nativeFullText capability'
     );
+    await expect(client.retrieve("orders")).rejects.toThrow("does not declare nativeFullText capability");
     await client.close();
   });
 
@@ -222,7 +226,8 @@ describe("SDK lexical provider resolution", () => {
     });
 
     await expect(resolveLexicalStore(client)).rejects.toBe(binderError);
-    expect(bindLexical).toHaveBeenCalledTimes(1);
+    await expect(client.retrieve("orders")).rejects.toBe(binderError);
+    expect(bindLexical).toHaveBeenCalledTimes(2);
     await client.close();
   });
 });

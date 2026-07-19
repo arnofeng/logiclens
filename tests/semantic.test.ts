@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { configSchema } from "../src/config/schema.js";
 import { extractHeuristicEntities } from "../src/core/semantic/extractEntities.js";
-import { buildSemanticRecords, FallbackSemanticIndex, indexSemanticText, JsonSemanticIndex, type SemanticIndex, type SemanticRecord } from "../src/core/semantic/semanticIndex.js";
+import { buildSemanticRecords, FallbackSemanticIndex, indexSemanticText, JsonSemanticIndex, SemanticProviderOperationalError, type SemanticIndex, type SemanticRecord } from "../src/core/semantic/semanticIndex.js";
 import { BRAND_DEFAULTS } from "../src/shared/branding.js";
 import type { EmbeddingProvider } from "../src/core/registries/types.js";
 import type { CodeSymbol, ParsedGraphFile, RepoNode } from "../src/core/parsing/types.js";
@@ -128,7 +128,7 @@ describe("semantic heuristics", () => {
         throw new Error("primary upsert unavailable");
       },
       search: async () => {
-        throw new Error("primary search unavailable");
+        throw new SemanticProviderOperationalError({ cause: new Error("primary search unavailable") });
       }
     };
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-semantic-fallback-"));
@@ -151,7 +151,7 @@ describe("semantic heuristics", () => {
     expect(index.consumeFallbackEvents()).toEqual([
       { operation: "records", message: "primary records unavailable" },
       { operation: "upsert", message: "primary upsert unavailable" },
-      { operation: "search", message: "primary search unavailable" }
+      { operation: "search", message: "Semantic provider search failed" }
     ]);
     expect(index.consumeFallbackEvents()).toEqual([]);
   });

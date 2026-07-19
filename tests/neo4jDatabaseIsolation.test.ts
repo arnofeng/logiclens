@@ -31,11 +31,13 @@ vi.mock("neo4j-driver", () => ({
 }));
 
 import { Neo4jGraphDB } from "../src/adapters/graph-db/neo4j/Neo4jGraphDB.js";
-import { withTransaction } from "../src/core/graph-model/db.js";
+import { GraphDatabaseClosedError, GraphDatabaseOperationalError, withTransaction } from "../src/core/graph-model/db.js";
 
 describe("Neo4j database isolation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.session.run.mockResolvedValue({ records: [] });
+    mocks.tx.run.mockResolvedValue({ records: [] });
   });
 
   it("binds standalone queries and transactions to the configured database", async () => {
@@ -68,5 +70,26 @@ describe("Neo4j database isolation", () => {
 
     expect(mocks.driver.session).not.toHaveBeenCalled();
     expect(mocks.driver.verifyConnectivity).not.toHaveBeenCalled();
+  });
+
+  it("propagates Neo4j syntax errors and wraps only transient query failures", async () => {
+    const db = await Neo4jGraphDB.open("bolt://example", { username: "test", password: "secret" });
+    const syntax = Object.assign(new Error("invalid query"), { code: "Neo.ClientError.Statement.SyntaxError" });
+    mocks.session.run.mockRejectedValueOnce(syntax);
+    await expect(db.query("INVALID")).rejects.toBe(syntax);
+
+    const timeout = Object.assign(new Error("secret timeout detail"), { code: "Neo.TransientError.Transaction.TransactionTimedOut" });
+    mocks.session.run.mockRejectedValueOnce(timeout);
+    const failure = await db.query("RETURN 1").catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(GraphDatabaseOperationalError);
+    expect(failure).toMatchObject({ kind: "timeout", message: "Graph database query failed" });
+    expect((failure as Error).cause).toBe(timeout);
+    await db.close();
+  });
+
+  it("rejects queries after close with the closed-state error", async () => {
+    const db = await Neo4jGraphDB.open("bolt://example", { username: "test", password: "secret" });
+    await db.close();
+    await expect(db.query("RETURN 1")).rejects.toBeInstanceOf(GraphDatabaseClosedError);
   });
 });

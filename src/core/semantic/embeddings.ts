@@ -4,6 +4,16 @@ import { embeddingProviderRegistry, type EmbeddingProviderRegistry } from "../re
 export type { EmbeddingVector };
 export type { EmbeddingProvider };
 
+export class EmbeddingProviderUnavailableError extends Error {
+  readonly providerName: string;
+
+  constructor(providerName: string, hint = "") {
+    super(`Embedding provider "${providerName}" is not registered.${hint}`);
+    this.name = "EmbeddingProviderUnavailableError";
+    this.providerName = providerName;
+  }
+}
+
 export class NullEmbeddingProvider implements EmbeddingProvider {
   readonly name = "off";
 
@@ -27,7 +37,7 @@ export function resolveEmbeddingProvider(
     const hint = available.length > 0
       ? ` Available providers: ${available.join(", ")}.`
       : " No embedding providers are registered. Configure a built-in embedding provider.";
-    throw new Error(`Embedding provider "${providerName}" is not registered.${hint}`);
+    throw new EmbeddingProviderUnavailableError(providerName, hint);
   }
   return provider;
 }

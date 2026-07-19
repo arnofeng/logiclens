@@ -1,11 +1,14 @@
 import type { AppConfig } from "../../../config/schema.js";
 import {
   defaultSemanticIndex,
+  SemanticProviderOperationalError,
   type SemanticIndex,
+  type SemanticSearchExecution,
   type SemanticSearchResult
 } from "../../../core/semantic/semanticIndex.js";
 import {
   resolveEmbeddingProvider,
+  EmbeddingProviderUnavailableError,
   type EmbeddingProvider
 } from "../../../core/semantic/embeddings.js";
 import { candidatesFromSemanticResults } from "../candidates.js";
@@ -37,8 +40,10 @@ export async function retrieveOptionalSemantic(
   try {
     provider = resolveProvider(providerName);
   } catch (error) {
-    if (!(error instanceof Error)) throw error;
-    return emptyRouteResult("semantic", "unavailable", "provider-resolve-failed");
+    if (error instanceof EmbeddingProviderUnavailableError) {
+      return emptyRouteResult("semantic", "unavailable", "provider-resolve-failed");
+    }
+    throw error;
   }
   if (!provider) return emptyRouteResult("semantic", "unavailable", "provider-unavailable");
 
@@ -46,7 +51,8 @@ export async function retrieveOptionalSemantic(
   if (limit === 0) return successfulRouteResult("semantic", [], [], 0);
   const createIndex = options.dependencies?.createIndex ?? defaultSemanticIndex;
   try {
-    const rows = (await createIndex(options.cwd, config).search(question, {
+    const index = createIndex(options.cwd, config);
+    const searchOptions = {
       embeddingProvider: provider,
       providerPolicy: {
         retry: embedding.retry,
@@ -54,10 +60,31 @@ export async function retrieveOptionalSemantic(
         rateLimit: embedding.rateLimit
       },
       limit
-    })).slice(0, limit);
-    return successfulRouteResult("semantic", candidatesFromSemanticResults(rows), rows, 1);
+    };
+    let execution: SemanticSearchExecution | undefined;
+    const rows = index.searchWithMetadata
+      ? [...(execution = await index.searchWithMetadata(question, searchOptions)).rows].slice(0, limit)
+      : (await index.search(question, searchOptions)).slice(0, limit);
+    const base = successfulRouteResult("semantic", candidatesFromSemanticResults(rows), rows, execution?.attemptedSearchCount ?? 1);
+    if (!execution) return base;
+    return Object.freeze({
+      ...base,
+      ...(execution.metadata.primaryStatus === "failed" ? {
+        status: "unhealthy" as const,
+        reason: "primary-provider-failed"
+      } : {}),
+      providerMetadata: execution.metadata
+    });
   } catch (error) {
-    if (!(error instanceof Error)) throw error;
-    return emptyRouteResult("semantic", "failed", "search-failed", { executed: true, queryCount: 1 });
+    if (error instanceof SemanticProviderOperationalError) {
+      return Object.freeze({
+        ...emptyRouteResult<SemanticSearchResult>("semantic", "failed", "search-failed", {
+          executed: error.attemptedSearchCount > 0,
+          queryCount: error.attemptedSearchCount
+        }),
+        ...(error.metadata ? { providerMetadata: error.metadata } : {})
+      });
+    }
+    throw error;
   }
 }

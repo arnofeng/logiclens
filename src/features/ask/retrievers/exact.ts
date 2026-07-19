@@ -1,8 +1,9 @@
 import path from "node:path";
-import type { GraphDB } from "../../../core/graph-model/db.js";
+import { GraphDatabaseOperationalError, type GraphDB } from "../../../core/graph-model/db.js";
 import {
   findExactCode,
   findSectionsAtExactPaths,
+  CountedGraphQueryError,
   entityTraceRowKey,
   traceContractWithQueryCount,
   traceEntitiesExactWithQueryCount,
@@ -18,7 +19,7 @@ import {
   candidatesFromSectionRows
 } from "../candidates.js";
 import type { QueryPlan } from "../planner.js";
-import { emptyRouteResult, successfulRouteResult, type RetrieverRouteResult } from "./types.js";
+import { emptyRouteResult, failedRouteResult, RetrieverOperationalError, successfulRouteResult, type RetrieverRouteResult } from "./types.js";
 
 export type ExactLegacyRow =
   | Readonly<{ kind: "code"; row: CodeSearchRow }>
@@ -36,6 +37,25 @@ export type ExactRetrieverDependencies = Readonly<{
   traceContract?: typeof traceContractWithQueryCount;
   traceEntitiesExact?: typeof traceEntitiesExactWithQueryCount;
 }>;
+
+const GENERIC_ENTITY_TERMS = new Set([
+  "a", "an", "and", "are", "describe", "do", "does", "explain", "for", "how", "is", "of", "please", "show", "the", "to", "what", "where", "which", "who", "why", "work", "works",
+  "workflow", "flow", "dependency", "impact", "operation", "entity", "contract", "repository", "repo",
+  "工作流", "流程", "依赖", "影响", "解释", "仓库"
+]);
+
+export function compatibilityEntityTargets(plan: QueryPlan): string[] {
+  const candidates = [...plan.exactIdentifiers, ...plan.terms];
+  return [...new Map(candidates.map((term, index) => {
+    const lowered = term.toLowerCase();
+    const structured = index < plan.exactIdentifiers.length;
+    const symbolLike = /[_\d]/u.test(term) || /[a-z][A-Z]/u.test(term) || /^[A-Z][A-Za-z\d]*$/u.test(term);
+    const score = GENERIC_ENTITY_TERMS.has(lowered) ? 0 : structured ? 3 : symbolLike ? 2 : 1;
+    return { term, lowered, index, score };
+  }).filter(({ score }) => score > 0)
+    .sort((left, right) => right.score - left.score || left.index - right.index || left.term.localeCompare(right.term))
+    .map((candidate) => [candidate.lowered, candidate.term] as const)).values()].slice(0, 3);
+}
 
 function uniqueSorted(values: readonly string[]): string[] {
   return [...new Set(values.map((value) => value.normalize("NFC").trim()).filter(Boolean))].sort();
@@ -95,31 +115,49 @@ export async function retrieveExactTargets(
   const identifiers = uniqueSorted(plan.exactIdentifiers);
   const paths = normalizeExactPaths(plan.paths, options.repoRoots);
 
-  let exact: RetrieverRouteResult<ExactLegacyRow>;
+  let exact: RetrieverRouteResult<ExactLegacyRow> | undefined;
   if (!plan.enabledRoutes.includes("exact")) {
     exact = emptyRouteResult("exact", "disabled", "route-disabled");
   } else if (identifiers.length === 0 && paths.length === 0) {
     exact = emptyRouteResult("exact", "disabled", "no-structured-targets");
   } else {
     const limit = Math.max(0, plan.budgets.exact.limit);
-    const codeRows = limit > 0 ? await deps.findExactCode(db, { identifiers, paths, limit }) : [];
-    const remaining = Math.max(0, limit - codeRows.length);
-    const queriedSections = remaining > 0 && paths.length > 0;
-    const sectionRows = queriedSections
-      ? await deps.findSectionsAtExactPaths(db, paths, remaining)
-      : [];
-    const rows = uniqueRows<CodeSearchRow | SectionSearchRow>([...codeRows, ...sectionRows], rowKey, limit);
-    const legacyRows: ExactLegacyRow[] = rows.map((row) => "codeId" in row
-      ? { kind: "code", row }
-      : { kind: "section", row });
-    const candidates = [
-      ...candidatesFromCodeRows(rows.filter((row): row is CodeSearchRow => "codeId" in row), options.workspaceId),
-      ...candidatesFromSectionRows(rows.filter((row): row is SectionSearchRow => "sectionId" in row), options.workspaceId)
-    ];
-    exact = successfulRouteResult("exact", candidates, legacyRows, (limit > 0 ? 1 : 0) + (queriedSections ? 1 : 0));
+    let queryCount = 0;
+    let codeRows: CodeSearchRow[] = [];
+    let sectionRows: SectionSearchRow[] = [];
+    try {
+      if (limit > 0) {
+        queryCount += 1;
+        codeRows = await deps.findExactCode(db, { identifiers, paths, limit });
+      }
+      const remaining = Math.max(0, limit - codeRows.length);
+      if (remaining > 0 && paths.length > 0) {
+        queryCount += 1;
+        sectionRows = await deps.findSectionsAtExactPaths(db, paths, remaining);
+      }
+    } catch (error) {
+      if (error instanceof RetrieverOperationalError) {
+        exact = failedRouteResult("exact", error.attemptedQueryCount, error.reason);
+      } else if (error instanceof GraphDatabaseOperationalError) {
+        exact = failedRouteResult("exact", queryCount, "query-failed");
+      } else {
+        throw error;
+      }
+    }
+    if (!exact) {
+      const rows = uniqueRows<CodeSearchRow | SectionSearchRow>([...codeRows, ...sectionRows], rowKey, limit);
+      const legacyRows: ExactLegacyRow[] = rows.map((row) => "codeId" in row
+        ? { kind: "code", row }
+        : { kind: "section", row });
+      const candidates = [
+        ...candidatesFromCodeRows(rows.filter((row): row is CodeSearchRow => "codeId" in row), options.workspaceId),
+        ...candidatesFromSectionRows(rows.filter((row): row is SectionSearchRow => "sectionId" in row), options.workspaceId)
+      ];
+      exact = successfulRouteResult("exact", candidates, legacyRows, queryCount);
+    }
   }
 
-  let contract: RetrieverRouteResult<ContractTraceRow>;
+  let contract: RetrieverRouteResult<ContractTraceRow> | undefined;
   const contractTargets = [...new Map(plan.contractTargets.map((target) => [
     `${target.kind}:${target.method ?? ""}:${target.value}`,
     target
@@ -134,25 +172,63 @@ export async function retrieveExactTargets(
     let queryCount = 0;
     for (const target of contractTargets) {
       if (rows.length >= limit) break;
-      const result = await deps.traceContract(db, target.kind, target.value, target.method, limit - rows.length);
-      queryCount += result.queryCount;
-      rows.push(...result.rows);
+      const previousQueryCount = queryCount;
+      try {
+        queryCount += 1;
+        const result = await deps.traceContract(db, target.kind, target.value, target.method, limit - rows.length);
+        queryCount += Math.max(0, result.queryCount - 1);
+        rows.push(...result.rows);
+      } catch (error) {
+        if (error instanceof CountedGraphQueryError) {
+          queryCount = previousQueryCount + error.attemptedQueryCount;
+          contract = failedRouteResult("contract", queryCount, "query-failed");
+        } else if (error instanceof RetrieverOperationalError) {
+          queryCount = previousQueryCount + error.attemptedQueryCount;
+          contract = failedRouteResult("contract", queryCount, error.reason);
+        } else if (error instanceof GraphDatabaseOperationalError) {
+          contract = failedRouteResult("contract", queryCount, "query-failed");
+        } else {
+          throw error;
+        }
+        break;
+      }
     }
-    const unique = uniqueRows(rows, (row) => `${row.contractId}:${row.repoName}:${row.role}:${row.filePath}:${row.line}`, limit);
-    contract = successfulRouteResult("contract", candidatesFromContractRows(unique, options.workspaceId), unique, queryCount);
+    if (!contract) {
+      const unique = uniqueRows(rows, (row) => `${row.contractId}:${row.repoName}:${row.role}:${row.filePath}:${row.line}`, limit);
+      contract = successfulRouteResult("contract", candidatesFromContractRows(unique, options.workspaceId), unique, queryCount);
+    }
   }
 
-  let entity: RetrieverRouteResult<EntityTraceRow>;
+  let entity: RetrieverRouteResult<EntityTraceRow> | undefined;
+  const entityTargets = identifiers.length > 0
+    ? identifiers
+    : plan.contractTargets.length === 0 && (plan.kind === "workflow" || plan.kind === "dependency" || plan.kind === "impact" || plan.kind === "general")
+      ? compatibilityEntityTargets(plan)
+      : [];
   if (!plan.enabledRoutes.includes("entity")) {
     entity = emptyRouteResult("entity", "disabled", "route-disabled");
-  } else if (identifiers.length === 0) {
+  } else if (entityTargets.length === 0) {
     entity = emptyRouteResult("entity", "disabled", "no-structured-targets");
   } else {
     const limit = Math.max(0, plan.budgets.entity.limit);
-    const result = limit > 0 ? await deps.traceEntitiesExact(db, identifiers, limit) : { rows: [], queryCount: 0 };
-    const rows = result.rows;
-    const unique = uniqueRows(rows, entityTraceRowKey, limit);
-    entity = successfulRouteResult("entity", candidatesFromEntityRows(unique, options.workspaceId), unique, result.queryCount);
+    let result: Awaited<ReturnType<typeof traceEntitiesExactWithQueryCount>> = { rows: [], queryCount: 0 };
+    try {
+      if (limit > 0) result = await deps.traceEntitiesExact(db, entityTargets, limit);
+    } catch (error) {
+      if (error instanceof CountedGraphQueryError) {
+        entity = failedRouteResult("entity", error.attemptedQueryCount, "query-failed");
+      } else if (error instanceof RetrieverOperationalError) {
+        entity = failedRouteResult("entity", error.attemptedQueryCount, error.reason);
+      } else if (error instanceof GraphDatabaseOperationalError) {
+        entity = failedRouteResult("entity", limit > 0 ? 1 : 0, "query-failed");
+      } else {
+        throw error;
+      }
+    }
+    if (!entity) {
+      const unique = uniqueRows(result.rows, entityTraceRowKey, limit);
+      entity = successfulRouteResult("entity", candidatesFromEntityRows(unique, options.workspaceId), unique, result.queryCount);
+    }
   }
 
   return Object.freeze({ exact, contract, entity });

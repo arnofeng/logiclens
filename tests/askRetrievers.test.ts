@@ -1,6 +1,9 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { configSchema } from "../src/config/schema.js";
-import type { GraphDB } from "../src/core/graph-model/db.js";
+import { GraphDatabaseOperationalError, type GraphDB } from "../src/core/graph-model/db.js";
 import type {
   CodeSearchRow,
   ContractTraceRow,
@@ -18,8 +21,8 @@ import type { ContractKind } from "../src/core/parsing/types.js";
 import { WorkspaceLexicalStoreError, type WorkspaceLexicalStore } from "../src/core/retrieval/provider.js";
 import { createRenderRef } from "../src/core/retrieval/renderRef.js";
 import type { LexicalHit, LexicalIndexHealth } from "../src/core/retrieval/types.js";
-import type { SemanticIndex, SemanticSearchResult } from "../src/core/semantic/semanticIndex.js";
-import type { EmbeddingProvider } from "../src/core/semantic/embeddings.js";
+import { FallbackSemanticIndex, SemanticProviderOperationalError, type SemanticIndex, type SemanticSearchResult } from "../src/core/semantic/semanticIndex.js";
+import { EmbeddingProviderUnavailableError, type EmbeddingProvider } from "../src/core/semantic/embeddings.js";
 import { createRetrievalCandidate } from "../src/features/ask/candidates.js";
 import { reciprocalRankFusion } from "../src/features/ask/fusion.js";
 import type { QueryPlan, RetrievalRoute } from "../src/features/ask/planner.js";
@@ -225,6 +228,61 @@ describe("exact contract and entity retriever", () => {
     expect(result.entity.candidates[0]?.location).toBeUndefined();
   });
 
+  it("isolates exact, contract, and entity failures with truthful execution counts", async () => {
+    const contract = vi.fn(async () => ({ rows: [CONTRACT_ROW], queryCount: 5 }));
+    const entity = vi.fn(async () => ({ rows: [ENTITY_ROW], queryCount: 4 }));
+    const result = await retrieveExactTargets({} as GraphDB, plan({
+      exactIdentifiers: ["createOrder"],
+      contractTargets: [{ kind: "api", value: "/orders", method: "POST" }]
+    }), {
+      workspaceId: "workspace:test",
+      dependencies: {
+        findExactCode: vi.fn(async () => { throw new GraphDatabaseOperationalError({ cause: new Error("exact database unavailable") }); }),
+        findSectionsAtExactPaths: vi.fn(),
+        traceContract: contract,
+        traceEntitiesExact: entity
+      }
+    });
+    expect(contract).toHaveBeenCalledTimes(1);
+    expect(entity).toHaveBeenCalledTimes(1);
+    expect(result.exact).toMatchObject({ status: "failed", executed: true, queryCount: 1, reason: "query-failed" });
+    expect(result.contract).toMatchObject({ status: "succeeded", executed: true, queryCount: 5 });
+    expect(result.entity).toMatchObject({ status: "succeeded", executed: true, queryCount: 4 });
+  });
+
+  it("propagates ordinary exact query programming errors", async () => {
+    await expect(retrieveExactTargets({} as GraphDB, plan({ exactIdentifiers: ["createOrder"] }), {
+      workspaceId: "workspace:test",
+      dependencies: {
+        findExactCode: vi.fn(async () => { throw new Error("exact invariant failed"); }),
+        findSectionsAtExactPaths: vi.fn(), traceContract: vi.fn(), traceEntitiesExact: vi.fn()
+      }
+    })).rejects.toThrow("exact invariant failed");
+  });
+
+  it("preserves contract role and entity middle-query failure counts", async () => {
+    let contractCalls = 0;
+    const contractDb = { query: vi.fn(async () => {
+      contractCalls += 1;
+      if (contractCalls === 1) return [{ id: CONTRACT_ROW.contractId }];
+      if (contractCalls === 3) throw new GraphDatabaseOperationalError({ cause: new Error("role query failed") });
+      return [];
+    }) } as unknown as GraphDB;
+    const contractResult = await retrieveExactTargets(contractDb, plan({
+      enabledRoutes: ["contract"], contractTargets: [{ kind: "api", value: "/orders", method: "POST" }]
+    }), { workspaceId: "workspace:test" });
+    expect(contractResult.contract).toMatchObject({ status: "failed", executed: true, queryCount: 3, reason: "query-failed" });
+
+    let entityCalls = 0;
+    const entityDb = { query: vi.fn(async () => {
+      entityCalls += 1;
+      if (entityCalls === 4) throw new GraphDatabaseOperationalError({ cause: new Error("entity query failed") });
+      return [];
+    }) } as unknown as GraphDB;
+    const entityResult = await retrieveExactTargets(entityDb, plan({ enabledRoutes: ["entity"], exactIdentifiers: ["Order"] }), { workspaceId: "workspace:test" });
+    expect(entityResult.entity).toMatchObject({ status: "failed", executed: true, queryCount: 4, reason: "query-failed" });
+  });
+
   it("does not issue graph queries without structured targets", async () => {
     const exactCode = vi.fn();
     const sections = vi.fn();
@@ -325,6 +383,32 @@ describe("bounded graph retriever", () => {
     expect(fused.find((candidate) => candidate.canonicalId === exactSeed.canonicalId)?.routes.map(({ route }) => route)).toEqual(["exact", "graph"]);
   });
 
+  it.each([2, 3] as const)("reports %s attempted graph queries when that query fails", async (failAt) => {
+    let calls = 0;
+    const operational = async <T>(value: T): Promise<T> => {
+      calls += 1;
+      if (calls === failAt) throw new GraphDatabaseOperationalError({ cause: new Error("graph provider failed") });
+      return value;
+    };
+    const promise = retrieveBoundedGraph({ query: vi.fn() } as unknown as GraphDB, plan(), [seed({
+      canonicalId: CONTRACT_ROW.contractId, kind: "contract", confidence: "resolved-contract", route: "contract"
+    })], { workspaceId: "workspace:test", dependencies: {
+      findContractSourceSymbols: async () => operational([CODE_ROW]),
+      callEdgesAround: async () => operational([EDGE]),
+      sectionsDocumentingCode: async () => operational([SECTION_ROW])
+    } });
+    await expect(promise).rejects.toMatchObject({
+      route: "graph", attemptedQueryCount: failAt, reason: "query-failed"
+    });
+  });
+
+  it("propagates ordinary graph query programming errors", async () => {
+    await expect(retrieveBoundedGraph({} as GraphDB, plan(), [seed({ canonicalId: CODE_ROW.codeId })], {
+      workspaceId: "workspace:test",
+      dependencies: { callEdgesAround: vi.fn(async () => { throw new Error("graph invariant failed"); }), findContractSourceSymbols: vi.fn() }
+    })).rejects.toThrow("graph invariant failed");
+  });
+
   it.each(["probable", "heuristic"] as const)("keeps %s call-edge endpoints at discovery confidence", async (resolution) => {
     const edge = { ...EDGE, resolution };
     const result = await retrieveBoundedGraph({} as GraphDB, plan(), [seed({ canonicalId: CODE_ROW.codeId })], {
@@ -417,7 +501,7 @@ describe("optional semantic retriever", () => {
   it("distinguishes unavailable providers, resolution failures, failed search, empty success, and hit success", async () => {
     const unavailable = await retrieveOptionalSemantic(plan(), "orders", enabledConfig, { dependencies: { resolveProvider: () => undefined } });
     expect(unavailable).toMatchObject({ status: "unavailable", reason: "provider-unavailable", queryCount: 0 });
-    const resolveFailed = await retrieveOptionalSemantic(plan(), "orders", enabledConfig, { dependencies: { resolveProvider: () => { throw new Error("registry offline"); } } });
+    const resolveFailed = await retrieveOptionalSemantic(plan(), "orders", enabledConfig, { dependencies: { resolveProvider: () => { throw new EmbeddingProviderUnavailableError("test"); } } });
     expect(resolveFailed).toMatchObject({ status: "unavailable", reason: "provider-resolve-failed", queryCount: 0 });
 
     const search = vi.fn(async (_question: string, options?: Parameters<SemanticIndex["search"]>[1]) => {
@@ -443,8 +527,138 @@ describe("optional semantic retriever", () => {
     expect(empty).toMatchObject({ status: "succeeded", queryCount: 1, legacyRows: [] });
     const failed = await retrieveOptionalSemantic(plan(), "orders", enabledConfig, { dependencies: {
       resolveProvider: () => provider,
-      createIndex: () => ({ search: vi.fn(async () => { throw new Error("search broke"); }), records: vi.fn(), upsert: vi.fn() } as unknown as SemanticIndex)
+      createIndex: () => ({ search: vi.fn(async () => { throw new SemanticProviderOperationalError({ cause: new Error("search broke") }); }), records: vi.fn(), upsert: vi.fn() } as unknown as SemanticIndex)
     } });
     expect(failed).toMatchObject({ status: "failed", reason: "search-failed", queryCount: 1 });
+
+    await expect(retrieveOptionalSemantic(plan(), "orders", enabledConfig, { dependencies: {
+      resolveProvider: () => { throw new Error("semantic registry invariant"); }
+    } })).rejects.toThrow("semantic registry invariant");
+    await expect(retrieveOptionalSemantic(plan(), "orders", enabledConfig, { dependencies: {
+      resolveProvider: () => provider,
+      createIndex: () => ({ search: vi.fn(async () => { throw new Error("semantic search invariant"); }), records: vi.fn(), upsert: vi.fn() } as unknown as SemanticIndex)
+    } })).rejects.toThrow("semantic search invariant");
+  });
+
+  it("returns fallback hits with degraded primary-provider metadata", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-semantic-fallback-"));
+    const secret = "secret-chroma-host";
+    const primary = {
+      search: vi.fn(async () => { throw new SemanticProviderOperationalError({ cause: new Error(secret) }); }),
+      records: vi.fn(),
+      upsert: vi.fn()
+    } as unknown as SemanticIndex;
+    const fallback = {
+      search: vi.fn(async () => [semanticRow]),
+      records: vi.fn(),
+      upsert: vi.fn()
+    } as unknown as SemanticIndex;
+    try {
+      const result = await retrieveOptionalSemantic(plan(), "orders", enabledConfig, { dependencies: {
+        resolveProvider: () => provider,
+        createIndex: () => new FallbackSemanticIndex(primary, fallback, cwd, { primary: "chroma", fallback: "json" })
+      } });
+
+      expect(result).toMatchObject({
+        status: "unhealthy",
+        reason: "primary-provider-failed",
+        queryCount: 2,
+        providerMetadata: {
+          primaryProvider: "chroma",
+          effectiveProvider: "json",
+          fallbackUsed: true,
+          fallbackReason: "primary-search-failed",
+          primaryStatus: "failed"
+        }
+      });
+      expect(primary.search).toHaveBeenCalledTimes(1);
+      expect(fallback.search).toHaveBeenCalledTimes(1);
+      expect(result.legacyRows).toEqual([semanticRow]);
+      expect(JSON.stringify(result)).not.toContain(secret);
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("counts primary-only and primary-empty fallback semantic searches", async () => {
+    const primaryHit = {
+      search: vi.fn(async () => [semanticRow]), records: vi.fn(), upsert: vi.fn()
+    } as unknown as SemanticIndex;
+    const unusedFallback = {
+      search: vi.fn(async () => []), records: vi.fn(), upsert: vi.fn()
+    } as unknown as SemanticIndex;
+    const hit = await retrieveOptionalSemantic(plan(), "orders", enabledConfig, { dependencies: {
+      resolveProvider: () => provider,
+      createIndex: () => new FallbackSemanticIndex(primaryHit, unusedFallback)
+    } });
+    expect(hit).toMatchObject({ status: "succeeded", queryCount: 1 });
+    expect(primaryHit.search).toHaveBeenCalledTimes(1);
+    expect(unusedFallback.search).not.toHaveBeenCalled();
+
+    const emptyPrimary = {
+      search: vi.fn(async () => []), records: vi.fn(), upsert: vi.fn()
+    } as unknown as SemanticIndex;
+    const fallback = {
+      search: vi.fn(async () => [semanticRow]), records: vi.fn(), upsert: vi.fn()
+    } as unknown as SemanticIndex;
+    const fallbackHit = await retrieveOptionalSemantic(plan(), "orders", enabledConfig, { dependencies: {
+      resolveProvider: () => provider,
+      createIndex: () => new FallbackSemanticIndex(emptyPrimary, fallback, process.cwd(), { primary: "chroma", fallback: "json" })
+    } });
+    expect(fallbackHit).toMatchObject({
+      status: "succeeded",
+      queryCount: 2,
+      providerMetadata: { fallbackUsed: true, fallbackReason: "primary-empty", primaryStatus: "succeeded" }
+    });
+    expect(emptyPrimary.search).toHaveBeenCalledTimes(1);
+    expect(fallback.search).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves two attempted searches when primary and fallback both fail operationally", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-semantic-double-failure-"));
+    const primary = {
+      search: vi.fn(async () => { throw new SemanticProviderOperationalError(); }), records: vi.fn(), upsert: vi.fn()
+    } as unknown as SemanticIndex;
+    const fallback = {
+      search: vi.fn(async () => { throw new SemanticProviderOperationalError(); }), records: vi.fn(), upsert: vi.fn()
+    } as unknown as SemanticIndex;
+    try {
+      const result = await retrieveOptionalSemantic(plan(), "orders", enabledConfig, { dependencies: {
+        resolveProvider: () => provider,
+        createIndex: () => new FallbackSemanticIndex(primary, fallback, cwd, { primary: "chroma", fallback: "json" })
+      } });
+      expect(result).toMatchObject({
+        status: "failed",
+        reason: "search-failed",
+        queryCount: 2,
+        providerMetadata: {
+          primaryProvider: "chroma",
+          effectiveProvider: "json",
+          fallbackUsed: true,
+          fallbackReason: "primary-search-failed",
+          primaryStatus: "failed"
+        }
+      });
+      expect(primary.search).toHaveBeenCalledTimes(1);
+      expect(fallback.search).toHaveBeenCalledTimes(1);
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("does not hide ordinary primary semantic programming errors behind fallback", async () => {
+    const invariant = new Error("semantic result conversion invariant");
+    const primary = {
+      search: vi.fn(async () => { throw invariant; }), records: vi.fn(), upsert: vi.fn()
+    } as unknown as SemanticIndex;
+    const fallback = {
+      search: vi.fn(async () => [semanticRow]), records: vi.fn(), upsert: vi.fn()
+    } as unknown as SemanticIndex;
+
+    await expect(retrieveOptionalSemantic(plan(), "orders", enabledConfig, { dependencies: {
+      resolveProvider: () => provider,
+      createIndex: () => new FallbackSemanticIndex(primary, fallback)
+    } })).rejects.toBe(invariant);
+    expect(fallback.search).not.toHaveBeenCalled();
   });
 });

@@ -1,24 +1,27 @@
-import type { GraphDB } from "../../../core/graph-model/db.js";
-import { findContractSourceSymbols, type CodeSearchRow } from "../../../core/graph-model/queries.js";
+import { GraphDatabaseOperationalError, type GraphDB } from "../../../core/graph-model/db.js";
+import { findContractSourceSymbols, sectionsDocumentingCode, type CodeSearchRow, type SectionSearchRow } from "../../../core/graph-model/queries.js";
 import { callEdgesAround, type EdgeRow } from "../../../core/graph-model/subgraph.js";
 import {
   candidatesFromGraphEdges,
   candidatesFromGraphCodeRows,
+  candidatesFromSectionRows,
   createRetrievalCandidate,
   stableCandidateKey,
   strongestCandidateConfidence,
   type RetrievalCandidate
 } from "../candidates.js";
 import type { QueryPlan } from "../planner.js";
-import { emptyRouteResult, successfulRouteResult, type RetrieverRouteResult } from "./types.js";
+import { emptyRouteResult, RetrieverOperationalError, successfulRouteResult, type RetrieverRouteResult } from "./types.js";
 
 export type GraphLegacyRow =
   | Readonly<{ kind: "implementation"; row: CodeSearchRow }>
+  | Readonly<{ kind: "section"; row: SectionSearchRow }>
   | Readonly<{ kind: "edge"; row: EdgeRow }>;
 
 export type GraphRetrieverDependencies = Readonly<{
   callEdgesAround?: typeof callEdgesAround;
   findContractSourceSymbols?: typeof findContractSourceSymbols;
+  sectionsDocumentingCode?: typeof sectionsDocumentingCode;
 }>;
 
 const STRONG_LEXICAL_MATCH_REASONS = new Set(["exact-identifier", "exact-path", "exact-contract", "canonical-id"]);
@@ -97,6 +100,16 @@ function mergeGraphCandidates(candidates: readonly RetrievalCandidate[], limit: 
     .slice(0, limit);
 }
 
+async function graphProviderQuery<T>(attemptedQueryCount: number, operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof RetrieverOperationalError) throw error;
+    if (!(error instanceof GraphDatabaseOperationalError)) throw error;
+    throw new RetrieverOperationalError("graph", attemptedQueryCount, "query-failed", { cause: error });
+  }
+}
+
 export async function retrieveBoundedGraph(
   db: GraphDB,
   plan: QueryPlan,
@@ -124,7 +137,8 @@ export async function retrieveBoundedGraph(
 
   const deps = {
     callEdgesAround: options.dependencies?.callEdgesAround ?? callEdgesAround,
-    findContractSourceSymbols: options.dependencies?.findContractSourceSymbols ?? findContractSourceSymbols
+    findContractSourceSymbols: options.dependencies?.findContractSourceSymbols ?? findContractSourceSymbols,
+    sectionsDocumentingCode: options.dependencies?.sectionsDocumentingCode ?? sectionsDocumentingCode
   };
   const contractIds = uniqueSeeds
     .filter((candidate) => candidate.kind === "contract")
@@ -133,7 +147,7 @@ export async function retrieveBoundedGraph(
   let implementationRows: CodeSearchRow[] = [];
   if (contractIds.length > 0) {
     queryCount += 1;
-    implementationRows = await deps.findContractSourceSymbols(db, contractIds, resultLimit);
+    implementationRows = await graphProviderQuery(queryCount, () => deps.findContractSourceSymbols(db, contractIds, resultLimit));
     implementationRows = [...new Map(implementationRows
       .sort((left, right) => left.codeId.localeCompare(right.codeId))
       .map((row) => [row.codeId, row])).values()].slice(0, resultLimit);
@@ -149,18 +163,34 @@ export async function retrieveBoundedGraph(
   let edges: EdgeRow[] = [];
   if (codeIds.length > 0 && remainingForEdges > 0) {
     queryCount += 1;
-    edges = await deps.callEdgesAround(db, codeIds, remainingForEdges);
+    edges = await graphProviderQuery(queryCount, () => deps.callEdgesAround(db, codeIds, remainingForEdges));
     edges = [...new Map(edges.sort((left, right) => edgeKey(left).localeCompare(edgeKey(right))).map((edge) => [edgeKey(edge), edge])).values()]
       .slice(0, remainingForEdges);
   }
   if (queryCount === 0) return emptyRouteResult("graph", "disabled", "no-queryable-seeds");
 
+  const remainingForSections = Math.max(0, resultLimit - implementationRows.length - edges.length);
+  let sections: SectionSearchRow[] = [];
+  if (codeIds.length > 0 && remainingForSections > 0 && typeof db.query === "function") {
+    queryCount += 1;
+    sections = await graphProviderQuery(queryCount, () => deps.sectionsDocumentingCode(db, codeIds, remainingForSections));
+    sections = [...new Map(sections.sort((left, right) => left.sectionId.localeCompare(right.sectionId)).map((row) => [row.sectionId, row])).values()]
+      .slice(0, remainingForSections);
+  }
+
   const candidates = mergeGraphCandidates([
     ...candidatesFromGraphCodeRows(implementationRows, options.workspaceId),
-    ...candidatesFromGraphEdges(edges, options.workspaceId)
+    ...candidatesFromGraphEdges(edges, options.workspaceId),
+    ...candidatesFromSectionRows(sections, options.workspaceId).map((candidate) => createRetrievalCandidate({
+      ...candidate,
+      routes: candidate.routes.map((route) => ({ ...route, route: "graph" as const })),
+      provenance: candidate.provenance.map((provenance) => ({ ...provenance, route: "graph" as const, confidence: "corroborated" as const })),
+      confidence: "corroborated"
+    }))
   ], resultLimit);
   const legacyRows: GraphLegacyRow[] = [
     ...implementationRows.map((row): GraphLegacyRow => ({ kind: "implementation", row })),
+    ...sections.map((row): GraphLegacyRow => ({ kind: "section", row })),
     ...edges.map((row): GraphLegacyRow => ({ kind: "edge", row }))
   ];
   return successfulRouteResult("graph", candidates, legacyRows, queryCount);

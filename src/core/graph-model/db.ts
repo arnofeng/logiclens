@@ -54,6 +54,40 @@ export type GraphWriteBatchStatus = "started" | "committed" | "failed" | "recove
  */
 export type GraphValue = string | number | boolean | null | bigint | GraphValue[] | { [key: string]: GraphValue };
 
+export type GraphDatabaseOperationalFailureKind =
+  | "connection"
+  | "timeout"
+  | "service-unavailable"
+  | "transient";
+
+/**
+ * Provider contract for classifying only recoverable database failures.
+ * Query syntax, schema, arguments, result conversion, and adapter bugs must
+ * return undefined so that the original error propagates.
+ */
+export type GraphDatabaseErrorClassifier = (
+  error: unknown
+) => GraphDatabaseOperationalFailureKind | undefined;
+
+/** A provider/database execution failure safe for retrieval degradation. */
+export class GraphDatabaseOperationalError extends Error {
+  readonly operation = "query";
+  readonly kind: GraphDatabaseOperationalFailureKind;
+
+  constructor(options?: ErrorOptions & { kind?: GraphDatabaseOperationalFailureKind }) {
+    super("Graph database query failed", options);
+    this.name = "GraphDatabaseOperationalError";
+    this.kind = options?.kind ?? "service-unavailable";
+  }
+}
+
+export class GraphDatabaseClosedError extends Error {
+  constructor() {
+    super("Graph database is closed");
+    this.name = "GraphDatabaseClosedError";
+  }
+}
+
 export type GraphWriteBatchJournal = {
   batchId: string;
   repoIds: string[];

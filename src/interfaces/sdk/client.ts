@@ -7,7 +7,7 @@ import type { GraphDB, Stats } from "../../core/graph-model/db.js";
 import {
   createGraphDB
 } from "../../core/graph-model/factory.js";
-import { resolveWorkspaceLexicalStore, type WorkspaceLexicalStore } from "../../core/retrieval/provider.js";
+import { resolveWorkspaceLexicalStore, WorkspaceLexicalStoreError, type WorkspaceLexicalStore } from "../../core/retrieval/provider.js";
 import { registerBuiltinEmbeddingProviders } from "../../adapters/embeddings/builtinProviders.js";
 import {
   listDependencies,
@@ -609,7 +609,21 @@ export class AppClient {
   async retrieve(question: string): Promise<RetrievalResult> {
     const db = await this.getDb();
     const planningContext = await this.getQueryPlanningContext();
-    return retrieveForQuestion(db, question, { cwd: this.cwd, config: this.config, planningContext });
+    let lexicalStore: WorkspaceLexicalStore | undefined;
+    let lexicalStoreUnavailable = false;
+    try {
+      lexicalStore = await this.resolveLexicalStore();
+    } catch (error) {
+      if (!(error instanceof WorkspaceLexicalStoreError)) throw error;
+      lexicalStoreUnavailable = true;
+    }
+    return retrieveForQuestion(db, question, {
+      cwd: this.cwd,
+      config: this.config,
+      planningContext,
+      lexicalStore,
+      lexicalStoreUnavailable
+    });
   }
 
   /**
