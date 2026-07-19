@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { planQuestion } from "../src/features/ask/planner.js";
-import { retrieveForQuestion } from "../src/features/ask/retrieve.js";
+import { compatibilityEntityTargets, retrieveForQuestion } from "../src/features/ask/retrieve.js";
 import { scoreCallResolution } from "../src/core/extraction/resolveReferences.js";
 import { chunk } from "../src/shared/chunk.js";
 import { BRAND } from "../src/shared/branding.js";
@@ -19,6 +19,29 @@ describe("rag helpers", () => {
 
   it("scores call resolution candidates", () => {
     expect(scoreCallResolution({ sameFile: true, imported: false, sameRepo: true, nameExact: true })).toBeGreaterThan(0.7);
+  });
+
+  it.each([
+    "How does Order workflow work?",
+    "Explain the Order workflow"
+  ])("prioritizes the wrapped entity name for compatibility retrieval: %s", async (question) => {
+    expect(compatibilityEntityTargets(planQuestion(question))[0]).toBe("Order");
+    const tracedTerms: string[] = [];
+    const db = {
+      async query(sql: string, params?: Record<string, unknown>) {
+        if (typeof params?.term === "string" && (sql.includes("(e:Entity)") || sql.includes("PARTICIPATES_IN"))) tracedTerms.push(params.term);
+        if (sql.includes("PARTICIPATES_IN") && !sql.includes("WORKFLOW_STEP") && params?.term === "order") {
+          return [{
+            entityId: "entity:order", entityName: "Order", repoName: "orders", sourceKind: "operation",
+            name: "create", filePath: "", line: 0, role: "producer", evidence: "creates orders", confidence: 1
+          }];
+        }
+        return [];
+      }
+    };
+    const retrieval = await retrieveForQuestion(db as never, question);
+    expect(retrieval.entities).toEqual([expect.objectContaining({ entityName: "Order", sourceKind: "operation" })]);
+    expect(new Set(tracedTerms)).toEqual(new Set(["order"]));
   });
 
   it("chunks arrays", () => {
@@ -84,7 +107,7 @@ describe("rag helpers", () => {
     expect(queries.some((sql) => sql.includes("MATCH (c:Contract) WHERE c.kind = $kind AND c.key = $key"))).toBe(true);
   });
 
-  it("warns and degrades gracefully when the configured embedding provider is unregistered", async () => {
+  it("degrades gracefully without warning when the configured embedding provider is unregistered", async () => {
     const db = { async query() { return []; } };
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
@@ -95,7 +118,7 @@ describe("rag helpers", () => {
       } as never
     });
 
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Semantic search disabled"));
+    expect(warnSpy).not.toHaveBeenCalled();
     expect(retrieval.semantic).toEqual([]);
     warnSpy.mockRestore();
   });

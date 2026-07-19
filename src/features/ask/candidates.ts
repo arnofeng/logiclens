@@ -5,8 +5,9 @@ import type {
   SectionSearchRow
 } from "../../core/graph-model/queries.js";
 import type { SemanticSearchResult, SemanticNodeKind } from "../../core/semantic/semanticIndex.js";
+import type { EdgeRow } from "../../core/graph-model/subgraph.js";
 import type { LexicalHit, LexicalDocumentKind } from "../../core/retrieval/types.js";
-import { createRenderRef } from "../../core/retrieval/renderRef.js";
+import { createRenderRef, parseRenderRef } from "../../core/retrieval/renderRef.js";
 import { fileId, repoId } from "../../shared/path.js";
 import type { RetrievalRoute } from "./planner.js";
 
@@ -164,7 +165,7 @@ function candidateLocation(repoIdValue: string, path: string, startLine?: number
   };
 }
 
-export function candidatesFromLexicalHits(hits: readonly LexicalHit[]): RetrievalCandidate[] {
+export function candidatesFromLexicalHits(hits: readonly LexicalHit[], workspaceId?: string): RetrievalCandidate[] {
   const grouped = new Map<string, LexicalHit[]>();
   for (const hit of hits) {
     const key = stableCandidateKey(hit);
@@ -172,9 +173,23 @@ export function candidatesFromLexicalHits(hits: readonly LexicalHit[]): Retrieva
     values.push(hit);
     grouped.set(key, values);
   }
-  return [...grouped.entries()].sort(([left], [right]) => compareText(left, right)).map(([, values]) => {
+  return [...grouped.entries()].map(([key, values]) => ({
+    key,
+    values,
+    bestRank: Math.min(...values.map((hit) => hit.rank))
+  })).sort((left, right) => left.bestRank - right.bestRank || compareText(left.key, right.key)).map(({ values }) => {
     const ordered = [...values].sort((left, right) => left.rank - right.rank || compareText(left.documentId, right.documentId));
     const first = ordered[0]!;
+    const parsed = workspaceId ? parseRenderRef(first.renderRef, workspaceId) : undefined;
+    if (parsed && (parsed.repoId !== first.repoId || parsed.kind !== first.kind || parsed.canonicalId !== first.canonicalId)) {
+      throw new Error(`Lexical hit renderRef identity does not match document ${first.documentId}`);
+    }
+    const location = parsed?.fileId && parsed.path ? {
+      fileId: parsed.fileId,
+      path: parsed.path,
+      ...(parsed.startLine ? { startLine: parsed.startLine } : {}),
+      ...(parsed.endLine ? { endLine: parsed.endLine } : {})
+    } : undefined;
     return createRetrievalCandidate({
       canonicalId: first.canonicalId,
       repoId: first.repoId,
@@ -185,10 +200,66 @@ export function candidatesFromLexicalHits(hits: readonly LexicalHit[]): Retrieva
         rank: hit.rank,
         confidence: "discovery",
         documentId: hit.documentId,
-        renderRef: hit.renderRef
+        renderRef: hit.renderRef,
+        ...(hit === first && location ? { location } : {})
       })),
       matchReasons: ordered.flatMap((hit) => hit.matchReasons),
       confidence: "discovery"
+    });
+  });
+}
+
+export function candidatesFromGraphCodeRows(rows: readonly CodeSearchRow[], workspaceId: string): RetrievalCandidate[] {
+  return rows.map((row, index) => {
+    const owner = repoId(row.repoName);
+    const location = candidateLocation(owner, row.filePath);
+    return createRetrievalCandidate({
+      canonicalId: row.codeId,
+      repoId: owner,
+      kind: "code",
+      renderRef: createRenderRef({ workspaceId, repoId: owner, kind: "code", canonicalId: row.codeId, fileId: location.fileId, path: row.filePath }),
+      location,
+      routes: [{ route: "graph", rank: index + 1, documentIds: [] }],
+      matchReasons: ["contract-implementation"],
+      confidence: "corroborated"
+    });
+  });
+}
+
+export function candidatesFromGraphEdges(rows: readonly EdgeRow[], workspaceId: string): RetrievalCandidate[] {
+  const confidenceForResolution = (resolution: EdgeRow["resolution"]): CandidateConfidence =>
+    resolution === "exact" ? "corroborated" : "discovery";
+  const endpoints = rows.flatMap((row, index) => {
+    if (!row.fromCodeId || !row.toCodeId || !row.fromRepoId || !row.toRepoId || !row.fromPath || !row.toPath) return [];
+    const documentId = JSON.stringify(["call-edge", row.fromCodeId, row.toCodeId, row.resolution, row.raw]);
+    return [
+      { canonicalId: row.fromCodeId, repoId: row.fromRepoId, path: row.fromPath, rank: index + 1, direction: "from", resolution: row.resolution, confidence: confidenceForResolution(row.resolution), documentId },
+      { canonicalId: row.toCodeId, repoId: row.toRepoId, path: row.toPath, rank: index + 1, direction: "to", resolution: row.resolution, confidence: confidenceForResolution(row.resolution), documentId }
+    ];
+  });
+  const grouped = new Map<string, typeof endpoints>();
+  for (const endpoint of endpoints) {
+    const key = JSON.stringify([endpoint.repoId, "code", endpoint.canonicalId]);
+    grouped.set(key, [...(grouped.get(key) ?? []), endpoint]);
+  }
+  return [...grouped.entries()].map(([key, values]) => ({
+    key,
+    values,
+    rank: Math.min(...values.map((value) => value.rank))
+  })).sort((left, right) => left.rank - right.rank || compareText(left.key, right.key)).map(({ values }) => {
+    const first = [...values].sort((left, right) => left.rank - right.rank || compareText(left.path, right.path))[0]!;
+    const location = candidateLocation(first.repoId, first.path);
+    const renderRef = createRenderRef({ workspaceId, repoId: first.repoId, kind: "code", canonicalId: first.canonicalId, fileId: location.fileId, path: first.path });
+    return createRetrievalCandidate({
+      canonicalId: first.canonicalId,
+      repoId: first.repoId,
+      kind: "code",
+      renderRef,
+      location,
+      routes: values.map((value) => ({ route: "graph", rank: value.rank, documentIds: [value.documentId] })),
+      provenance: values.map((value) => ({ route: "graph", rank: value.rank, confidence: value.confidence, documentId: value.documentId, renderRef, location })),
+      matchReasons: values.flatMap((value) => [`call-edge-${value.direction}`, `call-edge-resolution-${value.resolution}`]),
+      confidence: strongestCandidateConfidence(values.map((value) => value.confidence))
     });
   });
 }
@@ -267,12 +338,12 @@ function semanticKind(kind: SemanticNodeKind): CandidateSourceKind {
 }
 
 export function candidatesFromSemanticResults(rows: readonly SemanticSearchResult[]): RetrievalCandidate[] {
-  return rows.map((row, index) => createRetrievalCandidate({
+  return rows.flatMap((row, index) => row.repoId ? [createRetrievalCandidate({
     canonicalId: row.nodeId,
-    repoId: row.repoId ?? "workspace",
+    repoId: row.repoId,
     kind: semanticKind(row.nodeKind),
     routes: [{ route: "semantic", rank: index + 1, documentIds: [] }],
     matchReasons: ["semantic-match"],
     confidence: "discovery"
-  }));
+  })] : []);
 }

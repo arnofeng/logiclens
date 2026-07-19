@@ -4,7 +4,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { canonicalContractKey, extractCrossRepoContracts } from "../src/core/contracts/extraction/crossRepoContracts.js";
 import { KuzuGraphDB } from "../src/core/graph-model/db.js";
-import { findImpactSections, listContracts, listDependencies, listUnresolvedEvidence, sectionsDocumentingCode, traceContract, traceEntity } from "../src/core/graph-model/queries.js";
+import { callEdgesAround } from "../src/core/graph-model/subgraph.js";
+import { findImpactSections, listContracts, listDependencies, listUnresolvedEvidence, sectionsDocumentingCode, traceContract, traceEntitiesExactWithQueryCount, traceEntity } from "../src/core/graph-model/queries.js";
 import { upsertParsedFiles } from "../src/core/graph-model/upsert.js";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import type { ParsedFile, RepoNode } from "../src/core/parsing/types.js";
@@ -97,6 +98,109 @@ describe("graph", () => {
     } finally {
       await db.close();
     }
+  });
+
+  it("runs all exact entity sources sequentially and filters inactive lifecycle data", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-exact-entity-lifecycle-"));
+    const db = await KuzuGraphDB.open(path.join(dir, "graph"));
+    try {
+      await db.initSchema("exact-entity-lifecycle-test");
+      const repo: RepoNode = {
+        id: repoId("entity-lifecycle"), name: "entity-lifecycle", path: dir,
+        remoteUrl: "", branch: "", commitSha: "", language: "typescript", indexedAt: "now"
+      };
+      await db.upsertRepo(repo);
+      await db.upsertEntity({ id: "entity:order-contract", name: "Order", kind: "domain", description: "order contract entity" });
+      await db.upsertEntity({ id: "entity:invoice-contract", name: "Invoice", kind: "domain", description: "invoice contract entity" });
+      await db.upsertEntity({ id: "entity:stale-order-contract", name: "Order", kind: "domain", description: "stale order contract entity" });
+      const contractFixtures = [
+        { id: "contract:api:/orders", key: "/orders", entityId: "entity:order-contract", evidenceId: "evidence:orders", active: true, evidenceActive: true },
+        { id: "contract:api:/invoices", key: "/invoices", entityId: "entity:invoice-contract", evidenceId: "evidence:invoices", active: true, evidenceActive: true },
+        { id: "contract:api:/inactive-mention", key: "/inactive-mention", entityId: "entity:stale-order-contract", evidenceId: "evidence:inactive-mention", active: false, evidenceActive: true },
+        { id: "contract:api:/inactive-evidence", key: "/inactive-evidence", entityId: "entity:stale-order-contract", evidenceId: "evidence:inactive-evidence", active: true, evidenceActive: false }
+      ] as const;
+      for (const fixture of contractFixtures) {
+        await db.upsertContract({ id: fixture.id, kind: "api", key: fixture.key, name: fixture.key, description: fixture.key });
+        await db.upsertEvidence({
+          id: fixture.evidenceId, repoId: repo.id, fileId: `file:${fixture.evidenceId}`, filePath: `${fixture.key.slice(1)}.ts`,
+          line: 1, raw: fixture.key, rule: "exact-entity-test", confidence: 1, active: fixture.evidenceActive
+        });
+        await db.addRepoContract({ repoId: repo.id, contractId: fixture.id, role: "producer", evidenceId: fixture.evidenceId, confidence: 1, active: true });
+        await db.addContractEntity({ contractId: fixture.id, entityId: fixture.entityId, evidenceId: fixture.evidenceId, confidence: 1, active: fixture.active });
+      }
+      await db.upsertOperation({ id: "operation:active-order", verb: "create", entityName: "Order", description: "active order" });
+      await db.upsertOperation({ id: "operation:inactive-order", verb: "delete", entityName: "Order", description: "inactive order" });
+      await db.upsertWorkflow({ id: "workflow:active-order", name: "ActiveOrderWorkflow", description: "active workflow" });
+      await db.upsertWorkflow({ id: "workflow:inactive-order", name: "InactiveOrderWorkflow", description: "inactive workflow" });
+      await db.addOperationRepo({ operationId: "operation:active-order", repoId: repo.id, role: "producer", evidenceId: "evidence:active", confidence: 1, active: true });
+      await db.addOperationRepo({ operationId: "operation:inactive-order", repoId: repo.id, role: "stale", evidenceId: "evidence:inactive", confidence: 1, active: false });
+      await db.addWorkflowOperation({ workflowId: "workflow:active-order", operationId: "operation:active-order", step: 1, evidenceId: "evidence:active", confidence: 1, active: true });
+      await db.addWorkflowOperation({ workflowId: "workflow:inactive-order", operationId: "operation:active-order", step: 2, evidenceId: "evidence:inactive", confidence: 1, active: false });
+
+      const result = await traceEntitiesExactWithQueryCount(db, ["Order"], 10);
+      expect(result.queryCount).toBe(8);
+      expect(result.rows).toEqual(expect.arrayContaining([
+        expect.objectContaining({ sourceKind: "contract", name: "api:/orders", role: "producer" }),
+        expect.objectContaining({ sourceKind: "operation", name: "create", role: "producer" }),
+        expect.objectContaining({ sourceKind: "workflow", name: "ActiveOrderWorkflow" })
+      ]));
+      expect(result.rows).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: "api:/inactive-mention" }),
+        expect.objectContaining({ name: "api:/inactive-evidence" }),
+        expect.objectContaining({ role: "stale" }),
+        expect.objectContaining({ name: "InactiveOrderWorkflow" })
+      ]));
+      const contractOnly = await traceEntitiesExactWithQueryCount(db, ["Invoice"], 10);
+      expect(contractOnly.queryCount).toBe(8);
+      expect(contractOnly.rows).toEqual([expect.objectContaining({ sourceKind: "contract", name: "api:/invoices", role: "producer" })]);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("keeps same-source entities and truncates exact entity rows independently of insertion order", async () => {
+    async function retrieveForInsertionOrder(entityIds: readonly string[], limit: number) {
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-exact-entity-order-"));
+      const db = await KuzuGraphDB.open(path.join(dir, "graph"));
+      try {
+        await db.initSchema("exact-entity-order-test");
+        const repo: RepoNode = {
+          id: repoId("entity-order"), name: "entity-order", path: dir,
+          remoteUrl: "", branch: "", commitSha: "", language: "typescript", indexedAt: "now"
+        };
+        const file = {
+          id: fileId(repo.id, "src/entities.ts"), repoId: repo.id, path: "src/entities.ts",
+          language: "typescript", hash: "entities", loc: 3, active: true
+        };
+        const code = {
+          id: "code:repo:entity-order:src/entities.ts:function:handle:1", repoId: repo.id, fileId: file.id,
+          kind: "function" as const, name: "handle", qualifiedName: "handle", startLine: 1, endLine: 3,
+          signature: "handle()", source: "handle()", hash: "handle", active: true
+        };
+        await db.upsertRepo(repo);
+        await db.upsertFile(file);
+        await db.upsertCode(code);
+        await db.addContains(repo.id, file.id);
+        await db.addContains(file.id, code.id);
+        const names = new Map([["entity:a", "Account"], ["entity:b", "Customer"], ["entity:c", "Order"]]);
+        for (const entityId of entityIds) {
+          await db.upsertEntity({ id: entityId, name: names.get(entityId)!, kind: "domain", description: entityId });
+          await db.addMention(code.id, entityId, 1);
+        }
+        return await traceEntitiesExactWithQueryCount(db, [...names.values()], limit);
+      } finally {
+        await db.close();
+      }
+    }
+
+    const forward = await retrieveForInsertionOrder(["entity:a", "entity:b", "entity:c"], 2);
+    const reverse = await retrieveForInsertionOrder(["entity:c", "entity:b", "entity:a"], 2);
+    expect(forward.queryCount).toBe(8);
+    expect(forward.rows.map((row) => row.entityId)).toEqual(["entity:a", "entity:b"]);
+    expect(reverse.rows).toEqual(forward.rows);
+    const all = await retrieveForInsertionOrder(["entity:c", "entity:a", "entity:b"], 3);
+    expect(all.rows.map((row) => row.entityId)).toEqual(["entity:a", "entity:b", "entity:c"]);
+    expect(new Set(all.rows.map((row) => row.sourceId))).toEqual(new Set(["code:repo:entity-order:src/entities.ts:function:handle:1"]));
   });
 
   it("clears repo indexed artifacts through the graph layer", async () => {
@@ -214,6 +318,12 @@ describe("graph", () => {
       expect(stats.codeNodes).toBeGreaterThanOrEqual(10);
       expect(stats.sectionNodes).toBeGreaterThanOrEqual(2);
       expect(stats.callEdges).toBeGreaterThanOrEqual(2);
+      const codeIds = await db.query<{ codeId: string }>("MATCH (c:Code) RETURN c.id AS codeId ORDER BY c.id;");
+      const callEdges = await callEdgesAround(db, codeIds.map((row) => row.codeId), 10);
+      expect(callEdges.length).toBeGreaterThan(0);
+      expect(callEdges.every((edge) => edge.fromCodeId?.startsWith("code:") && edge.toCodeId?.startsWith("code:") &&
+        edge.fromRepoId?.startsWith("repo:") && edge.toRepoId?.startsWith("repo:") &&
+        edge.fromPath && !path.isAbsolute(edge.fromPath) && edge.toPath && !path.isAbsolute(edge.toPath))).toBe(true);
       expect(stats.entities).toBeGreaterThan(0);
       const markdownFiles = await db.query<{ language: string }>("MATCH (f:File) WHERE f.path = 'README.md' RETURN f.language AS language;");
       expect(markdownFiles[0]?.language).toBe("markdown");

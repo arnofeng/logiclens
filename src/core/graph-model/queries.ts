@@ -1,4 +1,4 @@
-import type { GraphDB, ContractSummaryRow } from "./db.js";
+import type { GraphDB, GraphValue, ContractSummaryRow } from "./db.js";
 export type { ContractSummaryRow } from "./db.js";
 import { repoId } from "../../shared/path.js";
 import { confidenceBand, type ConfidenceBand } from "../../shared/confidence.js";
@@ -163,6 +163,11 @@ export type ActiveSemanticGraph = {
   relations: SemanticRelationEdge[];
 };
 
+export type CountedQueryResult<Row> = Readonly<{
+  rows: Row[];
+  queryCount: number;
+}>;
+
 /**
  * Represents a row in an entity trace query result, identifying how an entity relates to a source node.
  */
@@ -187,7 +192,18 @@ export type EntityTraceRow = {
   evidence: string;
   /** Confidence score of the entity mapping (between 0 and 1) */
   confidence: number;
+  /** Stable identity of the source node when supplied by an exact query. */
+  sourceId?: string;
+  /** Stable identity of the supporting evidence when supplied by an exact query. */
+  evidenceId?: string;
 };
+
+export function entityTraceRowKey(row: EntityTraceRow): string {
+  return JSON.stringify([
+    row.entityId, row.repoName, row.sourceKind, row.sourceId ?? "", row.name,
+    row.filePath, row.line, row.role, row.evidenceId ?? "", row.evidence
+  ]);
+}
 
 export async function searchCode(db: GraphDB, term: string, limit = 20): Promise<CodeSearchRow[]> {
   const lowered = term.toLowerCase();
@@ -210,6 +226,49 @@ export async function searchSections(db: GraphDB, term: string, limit = 20): Pro
      RETURN r.name AS repoName, f.path AS filePath, s.id AS sectionId, s.heading AS heading, s.level AS level, s.startLine AS startLine, s.endLine AS endLine, s.summary AS summary, s.text AS text
      LIMIT ${limit};`,
     { term: lowered }
+  );
+}
+
+export async function findExactCode(
+  db: GraphDB,
+  input: { identifiers: readonly string[]; paths: readonly string[]; limit: number }
+): Promise<CodeSearchRow[]> {
+  if (input.limit < 1 || (input.identifiers.length === 0 && input.paths.length === 0)) return [];
+  const conditions: string[] = [];
+  const params: Record<string, GraphValue> = {};
+  if (input.identifiers.length > 0) {
+    conditions.push("(c.id IN $identifiers OR c.name IN $identifiers OR c.qualifiedName IN $identifiers)");
+    params.identifiers = [...input.identifiers];
+  }
+  if (input.paths.length > 0) {
+    conditions.push("f.path IN $paths");
+    params.paths = [...input.paths];
+  }
+  return db.query<CodeSearchRow>(
+    `MATCH (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(c:Code)
+     WHERE (${conditions.join(" OR ")})
+       AND (f.active IS NULL OR f.active = true) AND (c.active IS NULL OR c.active = true)
+     RETURN r.name AS repoName, f.path AS filePath, c.id AS codeId, c.kind AS kind, c.name AS name, c.qualifiedName AS qualifiedName, c.summary AS summary, c.signature AS signature
+     ORDER BY r.name, f.path, c.qualifiedName, c.id
+     LIMIT ${input.limit};`,
+    params
+  );
+}
+
+export async function findSectionsAtExactPaths(
+  db: GraphDB,
+  paths: readonly string[],
+  limit: number
+): Promise<SectionSearchRow[]> {
+  if (limit < 1 || paths.length === 0) return [];
+  return db.query<SectionSearchRow>(
+    `MATCH (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(s:Section)
+     WHERE f.path IN $paths
+       AND (f.active IS NULL OR f.active = true) AND (s.active IS NULL OR s.active = true)
+     RETURN r.name AS repoName, f.path AS filePath, s.id AS sectionId, s.heading AS heading, s.level AS level, s.startLine AS startLine, s.endLine AS endLine, s.summary AS summary, s.text AS text
+     ORDER BY r.name, f.path, s.startLine, s.id
+     LIMIT ${limit};`,
+    { paths: [...paths] }
   );
 }
 
@@ -261,15 +320,17 @@ export async function hasCodeSymbolMatch(db: GraphDB, term: string): Promise<boo
   return rows.length > 0;
 }
 
-export async function findContractSourceSymbols(db: GraphDB, contractIds: string[]): Promise<CodeSearchRow[]> {
-  if (contractIds.length === 0) return [];
+export async function findContractSourceSymbols(db: GraphDB, contractIds: string[], limit = 100): Promise<CodeSearchRow[]> {
+  if (contractIds.length === 0 || limit < 1) return [];
   return db.query<CodeSearchRow>(
     `MATCH (c:Contract)-[hs:HAS_SPEC]->(s:ContractSpec), (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(code:Code)
      WHERE c.id IN $contractIds AND s.sourceSymbolId = code.id
        AND (hs.active IS NULL OR hs.active = true)
        AND (s.active IS NULL OR s.active = true)
        AND (f.active IS NULL OR f.active = true) AND (code.active IS NULL OR code.active = true)
-     RETURN r.name AS repoName, f.path AS filePath, code.id AS codeId, code.kind AS kind, code.name AS name, code.qualifiedName AS qualifiedName, code.summary AS summary, code.signature AS signature;`,
+     RETURN r.name AS repoName, f.path AS filePath, code.id AS codeId, code.kind AS kind, code.name AS name, code.qualifiedName AS qualifiedName, code.summary AS summary, code.signature AS signature
+     ORDER BY r.name, f.path, code.qualifiedName, code.id
+     LIMIT ${limit};`,
     { contractIds }
   );
 }
@@ -372,22 +433,32 @@ export async function listContracts(db: GraphDB, options: { limit?: number; kind
   return db.listContracts(dbOptions);
 }
 
-async function traceContractRole(db: GraphDB, contractIds: string[], rel: string, role: ContractRole): Promise<ContractTraceRow[]> {
-  if (contractIds.length === 0) return [];
+async function traceContractRole(db: GraphDB, contractIds: string[], rel: string, role: ContractRole, limit: number): Promise<ContractTraceRow[]> {
+  if (contractIds.length === 0 || limit < 1) return [];
   const rows = await db.query<Omit<ContractTraceRow, "resolution">>(
     `MATCH (r:Repo)-[edge:${rel}]->(c:Contract), (e:Evidence)
      WHERE c.id IN $contractIds AND edge.evidenceId = e.id
        AND (edge.active IS NULL OR edge.active = true) AND (e.active IS NULL OR e.active = true)
-     RETURN c.id AS contractId, c.kind AS kind, c.key AS key, c.name AS name, '${role}' AS role, r.name AS repoName, e.filePath AS filePath, e.line AS line, e.raw AS raw, e.rule AS rule, e.confidence AS confidence;`,
+     RETURN c.id AS contractId, c.kind AS kind, c.key AS key, c.name AS name, '${role}' AS role, r.name AS repoName, e.filePath AS filePath, e.line AS line, e.raw AS raw, e.rule AS rule, e.confidence AS confidence
+     ORDER BY r.name, e.filePath, e.line, c.id
+     LIMIT ${limit};`,
     { contractIds }
   );
   return rows.map((row) => ({ ...row, resolution: confidenceBand(row.confidence) }));
 }
 
-export async function traceContract(db: GraphDB, kind: ContractKind, value: string, method?: string): Promise<ContractTraceRow[]> {
+export async function traceContractWithQueryCount(
+  db: GraphDB,
+  kind: ContractKind,
+  value: string,
+  method?: string,
+  limit = 100
+): Promise<CountedQueryResult<ContractTraceRow>> {
+  if (limit < 1) return { rows: [], queryCount: 0 };
   const key = canonicalContractKey(kind, value);
   const normalizedMethod = method?.trim().toUpperCase();
   const methodKey = normalizedMethod && kind === "api" ? canonicalContractKey(kind, value, normalizedMethod) : undefined;
+  let queryCount = 1;
   let contracts = methodKey
     ? await db.query<{ id: string }>(
       "MATCH (c:Contract) WHERE c.kind = $kind AND (c.key = $key OR c.key = $methodKey) RETURN c.id AS id;",
@@ -406,20 +477,27 @@ export async function traceContract(db: GraphDB, kind: ContractKind, value: stri
   // trace fallback.  If a path is served by multiple methods this returns
   // all of them.
   if (contracts.length === 0 && kind === "api" && !methodKey) {
+    queryCount += 1;
     contracts = await db.query<{ id: string }>(
       "MATCH (c:Contract) WHERE c.kind = $kind AND c.key ENDS WITH $suffix RETURN c.id AS id;",
       { kind, suffix: `:${key}` }
     );
   }
   const contractIds = contracts.map((contract) => contract.id);
-  if (contractIds.length === 0) return [];
-  const rows = (await Promise.all([
-    traceContractRole(db, contractIds, "OWNS_PACKAGE", "owner"),
-    traceContractRole(db, contractIds, "PRODUCES", "producer"),
-    traceContractRole(db, contractIds, "CONSUMES", "consumer"),
-    traceContractRole(db, contractIds, "SHARES_CONTRACT", "shared")
-  ])).flat();
-  return rows.sort((a, b) => a.repoName.localeCompare(b.repoName) || a.role.localeCompare(b.role) || a.line - b.line);
+  if (contractIds.length === 0) return { rows: [], queryCount };
+  const rows: ContractTraceRow[] = [];
+  for (const [rel, role] of [["OWNS_PACKAGE", "owner"], ["PRODUCES", "producer"], ["CONSUMES", "consumer"], ["SHARES_CONTRACT", "shared"]] as const) {
+    queryCount += 1;
+    rows.push(...await traceContractRole(db, contractIds, rel, role, limit));
+  }
+  return {
+    rows: rows.sort((a, b) => a.repoName.localeCompare(b.repoName) || a.role.localeCompare(b.role) || a.line - b.line).slice(0, limit),
+    queryCount
+  };
+}
+
+export async function traceContract(db: GraphDB, kind: ContractKind, value: string, method?: string, limit = 100): Promise<ContractTraceRow[]> {
+  return (await traceContractWithQueryCount(db, kind, value, method, limit)).rows;
 }
 
 export async function listUnresolvedEvidence(db: GraphDB, limit = 100): Promise<UnresolvedEvidenceRow[]> {
@@ -603,6 +681,73 @@ export async function traceEntity(db: GraphDB, value: string, limit = 100): Prom
     { term: lowered }
   ));
   return [...new Map(rows.map((row) => [`${row.repoName}:${row.sourceKind}:${row.name}:${row.line}:${row.role}`, row])).values()].slice(0, limit);
+}
+
+export async function traceEntitiesExactWithQueryCount(
+  db: GraphDB,
+  values: readonly string[],
+  limit = 100
+): Promise<CountedQueryResult<EntityTraceRow>> {
+  if (values.length === 0 || limit < 1) return { rows: [], queryCount: 0 };
+  const normalizedValues = [...new Set(values.map((value) => value.normalize("NFC").toLowerCase()))].sort();
+  const params = { values: normalizedValues };
+  const perQueryLimit = limit;
+  const queries: Array<() => Promise<EntityTraceRow[]>> = [
+    () => db.query<EntityTraceRow>(
+      `MATCH (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(c:Code)-[m:MENTIONS]->(e:Entity)
+       WHERE (lower(e.name) IN $values OR lower(c.name) IN $values OR lower(c.qualifiedName) IN $values OR c.id IN $values)
+         AND (f.active IS NULL OR f.active = true) AND (c.active IS NULL OR c.active = true)
+       RETURN e.id AS entityId, e.name AS entityName, r.name AS repoName, 'code' AS sourceKind, c.qualifiedName AS name, f.path AS filePath, c.startLine AS line, 'mentions' AS role, c.signature AS evidence, m.confidence AS confidence, c.id AS sourceId, '' AS evidenceId
+       ORDER BY r.id, c.id, e.id, f.path, c.startLine, m.confidence
+       LIMIT ${perQueryLimit};`, params),
+    () => db.query<EntityTraceRow>(
+      `MATCH (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(s:Section)-[m:MENTIONS]->(e:Entity)
+       WHERE (lower(e.name) IN $values OR lower(s.heading) IN $values OR s.id IN $values)
+         AND (f.active IS NULL OR f.active = true) AND (s.active IS NULL OR s.active = true)
+       RETURN e.id AS entityId, e.name AS entityName, r.name AS repoName, 'section' AS sourceKind, s.heading AS name, f.path AS filePath, s.startLine AS line, 'mentions' AS role, s.text AS evidence, m.confidence AS confidence, s.id AS sourceId, '' AS evidenceId
+       ORDER BY r.id, s.id, e.id, f.path, s.startLine, m.confidence
+       LIMIT ${perQueryLimit};`, params)
+  ];
+  for (const [rel, role] of [["OWNS_PACKAGE", "owner"], ["PRODUCES", "producer"], ["CONSUMES", "consumer"], ["SHARES_CONTRACT", "shared"]] as const) {
+    queries.push(() => db.query<EntityTraceRow>(
+      `MATCH (r:Repo)-[edge:${rel}]->(c:Contract)-[m:CONTRACT_MENTIONS]->(e:Entity), (ev:Evidence)
+       WHERE m.evidenceId = ev.id AND ev.repoId = r.id
+         AND (lower(e.name) IN $values OR lower(c.name) IN $values OR lower(c.key) IN $values OR lower(c.id) IN $values)
+         AND (edge.active IS NULL OR edge.active = true)
+         AND (m.active IS NULL OR m.active = true) AND (ev.active IS NULL OR ev.active = true)
+       RETURN e.id AS entityId, e.name AS entityName, r.name AS repoName, 'contract' AS sourceKind, c.kind + ':' + c.key AS name, ev.filePath AS filePath, ev.line AS line, '${role}' AS role, ev.raw AS evidence, m.confidence AS confidence, c.id AS sourceId, ev.id AS evidenceId
+       ORDER BY r.id, c.id, e.id, ev.id, ev.filePath, ev.line, m.confidence
+       LIMIT ${perQueryLimit};`, params));
+  }
+  queries.push(
+    () => db.query<EntityTraceRow>(
+      `MATCH (r:Repo)-[p:PARTICIPATES_IN]->(o:Operation)
+       WHERE (lower(o.entityName) IN $values OR lower(o.verb) IN $values OR o.id IN $values)
+         AND (p.active IS NULL OR p.active = true)
+       RETURN 'entity:' + lower(o.entityName) AS entityId, o.entityName AS entityName, r.name AS repoName, 'operation' AS sourceKind, o.verb AS name, '' AS filePath, 0 AS line, p.role AS role, o.description AS evidence, p.confidence AS confidence, o.id AS sourceId, p.evidenceId AS evidenceId
+       ORDER BY r.id, o.id, p.evidenceId, p.role, p.confidence
+       LIMIT ${perQueryLimit};`, params),
+    () => db.query<EntityTraceRow>(
+      `MATCH (w:Workflow)-[s:WORKFLOW_STEP]->(o:Operation)<-[p:PARTICIPATES_IN]-(r:Repo)
+       WHERE (lower(w.name) IN $values OR lower(o.entityName) IN $values OR w.id IN $values OR o.id IN $values)
+         AND (s.active IS NULL OR s.active = true) AND (p.active IS NULL OR p.active = true)
+       RETURN 'entity:' + lower(o.entityName) AS entityId, o.entityName AS entityName, r.name AS repoName, 'workflow' AS sourceKind, w.name AS name, '' AS filePath, s.step AS line, p.role AS role, w.description AS evidence, s.confidence AS confidence, w.id AS sourceId, s.evidenceId AS evidenceId
+       ORDER BY w.id, s.step, o.id, r.id, s.evidenceId, p.evidenceId, p.role
+       LIMIT ${perQueryLimit};`, params)
+  );
+  const rows: EntityTraceRow[] = [];
+  for (const query of queries) rows.push(...await query());
+  return { rows: [...new Map(rows
+    .sort((left, right) => entityTraceRowKey(left).localeCompare(entityTraceRowKey(right)))
+    .map((row) => [entityTraceRowKey(row), row])).values()].slice(0, limit), queryCount: queries.length };
+}
+
+export async function traceEntitiesExact(
+  db: GraphDB,
+  values: readonly string[],
+  limit = 100
+): Promise<EntityTraceRow[]> {
+  return (await traceEntitiesExactWithQueryCount(db, values, limit)).rows;
 }
 
 // ---------------------------------------------------------------------------

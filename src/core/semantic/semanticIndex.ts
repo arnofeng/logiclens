@@ -109,7 +109,8 @@ export class JsonSemanticIndex implements SemanticIndex {
 
   async search(query: string, options: { embeddingProvider?: EmbeddingProvider; limit?: number; providerPolicy?: ProviderPolicy } = {}): Promise<SemanticSearchResult[]> {
     const records = await this.read();
-    const queryEmbedding = options.embeddingProvider ? await options.embeddingProvider.embedText(query) : undefined;
+    const runtime = options.embeddingProvider ? createProviderCallRuntime(options.providerPolicy) : undefined;
+    const queryEmbedding = options.embeddingProvider ? await options.embeddingProvider.embedText(query, runtime) : undefined;
     const terms = query.toLowerCase().split(/[^a-z0-9_\u4e00-\u9fa5]+/).filter(Boolean);
     const scored = records.map((record) => {
       const vectorScore = queryEmbedding && record.embedding ? cosineSimilarity(queryEmbedding, record.embedding) : 0;
@@ -200,7 +201,8 @@ export class ChromaSemanticIndex implements SemanticIndex {
   }
 
   async search(query: string, options: { embeddingProvider?: EmbeddingProvider; limit?: number; providerPolicy?: ProviderPolicy } = {}): Promise<SemanticSearchResult[]> {
-    const queryEmbedding = options.embeddingProvider ? await options.embeddingProvider.embedText(query) : undefined;
+    const runtime = options.embeddingProvider ? createProviderCallRuntime(options.providerPolicy) : undefined;
+    const queryEmbedding = options.embeddingProvider ? await options.embeddingProvider.embedText(query, runtime) : undefined;
     if (!queryEmbedding) return [];
     const collection = await this.collectionHandle();
     const result = await collection.query<ChromaMetadata>({
