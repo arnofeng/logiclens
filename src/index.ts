@@ -19,6 +19,7 @@ import { createContractId, createEvidenceId, normalizeRuleName } from "./core/re
 import type { Stats } from "./core/graph-model/db.js";
 import type { DependencyRow, ContractSummaryRow } from "./core/graph-model/queries.js";
 import type { RetrievalResult } from "./features/ask/retrieve.js";
+import type { QueryPlanningContext } from "./features/ask/planningContext.js";
 import type {
   AnnotationArgument,
   AnnotationFact,
@@ -67,6 +68,7 @@ export type {
   DependencyRow,
   ContractSummaryRow,
   RetrievalResult,
+  QueryPlanningContext,
   ImpactResult,
   SemanticTraceGraph,
   ParsedFile,

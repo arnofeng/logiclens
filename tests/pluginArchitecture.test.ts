@@ -6,7 +6,7 @@ import { ExtractionBuilder } from "../src/core/contracts/extraction/extractionBu
 import { normalizePublicFacts } from "../src/core/plugins/publicFactNormalizer.js";
 import { adaptFactExtractor, adaptFrameworkDetector, adaptLanguageParser } from "../src/core/plugins/adapter.js";
 import { clearRegisteredPluginCapabilities, registerLoadedPlugins } from "../src/core/plugins/register.js";
-import { autoDetectAndRegisterPlugins } from "../src/core/plugins/register.js";
+import { autoDetectAndRegisterPlugins, loadWorkspacePluginPlanningSnapshot } from "../src/core/plugins/register.js";
 import { detectActiveLanguages, builtinLanguagePluginManifests, scanRepoPathSnapshot } from "../src/core/plugins/detection.js";
 import { registerCommonBuiltins, resetJavaBuiltinCapabilities } from "../src/core/plugins/bootstrap.js";
 import { ContractExtractorRegistry, FrameworkDetectorRegistry, ParserRegistry, contractExtractorRegistry, frameworkDetectorRegistry, parserRegistry } from "../src/core/registries/registry.js";
@@ -18,6 +18,10 @@ import { joinHttpPaths, normalizeRouteTemplate } from "@logiclens/plugin-sdk/uti
 import { defaultConfig } from "../src/config/loadConfig.js";
 import { scanAndParseRepo } from "../src/core/indexing/scanParse.js";
 import { repoId } from "../src/shared/path.js";
+import { createQueryPlanningContext } from "../src/features/ask/planningContext.js";
+import { planQuestion } from "../src/features/ask/planner.js";
+import { AppClient } from "../src/interfaces/sdk/client.js";
+import type { QueryPlanningContext } from "../src/features/ask/planningContext.js";
 
 async function installFixtureLanguagePlugin(repo: string): Promise<void> {
   const pluginDir = path.join(repo, ".logiclens", "plugins", "fixture-csharp");
@@ -76,6 +80,24 @@ async function installScopedFixturePlugin(repo: string, label: string): Promise<
       }}]
     };
   `, "utf8");
+}
+
+async function installPlanningLanguagePlugin(cwd: string, name: string, language: string, extension: string): Promise<void> {
+  const pluginDir = path.join(cwd, ".logiclens", "plugins", name);
+  await fs.mkdir(pluginDir, { recursive: true });
+  const manifest = {
+    name,
+    version: "0.0.1",
+    logiclensPluginApiVersion: LOGICLENS_PLUGIN_API_VERSION,
+    capabilities: ["language"],
+    entry: "./index.js",
+    languages: [{ id: language, extensions: [extension], detect: { extensions: [extension] } }]
+  };
+  await fs.writeFile(path.join(pluginDir, "plugin.json"), JSON.stringify(manifest), "utf8");
+  await fs.writeFile(path.join(pluginDir, "index.js"), `export default {
+    manifest: ${JSON.stringify(manifest)},
+    languages: [{ id: ${JSON.stringify(language)}, extensions: [${JSON.stringify(extension)}], parse() { return { symbols: [] }; } }]
+  };`, "utf8");
 }
 
 async function readProductionSources(roots: readonly string[]): Promise<Array<{ file: string; source: string }>> {
@@ -234,6 +256,12 @@ describe("plugin architecture foundation", () => {
     expect(Number((globalThis as Record<string, unknown>).__logiclensFixtureCsharpLoads ?? 0)).toBe(beforeLoads + 1);
     expect(bootstrap.activePluginSourceGlobsByRepo.get(activeRepo)).toEqual(["**/*.cs"]);
     expect(bootstrap.activePluginSourceGlobsByRepo.get(inactiveRepo)).toBeUndefined();
+    const planningContext = createQueryPlanningContext({
+      activePluginManifests: bootstrap.activePluginManifests,
+      activeParsers: bootstrap.activeLanguageParsers,
+      repoIds: config.repos.map((configuredRepo) => repoId(configuredRepo.name))
+    });
+    expect(planQuestion("Open Order.cs", planningContext).paths).toEqual(["Order.cs"]);
 
     const repo = {
       id: repoId("active"), name: "active", path: activeRepo, remoteUrl: "", branch: "", commitSha: "",
@@ -254,6 +282,55 @@ describe("plugin architecture foundation", () => {
     const repeated = await autoDetectAndRegisterPlugins({ config, cwd, repoConfigs: config.repos });
     expect(repeated.activePluginSourceGlobsByRepo.get(activeRepo)).toBeUndefined();
     expect(parserRegistry.resolve({ language: "csharp" })).toBeUndefined();
+    expect(createQueryPlanningContext({
+      activePluginManifests: repeated.activePluginManifests,
+      activeParsers: repeated.activeLanguageParsers,
+      repoIds: config.repos.map((configuredRepo) => repoId(configuredRepo.name))
+    }).fileExtensions).not.toContain(".cs");
+  });
+
+  it("caches workspace-owned planning snapshots and isolates concurrent clients", async () => {
+    const firstCwd = await fs.mkdtemp(path.join(os.tmpdir(), "query-planning-first-"));
+    const secondCwd = await fs.mkdtemp(path.join(os.tmpdir(), "query-planning-second-"));
+    const firstRepo = path.join(firstCwd, "repo");
+    const secondRepo = path.join(secondCwd, "repo");
+    await fs.mkdir(firstRepo);
+    await fs.mkdir(secondRepo);
+    await installPlanningLanguagePlugin(firstCwd, "fixture-cs-planning", "csharp", ".cs");
+    await installPlanningLanguagePlugin(secondCwd, "fixture-fs-planning", "fsharp", ".fs");
+    await fs.writeFile(path.join(firstRepo, "Order.cs"), "class Order {}", "utf8");
+    await fs.writeFile(path.join(secondRepo, "Order.fs"), "type Order = class end", "utf8");
+    const firstConfig = { ...defaultConfig(), repos: [{ name: "first", path: firstRepo }] };
+    const secondConfig = { ...defaultConfig(), repos: [{ name: "second", path: secondRepo }] };
+    const registryBefore = parserRegistry.parsers();
+
+    const scopedSnapshot = await loadWorkspacePluginPlanningSnapshot({ config: firstConfig, cwd: firstCwd, repoConfigs: firstConfig.repos });
+    expect(scopedSnapshot.activeLanguageParsers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ language: "csharp", extensions: [".cs"], scopeRepoId: repoId("first") })
+    ]));
+    expect(parserRegistry.parsers()).toEqual(registryBefore);
+
+    const firstClient = new AppClient({ cwd: firstCwd }, firstConfig);
+    const secondClient = new AppClient({ cwd: secondCwd }, secondConfig);
+    const planning = (client: AppClient) => (client as unknown as {
+      getQueryPlanningContext(): Promise<QueryPlanningContext>;
+    }).getQueryPlanningContext();
+    const [first, repeated, second] = await Promise.all([
+      planning(firstClient), planning(firstClient), planning(secondClient)
+    ]);
+    expect(repeated).toBe(first);
+    expect(first.fileExtensions).toContain(".cs");
+    expect(first.fileExtensions).not.toContain(".fs");
+    expect(second.fileExtensions).toContain(".fs");
+    expect(second.fileExtensions).not.toContain(".cs");
+    expect(parserRegistry.parsers()).toEqual(registryBefore);
+
+    const queryClient = new AppClient({ cwd: firstCwd }, firstConfig);
+    (queryClient as unknown as { getDb(): Promise<unknown> }).getDb = async () => ({ async query() { return []; } });
+    await queryClient.retrieve("Open Order.cs");
+    const cachedPromise = (queryClient as unknown as { planningContextPromise: Promise<QueryPlanningContext> }).planningContextPromise;
+    await queryClient.retrieve("Open Order.cs");
+    expect((queryClient as unknown as { planningContextPromise: Promise<QueryPlanningContext> }).planningContextPromise).toBe(cachedPromise);
   });
 
   it("makes a workspace plugin available to every matching repository", async () => {
@@ -913,5 +990,15 @@ describe("plugin architecture foundation", () => {
       "typescript"
     ]);
     await expect(fs.stat(path.resolve("src/core/plugins/bundled"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("keeps query planning free of registries, config, and providers", async () => {
+    const sources = await Promise.all([
+      "src/features/ask/planner.ts",
+      "src/features/ask/queryTargets.ts",
+      "src/features/ask/queryLexer.ts"
+    ].map((file) => fs.readFile(path.resolve(file), "utf8")));
+    const combined = sources.join("\n");
+    expect(combined).not.toMatch(/registries\/registry|config\/|adapters\/|retrieval\/provider|semantic\/embeddings|graph-model\/db/);
   });
 });

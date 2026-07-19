@@ -36,10 +36,17 @@ import type { LanguageParser } from "../registries/types.js";
 
 export type PluginBootstrapResult = {
   loadedPlugins: LoadedLogicLensPlugin[];
+  activePluginManifests: readonly PluginManifest[];
+  activeLanguageParsers: readonly LanguageParser[];
   additionalIndexFilesByRepo: ReadonlyMap<string, readonly string[]>;
   activePluginSourceGlobsByRepo: ReadonlyMap<string, readonly string[]>;
   availablePluginSourceGlobsByRepo: ReadonlyMap<string, readonly string[]>;
 };
+
+export type PluginPlanningSnapshot = Readonly<{
+  activePluginManifests: readonly PluginManifest[];
+  activeLanguageParsers: readonly LanguageParser[];
+}>;
 
 const registeredPluginState = {
   parsers: new Set<LanguageParser>(),
@@ -147,10 +154,62 @@ export async function autoDetectAndRegisterPlugins(input: {
   }
   return {
     loadedPlugins: allLoaded,
+    activePluginManifests: allLoaded.map(({ plugin }) => plugin.manifest),
+    activeLanguageParsers: [...registeredPluginState.parsers],
     additionalIndexFilesByRepo,
     activePluginSourceGlobsByRepo,
     availablePluginSourceGlobsByRepo
   };
+}
+
+/**
+ * Builds workspace-owned query-planning inputs without touching process-global
+ * registries. Language modules are loaded once for validation, then adapted as
+ * repo-scoped parser metadata owned only by the returned snapshot.
+ */
+export async function loadWorkspacePluginPlanningSnapshot(input: {
+  config: AppConfig;
+  cwd: string;
+  repoConfigs: AppConfig["repos"];
+  warn?: (message: string) => void;
+}): Promise<PluginPlanningSnapshot> {
+  const repos = input.repoConfigs.map((repo) => toRepoNode(repo, input.cwd));
+  const available = await discoverAvailablePlugins({ cwd: input.cwd, config: input.config, warn: input.warn });
+  const states = await Promise.all(repos.map(async (repo) => {
+    const plugins = pluginsAvailableToRepo(available, repo.path);
+    const detectionGlobs = detectionGlobsForPlugins(plugins, input.config.include);
+    const snapshot = await scanRepoPathSnapshot(repo.path, input.config, detectionGlobs);
+    return { repo, plugins, activeLanguages: detectActiveLanguages({ plugins, snapshots: [snapshot] }) };
+  }));
+  const loadable = [...new Map(states.flatMap((state) =>
+    pluginsForActiveLanguages(state.plugins, state.activeLanguages)
+      .filter((plugin) => plugin.entryPath)
+      .map((plugin) => [plugin.source, plugin] as const)
+  )).values()];
+  const loaded = await loadDiscoveredLogicLensPlugins(loadable.map(toDiscovered), {
+    cwd: input.cwd,
+    failFast: input.config.plugins?.failFast,
+    onWarning: input.warn
+  });
+  const loadedBySource = new Map(loaded.map((plugin) => [plugin.source, plugin]));
+  const parsers: LanguageParser[] = [];
+  const manifests = new Map<string, PluginManifest>();
+  for (const state of states) {
+    for (const availablePlugin of pluginsForActiveLanguages(state.plugins, state.activeLanguages)) {
+      const loadedPlugin = loadedBySource.get(availablePlugin.source);
+      if (!loadedPlugin) continue;
+      manifests.set(loadedPlugin.plugin.manifest.name, loadedPlugin.plugin.manifest);
+      for (const language of loadedPlugin.plugin.languages ?? []) {
+        if (!state.activeLanguages.has(language.id)) continue;
+        const parser = adaptLanguageParser(language, state.repo.id);
+        if (parser) parsers.push(parser);
+      }
+    }
+  }
+  return Object.freeze({
+    activePluginManifests: Object.freeze([...manifests.values()]),
+    activeLanguageParsers: Object.freeze(parsers)
+  });
 }
 
 export function registerLoadedPlugins(

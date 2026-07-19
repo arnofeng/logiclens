@@ -1,5 +1,5 @@
-import { BUILTIN_PARSER_EXTENSIONS } from "../../core/parsing/extensionMetadata.js";
 import type { QuerySpan } from "./queryLexer.js";
+import { DEFAULT_QUERY_PLANNING_CONTEXT, type QueryPlanningContext } from "./planningContext.js";
 
 export type ContractTargetKind = "api" | "event" | "schema" | "dto" | "enum";
 
@@ -43,10 +43,10 @@ function hasClauseBoundary(spans: readonly QuerySpan[], first: number, second: n
   return spans.slice(start, end).some((span) => CONNECTOR.test(normalizedWord(span)));
 }
 
-function hasKnownFileExtension(value: string): boolean {
+function hasKnownFileExtension(value: string, context: QueryPlanningContext): boolean {
   const clean = value.split(/[?#]/, 1)[0]?.replace(/[\\/]+$/, "") ?? "";
   const lower = clean.toLowerCase();
-  return [...BUILTIN_PARSER_EXTENSIONS].some((extension) => lower.endsWith(extension));
+  return context.fileExtensions.some((extension) => lower.endsWith(extension));
 }
 
 function isGenericFileName(value: string): boolean {
@@ -92,11 +92,11 @@ function explicitContract(value: string): ContractTarget | undefined {
 
 type EvidenceTargetClass = "any" | "path";
 
-function isPotentialTargetSpan(span: QuerySpan, targetClass: EvidenceTargetClass): boolean {
+function isPotentialTargetSpan(span: QuerySpan, targetClass: EvidenceTargetClass, context: QueryPlanningContext): boolean {
   const value = span.value;
   if (explicitContract(value)) return true;
   if (value.startsWith("/") || isStrongFileShape(value) || isRelativePathShape(value)) return true;
-  if (hasKnownFileExtension(value) || isGenericFileName(value)) return true;
+  if (hasKnownFileExtension(value, context) || isGenericFileName(value)) return true;
   if (targetClass === "path") return false;
   if (span.quoted) return true;
   return isStrongCodeShape(value) || isSimplePascalCase(value) || isStructuredContractValue(value);
@@ -112,7 +112,8 @@ function evidenceBindsTarget(
   direction: EvidenceDirection,
   maxDistance: number,
   targetClass: EvidenceTargetClass,
-  tieDirection: EvidenceTieDirection
+  tieDirection: EvidenceTieDirection,
+  context: QueryPlanningContext
 ): boolean {
   if (direction === "before" && evidenceIndex >= targetIndex) return false;
   if (direction === "after" && evidenceIndex <= targetIndex) return false;
@@ -121,7 +122,7 @@ function evidenceBindsTarget(
   const candidates = spans
     .map((span, index) => ({ span, index, distance: Math.abs(index - evidenceIndex) }))
     .filter(({ span, index, distance: candidateDistance }) =>
-      index !== evidenceIndex && candidateDistance <= maxDistance && isPotentialTargetSpan(span, targetClass) &&
+      index !== evidenceIndex && candidateDistance <= maxDistance && isPotentialTargetSpan(span, targetClass, context) &&
       !hasClauseBoundary(spans, evidenceIndex, index) &&
       (direction !== "before" || index > evidenceIndex) &&
       (direction !== "after" || index < evidenceIndex)
@@ -140,13 +141,14 @@ function boundEvidenceDistance(
   direction: EvidenceDirection = "either",
   maxDistance = 4,
   targetClass: EvidenceTargetClass = "any",
-  tieDirection: EvidenceTieDirection = "preceding"
+  tieDirection: EvidenceTieDirection = "preceding",
+  context: QueryPlanningContext = DEFAULT_QUERY_PLANNING_CONTEXT
 ): number | undefined {
   let bestDistance: number | undefined;
   for (let evidenceIndex = 0; evidenceIndex < spans.length; evidenceIndex += 1) {
     if (!pattern.test(normalizedWord(spans[evidenceIndex]!))) continue;
     const distance = Math.abs(evidenceIndex - targetIndex);
-    if (!evidenceBindsTarget(spans, targetIndex, evidenceIndex, direction, maxDistance, targetClass, tieDirection)) continue;
+    if (!evidenceBindsTarget(spans, targetIndex, evidenceIndex, direction, maxDistance, targetClass, tieDirection, context)) continue;
     if (bestDistance === undefined || distance < bestDistance) bestDistance = distance;
   }
   return bestDistance;
@@ -157,13 +159,13 @@ function minimumDistance(...distances: Array<number | undefined>): number | unde
   return present.length > 0 ? Math.min(...present) : undefined;
 }
 
-function isStructuralUrl(value: string, spans: readonly QuerySpan[], index: number): boolean {
+function isStructuralUrl(value: string, spans: readonly QuerySpan[], index: number, context: QueryPlanningContext): boolean {
   if (/^[a-z][a-z\d+.-]*:\/\//i.test(value)) return true;
   if (/^localhost(?::\d+)?(?:\/|$)/i.test(value)) return true;
   if (/^(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?(?:\/|$)/.test(value)) return true;
   if (/^\[[0-9a-f:]+\](?::\d+)?(?:\/|$)/i.test(value) || /^[0-9a-f]*:[0-9a-f:]+(?:\/|$)/i.test(value)) return true;
   if (/^(?:[\p{L}\p{N}-]+\.)+[\p{L}\p{N}-]+(?::\d+)?\/(?:[^\s]*)$/u.test(value)) return true;
-  return /^(?:[\p{L}\p{N}-]+\.)+[\p{L}\p{N}-]+$/u.test(value) && boundEvidenceDistance(spans, index, URL_CONTEXT, "before", 2, "path") !== undefined;
+  return /^(?:[\p{L}\p{N}-]+\.)+[\p{L}\p{N}-]+$/u.test(value) && boundEvidenceDistance(spans, index, URL_CONTEXT, "before", 2, "path", "preceding", context) !== undefined;
 }
 
 function implicitContractFromSuffix(value: string): ContractTarget | undefined {
@@ -172,13 +174,13 @@ function implicitContractFromSuffix(value: string): ContractTarget | undefined {
   return undefined;
 }
 
-function contractContextKind(spans: readonly QuerySpan[], index: number): ContractTargetKind | undefined {
+function contractContextKind(spans: readonly QuerySpan[], index: number, context: QueryPlanningContext): ContractTargetKind | undefined {
   const contextIndex = spans
     .map((span, candidateIndex) => ({ span, candidateIndex, distance: Math.abs(candidateIndex - index) }))
     .filter(({ span, candidateIndex, distance }) =>
       CONTRACT_CONTEXT.test(normalizedWord(span)) && distance <= 3 &&
       !hasClauseBoundary(spans, candidateIndex, index) &&
-      evidenceBindsTarget(spans, index, candidateIndex, "either", 3, "any", "preceding")
+      evidenceBindsTarget(spans, index, candidateIndex, "either", 3, "any", "preceding", context)
     )
     .sort((left, right) => left.distance - right.distance || left.candidateIndex - right.candidateIndex)[0]?.candidateIndex;
   if (contextIndex === undefined) return undefined;
@@ -190,35 +192,35 @@ function contractContextKind(spans: readonly QuerySpan[], index: number): Contra
   return word as ContractTargetKind;
 }
 
-function classifySpan(spans: readonly QuerySpan[], index: number): ClassifiedTarget {
+function classifySpan(spans: readonly QuerySpan[], index: number, context: QueryPlanningContext): ClassifiedTarget {
   const span = spans[index]!;
   const value = span.value.normalize("NFC");
   const explicit = explicitContract(value);
   if (explicit) return { type: "contract", span, ...explicit };
 
-  if (isStructuralUrl(value, spans, index)) return { type: "ignored", reason: "url", span };
+  if (isStructuralUrl(value, spans, index, context)) return { type: "ignored", reason: "url", span };
   if (VERSION.test(value)) return { type: "ignored", reason: "version", span };
 
   const methodIndex = spans
     .map((candidate, candidateIndex) => ({ candidate, candidateIndex }))
     .filter(({ candidate, candidateIndex }) => HTTP_METHOD.test(normalizedWord(candidate)) && candidateIndex < index)
-    .filter(({ candidateIndex }) => evidenceBindsTarget(spans, index, candidateIndex, "before", 4, "path", "following"))
+    .filter(({ candidateIndex }) => evidenceBindsTarget(spans, index, candidateIndex, "before", 4, "path", "following", context))
     .sort((left, right) => right.candidateIndex - left.candidateIndex)[0]?.candidateIndex;
   const method = methodIndex === undefined ? undefined : normalizedWord(spans[methodIndex]!).toUpperCase();
   const fileDistance = minimumDistance(
-    boundEvidenceDistance(spans, index, FILE_LEADING_CONTEXT, "before", 4, "path"),
-    boundEvidenceDistance(spans, index, FILE_LABEL_CONTEXT, "before", 4, "path"),
-    boundEvidenceDistance(spans, index, FILE_LABEL_CONTEXT, "after", 4, "path")
+    boundEvidenceDistance(spans, index, FILE_LEADING_CONTEXT, "before", 4, "path", "preceding", context),
+    boundEvidenceDistance(spans, index, FILE_LABEL_CONTEXT, "before", 4, "path", "preceding", context),
+    boundEvidenceDistance(spans, index, FILE_LABEL_CONTEXT, "after", 4, "path", "preceding", context)
   );
   const apiDistance = minimumDistance(
-    boundEvidenceDistance(spans, index, API_LEADING_CONTEXT, "before", 4, "path"),
-    boundEvidenceDistance(spans, index, API_LABEL_CONTEXT, "either", 4, "path", "following")
+    boundEvidenceDistance(spans, index, API_LEADING_CONTEXT, "before", 4, "path", "preceding", context),
+    boundEvidenceDistance(spans, index, API_LABEL_CONTEXT, "either", 4, "path", "following", context)
   );
   const fileEvidence = fileDistance !== undefined && (apiDistance === undefined || fileDistance < apiDistance);
   const apiEvidence = apiDistance !== undefined && (fileDistance === undefined || apiDistance <= fileDistance);
   const slashLike = value.startsWith("/");
 
-  if (hasKnownFileExtension(value) || isStrongFileShape(value) || (fileEvidence && (isGenericFileName(value) || isRelativePathShape(value)))) {
+  if (hasKnownFileExtension(value, context) || isStrongFileShape(value) || (fileEvidence && (isGenericFileName(value) || isRelativePathShape(value)))) {
     return { type: "path", value, span };
   }
   if (slashLike) {
@@ -228,7 +230,7 @@ function classifySpan(spans: readonly QuerySpan[], index: number): ClassifiedTar
     return { type: "ignored", reason: "ambiguous", span };
   }
 
-  const contextualKind = contractContextKind(spans, index);
+  const contextualKind = contractContextKind(spans, index, context);
   if (contextualKind && (span.quoted || isStrongCodeShape(value) || isSimplePascalCase(value) || isStructuredContractValue(value))) {
     return { type: "contract", kind: contextualKind, value, span };
   }
@@ -239,13 +241,16 @@ function classifySpan(spans: readonly QuerySpan[], index: number): ClassifiedTar
     return { type: "ignored", reason: "context", span };
   }
 
-  const codeEvidence = boundEvidenceDistance(spans, index, CODE_CONTEXT) !== undefined;
+  const codeEvidence = boundEvidenceDistance(spans, index, CODE_CONTEXT, "either", 4, "any", "preceding", context) !== undefined;
   if (isStrongCodeShape(value) || (isSimplePascalCase(value) && codeEvidence) || (span.quoted && codeEvidence)) {
     return { type: "identifier", value, span };
   }
   return { type: "ignored", reason: "ambiguous", span };
 }
 
-export function classifyQueryTargets(spans: readonly QuerySpan[]): ClassifiedTarget[] {
-  return spans.map((_, index) => classifySpan(spans, index));
+export function classifyQueryTargets(
+  spans: readonly QuerySpan[],
+  context: QueryPlanningContext = DEFAULT_QUERY_PLANNING_CONTEXT
+): ClassifiedTarget[] {
+  return spans.map((_, index) => classifySpan(spans, index, context));
 }

@@ -1,12 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { lexQuery } from "../src/features/ask/queryLexer.js";
 import { classifyQueryTargets } from "../src/features/ask/queryTargets.js";
+import { createQueryPlanningContext } from "../src/features/ask/planningContext.js";
 
 function classified(question: string) {
   return classifyQueryTargets(lexQuery(question));
 }
 
 describe("query target classifier", () => {
+  it.each(["Foo.cs", "\"Foo.cs\"", "Open Foo.cs", "打开 Foo.cs", "Foo.CS"])(
+    "classifies active plugin files as paths: %s",
+    (question) => {
+      const context = createQueryPlanningContext({
+        activePluginManifests: [{ languages: [{ id: "csharp", extensions: [" .CS "] }] }]
+      });
+      const targets = classifyQueryTargets(lexQuery(question), context);
+      expect(targets.filter((target) => target.type === "path").map((target) => target.value)).toEqual([question.match(/Foo\.cs/i)?.[0] ?? "Foo.cs"]);
+      expect(targets.filter((target) => target.type === "identifier")).toEqual([]);
+    }
+  );
+
+  it.each(["File.ts", "View.tsx", "README.md", "schema.graphql"])("keeps built-in file recognition: %s", (question) => {
+    expect(classified(question).filter((target) => target.type === "path")).toHaveLength(1);
+  });
   it.each([
     ["api:/orders", { kind: "api", value: "/orders" }],
     ["POST:/orders", { kind: "api", value: "/orders", method: "POST" }],

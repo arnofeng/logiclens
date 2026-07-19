@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { BUILTIN_PARSER_EXTENSION_METADATA } from "../src/core/parsing/extensionMetadata.js";
 import { builtinLanguageForPath } from "../src/core/parsing/parserRegistry.js";
 import { MAX_LEXICAL_QUERY_CODE_POINTS, planQuestion, type ContractTarget, type RetrievalRoute } from "../src/features/ask/planner.js";
+import { createQueryPlanningContext } from "../src/features/ask/planningContext.js";
 
 type MatrixRow = {
   question: string;
@@ -210,4 +211,40 @@ describe("parser extension metadata", () => {
       expect(builtinLanguageForPath(`fixture${extension}`)).toBe(language);
     }
   );
+
+  it("uses an immutable and deterministic active plugin extension snapshot", () => {
+    const manifestExtensions = [" CS ", "bad/path", "", ".CS"];
+    const parserExtensions = [".razor", " cshtml "];
+    const context = createQueryPlanningContext({
+      activePluginManifests: [{ languages: [{ id: "csharp", extensions: manifestExtensions }] }],
+      activeParsers: [{ extensions: parserExtensions, scopeRepoId: "repo:active" }],
+      repoIds: ["repo:active"]
+    });
+    const serialized = JSON.stringify(context);
+    manifestExtensions.push(".foreign");
+    parserExtensions.push(".mutated");
+
+    expect(Object.isFrozen(context)).toBe(true);
+    expect(Object.isFrozen(context.fileExtensions)).toBe(true);
+    expect(context.fileExtensions).toContain(".cs");
+    expect(context.fileExtensions).toContain(".razor");
+    expect(context.fileExtensions).toContain(".cshtml");
+    expect(context.fileExtensions).not.toContain("bad/path");
+    expect(JSON.stringify(context)).toBe(serialized);
+    expect(createQueryPlanningContext({ activePluginManifests: [{ languages: [{ id: "csharp", extensions: [".CS"] }] }] })).toEqual(
+      createQueryPlanningContext({ activePluginManifests: [{ languages: [{ id: "csharp", extensions: ["cs"] }] }] })
+    );
+  });
+
+  it("does not include foreign scoped parsers", () => {
+    const context = createQueryPlanningContext({
+      activeParsers: [
+        { extensions: [".owned"], scopeRepoId: "repo:owned" },
+        { extensions: [".foreign"], scopeRepoId: "repo:foreign" }
+      ],
+      repoIds: ["repo:owned"]
+    });
+    expect(context.fileExtensions).toContain(".owned");
+    expect(context.fileExtensions).not.toContain(".foreign");
+  });
 });

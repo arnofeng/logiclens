@@ -1,5 +1,6 @@
 import { lexQuery } from "./queryLexer.js";
 import { classifyQueryTargets, type ContractTarget } from "./queryTargets.js";
+import { DEFAULT_QUERY_PLANNING_CONTEXT, type QueryPlanningContext } from "./planningContext.js";
 
 export type QuestionKind = "impact" | "workflow" | "symbol" | "dependency" | "debugging" | "general";
 export type RetrievalRoute = "exact" | "contract" | "entity" | "lexical" | "graph" | "semantic";
@@ -67,17 +68,23 @@ export function normalizeLexicalQuery(question: string): string {
   return [...normalized].slice(0, MAX_LEXICAL_QUERY_CODE_POINTS).join("");
 }
 
-export function contractTargetsFromQuestion(question: string): ContractTarget[] {
+export function contractTargetsFromQuestion(
+  question: string,
+  context: QueryPlanningContext = DEFAULT_QUERY_PLANNING_CONTEXT
+): ContractTarget[] {
   return stableUniqueContracts(
-    classifyQueryTargets(lexQuery(question))
+    classifyQueryTargets(lexQuery(question), context)
       .filter((target) => target.type === "contract")
       .map(({ kind, value, method }) => ({ kind, value, ...(method ? { method } : {}) }))
   );
 }
 
-export function planQuestion(question: string): QueryPlan {
+export function planQuestion(
+  question: string,
+  context: QueryPlanningContext = DEFAULT_QUERY_PLANNING_CONTEXT
+): QueryPlan {
   const normalizedLexicalQuery = normalizeLexicalQuery(question);
-  const targets = classifyQueryTargets(lexQuery(question));
+  const targets = classifyQueryTargets(lexQuery(question), context);
   const exactIdentifiers = stableUnique(targets.filter((target) => target.type === "identifier").map((target) => target.value));
   const paths = stableUnique(targets.filter((target) => target.type === "path").map((target) => target.value));
   const contractTargets = stableUniqueContracts(

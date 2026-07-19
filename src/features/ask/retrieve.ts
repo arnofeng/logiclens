@@ -17,6 +17,7 @@ import type { AppConfig } from "../../config/schema.js";
 import { defaultSemanticIndex, type SemanticSearchResult } from "../../core/semantic/semanticIndex.js";
 import { resolveEmbeddingProvider } from "../../core/semantic/embeddings.js";
 import { planQuestion } from "./planner.js";
+import type { QueryPlanningContext } from "./planningContext.js";
 
 /**
  * The structured retrieval result context representing matching information
@@ -41,8 +42,9 @@ export type RetrievalResult = {
   edges: Awaited<ReturnType<typeof callEdgesAround>>;
 };
 
-export async function retrieveForQuestion(db: GraphDB, question: string, options: { cwd?: string; config?: AppConfig } = {}): Promise<RetrievalResult> {
-  const plan = planQuestion(question);
+export async function retrieveForQuestion(db: GraphDB, question: string, options: { cwd?: string; config?: AppConfig; planningContext?: QueryPlanningContext } = {}): Promise<RetrievalResult> {
+  const cwd = options.cwd ?? process.cwd();
+  const plan = planQuestion(question, options.planningContext);
   const rows: CodeSearchRow[] = [];
   const sectionRows: SectionSearchRow[] = [];
   const entityRows: EntityTraceRow[] = [];

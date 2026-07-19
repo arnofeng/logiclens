@@ -29,6 +29,8 @@ import {
 import type { EdgeRow } from "../../core/graph-model/subgraph.js";
 import type { SemanticImpactReport } from "../../core/contracts/impact/semanticImpact.js";
 import { retrieveForQuestion, type RetrievalResult } from "../../features/ask/retrieve.js";
+import { createQueryPlanningContext, type QueryPlanningContext } from "../../features/ask/planningContext.js";
+import { loadWorkspacePluginPlanningSnapshot } from "../../core/plugins/register.js";
 import { answerQuestion } from "../../features/ask/answer.js";
 import { rebuildRepoDependencies } from "../../core/graph-model/rebuildRelations.js";
 import { discoverGitRepos } from "../../core/workspace/repoDiscovery.js";
@@ -97,6 +99,8 @@ export type AppClientOptions = {
   config?: AppConfig;
   /** Custom logger implementation */
   logger?: AppLogger;
+  /** Precomputed immutable query-planning snapshot for an embedding host. */
+  queryPlanningContext?: QueryPlanningContext;
 };
 
 export type ClientOptions = AppClientOptions;
@@ -120,6 +124,8 @@ export class AppClient {
   private logger: Required<AppLogger>;
   private watcher?: FileWatcher;
   private indexQueue = new SingleProcessIndexQueue();
+  private planningContextPromise?: Promise<QueryPlanningContext>;
+  private readonly configuredPlanningContext?: QueryPlanningContext;
 
   constructor(options: ClientOptions, config: AppConfig) {
     this.config = config;
@@ -128,7 +134,32 @@ export class AppClient {
       ...defaultLogger,
       ...options.logger
     };
+    this.configuredPlanningContext = options.queryPlanningContext;
     this.ensureProviders();
+  }
+
+  private getQueryPlanningContext(): Promise<QueryPlanningContext> {
+    if (this.configuredPlanningContext) return Promise.resolve(this.configuredPlanningContext);
+    if (!this.planningContextPromise) {
+      this.planningContextPromise = loadWorkspacePluginPlanningSnapshot({
+        config: this.config,
+        cwd: this.cwd,
+        repoConfigs: this.config.repos,
+        warn: (message) => this.logger.warn(message)
+      }).then((snapshot) => createQueryPlanningContext({
+        activePluginManifests: snapshot.activePluginManifests,
+        activeParsers: snapshot.activeLanguageParsers,
+        repoIds: this.config.repos.map((repo) => toRepoNode(repo, this.cwd).id)
+      })).catch((error) => {
+        this.planningContextPromise = undefined;
+        throw error;
+      });
+    }
+    return this.planningContextPromise;
+  }
+
+  private invalidateQueryPlanningContext(): void {
+    if (!this.configuredPlanningContext) this.planningContextPromise = undefined;
   }
 
   /**
@@ -213,6 +244,7 @@ export class AppClient {
     const repos = this.config.repos.filter((repo) => repo.name !== name);
     repos.push({ name, path: storedPath });
     this.config = { ...this.config, repos };
+    this.invalidateQueryPlanningContext();
     return { name, storedPath };
   }
 
@@ -246,6 +278,7 @@ export class AppClient {
     }
     const repos = [...byName.values()];
     this.config = { ...this.config, repos };
+    this.invalidateQueryPlanningContext();
 
     const addedRepos = discovery.repos.map((r) => ({
       name: r.name,
@@ -279,15 +312,19 @@ export class AppClient {
    */
   async index(options?: AppIndexOptions): Promise<IndexResult> {
     const { queueSource = "manual", queueLabel, ...indexOptions } = options ?? {};
-    return this.indexQueue.enqueue({
-      source: queueSource,
-      label: queueLabel ?? describeIndexOptions(indexOptions),
-      run: async () => {
-        this.ensureProviders();
-        const db = await this.getDb();
-        return runIndexing(db, this.config, { ...indexOptions, cwd: this.cwd, logger: this.logger });
-      }
-    });
+    try {
+      return await this.indexQueue.enqueue({
+        source: queueSource,
+        label: queueLabel ?? describeIndexOptions(indexOptions),
+        run: async () => {
+          this.ensureProviders();
+          const db = await this.getDb();
+          return runIndexing(db, this.config, { ...indexOptions, cwd: this.cwd, logger: this.logger });
+        }
+      });
+    } finally {
+      this.invalidateQueryPlanningContext();
+    }
   }
 
   getIndexQueueStatus(): IndexQueueStatusSnapshot {
@@ -571,7 +608,8 @@ export class AppClient {
    */
   async retrieve(question: string): Promise<RetrievalResult> {
     const db = await this.getDb();
-    return retrieveForQuestion(db, question, { cwd: this.cwd, config: this.config });
+    const planningContext = await this.getQueryPlanningContext();
+    return retrieveForQuestion(db, question, { cwd: this.cwd, config: this.config, planningContext });
   }
 
   /**
