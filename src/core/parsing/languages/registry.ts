@@ -6,6 +6,7 @@ import { tsQueries, jsQueries } from "./typescript.js";
 import { javaQueries } from "./java.js";
 import { pythonQueries } from "./python.js";
 import { goQueries } from "./go.js";
+import { parserExtensionsFor } from "../extensionMetadata.js";
 
 export type FactsDialect = "java-annotations" | "js-decorators" | "none";
 
@@ -25,7 +26,7 @@ export interface LanguageDefinition {
 export const LANGUAGE_DEFINITIONS: LanguageDefinition[] = [
   {
     id: "typescript",
-    extensions: [".ts"],
+    extensions: parserExtensionsFor("typescript"),
     loadGrammar: async () => {
       const module = await import("tree-sitter-typescript") as unknown as { default?: { typescript: unknown }; typescript?: unknown };
       return module.default?.typescript ?? module.typescript;
@@ -35,7 +36,7 @@ export const LANGUAGE_DEFINITIONS: LanguageDefinition[] = [
   },
   {
     id: "tsx",
-    extensions: [".tsx"],
+    extensions: parserExtensionsFor("tsx"),
     loadGrammar: async () => {
       const module = await import("tree-sitter-typescript") as unknown as { default?: { tsx: unknown }; tsx?: unknown };
       return module.default?.tsx ?? module.tsx;
@@ -45,7 +46,7 @@ export const LANGUAGE_DEFINITIONS: LanguageDefinition[] = [
   },
   {
     id: "javascript",
-    extensions: [".js"],
+    extensions: parserExtensionsFor("javascript"),
     loadGrammar: async () => {
       const module = await import("tree-sitter-javascript") as { default: unknown };
       return module.default;
@@ -55,7 +56,7 @@ export const LANGUAGE_DEFINITIONS: LanguageDefinition[] = [
   },
   {
     id: "jsx",
-    extensions: [".jsx"],
+    extensions: parserExtensionsFor("jsx"),
     loadGrammar: async () => {
       const module = await import("tree-sitter-javascript") as { default: unknown };
       return module.default;
@@ -65,7 +66,7 @@ export const LANGUAGE_DEFINITIONS: LanguageDefinition[] = [
   },
   {
     id: "java",
-    extensions: [".java"],
+    extensions: parserExtensionsFor("java"),
     loadGrammar: async () => {
       const module = await import("tree-sitter-java") as { default: unknown };
       return module.default;
@@ -81,7 +82,7 @@ export const LANGUAGE_DEFINITIONS: LanguageDefinition[] = [
   },
   {
     id: "python",
-    extensions: [".py"],
+    extensions: parserExtensionsFor("python"),
     loadGrammar: async () => {
       const module = await import("tree-sitter-python") as { default: unknown };
       return module.default;
@@ -91,7 +92,7 @@ export const LANGUAGE_DEFINITIONS: LanguageDefinition[] = [
   },
   {
     id: "go",
-    extensions: [".go"],
+    extensions: parserExtensionsFor("go"),
     loadGrammar: async () => {
       const module = await import("tree-sitter-go") as { default: unknown };
       return module.default;

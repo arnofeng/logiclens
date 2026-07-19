@@ -1,11 +1,12 @@
 import type { LanguageParser } from "../../registries/types.js";
 import type { ParsedFile } from "../types.js";
+import { parserExtensionsFor } from "../extensionMetadata.js";
 
 export function createGraphqlParser(): LanguageParser {
   return {
     name: "builtin:graphql",
     language: "graphql",
-    extensions: [".graphql", ".gql"],
+    extensions: parserExtensionsFor("graphql"),
     parse(input) {
       const loc = input.source.split(/\r?\n/).length;
       const parsedFile: ParsedFile = {

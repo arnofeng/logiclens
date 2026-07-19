@@ -51,6 +51,54 @@ describe("graph", () => {
     }
   });
 
+  it("traces method-aware API contracts without crossing HTTP methods", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-method-aware-contract-"));
+    const db = await KuzuGraphDB.open(path.join(dir, "graph"));
+    try {
+      await db.initSchema("method-aware-contract-test");
+      const cases = [
+        { repoName: "get-producer", key: "GET:/orders" },
+        { repoName: "path-producer", key: "/orders" },
+        { repoName: "post-producer", key: "POST:/orders" }
+      ];
+
+      for (const [index, entry] of cases.entries()) {
+        const repo: RepoNode = {
+          id: repoId(entry.repoName),
+          name: entry.repoName,
+          path: path.join(dir, entry.repoName),
+          remoteUrl: "",
+          branch: "",
+          commitSha: "",
+          language: "typescript",
+          indexedAt: "now"
+        };
+        const contractId = `contract:api:${entry.key}`;
+        const evidenceId = `evidence:method-aware:${index}`;
+        await db.upsertRepo(repo);
+        await db.upsertContract({ id: contractId, kind: "api", key: entry.key, name: entry.key, description: "method-aware regression" });
+        await db.upsertEvidence({
+          id: evidenceId,
+          repoId: repo.id,
+          fileId: `file:${entry.repoName}`,
+          filePath: `${entry.repoName}.ts`,
+          line: index + 1,
+          raw: entry.key,
+          rule: "method-aware-test",
+          confidence: 1,
+          active: true
+        });
+        await db.addRepoContract({ repoId: repo.id, contractId, role: "producer", evidenceId, confidence: 1, active: true });
+      }
+
+      const rows = await traceContract(db, "api", "/orders", "GET");
+      expect(rows.map((row) => row.repoName)).toEqual(["get-producer", "path-producer"]);
+      expect(rows.map((row) => row.repoName)).not.toContain("post-producer");
+    } finally {
+      await db.close();
+    }
+  });
+
   it("clears repo indexed artifacts through the graph layer", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-clear-repo-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));

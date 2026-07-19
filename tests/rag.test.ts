@@ -6,8 +6,15 @@ import { chunk } from "../src/shared/chunk.js";
 import { BRAND } from "../src/shared/branding.js";
 
 describe("rag helpers", () => {
-  it("detects workflow questions", () => {
-    expect(planQuestion("Which code is involved in the order creation flow?").kind).toBe("workflow");
+  it.each([
+    ["What is the impact of this ref?", "impact"],
+    ["Which code is involved in the order creation flow?", "workflow"],
+    ["Where is this class defined?", "symbol"],
+    ["Show package dependencies", "dependency"],
+    ["Debug this exception", "debugging"],
+    ["Explain this repository", "general"]
+  ] as const)("keeps question kind compatibility for %s", (question, kind) => {
+    expect(planQuestion(question).kind).toBe(kind);
   });
 
   it("scores call resolution candidates", () => {

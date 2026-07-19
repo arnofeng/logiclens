@@ -41,31 +41,14 @@ export type RetrievalResult = {
   edges: Awaited<ReturnType<typeof callEdgesAround>>;
 };
 
-function contractTargetsFromQuestion(question: string): { kind: "api"; value: string }[] {
-  const targets: { kind: "api"; value: string }[] = [];
-  const seen = new Set<string>();
-  const push = (value: string): void => {
-    const normalized = value.replace(/[),.;\uFF0C\u3002\uFF1B\uFF09]+$/, "");
-    if (!normalized.startsWith("/")) return;
-    const key = `api:${normalized}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    targets.push({ kind: "api", value: normalized });
-  };
-
-  for (const match of question.matchAll(/\bapi:(\/[^\s'"`\uFF0C\u3002\uFF1B,)\uFF09]+)/gi)) push(match[1] ?? "");
-  for (const match of question.matchAll(/\/[A-Za-z0-9_{}:$.-]+(?:\/[A-Za-z0-9_{}:$.-]+)*/g)) push(match[0]);
-  return targets;
-}
-
 export async function retrieveForQuestion(db: GraphDB, question: string, options: { cwd?: string; config?: AppConfig } = {}): Promise<RetrievalResult> {
   const plan = planQuestion(question);
   const rows: CodeSearchRow[] = [];
   const sectionRows: SectionSearchRow[] = [];
   const entityRows: EntityTraceRow[] = [];
   const contractRows: ContractTraceRow[] = [];
-  for (const target of contractTargetsFromQuestion(question)) {
-    contractRows.push(...await traceContract(db, target.kind, target.value));
+  for (const target of plan.contractTargets) {
+    contractRows.push(...await traceContract(db, target.kind, target.value, target.method));
   }
   for (const term of plan.terms.slice(0, 5)) {
     if (plan.kind === "workflow" || plan.kind === "dependency" || plan.kind === "impact" || plan.kind === "general") {

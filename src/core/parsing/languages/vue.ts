@@ -2,12 +2,13 @@ import type { LanguageParser, ParseInput } from "../../registries/types.js";
 import type { ParsedFile } from "../types.js";
 import { parserRegistry } from "../../registries/registry.js";
 import { parse as parseSFC } from "@vue/compiler-sfc";
+import { parserExtensionsFor } from "../extensionMetadata.js";
 
 export function createVueParser(): LanguageParser {
   return {
     name: "builtin:vue",
     language: "vue",
-    extensions: [".vue"],
+    extensions: parserExtensionsFor("vue"),
     async parse(input: ParseInput): Promise<ParsedFile> {
       const source = input.source;
 

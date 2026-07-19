@@ -11,11 +11,12 @@ import { fileId } from "../../shared/path.js";
 import { hashText } from "../../shared/hash.js";
 import type { DocumentLanguage, FileLanguage, ParsedDocument, ParsedFile, ParsedGraphFile, SourceLanguage } from "./types.js";
 import type { LanguageParser } from "../registries/types.js";
+import { BUILTIN_PARSER_EXTENSION_METADATA, parserExtensionsFor } from "./extensionMetadata.js";
 
 const markdownParser: LanguageParser = {
   name: "builtin:markdown",
   language: "markdown",
-  extensions: [".md", ".mdx"],
+  extensions: parserExtensionsFor("markdown"),
   parse(input) {
     return parseMarkdownDocument({
       repoId: input.repoId,
@@ -142,19 +143,9 @@ let builtinsRegistered = false;
 export function builtinLanguageForPath(relativePath: string): string | undefined {
   const normalized = relativePath.split(path.sep).join("/");
   
-  const staticExtensions = [
-    [".mdx", "markdown"],
-    [".md", "markdown"],
-    [".yaml", "yaml"],
-    [".yml", "yaml"],
-    [".toml", "toml"],
-    [".properties", "properties"],
-    [".vue", "vue"],
-    [".proto", "proto"],
-    [".xml", "xml"],
-    [".graphql", "graphql"],
-    [".gql", "graphql"]
-  ];
+  const staticExtensions = BUILTIN_PARSER_EXTENSION_METADATA
+    .filter((entry) => !LANGUAGE_DEFINITIONS.some((definition) => definition.id === entry.language))
+    .flatMap((entry) => entry.extensions.map((extension) => [extension, entry.language] as const));
   const matchedStatic = staticExtensions.find(([ext]) => normalized.endsWith(ext));
   if (matchedStatic) return matchedStatic[1];
 
@@ -169,7 +160,7 @@ function createProtoParser(): LanguageParser {
   return {
     name: "builtin:proto",
     language: "proto",
-    extensions: [".proto"],
+    extensions: parserExtensionsFor("proto"),
     parse(input) {
       const loc = input.source.split(/\r?\n/).length;
       const parsedFile: ParsedFile = {
@@ -265,16 +256,16 @@ export function registerCommonParsers(): void {
     parserRegistry.register(createGraphqlParser());
   }
   if (!parserRegistry.resolve({ language: "yaml" })) {
-    parserRegistry.register(createFileLevelParser("yaml", [".yml", ".yaml"]));
+    parserRegistry.register(createFileLevelParser("yaml", parserExtensionsFor("yaml")));
   }
   if (!parserRegistry.resolve({ language: "toml" })) {
-    parserRegistry.register(createFileLevelParser("toml", [".toml"]));
+    parserRegistry.register(createFileLevelParser("toml", parserExtensionsFor("toml")));
   }
   if (!parserRegistry.resolve({ language: "properties" })) {
-    parserRegistry.register(createFileLevelParser("properties", [".properties"]));
+    parserRegistry.register(createFileLevelParser("properties", parserExtensionsFor("properties")));
   }
   if (!parserRegistry.resolve({ language: "xml" })) {
-    parserRegistry.register(createSourceOnlyParser("xml", [".xml"], hasDubboXmlConfig));
+    parserRegistry.register(createSourceOnlyParser("xml", parserExtensionsFor("xml"), hasDubboXmlConfig));
   }
 }
 
