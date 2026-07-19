@@ -37,9 +37,10 @@ describe("retrieval diagnostics", () => {
     expect(result.diagnostics.timings).toMatchObject({
       planning: { status: "completed", durationMs: 1 }, exactContractEntity: { status: "completed", durationMs: 1 }, lexical: { status: "completed", durationMs: 1 },
       graphExpansion: { status: "completed", durationMs: 1 }, semantic: { status: "skipped", durationMs: 1 }, fusion: { status: "completed", durationMs: 1 }, selection: { status: "completed", durationMs: 1 },
-      sourceLoading: { status: "not_run", durationMs: 0 }, total: { durationMs: 15 }
+      sourceLoading: { status: "skipped", durationMs: 1 }, total: { durationMs: 17 }
     });
-    expect(result.diagnostics.queries).toEqual({ total: 12, byRoute: { exact: 2, contract: 3, entity: 4, lexical: 1, graph: 2, semantic: 0 }, dependencies: 0 });
+    expect(result.diagnostics.queries).toEqual({ total: 12, byRoute: { exact: 2, contract: 3, entity: 4, lexical: 1, graph: 2, semantic: 0 }, dependencies: 0, sourceLoading: 0 });
+    expect(result.diagnostics.sourceLoading).toEqual({ status: "skipped", reason: "no_loadable_documents", queryCount: 0, rejectionCounts: {} });
     expect(result.diagnostics.providers).toEqual({
       lexical: { status: "succeeded", providerVersion: "kuzu-safe", projectionSchemaVersion: "1", tokenizerVersion: "1" },
       semantic: { status: "disabled" }
@@ -74,7 +75,7 @@ describe("retrieval diagnostics", () => {
     expect(determineRetrievalOutcome(0, [disabled, failed])).toBe("failed");
   });
 
-  it("reports semantic primary fallback and degrades an otherwise successful retrieval", async () => {
+  it("reports semantic primary fallback and fails when no reliable evidence can be loaded", async () => {
     const semanticHit = candidatesFromSemanticResults([{
       nodeId: "code:repo:api:src/orders.ts:function:createOrder:1",
       nodeKind: "Code",
@@ -108,7 +109,7 @@ describe("retrieval diagnostics", () => {
       } as never
     });
 
-    expect(result.outcome).toBe("degraded");
+    expect(result.outcome).toBe("failed");
     expect(result.diagnostics.routes.semantic).toMatchObject({ status: "unhealthy", reason: "primary-provider-failed", queryCount: 2 });
     expect(result.diagnostics.queries.byRoute.semantic).toBe(2);
     expect(result.diagnostics.queries.total).toBe(2);

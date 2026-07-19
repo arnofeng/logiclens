@@ -11,6 +11,7 @@ import {
 import { reciprocalRankFusion } from "../src/features/ask/fusion.js";
 import type { LexicalHit } from "../src/core/retrieval/types.js";
 import { parseRenderRef } from "../src/core/retrieval/renderRef.js";
+import { lexicalDocumentId } from "../src/core/retrieval/projection.js";
 
 describe("retrieval candidates", () => {
   it("uses collision-safe repo/kind/canonical identity", () => {
@@ -47,7 +48,8 @@ describe("retrieval candidates", () => {
     }], workspaceId)[0]!;
     const contract = candidatesFromContractRows([{
       contractId: "contract:api:get-orders", kind: "api", key: "GET:/orders", name: "GET /orders", role: "producer",
-      repoName: "alpha", filePath: "src/Order.ts", line: 10, raw: "route", rule: "exact-parser-route", confidence: 0.9, resolution: "exact"
+      repoName: "alpha", filePath: "src/Order.ts", line: 10, evidenceId: "evidence:get-orders",
+      raw: "route", rule: "exact-parser-route", confidence: 0.9, resolution: "exact"
     }], workspaceId)[0]!;
     const entity = candidatesFromEntityRows([{
       entityId: "entity:order", entityName: "Order", repoName: "alpha", sourceKind: "code", name: "Order",
@@ -59,8 +61,13 @@ describe("retrieval candidates", () => {
     }])[0]!;
 
     expect(code.location).toEqual({ fileId: "file:repo:alpha:src/Order.ts", path: "src/Order.ts" });
+    expect(code.routes[0]?.documentIds).toEqual([lexicalDocumentId(workspaceId, "repo:alpha", "code", code.canonicalId)]);
     expect(section.location).toMatchObject({ path: "README.md", startLine: 2, endLine: 8 });
+    expect(section.routes[0]?.documentIds).toEqual([lexicalDocumentId(workspaceId, "repo:alpha", "section", section.canonicalId)]);
     expect(contract).toMatchObject({ kind: "contract", confidence: "resolved-contract" });
+    expect(contract.routes[0]?.documentIds).toEqual([
+      lexicalDocumentId(workspaceId, "repo:alpha", "contract", contract.canonicalId, "evidence:get-orders")
+    ]);
     expect(entity).toMatchObject({ kind: "entity", canonicalId: "entity:order" });
     expect(stableCandidateKey(semantic)).toBe(stableCandidateKey(code));
     expect(reciprocalRankFusion([code, semantic])[0]?.routes.map(({ route }) => route)).toEqual(["exact", "semantic"]);

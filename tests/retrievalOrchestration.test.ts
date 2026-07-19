@@ -1,8 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import type { GraphDB } from "../src/core/graph-model/db.js";
 import type { WorkspaceLexicalStore } from "../src/core/retrieval/provider.js";
+import { WorkspaceLexicalStoreError } from "../src/core/retrieval/provider.js";
 import type { LexicalIndexHealth } from "../src/core/retrieval/types.js";
-import { createRetrievalCandidate } from "../src/features/ask/candidates.js";
+import type { LexicalDocument } from "../src/core/retrieval/types.js";
+import { createRenderRef } from "../src/core/retrieval/renderRef.js";
+import { lexicalDocumentId } from "../src/core/retrieval/projection.js";
+import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
+import { candidatesFromCodeRows, candidatesFromContractRows, candidatesFromLexicalHits, createRetrievalCandidate } from "../src/features/ask/candidates.js";
 import { reciprocalRankFusion } from "../src/features/ask/fusion.js";
 import type { QueryPlan } from "../src/features/ask/planner.js";
 import { retrieveForQuestion } from "../src/features/ask/retrieve.js";
@@ -23,9 +28,12 @@ function plan(): QueryPlan {
 }
 
 function candidate(route: "exact" | "lexical" | "graph", canonicalId: string) {
+  const workspaceId = deriveWorkspaceId("default-system");
+  const renderRef = createRenderRef({ workspaceId, repoId: "repo:a", kind: "code", canonicalId, fileId: `file:${canonicalId}`, path: `src/${route}.ts` });
   return createRetrievalCandidate({
     canonicalId, repoId: "repo:a", kind: "code",
-    routes: [{ route, rank: 1, documentIds: [] }],
+    routes: [{ route, rank: 1, documentIds: [`doc:${canonicalId}`] }],
+    provenance: [{ route, rank: 1, confidence: route === "lexical" ? "corroborated" : "exact", documentId: `doc:${canonicalId}`, renderRef }],
     matchReasons: route === "lexical" ? ["exact-identifier"] : [route],
     confidence: route === "lexical" ? "corroborated" : "exact"
   });
@@ -34,8 +42,17 @@ function candidate(route: "exact" | "lexical" | "graph", canonicalId: string) {
 function store(order: string[]): WorkspaceLexicalStore {
   return {
     health: vi.fn(async () => { order.push("lexical-health"); return HEALTH; }),
+    loadDocuments: vi.fn(async ({ workspaceId, documentIds }: { workspaceId: string; documentIds: readonly string[] }) => {
+      order.push("source-loading");
+      return documentIds.map((id): LexicalDocument => {
+        const canonicalId = id.slice("doc:".length);
+        const route = canonicalId.includes("repo:b") ? "lexical" : canonicalId.includes("repo:c") ? "graph" : "exact";
+        const renderRef = createRenderRef({ workspaceId, repoId: "repo:a", kind: "code", canonicalId, fileId: `file:${canonicalId}`, path: `src/${route}.ts` });
+        return { id, canonicalId, workspaceId, repoId: "repo:a", kind: "code", title: canonicalId, path: `src/${route}.ts`, searchableText: canonicalId, tokens: [], active: true, sourceHash: "hash", batchId: "batch", renderRef };
+      });
+    }),
     search: vi.fn(), ensureSchema: vi.fn(), commitVersions: vi.fn(), upsertDocuments: vi.fn(),
-    reconcileRepoDocuments: vi.fn(), reconcileRepoFileDocuments: vi.fn(), cleanupBatch: vi.fn(), loadDocuments: vi.fn()
+    reconcileRepoDocuments: vi.fn(), reconcileRepoFileDocuments: vi.fn(), cleanupBatch: vi.fn()
   } as unknown as WorkspaceLexicalStore;
 }
 
@@ -65,11 +82,112 @@ describe("Ask retrieval orchestration", () => {
         fusion
       }
     });
-    expect(order).toEqual(["plan", "exact-contract-entity", "lexical-health", "lexical-search", "graph", "semantic", "fusion"]);
+    expect(order).toEqual(["plan", "exact-contract-entity", "lexical-health", "lexical-search", "graph", "semantic", "fusion", "source-loading"]);
     expect(fusion).toHaveBeenCalledTimes(1);
     expect(graph).toHaveBeenCalledTimes(1);
     expect(result.selectedCandidates).toEqual(result.fusedCandidates);
+    expect(result.loadedEvidence).toHaveLength(3);
+    expect(result.diagnostics.queries.sourceLoading).toBe(1);
     expect(result.outcome).toBe("succeeded");
+  });
+
+  it("loads real exact-only evidence and fuses exact+lexical provenance without false degradation", async () => {
+    const workspaceId = deriveWorkspaceId("default-system");
+    const canonicalId = "code:repo:alpha:src/Order.ts:class:Order:1";
+    const documentId = lexicalDocumentId(workspaceId, "repo:alpha", "code", canonicalId);
+    const documentRenderRef = createRenderRef({
+      workspaceId, repoId: "repo:alpha", kind: "code", canonicalId,
+      fileId: "file:repo:alpha:src/Order.ts", path: "src/Order.ts", startLine: 1, endLine: 8
+    });
+    const document: LexicalDocument = {
+      id: documentId, canonicalId, workspaceId, repoId: "repo:alpha", kind: "code", title: "Order",
+      path: "src/Order.ts", searchableText: "class Order", tokens: ["order"], active: true,
+      sourceHash: "hash", batchId: "batch", renderRef: documentRenderRef
+    };
+    const exactCandidate = candidatesFromCodeRows([{
+      repoName: "alpha", filePath: "src/Order.ts", codeId: canonicalId, kind: "class", name: "Order",
+      qualifiedName: "Order", summary: "", signature: "class Order"
+    }], workspaceId)[0]!;
+    const lexicalCandidate = candidatesFromLexicalHits([{
+      canonicalId, documentId, repoId: "repo:alpha", kind: "code", rank: 1,
+      matchReasons: ["title"], renderRef: documentRenderRef
+    }], workspaceId)[0]!;
+    const loadDocuments = vi.fn(async () => [document]);
+    const lexicalStore = {
+      ...store([]),
+      loadDocuments
+    } as WorkspaceLexicalStore;
+    const routes = (includeLexical: boolean) => ({
+      plan: () => ({
+        ...plan(),
+        enabledRoutes: includeLexical ? ["exact", "lexical"] : ["exact"]
+      }),
+      exact: async () => ({
+        exact: successfulRouteResult("exact", [exactCandidate], [], 1),
+        contract: emptyRouteResult("contract", "disabled", "route-disabled"),
+        entity: emptyRouteResult("entity", "disabled", "route-disabled")
+      }),
+      ...(includeLexical ? { lexical: async () => successfulRouteResult("lexical", [lexicalCandidate], [], 1) } : {}),
+      graph: async () => emptyRouteResult("graph", "disabled", "route-disabled"),
+      semantic: async () => emptyRouteResult("semantic", "disabled", "route-disabled")
+    });
+
+    const exactOnly = await retrieveForQuestion({} as GraphDB, "Order", { lexicalStore, dependencies: routes(false) as never });
+    expect(exactOnly.selectedCandidates).toHaveLength(1);
+    expect(exactOnly.loadedEvidence).toHaveLength(1);
+    expect(exactOnly.sourceLoadRejections).toEqual([]);
+    expect(exactOnly.outcome).toBe("succeeded");
+
+    const fused = await retrieveForQuestion({} as GraphDB, "Order", { lexicalStore, dependencies: routes(true) as never });
+    expect(fused.selectedCandidates).toHaveLength(1);
+    expect(fused.selectedCandidates[0]?.routes.map(({ route }) => route)).toEqual(["exact", "lexical"]);
+    expect(fused.loadedEvidence).toHaveLength(1);
+    expect(fused.sourceLoadRejections).toEqual([]);
+    expect(fused.outcome).toBe("succeeded");
+    expect(loadDocuments).toHaveBeenCalledTimes(2);
+  });
+
+  it("loads resolved contract-only evidence using the projection evidence discriminator", async () => {
+    const workspaceId = deriveWorkspaceId("default-system");
+    const canonicalId = "contract:api:post-orders";
+    const evidenceId = "evidence:post-orders";
+    const documentId = lexicalDocumentId(workspaceId, "repo:alpha", "contract", canonicalId, evidenceId);
+    const renderRef = createRenderRef({
+      workspaceId, repoId: "repo:alpha", kind: "contract", canonicalId,
+      fileId: "file:repo:alpha:src/routes.ts", path: "src/routes.ts", startLine: 12
+    });
+    const document: LexicalDocument = {
+      id: documentId, canonicalId, workspaceId, repoId: "repo:alpha", kind: "contract", title: "POST /orders",
+      path: "src/routes.ts", searchableText: "POST /orders producer route", tokens: ["post", "orders"], active: true,
+      sourceHash: "hash", batchId: "batch", renderRef
+    };
+    const contractCandidate = candidatesFromContractRows([{
+      contractId: canonicalId, kind: "api", key: "POST:/orders", name: "POST /orders", role: "producer",
+      repoName: "alpha", filePath: "src/routes.ts", line: 12, evidenceId,
+      raw: "router.post('/orders')", rule: "express-route", confidence: 0.95, resolution: "exact"
+    }], workspaceId)[0]!;
+    const loadDocuments = vi.fn(async ({ documentIds }: { documentIds: readonly string[] }) => {
+      expect(documentIds).toEqual([documentId]);
+      return [document];
+    });
+    const result = await retrieveForQuestion({} as GraphDB, "POST /orders", {
+      lexicalStore: { ...store([]), loadDocuments } as WorkspaceLexicalStore,
+      dependencies: {
+        plan: () => ({ ...plan(), enabledRoutes: ["contract"] }),
+        exact: async () => ({
+          exact: emptyRouteResult("exact", "disabled", "route-disabled"),
+          contract: successfulRouteResult("contract", [contractCandidate], [], 1),
+          entity: emptyRouteResult("entity", "disabled", "route-disabled")
+        }),
+        graph: async () => emptyRouteResult("graph", "disabled", "route-disabled"),
+        semantic: async () => emptyRouteResult("semantic", "disabled", "route-disabled")
+      } as never
+    });
+    expect(result.selectedCandidates).toHaveLength(1);
+    expect(result.loadedEvidence).toHaveLength(1);
+    expect(result.sourceLoadRejections).toEqual([]);
+    expect(result.outcome).toBe("succeeded");
+    expect(loadDocuments).toHaveBeenCalledTimes(1);
   });
 
   it("rethrows ordinary programming errors and only degrades typed operational failures", async () => {
@@ -92,6 +210,32 @@ describe("Ask retrieval orchestration", () => {
     await expect(retrieveForQuestion({} as GraphDB, "x", { dependencies: { plan: () => plan(), exact: async () => ({
       exact: successfulRouteResult("exact", [], [], 0), contract: successfulRouteResult("contract", [], [], 0), entity: successfulRouteResult("entity", [], [], 0)
     }), fusion: () => { throw new Error("fusion bug"); } } })).rejects.toThrow("fusion bug");
+  });
+
+  it("classifies source-loading provider failures, counts the batch query, and rethrows programming errors", async () => {
+    const lexicalCandidate = candidate("lexical", "code:orders");
+    const dependencies = {
+      plan: () => plan(),
+      exact: async () => ({
+        exact: successfulRouteResult("exact", [], [], 0), contract: successfulRouteResult("contract", [], [], 0), entity: successfulRouteResult("entity", [], [], 0)
+      }),
+      lexical: async () => successfulRouteResult("lexical", [lexicalCandidate], [], 1),
+      graph: async () => emptyRouteResult("graph", "disabled", "test"),
+      semantic: async () => emptyRouteResult("semantic", "disabled", "test")
+    };
+    const failedStore = store([]);
+    failedStore.loadDocuments = vi.fn(async () => { throw new WorkspaceLexicalStoreError("load_failed", { operation: "loadDocuments" }); });
+    const result = await retrieveForQuestion({} as GraphDB, "orders", { lexicalStore: failedStore, dependencies: dependencies as never });
+    expect(result.outcome).toBe("failed");
+    expect(result.loadedEvidence).toEqual([]);
+    expect(result.diagnostics.timings.sourceLoading.status).toBe("failed");
+    expect(result.diagnostics.queries.sourceLoading).toBe(1);
+    expect(result.diagnostics.queries.total).toBe(2);
+    expect(result.diagnostics.sourceLoading).toMatchObject({ status: "failed", reason: "provider_failed", queryCount: 1 });
+
+    const brokenStore = store([]);
+    brokenStore.loadDocuments = vi.fn(async () => { throw new Error("loader invariant"); });
+    await expect(retrieveForQuestion({} as GraphDB, "orders", { lexicalStore: brokenStore, dependencies: dependencies as never })).rejects.toThrow("loader invariant");
   });
 
   it("keeps lexical disabled when the plan does not enable it even if store resolution failed", async () => {

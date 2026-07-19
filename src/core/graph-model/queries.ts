@@ -77,6 +77,8 @@ export type ContractTraceRow = {
   filePath: string;
   /** The 1-based line number of the reference */
   line: number;
+  /** The evidence identity used by the lexical contract projection. */
+  evidenceId: string;
   /** The raw code or text snippet matching the contract reference */
   raw: string;
   /** The extractor rule name that identified the contract */
@@ -449,7 +451,7 @@ async function traceContractRole(db: GraphDB, contractIds: string[], rel: string
     `MATCH (r:Repo)-[edge:${rel}]->(c:Contract), (e:Evidence)
      WHERE c.id IN $contractIds AND edge.evidenceId = e.id
        AND (edge.active IS NULL OR edge.active = true) AND (e.active IS NULL OR e.active = true)
-     RETURN c.id AS contractId, c.kind AS kind, c.key AS key, c.name AS name, '${role}' AS role, r.name AS repoName, e.filePath AS filePath, e.line AS line, e.raw AS raw, e.rule AS rule, e.confidence AS confidence
+     RETURN c.id AS contractId, c.kind AS kind, c.key AS key, c.name AS name, '${role}' AS role, r.name AS repoName, e.filePath AS filePath, e.line AS line, edge.evidenceId AS evidenceId, e.raw AS raw, e.rule AS rule, e.confidence AS confidence
      ORDER BY r.name, e.filePath, e.line, c.id
      LIMIT ${limit};`,
     { contractIds }

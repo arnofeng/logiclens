@@ -9,6 +9,8 @@ import type { SemanticSearchResult } from "../../core/semantic/semanticIndex.js"
 import { deriveWorkspaceId } from "../../core/workspace/identity.js";
 import { reciprocalRankFusion, type FusedRetrievalCandidate } from "./fusion.js";
 import { determineRetrievalOutcome, safeLexicalProviderDiagnostic, type RetrievalDiagnostics, type RetrievalOutcome, type RetrievalRouteDiagnostic, type RetrievalStageDiagnostic } from "./diagnostics.js";
+import { selectCandidates, type SelectionRejection, type SelectionResult } from "./selection.js";
+import { loadSelectedEvidence, type LoadedEvidence, type SourceLoadRejection, type SourceLoadResult } from "./sourceLoader.js";
 import { planQuestion, type QueryPlan, type RetrievalRoute } from "./planner.js";
 import type { QueryPlanningContext } from "./planningContext.js";
 import { compatibilityEntityTargets, retrieveExactTargets } from "./retrievers/exact.js";
@@ -17,7 +19,6 @@ import { retrieveWorkspaceLexical } from "./retrievers/lexical.js";
 import { retrieveOptionalSemantic } from "./retrievers/semantic.js";
 import { emptyRouteResult, RetrieverOperationalError, type RetrieverRouteResult } from "./retrievers/types.js";
 
-const DEFAULT_SELECTION_LIMIT = 20;
 const ROUTES: readonly RetrievalRoute[] = ["exact", "contract", "entity", "lexical", "graph", "semantic"];
 export { compatibilityEntityTargets };
 
@@ -28,6 +29,8 @@ export type RetrievalDependencies = Readonly<{
   graph?: typeof retrieveBoundedGraph;
   semantic?: typeof retrieveOptionalSemantic;
   fusion?: typeof reciprocalRankFusion;
+  selection?: typeof selectCandidates;
+  sourceLoader?: typeof loadSelectedEvidence;
   dependencies?: typeof listDependencies;
   now?: () => number;
 }>;
@@ -52,6 +55,9 @@ export type RetrievalResult = Readonly<{
   edges: readonly EdgeRow[];
   fusedCandidates: readonly FusedRetrievalCandidate[];
   selectedCandidates: readonly FusedRetrievalCandidate[];
+  selectionRejections: readonly SelectionRejection[];
+  loadedEvidence: readonly LoadedEvidence[];
+  sourceLoadRejections: readonly SourceLoadRejection[];
   diagnostics: RetrievalDiagnostics;
   outcome: RetrievalOutcome;
 }>;
@@ -166,8 +172,22 @@ export async function retrieveForQuestion(db: GraphDB, question: string, options
   const fusionTiming = completed(duration(fusionStart, now()));
 
   const selectionStart = now();
-  const selectedCandidates = Object.freeze(fusedCandidates.slice(0, DEFAULT_SELECTION_LIMIT));
+  const selection: SelectionResult = (deps.selection ?? selectCandidates)(fusedCandidates, { workspaceId });
+  const selectedCandidates = selection.selectedCandidates;
   const selectionTiming = completed(duration(selectionStart, now()));
+
+  const sourceLoadingStart = now();
+  const sourceLoading: SourceLoadResult = await (deps.sourceLoader ?? loadSelectedEvidence)({
+    workspaceId,
+    selectedCandidates,
+    store: options.lexicalStore,
+    storeUnavailable: options.lexicalStoreUnavailable
+  });
+  const sourceLoadingDuration = duration(sourceLoadingStart, now());
+  const sourceLoadingTiming: RetrievalStageDiagnostic = Object.freeze({
+    status: sourceLoading.status,
+    durationMs: sourceLoadingDuration
+  });
 
   let compatibilityDependencies: readonly DependencyRow[] = [];
   let dependencyQueryCount = 0;
@@ -202,8 +222,12 @@ export async function retrieveForQuestion(db: GraphDB, question: string, options
     exact: exact.exact, contract: exact.contract, entity: exact.entity, lexical, graph, semantic
   };
   const byRoute = Object.freeze(Object.fromEntries(ROUTES.map((route) => [route, routeResults[route].queryCount])) as Record<RetrievalRoute, number>);
-  const totalQueries = Object.values(byRoute).reduce((sum, count) => sum + count, 0) + dependencyQueryCount;
-  const outcome = determineRetrievalOutcome(selectedCandidates.length, Object.values(routeResults), [dependencyDiagnostic.status]);
+  const totalQueries = Object.values(byRoute).reduce((sum, count) => sum + count, 0) + dependencyQueryCount + sourceLoading.queryCount;
+  const outcome = determineRetrievalOutcome(sourceLoading.evidence.length, Object.values(routeResults), [
+    dependencyDiagnostic.status,
+    sourceLoading.status,
+    ...(sourceLoading.rejections.length > 0 ? ["failed" as const] : [])
+  ]);
   const totalTiming = completed(duration(totalStart, now()));
   const semanticProvider = options.config?.embedding?.provider;
   const diagnostics: RetrievalDiagnostics = Object.freeze({
@@ -216,10 +240,10 @@ export async function retrieveForQuestion(db: GraphDB, question: string, options
       semantic: stageForRoute(semantic, semanticDuration),
       fusion: fusionTiming,
       selection: selectionTiming,
-      sourceLoading: Object.freeze({ status: "not_run", durationMs: 0 }),
+      sourceLoading: sourceLoadingTiming,
       total: totalTiming
     }),
-    queries: Object.freeze({ total: totalQueries, byRoute, dependencies: dependencyQueryCount }),
+    queries: Object.freeze({ total: totalQueries, byRoute, dependencies: dependencyQueryCount, sourceLoading: sourceLoading.queryCount }),
     compatibility: Object.freeze({ dependencies: dependencyDiagnostic }),
     providers: Object.freeze({
       lexical: safeLexicalProviderDiagnostic(lexical, lexicalHealth),
@@ -228,6 +252,15 @@ export async function retrieveForQuestion(db: GraphDB, question: string, options
         ...(semanticProvider && semanticProvider !== "off" ? { provider: semanticProvider } : {}),
         ...(semantic.providerMetadata ?? {})
       })
+    }),
+    sourceLoading: Object.freeze({
+      status: sourceLoading.status,
+      ...(sourceLoading.reason ? { reason: sourceLoading.reason } : {}),
+      queryCount: sourceLoading.queryCount,
+      rejectionCounts: Object.freeze(Object.fromEntries(sourceLoading.rejections.reduce((counts, item) => {
+        counts.set(item.reason, (counts.get(item.reason) ?? 0) + 1);
+        return counts;
+      }, new Map<string, number>())))
     })
   });
 
@@ -242,6 +275,9 @@ export async function retrieveForQuestion(db: GraphDB, question: string, options
     edges,
     fusedCandidates,
     selectedCandidates,
+    selectionRejections: selection.rejections,
+    loadedEvidence: sourceLoading.evidence,
+    sourceLoadRejections: sourceLoading.rejections,
     diagnostics,
     outcome
   });

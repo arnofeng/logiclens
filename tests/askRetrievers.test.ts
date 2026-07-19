@@ -135,7 +135,8 @@ const SECTION_ROW: SectionSearchRow = {
 };
 const CONTRACT_ROW: ContractTraceRow = {
   contractId: "contract:api:post-orders", kind: "api", key: "POST:/orders", name: "POST /orders", role: "producer",
-  repoName: "api", filePath: "src/orders.ts", line: 5, raw: "POST /orders", rule: "route", confidence: 0.9, resolution: "exact"
+  repoName: "api", filePath: "src/orders.ts", line: 5, evidenceId: "evidence:post-orders",
+  raw: "POST /orders", rule: "route", confidence: 0.9, resolution: "exact"
 };
 const ENTITY_ROW: EntityTraceRow = {
   entityId: "entity:order", entityName: "Order", repoName: "worker", sourceKind: "workflow", name: "OrderFlow",
@@ -439,7 +440,8 @@ describe("bounded graph retriever", () => {
     expect(merged[0]?.matchReasons).toEqual(expect.arrayContaining([
       "contract-implementation", "call-edge-from", "call-edge-resolution-exact"
     ]));
-    expect(merged[0]?.provenance).toHaveLength(2);
+    expect(merged[0]?.provenance).toHaveLength(1);
+    expect(merged[0]?.provenance[0]?.documentId).toMatch(/^lexical:code:/u);
   });
 
   it("deduplicates and sorts seeds, applies seed/result budgets, and bounds contract expansion", async () => {

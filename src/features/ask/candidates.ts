@@ -8,6 +8,7 @@ import type { SemanticSearchResult, SemanticNodeKind } from "../../core/semantic
 import type { EdgeRow } from "../../core/graph-model/subgraph.js";
 import type { LexicalHit, LexicalDocumentKind } from "../../core/retrieval/types.js";
 import { createRenderRef, parseRenderRef } from "../../core/retrieval/renderRef.js";
+import { lexicalDocumentId } from "../../core/retrieval/projection.js";
 import { fileId, repoId } from "../../shared/path.js";
 import type { RetrievalRoute } from "./planner.js";
 
@@ -219,7 +220,7 @@ export function candidatesFromGraphCodeRows(rows: readonly CodeSearchRow[], work
       kind: "code",
       renderRef: createRenderRef({ workspaceId, repoId: owner, kind: "code", canonicalId: row.codeId, fileId: location.fileId, path: row.filePath }),
       location,
-      routes: [{ route: "graph", rank: index + 1, documentIds: [] }],
+      routes: [{ route: "graph", rank: index + 1, documentIds: [lexicalDocumentId(workspaceId, owner, "code", row.codeId)] }],
       matchReasons: ["contract-implementation"],
       confidence: "corroborated"
     });
@@ -231,10 +232,9 @@ export function candidatesFromGraphEdges(rows: readonly EdgeRow[], workspaceId: 
     resolution === "exact" ? "corroborated" : "discovery";
   const endpoints = rows.flatMap((row, index) => {
     if (!row.fromCodeId || !row.toCodeId || !row.fromRepoId || !row.toRepoId || !row.fromPath || !row.toPath) return [];
-    const documentId = JSON.stringify(["call-edge", row.fromCodeId, row.toCodeId, row.resolution, row.raw]);
     return [
-      { canonicalId: row.fromCodeId, repoId: row.fromRepoId, path: row.fromPath, rank: index + 1, direction: "from", resolution: row.resolution, confidence: confidenceForResolution(row.resolution), documentId },
-      { canonicalId: row.toCodeId, repoId: row.toRepoId, path: row.toPath, rank: index + 1, direction: "to", resolution: row.resolution, confidence: confidenceForResolution(row.resolution), documentId }
+      { canonicalId: row.fromCodeId, repoId: row.fromRepoId, path: row.fromPath, rank: index + 1, direction: "from", resolution: row.resolution, confidence: confidenceForResolution(row.resolution), documentId: lexicalDocumentId(workspaceId, row.fromRepoId, "code", row.fromCodeId) },
+      { canonicalId: row.toCodeId, repoId: row.toRepoId, path: row.toPath, rank: index + 1, direction: "to", resolution: row.resolution, confidence: confidenceForResolution(row.resolution), documentId: lexicalDocumentId(workspaceId, row.toRepoId, "code", row.toCodeId) }
     ];
   });
   const grouped = new Map<string, typeof endpoints>();
@@ -274,7 +274,7 @@ export function candidatesFromCodeRows(rows: readonly CodeSearchRow[], workspace
       kind: "code",
       renderRef: createRenderRef({ workspaceId, repoId: owner, kind: "code", canonicalId: row.codeId, fileId: location.fileId, path: row.filePath }),
       location,
-      routes: [{ route: "exact", rank: index + 1, documentIds: [] }],
+      routes: [{ route: "exact", rank: index + 1, documentIds: [lexicalDocumentId(workspaceId, owner, "code", row.codeId)] }],
       matchReasons: ["exact-code"],
       confidence: "exact"
     });
@@ -291,7 +291,7 @@ export function candidatesFromSectionRows(rows: readonly SectionSearchRow[], wor
       kind: "section",
       renderRef: createRenderRef({ workspaceId, repoId: owner, kind: "section", canonicalId: row.sectionId, ...location }),
       location,
-      routes: [{ route: "exact", rank: index + 1, documentIds: [] }],
+      routes: [{ route: "exact", rank: index + 1, documentIds: [lexicalDocumentId(workspaceId, owner, "section", row.sectionId)] }],
       matchReasons: ["exact-section"],
       confidence: "exact"
     });
@@ -308,7 +308,11 @@ export function candidatesFromContractRows(rows: readonly ContractTraceRow[], wo
       kind: "contract",
       renderRef: createRenderRef({ workspaceId, repoId: owner, kind: "contract", canonicalId: row.contractId, ...location }),
       location,
-      routes: [{ route: "contract", rank: index + 1, documentIds: [] }],
+      routes: [{
+        route: "contract",
+        rank: index + 1,
+        documentIds: [lexicalDocumentId(workspaceId, owner, "contract", row.contractId, row.evidenceId)]
+      }],
       matchReasons: [`contract-${row.role}`, `resolution-${row.resolution}`],
       confidence: row.resolution === "exact" ? "resolved-contract" : "discovery"
     });

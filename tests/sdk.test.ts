@@ -388,7 +388,8 @@ describe("SDK Client", () => {
     
     // Test ask()
     const answer = await client.ask("OrderCreatedEvent");
-    expect(answer).toContain("Matched code:");
+    expect(answer).toContain("Verified evidence citations:");
+    expect(answer).toContain("[C1]");
     
     await client.close();
   }, 25000);

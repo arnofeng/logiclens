@@ -1,10 +1,27 @@
 import type { LexicalIndexHealth } from "../../core/retrieval/types.js";
 import type { RetrievalRoute } from "./planner.js";
-import type { RetrieverRouteResult, RetrieverRouteStatus } from "./retrievers/types.js";
+import type {
+  RetrieverRouteResult,
+  RetrieverRouteStatus,
+} from "./retrievers/types.js";
+import type {
+  SourceLoadRejectionReason,
+  SourceLoadStatus,
+} from "./sourceLoader.js";
 
-export type RetrievalOutcome = "succeeded" | "degraded" | "no_results" | "failed";
+export type RetrievalOutcome =
+  | "succeeded"
+  | "degraded"
+  | "no_results"
+  | "failed";
 
-export type RetrievalStageStatus = "completed" | "skipped" | "unavailable" | "unhealthy" | "failed" | "not_run";
+export type RetrievalStageStatus =
+  | "completed"
+  | "skipped"
+  | "unavailable"
+  | "unhealthy"
+  | "failed"
+  | "not_run";
 
 export type RetrievalStageDiagnostic = Readonly<{
   status: RetrievalStageStatus;
@@ -35,6 +52,7 @@ export type RetrievalDiagnostics = Readonly<{
     total: number;
     byRoute: Readonly<Record<RetrievalRoute, number>>;
     dependencies: number;
+    sourceLoading: number;
   }>;
   compatibility: Readonly<{
     dependencies: RetrievalRouteDiagnostic;
@@ -56,32 +74,46 @@ export type RetrievalDiagnostics = Readonly<{
       primaryStatus?: "succeeded" | "failed";
     }>;
   }>;
+  sourceLoading: Readonly<{
+    status: SourceLoadStatus;
+    reason?: string;
+    queryCount: number;
+    rejectionCounts: Readonly<
+      Partial<Record<SourceLoadRejectionReason, number>>
+    >;
+  }>;
 }>;
 
 export function safeLexicalProviderDiagnostic(
   route: RetrieverRouteResult<unknown>,
-  health?: LexicalIndexHealth
+  health?: LexicalIndexHealth,
 ): RetrievalDiagnostics["providers"]["lexical"] {
   return Object.freeze({
     status: route.status,
-    ...(health ? {
-      providerVersion: health.providerVersion,
-      projectionSchemaVersion: health.projectionSchemaVersion,
-      tokenizerVersion: health.tokenizerVersion
-    } : {})
+    ...(health
+      ? {
+          providerVersion: health.providerVersion,
+          projectionSchemaVersion: health.projectionSchemaVersion,
+          tokenizerVersion: health.tokenizerVersion,
+        }
+      : {}),
   });
 }
 
 export function determineRetrievalOutcome(
-  selectedCount: number,
+  reliableEvidenceCount: number,
   routes: readonly RetrieverRouteResult<unknown>[],
-  compatibilityStatuses: readonly RetrieverRouteStatus[] = []
+  compatibilityStatuses: readonly (
+    | RetrieverRouteStatus
+    | SourceLoadStatus
+  )[] = [],
 ): RetrievalOutcome {
-  const problematic = (status: RetrieverRouteStatus) => status === "failed" || status === "unavailable" || status === "unhealthy";
+  const problematic = (status: RetrieverRouteStatus | SourceLoadStatus) =>
+    status === "failed" || status === "unavailable" || status === "unhealthy";
   const hasCompatibilityProblem = compatibilityStatuses.some(problematic);
-  const hasProblem = routes.some(({ status }) => problematic(status)) || hasCompatibilityProblem;
-  if (selectedCount > 0) return hasProblem ? "degraded" : "succeeded";
-  if (hasCompatibilityProblem) return "failed";
-  const hasSuccessfulRoute = routes.some(({ status }) => status === "succeeded");
-  return hasSuccessfulRoute || !hasProblem ? "no_results" : "failed";
+  const hasProblem =
+    routes.some(({ status }) => problematic(status)) || hasCompatibilityProblem;
+  if (reliableEvidenceCount > 0) return hasProblem ? "degraded" : "succeeded";
+  if (hasProblem || hasCompatibilityProblem) return "failed";
+  return "no_results";
 }

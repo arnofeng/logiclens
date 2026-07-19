@@ -8,6 +8,7 @@ import type { WorkspaceLexicalStore } from "../src/core/retrieval/provider.js";
 import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
 import { planQuestion } from "../src/features/ask/planner.js";
 import { retrieveForQuestion } from "../src/features/ask/retrieve.js";
+import { answerQuestion, NO_RELIABLE_EVIDENCE } from "../src/features/ask/answer.js";
 import { WORKSPACE_CORPUS } from "./retrieval/workspaceCorpus.js";
 import { workspaceSpikeDocuments } from "./retrieval/workspaceLexicalSpikeFixtures.js";
 
@@ -41,10 +42,12 @@ describe("workspace Ask retrieval", () => {
 
     const search = vi.fn(realStore.search.bind(realStore));
     const health = vi.fn(realStore.health.bind(realStore));
+    const loadDocuments = vi.fn(realStore.loadDocuments.bind(realStore));
     const store = new Proxy(realStore, {
       get(target, property, receiver) {
         if (property === "search") return search;
         if (property === "health") return health;
+        if (property === "loadDocuments") return loadDocuments;
         const value = Reflect.get(target, property, receiver);
         return typeof value === "function" ? value.bind(target) : value;
       }
@@ -59,12 +62,16 @@ describe("workspace Ask retrieval", () => {
         : [];
       const before = search.mock.calls.length;
       const healthBefore = health.mock.calls.length;
+      const loadBefore = loadDocuments.mock.calls.length;
       const first = await retrieveForQuestion(db, corpusCase.question, {
         lexicalStore: store,
         config: { systemName, embedding: { provider: "off", level: "off" } } as never
       });
       expect(search.mock.calls.length - before, corpusCase.id).toBe(plan.enabledRoutes.includes("lexical") && plan.normalizedLexicalQuery ? 1 : 0);
       expect(health.mock.calls.length - healthBefore, corpusCase.id).toBe(plan.enabledRoutes.includes("lexical") && plan.normalizedLexicalQuery ? 1 : 0);
+      expect(loadDocuments.mock.calls.length - loadBefore, corpusCase.id).toBe(first.selectedCandidates.length > 0 ? 1 : 0);
+      expect(first.diagnostics.queries.sourceLoading, corpusCase.id).toBe(first.selectedCandidates.length > 0 ? 1 : 0);
+      expect(first.loadedEvidence.length, corpusCase.id).toBe(first.selectedCandidates.length);
 
       const lexicalOrder = first.fusedCandidates
         .filter((candidate) => candidate.routes.some(({ route }) => route === "lexical"))
@@ -78,6 +85,15 @@ describe("workspace Ask retrieval", () => {
 
       if (corpusCase.answerable) {
         expect(lexicalOrder.length, `${corpusCase.id}: lexical evidence`).toBeGreaterThan(0);
+        expect(first.selectedCandidates.length, `${corpusCase.id}: selected evidence`).toBeGreaterThan(0);
+        expect(first.loadedEvidence.length, `${corpusCase.id}: loaded evidence`).toBeGreaterThan(0);
+        expect(["succeeded", "degraded"], `${corpusCase.id}: outcome`).toContain(first.outcome);
+        const localAnswer = await answerQuestion(corpusCase.question, first, "offline-test-model");
+        expect(localAnswer, `${corpusCase.id}: local answer`).not.toBe(NO_RELIABLE_EVIDENCE);
+        const citedEvidence = first.loadedEvidence.find(({ document }) => document.path);
+        expect(citedEvidence, `${corpusCase.id}: cited path`).toBeDefined();
+        expect(localAnswer, `${corpusCase.id}: citation id`).toContain("[C1]");
+        expect(localAnswer, `${corpusCase.id}: repo/path citation`).toContain(`${citedEvidence!.document.repoId}/${citedEvidence!.document.path}`);
         for (const expectedCanonicalId of corpusCase.expectedCanonicalIds) {
           expect(lexicalOrder, corpusCase.id).toContain(expectedCanonicalId);
           const expected = first.fusedCandidates.find(({ canonicalId }) => canonicalId === expectedCanonicalId);
@@ -98,13 +114,16 @@ describe("workspace Ask retrieval", () => {
       }
 
       const repeatBefore = search.mock.calls.length;
+      const repeatLoadBefore = loadDocuments.mock.calls.length;
       const second = await retrieveForQuestion(db, corpusCase.question, {
         lexicalStore: store,
         config: { systemName, embedding: { provider: "off", level: "off" } } as never
       });
       expect(search.mock.calls.length - repeatBefore, corpusCase.id).toBe(plan.enabledRoutes.includes("lexical") && plan.normalizedLexicalQuery ? 1 : 0);
+      expect(loadDocuments.mock.calls.length - repeatLoadBefore, corpusCase.id).toBe(second.selectedCandidates.length > 0 ? 1 : 0);
       expect(second.fusedCandidates).toEqual(first.fusedCandidates);
       expect(second.selectedCandidates).toEqual(first.selectedCandidates);
+      expect(second.loadedEvidence).toEqual(first.loadedEvidence);
       expect(second.outcome).toBe(first.outcome);
     }
     expect(answerableRepos.size).toBeGreaterThanOrEqual(2);

@@ -97,7 +97,7 @@ describe("local availability", () => {
     }
   }, 30000);
 
-  it("indexes, queries, and answers cross-repo graph data without OPENAI_API_KEY", async () => {
+  it("indexes and queries cross-repo graph data but refuses unvalidated graph-only answer context", async () => {
     const originalKey = process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-local-"));
@@ -133,8 +133,7 @@ describe("local availability", () => {
 
         const retrieval = await retrieveForQuestion(db, "OrderCreatedEvent");
         const answer = await answerQuestion("OrderCreatedEvent", retrieval, "gpt-4.1-mini", undefined, undefined);
-        expect(answer).toContain("Matched code:");
-        expect(answer).toContain("Call edges:");
+        expect(answer).toBe("no_reliable_evidence");
 
         const summaries = await db.query<{ repoSummary: string; systemSummary: string }>(
           "MATCH (r:Repo), (s:System) RETURN r.summary AS repoSummary, s.summary AS systemSummary LIMIT 1;"

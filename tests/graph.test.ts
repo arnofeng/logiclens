@@ -94,6 +94,7 @@ describe("graph", () => {
 
       const rows = await traceContract(db, "api", "/orders", "GET");
       expect(rows.map((row) => row.repoName)).toEqual(["get-producer", "path-producer"]);
+      expect(rows.map((row) => row.evidenceId)).toEqual(["evidence:method-aware:0", "evidence:method-aware:1"]);
       expect(rows.map((row) => row.repoName)).not.toContain("post-producer");
     } finally {
       await db.close();
