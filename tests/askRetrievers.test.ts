@@ -508,6 +508,37 @@ describe("bounded graph retriever", () => {
     expect(result.queryCount).toBe(3);
     expect(result.candidates.map((candidate) => candidate.canonicalId)).toContain(second.toCodeId);
   });
+
+  it("over-fetches known edges before provider truncation without exceeding the final graph budget", async () => {
+    const second: EdgeRow = {
+      ...EDGE,
+      fromCodeId: EDGE.toCodeId,
+      toCodeId: "code:repo:api:src/audit.ts:function:auditOrder:1",
+      fromPath: EDGE.toPath,
+      toPath: "src/audit.ts",
+      fromFile: EDGE.toFile,
+      toFile: "api/src/audit.ts",
+      fromName: EDGE.toName,
+      toName: "auditOrder",
+      raw: "auditOrder()",
+    };
+    const limits: number[] = [];
+    const callEdgesAround = vi.fn(async (_db: GraphDB, ids: string[], limit = 100) => {
+      limits.push(limit);
+      const providerOrdered = ids.includes(CODE_ROW.codeId) ? [EDGE] : [EDGE, second];
+      return providerOrdered.slice(0, limit);
+    });
+    const graphPlan = plan({ budgets: { ...plan().budgets, graph: { limit: 2 } } });
+    const result = await retrieveBoundedGraph({} as GraphDB, graphPlan, [seed({ canonicalId: CODE_ROW.codeId })], {
+      workspaceId: "workspace:test",
+      graphHops: 2,
+      dependencies: { callEdgesAround, findContractSourceSymbols: vi.fn() },
+    });
+    expect(limits).toEqual([2, 2]);
+    expect(result.legacyRows.filter((row) => row.kind === "edge").map((row) => row.row)).toEqual([EDGE, second]);
+    expect(result.legacyRows.filter((row) => row.kind === "edge")).toHaveLength(2);
+    expect(result.queryCount).toBe(2);
+  });
 });
 
 describe("optional semantic retriever", () => {

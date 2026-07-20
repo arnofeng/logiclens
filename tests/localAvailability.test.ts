@@ -25,6 +25,7 @@ describe("local availability", () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-local-sdk-e2e-"));
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network must not be used"));
     const searchSpy = vi.spyOn(KuzuWorkspaceLexicalStore.prototype, "search");
+    const healthSpy = vi.spyOn(KuzuWorkspaceLexicalStore.prototype, "health");
     let client: Awaited<ReturnType<typeof createClient>> | undefined;
     try {
       const base = defaultConfig();
@@ -59,6 +60,22 @@ describe("local availability", () => {
       )).toBe(true);
 
       searches = searchSpy.mock.calls.length;
+      const healthChecks = healthSpy.mock.calls.length;
+      const exactOnly = await client.retrieve("OrderCreatedEvent", {
+        lexical: false,
+        semantic: false,
+        graphHops: 0,
+      });
+      expect(searchSpy.mock.calls.length - searches).toBe(0);
+      expect(healthSpy.mock.calls.length - healthChecks).toBe(0);
+      expect(exactOnly.diagnostics.routes.lexical).toMatchObject({ status: "disabled", queryCount: 0 });
+      expect(exactOnly.diagnostics.routes.exact.status).toBe("succeeded");
+      expect(exactOnly.selectedCandidates.length).toBeGreaterThan(0);
+      expect(exactOnly.diagnostics.sourceLoading).toMatchObject({ status: "completed", queryCount: 1 });
+      expect(exactOnly.loadedEvidence.length).toBeGreaterThan(0);
+      expect(exactOnly.outcome).toBe("succeeded");
+
+      searches = searchSpy.mock.calls.length;
       const answer = await client.ask("OrderCreatedEvent");
       expect(searchSpy.mock.calls.length - searches).toBe(1);
       expect(answer).not.toBe("no_reliable_evidence");
@@ -76,6 +93,7 @@ describe("local availability", () => {
       expect(fetchSpy).not.toHaveBeenCalled();
     } finally {
       await client?.close();
+      healthSpy.mockRestore();
       searchSpy.mockRestore();
       fetchSpy.mockRestore();
       await fs.rm(dir, { recursive: true, force: true });

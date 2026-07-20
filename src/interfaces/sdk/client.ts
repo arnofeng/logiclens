@@ -621,13 +621,13 @@ export class AppClient {
     const planningContext = await this.getQueryPlanningContext();
     let lexicalStore: WorkspaceLexicalStore | undefined;
     let lexicalStoreUnavailable = false;
-    if (retrieval.lexical) {
-      try {
-        lexicalStore = await this.resolveLexicalStore();
-      } catch (error) {
-        if (!(error instanceof WorkspaceLexicalStoreError)) throw error;
-        lexicalStoreUnavailable = true;
-      }
+    try {
+      // Exact, contract, entity, and graph candidates use the same store for
+      // delayed evidence loading even when workspace lexical search is off.
+      lexicalStore = await this.resolveLexicalStore();
+    } catch (error) {
+      if (!(error instanceof WorkspaceLexicalStoreError)) throw error;
+      lexicalStoreUnavailable = true;
     }
     return retrieveForQuestion(db, question, {
       cwd: this.cwd,

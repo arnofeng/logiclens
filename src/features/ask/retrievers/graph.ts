@@ -170,8 +170,12 @@ export async function retrieveBoundedGraph(
     const remainingForEdges = Math.max(0, resultLimit - implementationRows.length - edges.length);
     if (remainingForEdges === 0) break;
     queryCount += 1;
-    const rows = await graphProviderQuery(queryCount, () => deps.callEdgesAround(db, seedsForHop, remainingForEdges));
     const knownEdges = new Set(edges.map(edgeKey));
+    // A provider may return an already-seen reverse/incident edge before a
+    // new edge for this frontier. Over-fetch by the number of known edges so
+    // provider-side LIMIT cannot consume the remaining result capacity.
+    const providerLimit = remainingForEdges + knownEdges.size;
+    const rows = await graphProviderQuery(queryCount, () => deps.callEdgesAround(db, seedsForHop, providerLimit));
     const additions = [...new Map(rows
       .sort((left, right) => edgeKey(left).localeCompare(edgeKey(right)))
       .map((edge) => [edgeKey(edge), edge])).values()]
