@@ -327,7 +327,13 @@ describe("plugin architecture foundation", () => {
 
     const queryClient = new AppClient({ cwd: firstCwd }, firstConfig);
     (queryClient as unknown as { getDb(): Promise<unknown> }).getDb = async () => ({ async query() { return []; } });
-    (queryClient as unknown as { resolveLexicalStore(): Promise<undefined> }).resolveLexicalStore = async () => undefined;
+    (queryClient as unknown as { getLexicalProviderGate(): Promise<unknown> }).getLexicalProviderGate = async () => ({
+      configuredProvider: "auto",
+      effectiveProvider: "planning-test",
+      status: "unavailable",
+      reason: "native_full_text_unsupported",
+      reasonCodes: ["native_full_text_unsupported"]
+    });
     await queryClient.retrieve("Open Order.cs");
     const cachedPromise = (queryClient as unknown as { planningContextPromise: Promise<QueryPlanningContext> }).planningContextPromise;
     await queryClient.retrieve("Open Order.cs");

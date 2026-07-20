@@ -1,4 +1,8 @@
 import type { LexicalIndexHealth } from "../../core/retrieval/types.js";
+import type {
+  LexicalProviderGateResult,
+  LexicalProviderGateSummary
+} from "../../core/retrieval/provider.js";
 import type { RetrievalRoute } from "./planner.js";
 import type {
   RetrieverRouteResult,
@@ -60,9 +64,14 @@ export type RetrievalDiagnostics = Readonly<{
   providers: Readonly<{
     lexical: Readonly<{
       status: RetrieverRouteStatus;
+      configuredProvider?: string;
+      effectiveProvider?: string;
+      gateStatus?: LexicalProviderGateSummary["status"];
+      reasonCodes?: LexicalProviderGateSummary["reasonCodes"];
       providerVersion?: string;
       projectionSchemaVersion?: string;
       tokenizerVersion?: string;
+      indexStatus?: LexicalIndexHealth["status"];
     }>;
     semantic: Readonly<{
       status: RetrieverRouteStatus;
@@ -87,14 +96,23 @@ export type RetrievalDiagnostics = Readonly<{
 export function safeLexicalProviderDiagnostic(
   route: RetrieverRouteResult<unknown>,
   health?: LexicalIndexHealth,
+  gate?: LexicalProviderGateResult,
 ): RetrievalDiagnostics["providers"]["lexical"] {
   return Object.freeze({
     status: route.status,
+    ...(gate ? {
+      configuredProvider: gate.configuredProvider,
+      ...(gate.effectiveProvider ? { effectiveProvider: gate.effectiveProvider } : {}),
+      gateStatus: gate.status,
+      reasonCodes: Object.freeze([...gate.reasonCodes]),
+      indexStatus: gate.health?.status,
+    } : {}),
     ...(health
       ? {
           providerVersion: health.providerVersion,
           projectionSchemaVersion: health.projectionSchemaVersion,
           tokenizerVersion: health.tokenizerVersion,
+          indexStatus: health.status,
         }
       : {}),
   });

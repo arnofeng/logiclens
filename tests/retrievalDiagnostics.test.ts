@@ -42,7 +42,7 @@ describe("retrieval diagnostics", () => {
     expect(result.diagnostics.queries).toEqual({ total: 12, byRoute: { exact: 2, contract: 3, entity: 4, lexical: 1, graph: 2, semantic: 0 }, dependencies: 0, sourceLoading: 0 });
     expect(result.diagnostics.sourceLoading).toEqual({ status: "skipped", reason: "no_loadable_documents", queryCount: 0, rejectionCounts: {} });
     expect(result.diagnostics.providers).toEqual({
-      lexical: { status: "succeeded", providerVersion: "kuzu-safe", projectionSchemaVersion: "1", tokenizerVersion: "1" },
+      lexical: { status: "succeeded", providerVersion: "kuzu-safe", projectionSchemaVersion: "1", tokenizerVersion: "1", indexStatus: "healthy" },
       semantic: { status: "disabled" }
     });
     expect(Object.values(result.diagnostics.timings).every(({ durationMs }) => durationMs >= 0)).toBe(true);

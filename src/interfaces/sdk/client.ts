@@ -7,7 +7,14 @@ import type { GraphDB, Stats } from "../../core/graph-model/db.js";
 import {
   createGraphDB
 } from "../../core/graph-model/factory.js";
-import { resolveWorkspaceLexicalStore, WorkspaceLexicalStoreError, type WorkspaceLexicalStore } from "../../core/retrieval/provider.js";
+import {
+  resolveLexicalProvider,
+  resolveWorkspaceLexicalStore,
+  summarizeLexicalProviderGate,
+  type LexicalProviderGateResult,
+  type LexicalProviderGateSummary,
+  type WorkspaceLexicalStore
+} from "../../core/retrieval/provider.js";
 import { registerBuiltinEmbeddingProviders } from "../../adapters/embeddings/builtinProviders.js";
 import {
   listDependencies,
@@ -51,6 +58,7 @@ import { runIndexing } from "../../core/indexing/run.js";
 import { FileWatcher, type PendingFile, type WatchOptions, type WatchStatus } from "../../features/watch/watcher.js";
 import { shouldEnableWatcher } from "../../features/watch/policy.js";
 import { SingleProcessIndexQueue, type IndexQueueSource, type IndexQueueStatusSnapshot } from "../../core/indexing/scheduler.js";
+import { deriveWorkspaceId } from "../../core/workspace/identity.js";
 
 /**
  * Represents the result of an impact analysis, including contract traces,
@@ -132,6 +140,7 @@ export class AppClient {
   private watcher?: FileWatcher;
   private indexQueue = new SingleProcessIndexQueue();
   private planningContextPromise?: Promise<QueryPlanningContext>;
+  private lexicalProviderGatePromise?: Promise<LexicalProviderGateResult>;
   private readonly configuredPlanningContext?: QueryPlanningContext;
 
   constructor(options: ClientOptions, config: AppConfig) {
@@ -223,6 +232,35 @@ export class AppClient {
       lexicalProvider: this.config.retrieval.lexical.provider,
       scope: this.config.retrieval.lexical.scope
     });
+  }
+
+  private invalidateLexicalProviderGate(): void {
+    this.lexicalProviderGatePromise = undefined;
+  }
+
+  private getLexicalProviderGate(refresh = false): Promise<LexicalProviderGateResult> {
+    if (this.closed) return Promise.reject(new Error("Client is closed"));
+    if (refresh) this.invalidateLexicalProviderGate();
+    if (!this.lexicalProviderGatePromise) {
+      const promise = resolveLexicalProvider({
+        db: () => this.getDb(),
+        graphProvider: this.config.graph.provider,
+        lexicalProvider: this.config.retrieval.lexical.provider,
+        scope: this.config.retrieval.lexical.scope,
+        workspaceId: deriveWorkspaceId(this.config.systemName)
+      }).catch((error) => {
+        if (this.lexicalProviderGatePromise === promise) {
+          this.lexicalProviderGatePromise = undefined;
+        }
+        throw error;
+      });
+      this.lexicalProviderGatePromise = promise;
+    }
+    return this.lexicalProviderGatePromise;
+  }
+
+  async getLexicalProviderStatus(options: { refresh?: boolean } = {}): Promise<LexicalProviderGateSummary> {
+    return summarizeLexicalProviderGate(await this.getLexicalProviderGate(options.refresh === true));
   }
 
   /**
@@ -332,6 +370,7 @@ export class AppClient {
       });
     } finally {
       this.invalidateQueryPlanningContext();
+      this.invalidateLexicalProviderGate();
     }
   }
 
@@ -620,22 +659,17 @@ export class AppClient {
   ): Promise<RetrievalResult> {
     const db = await this.getDb();
     const planningContext = await this.getQueryPlanningContext();
-    let lexicalStore: WorkspaceLexicalStore | undefined;
-    let lexicalStoreUnavailable = false;
-    try {
-      // Exact, contract, entity, and graph candidates use the same store for
-      // delayed evidence loading even when workspace lexical search is off.
-      lexicalStore = await this.resolveLexicalStore();
-    } catch (error) {
-      if (!(error instanceof WorkspaceLexicalStoreError)) throw error;
-      lexicalStoreUnavailable = true;
-    }
+    const lexicalProviderGate = await this.getLexicalProviderGate();
+    // Preserve a successfully bound store for delayed evidence loading even
+    // when the release gate disables lexical full-text search.
+    const lexicalStore = lexicalProviderGate.store;
     return retrieveForQuestion(db, question, {
       cwd: this.cwd,
       config: this.config,
       planningContext,
       lexicalStore,
-      lexicalStoreUnavailable,
+      lexicalStoreUnavailable: !lexicalStore,
+      lexicalProviderGate,
       retrieval,
     });
   }
@@ -843,6 +877,7 @@ export class AppClient {
       this.dbInstance = undefined;
     }
     this.dbPromise = undefined;
+    this.invalidateLexicalProviderGate();
     this.closed = true;
   }
 

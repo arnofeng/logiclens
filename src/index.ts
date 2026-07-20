@@ -82,6 +82,20 @@ export {
   RETRIEVE_OPTION_LIMITS,
   normalizeRetrieveOptions,
 } from "./features/ask/options.js";
+export {
+  assertLexicalProviderReady,
+  resolveLexicalProvider,
+  summarizeLexicalProviderGate,
+} from "./core/retrieval/provider.js";
+export type {
+  LexicalProviderGateReasonCode,
+  LexicalProviderGateResult,
+  LexicalProviderGateStatus,
+  LexicalProviderGateSummary,
+  LexicalProviderReadyResult,
+  LexicalProviderUnavailableResult,
+  ResolveLexicalProviderInput,
+} from "./core/retrieval/provider.js";
 
 export {
   createClient,

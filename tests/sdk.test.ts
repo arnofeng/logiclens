@@ -36,7 +36,7 @@ import {
   registerGraphProvider,
   type GraphProviderRegistration
 } from "../src/core/graph-model/factory.js";
-import type { WorkspaceLexicalStore } from "../src/core/retrieval/provider.js";
+import { WorkspaceLexicalStoreError, type WorkspaceLexicalStore } from "../src/core/retrieval/provider.js";
 
 async function makeTempWorkspace(): Promise<string> {
   return await fs.mkdtemp(path.join(os.tmpdir(), brandedTempDirPrefix("sdk-test")));
@@ -52,7 +52,9 @@ const nativeFullText = {
 function fakeGraphDb(): GraphDB {
   return {
     initSchema: vi.fn().mockResolvedValue(undefined),
-    close: vi.fn().mockResolvedValue(undefined)
+    close: vi.fn().mockResolvedValue(undefined),
+    query: vi.fn().mockResolvedValue([]),
+    listRepos: vi.fn().mockResolvedValue([])
   } as unknown as GraphDB;
 }
 
@@ -65,7 +67,10 @@ function fakeLexicalStore(): WorkspaceLexicalStore {
     cleanupBatch: vi.fn(),
     search: vi.fn(),
     loadDocuments: vi.fn(),
-    health: vi.fn()
+    health: vi.fn().mockResolvedValue({
+      providerVersion: "test-1", projectionSchemaVersion: "1", tokenizerVersion: "1",
+      status: "healthy", reasons: [], metrics: { documentCount: 0, indexSizeBytes: 0 }
+    })
   } as unknown as WorkspaceLexicalStore;
 }
 
@@ -206,7 +211,14 @@ describe("SDK lexical provider resolution", () => {
     );
     expect(graphRegistration.factory.open).not.toHaveBeenCalled();
     expect(graphRegistration.bindLexical).not.toHaveBeenCalled();
-    await expect(client.retrieve("orders")).rejects.toThrow(/Unknown graph provider: sdk-missing-companion/);
+    const result = await client.retrieve("orders");
+    expect(result.diagnostics.providers.lexical).toMatchObject({
+      configuredProvider: "sdk-missing-companion",
+      effectiveProvider: "sdk-missing-companion",
+      gateStatus: "unavailable",
+      reasonCodes: ["provider_not_registered"]
+    });
+    expect(result.diagnostics.routes.lexical).toMatchObject({ status: "unavailable", queryCount: 0 });
     expect(graphRegistration.factory.open).toHaveBeenCalledTimes(1);
     expect(graphRegistration.bindLexical).not.toHaveBeenCalled();
     await client.close();
@@ -228,7 +240,11 @@ describe("SDK lexical provider resolution", () => {
     await expect(resolveLexicalStore(client)).rejects.toThrow(
       'Lexical provider "sdk-no-native-full-text-graph" does not declare nativeFullText capability'
     );
-    await expect(client.retrieve("orders")).rejects.toThrow("does not declare nativeFullText capability");
+    const result = await client.retrieve("orders");
+    expect(result.diagnostics.providers.lexical).toMatchObject({
+      gateStatus: "unavailable", reasonCodes: ["native_full_text_unsupported"]
+    });
+    expect(result.diagnostics.routes.lexical.queryCount).toBe(0);
     await client.close();
   });
 
@@ -289,6 +305,117 @@ describe("SDK lexical provider resolution", () => {
     await expect(resolveLexicalStore(client)).rejects.toBe(binderError);
     await expect(client.retrieve("orders")).rejects.toBe(binderError);
     expect(bindLexical).toHaveBeenCalledTimes(2);
+    await client.close();
+  });
+});
+
+describe("SDK lexical provider health cache", () => {
+  let sequence = 0;
+
+  function clientWithHealth(health: ReturnType<typeof vi.fn>) {
+    const provider = `sdk-gate-cache-${sequence++}`;
+    const db = fakeGraphDb();
+    const lexicalStore = fakeLexicalStore();
+    lexicalStore.health = health as WorkspaceLexicalStore["health"];
+    lexicalStore.search = vi.fn().mockResolvedValue([]);
+    lexicalStore.loadDocuments = vi.fn().mockResolvedValue([]);
+    registerGraphProvider(provider, lexicalRegistration(db, vi.fn(() => lexicalStore)));
+    return createClient({
+      config: {
+        ...defaultConfig(),
+        graph: { ...defaultConfig().graph, provider },
+        embedding: { ...defaultConfig().embedding, provider: "off", level: "off" }
+      }
+    });
+  }
+
+  const healthy = () => ({
+    providerVersion: "test-1", projectionSchemaVersion: "1", tokenizerVersion: "1",
+    status: "healthy" as const, reasons: [], metrics: { documentCount: 1, indexSizeBytes: 10 }
+  });
+  const unhealthy = () => ({
+    ...healthy(), status: "unhealthy" as const, reasons: ["fts_index_failed"]
+  });
+
+  it("checks once on first retrieval and reuses the result for sequential and concurrent queries", async () => {
+    const health = vi.fn().mockResolvedValue(healthy());
+    const client = await clientWithHealth(health);
+    await client.retrieve("orders");
+    await client.retrieve("payments");
+    expect(health).toHaveBeenCalledTimes(1);
+    await client.close();
+
+    const concurrentHealth = vi.fn(async () => healthy());
+    const concurrent = await clientWithHealth(concurrentHealth);
+    await Promise.all([concurrent.retrieve("orders"), concurrent.retrieve("payments"), concurrent.retrieve("shipping")]);
+    expect(concurrentHealth).toHaveBeenCalledTimes(1);
+    await concurrent.close();
+  });
+
+  it("invalidates after indexing and supports explicit refresh in both health directions", async () => {
+    const health = vi.fn()
+      .mockResolvedValueOnce(unhealthy())
+      .mockResolvedValueOnce(healthy())
+      .mockResolvedValueOnce(unhealthy())
+      .mockResolvedValueOnce(healthy());
+    const client = await clientWithHealth(health);
+    const first = await client.retrieve("orders");
+    expect(first.diagnostics.routes.lexical).toMatchObject({ status: "unavailable", queryCount: 0 });
+
+    expect(await client.getLexicalProviderStatus({ refresh: true })).toMatchObject({ status: "ready" });
+    const recovered = await client.retrieve("orders");
+    expect(recovered.diagnostics.providers.lexical).toMatchObject({ gateStatus: "ready", indexStatus: "healthy" });
+
+    expect(await client.getLexicalProviderStatus({ refresh: true })).toMatchObject({
+      status: "unavailable", reasonCodes: ["index_unhealthy"]
+    });
+    const blocked = await client.retrieve("orders");
+    expect(blocked.diagnostics.routes.lexical).toMatchObject({ status: "unavailable", queryCount: 0 });
+
+    (client as unknown as { indexQueue: { enqueue(input: unknown): Promise<unknown>; onIdle(): Promise<void> } }).indexQueue = {
+      enqueue: vi.fn().mockResolvedValue({}),
+      onIdle: vi.fn().mockResolvedValue(undefined)
+    };
+    await client.index();
+    expect((await client.getLexicalProviderStatus()).status).toBe("ready");
+    expect(health).toHaveBeenCalledTimes(4);
+    await client.close();
+  });
+
+  it("does not retain rejected refresh promises or reuse cache after close", async () => {
+    const programming = new Error("provider invariant");
+    const health = vi.fn().mockRejectedValueOnce(programming).mockResolvedValueOnce(healthy());
+    const client = await clientWithHealth(health);
+    await expect(client.getLexicalProviderStatus({ refresh: true })).rejects.toBe(programming);
+    await expect(client.getLexicalProviderStatus()).resolves.toMatchObject({ status: "ready" });
+    await client.close();
+    await expect(client.getLexicalProviderStatus()).rejects.toThrow("Client is closed");
+  });
+
+  it("invalidates after failed indexing and safely diagnoses operational health errors", async () => {
+    const secret = new Error("password=hidden bolt://private internal-metadata");
+    const operational = new WorkspaceLexicalStoreError(
+      "health_check_failed", { operation: "health", workspaceId: "workspace:test" }, { cause: secret }
+    );
+    const health = vi.fn()
+      .mockRejectedValueOnce(operational)
+      .mockResolvedValue(healthy())
+      .mockResolvedValue(healthy());
+    const client = await clientWithHealth(health);
+    const unavailable = await client.retrieve("orders");
+    expect(unavailable.diagnostics.providers.lexical).toMatchObject({
+      gateStatus: "unavailable", reasonCodes: ["health_check_failed"]
+    });
+    expect(JSON.stringify(unavailable.diagnostics)).not.toMatch(/hidden|bolt|internal-metadata/u);
+
+    await client.getLexicalProviderStatus({ refresh: true });
+    (client as unknown as { indexQueue: { enqueue(input: unknown): Promise<unknown>; onIdle(): Promise<void> } }).indexQueue = {
+      enqueue: vi.fn().mockRejectedValue(new Error("index failed")),
+      onIdle: vi.fn().mockResolvedValue(undefined)
+    };
+    await expect(client.index()).rejects.toThrow("index failed");
+    await expect(client.getLexicalProviderStatus()).resolves.toMatchObject({ status: "ready" });
+    expect(health).toHaveBeenCalledTimes(3);
     await client.close();
   });
 });

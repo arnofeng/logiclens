@@ -15,6 +15,7 @@ import {
 } from "../../features/ask/options.js";
 import type { RetrievalDiagnostics } from "../../features/ask/diagnostics.js";
 import type { RetrievalResult } from "../../features/ask/retrieve.js";
+import type { LexicalProviderGateSummary } from "../../core/retrieval/provider.js";
 
 type CatchUpState = WatchStatus["catchUp"];
 
@@ -90,7 +91,12 @@ export function projectAskQuestionResponse(
     timings: retrieval.diagnostics.timings,
     queries: retrieval.diagnostics.queries,
     compatibility: retrieval.diagnostics.compatibility,
-    providers: retrieval.diagnostics.providers,
+    // Ordinary MCP responses expose route status only. The complete, safe
+    // lexical provider summary belongs to get_watch_status.
+    providers: Object.freeze({
+      lexical: Object.freeze({ status: retrieval.diagnostics.providers.lexical.status }),
+      semantic: retrieval.diagnostics.providers.semantic
+    }),
     sourceLoading: retrieval.diagnostics.sourceLoading,
   });
   return Object.freeze({
@@ -111,6 +117,7 @@ export async function handleAskQuestion(
 }
 
 export type FreshnessMetadata = {
+  /** Graph/index freshness is independent from lexical provider readiness. */
   stale: boolean;
   generatedAt: string;
   reasons: string[];
@@ -122,7 +129,28 @@ export type FreshnessMetadata = {
   };
   catchUp?: CatchUpState;
   indexQueue: WatchStatus["indexQueue"];
+  lexical?: LexicalProviderGateSummary;
 };
+
+export type McpWorkspaceHealthStatus = WatchStatus & Readonly<{
+  lexical: LexicalProviderGateSummary;
+}>;
+
+export function buildWorkspaceHealthStatus(
+  watchStatus: WatchStatus,
+  lexical: LexicalProviderGateSummary
+): McpWorkspaceHealthStatus {
+  return Object.freeze({ ...watchStatus, lexical });
+}
+
+export async function loadWorkspaceHealthStatus(
+  client: Pick<InstanceType<typeof GraphClient>, "getWatchStatus" | "getLexicalProviderStatus">,
+  catchUp?: CatchUpState,
+  options: { refresh?: boolean } = {}
+): Promise<McpWorkspaceHealthStatus> {
+  const lexical = await client.getLexicalProviderStatus({ refresh: options.refresh });
+  return buildWorkspaceHealthStatus(client.getWatchStatus(catchUp), lexical);
+}
 
 export function buildFreshnessWarning(input: {
   content: Array<{ type: string; text?: string }>;
@@ -175,6 +203,7 @@ export function buildFreshnessMetadata(input: {
   degradedReason?: string | null;
   catchUp?: CatchUpState;
   indexQueue: WatchStatus["indexQueue"];
+  lexical?: LexicalProviderGateSummary;
 }): FreshnessMetadata {
   const reasons: string[] = [];
   if (input.catchUp?.running) reasons.push("catch-up-running");
@@ -195,13 +224,21 @@ export function buildFreshnessMetadata(input: {
       degradedReason: input.degradedReason ?? null
     },
     catchUp: input.catchUp,
-    indexQueue: input.indexQueue
+    indexQueue: input.indexQueue,
+    ...(input.lexical ? { lexical: input.lexical } : {})
   };
 }
 
 export function buildFreshnessNotice(metadata: FreshnessMetadata): string {
-  if (!metadata.stale) return "";
-  return `Freshness: stale (${metadata.reasons.join(", ")}). Call ${MCP_TOOLS.getWatchStatus} for full details.`;
+  const notices: string[] = [];
+  if (metadata.stale) {
+    notices.push(`Freshness: stale (${metadata.reasons.join(", ")}).`);
+  }
+  if (metadata.lexical?.status === "unavailable") {
+    notices.push(`Lexical search: unavailable (${metadata.lexical.reasonCodes.join(", ") || "provider-unavailable"}).`);
+  }
+  if (notices.length === 0) return "";
+  return `${notices.join(" ")} Call ${MCP_TOOLS.getWatchStatus} for full details.`;
 }
 
 function createCatchUpState(mode: CatchUpState["mode"], repos: string[]): CatchUpState {
@@ -401,16 +438,18 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
             }
           }
         }
+        const lexical = await client.getLexicalProviderStatus();
         const metadata = buildFreshnessMetadata({
           pending,
           watcherActive: client.isWatching(),
           degradedReason,
           catchUp: catchUpState,
-          indexQueue: client.getIndexQueueStatus()
+          indexQueue: client.getIndexQueueStatus(),
+          lexical
         });
 
         const notice = buildFreshnessNotice(metadata);
-        if (notice) {
+        if (notice && !response.content.some((item) => item.type === "text" && item.text === notice)) {
           response.content.push({
             type: "text",
             text: notice
@@ -450,12 +489,16 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   server.registerTool(
     MCP_TOOLS.getWatchStatus,
     {
-      description: `Use when a tool response says freshness is stale, or when checking whether ${BRAND.displayName} indexing/watch coverage is current. Returns file watcher status, startup catch-up status, partial coverage, pending files, and index queue details. Do not use for code relationship analysis.`,
+      description: `Use when a tool response says freshness is stale or lexical search is unavailable, or when checking whether ${BRAND.displayName} indexing/watch coverage is current. Returns separate graph freshness and lexical provider health details. Do not use for code relationship analysis.`,
+      inputSchema: {
+        refresh: z.boolean().optional().describe("Refresh lexical provider health instead of using the client cache.")
+      }
     },
-    async () => {
-      return wrapWithFreshness(MCP_TOOLS.getWatchStatus, {}, async () => {
+    async ({ refresh }) => {
+      return wrapWithFreshness(MCP_TOOLS.getWatchStatus, { refresh }, async () => {
+        const status = await loadWorkspaceHealthStatus(client, catchUpState, { refresh });
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(client.getWatchStatus(catchUpState), null, 2) }],
+          content: [{ type: "text" as const, text: JSON.stringify(status, null, 2) }],
         };
       });
     }

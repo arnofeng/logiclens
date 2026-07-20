@@ -15,6 +15,16 @@ export interface GraphProviderRegistration {
 
 const registrations = new Map<GraphProviderId, GraphProviderRegistration>();
 
+export class GraphProviderNotRegisteredError extends Error {
+  readonly provider: GraphProviderId;
+
+  constructor(provider: GraphProviderId, registered: readonly GraphProviderId[]) {
+    super(`Unknown graph provider: ${provider}. Registered: ${registered.join(", ")}`);
+    this.name = "GraphProviderNotRegisteredError";
+    this.provider = provider;
+  }
+}
+
 export function registerGraphProvider(
   provider: GraphProviderId,
   registration: GraphProviderRegistration
@@ -59,7 +69,7 @@ export async function getGraphProviderRegistration(
   const registration = registrations.get(provider);
   if (!registration) {
     const registered = [...registrations.keys()].sort();
-    throw new Error(`Unknown graph provider: ${provider}. Registered: ${registered.join(", ")}`);
+    throw new GraphProviderNotRegisteredError(provider, registered);
   }
   return registration;
 }

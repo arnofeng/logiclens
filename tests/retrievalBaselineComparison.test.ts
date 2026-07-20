@@ -42,7 +42,7 @@ describe("workspace retrieval lexical baseline comparison", () => {
       return projectEvaluationResult(result);
     });
     expect(search).not.toHaveBeenCalled();
-    expect(health).not.toHaveBeenCalled();
+    expect(health).toHaveBeenCalledTimes(1);
 
     const lexical = await runRetrievalEvaluation(QUALITY_GATE_CORPUS, async (corpusCase) => {
       const result = await fixture.client.retrieve(corpusCase.question, lexicalOptions);
@@ -66,7 +66,7 @@ describe("workspace retrieval lexical baseline comparison", () => {
       }
     }
     expect(search).toHaveBeenCalledTimes(lexical.queries.reduce((total, query) => total + (query.diagnostics.queries.byRoute.lexical ?? 0), 0));
-    expect(health).toHaveBeenCalledTimes(search.mock.calls.length);
+    expect(health).toHaveBeenCalledTimes(1);
     expect(lexical.overall.recallAt5, detail).toBeGreaterThanOrEqual(baseline.overall.recallAt5);
     expect(lexical.overall.mrrAt3, detail).toBeGreaterThanOrEqual(baseline.overall.mrrAt3);
     expect(lexical.overall.refusalAccuracy, detail).toBeGreaterThanOrEqual(baseline.overall.refusalAccuracy);

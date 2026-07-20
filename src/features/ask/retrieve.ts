@@ -3,7 +3,11 @@ import type { AppConfig } from "../../config/schema.js";
 import { GraphDatabaseOperationalError, type GraphDB } from "../../core/graph-model/db.js";
 import { listDependencies, type CodeSearchRow, type ContractTraceRow, type DependencyRow, type EntityTraceRow, type SectionSearchRow } from "../../core/graph-model/queries.js";
 import type { EdgeRow } from "../../core/graph-model/subgraph.js";
-import { WorkspaceLexicalStoreError, type WorkspaceLexicalStore } from "../../core/retrieval/provider.js";
+import {
+  WorkspaceLexicalStoreError,
+  type LexicalProviderGateResult,
+  type WorkspaceLexicalStore
+} from "../../core/retrieval/provider.js";
 import type { LexicalIndexHealth, LexicalHit } from "../../core/retrieval/types.js";
 import type { SemanticSearchResult } from "../../core/semantic/semanticIndex.js";
 import { deriveWorkspaceId } from "../../core/workspace/identity.js";
@@ -42,6 +46,7 @@ export type RetrieveExecutionOptions = Readonly<{
   planningContext?: QueryPlanningContext;
   lexicalStore?: WorkspaceLexicalStore;
   lexicalStoreUnavailable?: boolean;
+  lexicalProviderGate?: LexicalProviderGateResult;
   dependencies?: RetrievalDependencies;
   retrieval?: NormalizedRetrieveOptions;
 }>;
@@ -150,9 +155,12 @@ export async function retrieveForQuestion(db: GraphDB, question: string, options
     lexical = emptyRouteResult("lexical", "disabled", "query-empty");
   } else if (options.lexicalStoreUnavailable) {
     lexical = emptyRouteResult("lexical", "unavailable", "provider-unavailable");
+  } else if (options.lexicalProviderGate?.status === "unavailable") {
+    lexicalHealth = options.lexicalProviderGate.health;
+    lexical = emptyRouteResult("lexical", "unavailable", options.lexicalProviderGate.reason);
   } else if (options.lexicalStore) {
     try {
-      lexicalHealth = await options.lexicalStore.health(workspaceId);
+      lexicalHealth = options.lexicalProviderGate?.health ?? await options.lexicalStore.health(workspaceId);
       lexical = await (deps.lexical ?? retrieveWorkspaceLexical)(options.lexicalStore, plan, { workspaceId, repoRoots, health: lexicalHealth });
     } catch (error) {
       if (error instanceof WorkspaceLexicalStoreError) {
@@ -273,7 +281,7 @@ export async function retrieveForQuestion(db: GraphDB, question: string, options
     queries: Object.freeze({ total: totalQueries, byRoute, dependencies: dependencyQueryCount, sourceLoading: sourceLoading.queryCount }),
     compatibility: Object.freeze({ dependencies: dependencyDiagnostic }),
     providers: Object.freeze({
-      lexical: safeLexicalProviderDiagnostic(lexical, lexicalHealth),
+      lexical: safeLexicalProviderDiagnostic(lexical, lexicalHealth, options.lexicalProviderGate),
       semantic: Object.freeze({
         status: semantic.status,
         ...(semanticProvider && semanticProvider !== "off" ? { provider: semanticProvider } : {}),

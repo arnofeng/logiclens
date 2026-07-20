@@ -222,6 +222,55 @@ describe("Ask retrieval orchestration", () => {
     expect(loadDocuments).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps non-lexical routes and source loading available when the lexical gate is unhealthy", async () => {
+    const workspaceId = deriveWorkspaceId("default-system");
+    const canonicalId = "code:repo:alpha:src/Order.ts:class:Order:1";
+    const exactCandidate = candidate("exact", canonicalId);
+    const lexicalStore = store([]);
+    const lexical = vi.fn();
+    const graph = vi.fn(async () => emptyRouteResult("graph", "disabled", "no-seeds"));
+    const result = await retrieveForQuestion({} as GraphDB, "Order workflow", {
+      lexicalStore,
+      lexicalProviderGate: {
+        configuredProvider: "auto",
+        effectiveProvider: "test",
+        status: "unavailable",
+        reason: "index_unhealthy",
+        reasonCodes: ["index_unhealthy"],
+        capability: {
+          scope: "workspace", updateConsistency: "synchronous",
+          supportsFieldBoost: false, supportsPrefix: false
+        },
+        store: lexicalStore,
+        health: { ...HEALTH, status: "unhealthy", reasons: ["fts_index_failed"] }
+      },
+      dependencies: {
+        plan,
+        exact: async () => ({
+          exact: successfulRouteResult("exact", [exactCandidate], [], 1),
+          contract: successfulRouteResult("contract", [], [], 1),
+          entity: successfulRouteResult("entity", [], [], 1)
+        }),
+        lexical,
+        graph: graph as never,
+        semantic: async () => emptyRouteResult("semantic", "disabled", "provider-off")
+      } as never
+    });
+
+    expect(lexical).not.toHaveBeenCalled();
+    expect(graph).toHaveBeenCalledOnce();
+    expect(result.diagnostics.routes.lexical).toMatchObject({
+      status: "unavailable", reason: "index_unhealthy", queryCount: 0
+    });
+    expect(result.diagnostics.providers.lexical).toMatchObject({
+      configuredProvider: "auto", effectiveProvider: "test", gateStatus: "unavailable",
+      reasonCodes: ["index_unhealthy"], indexStatus: "unhealthy"
+    });
+    expect(result.selectedCandidates).toHaveLength(1);
+    expect(result.loadedEvidence).toHaveLength(1);
+    expect(result.loadedEvidence[0]?.document.workspaceId).toBe(workspaceId);
+  });
+
   it("rethrows ordinary programming errors and only degrades typed operational failures", async () => {
     const order: string[] = [];
     const dependencies = {

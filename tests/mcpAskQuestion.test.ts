@@ -3,7 +3,9 @@ import {
   ASK_QUESTION_INPUT_SCHEMA,
   buildFreshnessMetadata,
   buildFreshnessNotice,
+  buildWorkspaceHealthStatus,
   handleAskQuestion,
+  loadWorkspaceHealthStatus,
   projectAskQuestionResponse,
 } from "../src/interfaces/mcp/server.js";
 import type { RetrievalResult } from "../src/features/ask/retrieve.js";
@@ -77,6 +79,8 @@ describe("MCP ask_question", () => {
     });
     const serialized = JSON.stringify(response);
     expect(serialized).not.toMatch(/SECRET_BODY|SECRET_TOKEN|SECRET_HASH|SECRET_BATCH|searchableText|tokens|sourceHash|batchId/u);
+    expect(response.diagnostics.providers.lexical).toEqual({ status: "succeeded" });
+    expect(serialized).not.toMatch(/providerVersion|projectionSchemaVersion|tokenizerVersion|indexStatus/u);
   });
 
   it("projects disabled provider query counts and remains compatible with freshness notices", () => {
@@ -98,5 +102,72 @@ describe("MCP ask_question", () => {
       indexQueue: { running: false, pendingJobs: [] } as never,
     });
     expect(buildFreshnessNotice(metadata)).toContain("Freshness: stale");
+  });
+});
+
+describe("MCP lexical health boundary", () => {
+  const queue = { running: false, pendingJobs: [] } as never;
+  const healthy = {
+    configuredProvider: "auto", effectiveProvider: "kuzu", status: "ready" as const,
+    reasonCodes: [], providerVersion: "0.11.3", projectionSchemaVersion: "1",
+    tokenizerVersion: "1", indexStatus: "healthy" as const
+  };
+  const unhealthy = {
+    configuredProvider: "auto", effectiveProvider: "kuzu", status: "unavailable" as const,
+    reasonCodes: ["index_unhealthy" as const], providerVersion: "0.11.3",
+    projectionSchemaVersion: "1", tokenizerVersion: "1", indexStatus: "unhealthy" as const
+  };
+
+  it.each([
+    [false, healthy, ""],
+    [true, healthy, "Freshness: stale"],
+    [false, unhealthy, "Lexical search: unavailable"],
+    [true, unhealthy, "Freshness: stale"]
+  ] as const)("diagnoses graph stale=%s independently from lexical health", (stale, lexical, expected) => {
+    const metadata = buildFreshnessMetadata({
+      pending: stale ? [{ repoName: "api", path: "src/a.ts", firstSeenMs: 1, lastSeenMs: 2, indexing: false }] : [],
+      watcherActive: true,
+      indexQueue: queue,
+      lexical
+    });
+    const notice = buildFreshnessNotice(metadata);
+    expect(metadata.stale).toBe(stale);
+    expect(metadata.lexical).toEqual(lexical);
+    if (expected) expect(notice).toContain(expected);
+    else expect(notice).toBe("");
+    if (lexical.status === "unavailable") expect(notice).toContain("Lexical search: unavailable");
+  });
+
+  it("returns a complete safe status while ordinary notices remain compact", () => {
+    const watchStatus = {
+      active: false, degraded: false, degradedReason: null, partial: false, partialReasons: [],
+      mode: "off", installedWatchers: 0, coveredRepos: [], uncoveredRepos: [], uncoveredPaths: [],
+      pendingFiles: [], pausedRepos: [], indexQueue: queue,
+      catchUp: { mode: "off", running: false, completed: true, failed: false, pendingRepos: [], completedRepos: [] }
+    } as never;
+    const full = buildWorkspaceHealthStatus(watchStatus, unhealthy);
+    expect(full.lexical).toEqual(unhealthy);
+    expect(full.lexical).toMatchObject({
+      configuredProvider: "auto", effectiveProvider: "kuzu", providerVersion: "0.11.3",
+      projectionSchemaVersion: "1", tokenizerVersion: "1", indexStatus: "unhealthy",
+      reasonCodes: ["index_unhealthy"]
+    });
+
+    const notice = buildFreshnessNotice(buildFreshnessMetadata({
+      pending: [], watcherActive: false, indexQueue: queue, lexical: unhealthy
+    }));
+    expect(notice).toBe("Lexical search: unavailable (index_unhealthy). Call logiclens_get_watch_status for full details.");
+    expect(notice).not.toMatch(/providerVersion|projectionSchemaVersion|tokenizerVersion|indexStatus|bolt:|password/u);
+  });
+
+  it("passes explicit refresh through and exposes changed lexical health", async () => {
+    const getLexicalProviderStatus = vi.fn()
+      .mockResolvedValueOnce(unhealthy)
+      .mockResolvedValueOnce(healthy);
+    const getWatchStatus = vi.fn(() => ({ active: false, indexQueue: queue }));
+    const client = { getLexicalProviderStatus, getWatchStatus } as never;
+    expect((await loadWorkspaceHealthStatus(client)).lexical.status).toBe("unavailable");
+    expect((await loadWorkspaceHealthStatus(client, undefined, { refresh: true })).lexical.status).toBe("ready");
+    expect(getLexicalProviderStatus).toHaveBeenNthCalledWith(2, { refresh: true });
   });
 });
