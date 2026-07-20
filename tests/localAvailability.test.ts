@@ -129,27 +129,30 @@ describe("local availability", () => {
       const indexes = await db.query<{ index_name: string }>(
         "CALL SHOW_INDEXES() WHERE table_name = 'LexicalDocument' RETURN index_name;"
       );
-      const states = await db.query<{ status: string; lexicalDocumentCount: number; lexicalIndexStatus: string }>(
-        "MATCH (s:IndexState) RETURN s.status AS status, s.lexicalDocumentCount AS lexicalDocumentCount, s.lexicalIndexStatus AS lexicalIndexStatus;"
+      const states = await db.query<{ status: string; lexicalDocumentCount: number; lexicalIndexSizeBytes: number; lexicalIndexStatus: string }>(
+        "MATCH (s:IndexState) RETURN s.status AS status, s.lexicalDocumentCount AS lexicalDocumentCount, s.lexicalIndexSizeBytes AS lexicalIndexSizeBytes, s.lexicalIndexStatus AS lexicalIndexStatus;"
       );
 
       expect((await db.stats()).files).toBeGreaterThan(0);
       expect(result.lexicalDocumentCount).toBeGreaterThan(0);
+      expect(result.lexicalIndexSizeBytes).toBeGreaterThan(0);
       expect(health.metrics.documentCount).toBe(result.lexicalDocumentCount);
+      expect(health.metrics.indexSizeBytes).toBe(result.lexicalIndexSizeBytes);
       expect(new Set(hits.map((hit) => hit.repoId)).size).toBeGreaterThan(1);
       expect(hits.every((hit) => parseRenderRef(hit.renderRef, workspaceId).repoId === hit.repoId)).toBe(true);
       expect(indexes).toEqual([{ index_name: KUZU_WORKSPACE_FTS_INDEX }]);
       expect(states).toHaveLength(2);
-      expect(states.every((state) => state.status === "succeeded" && state.lexicalIndexStatus === "healthy" && state.lexicalDocumentCount > 0)).toBe(true);
+      expect(states.every((state) => state.status === "succeeded" && state.lexicalIndexStatus === "healthy" && state.lexicalDocumentCount > 0 && state.lexicalIndexSizeBytes > 0)).toBe(true);
       const preservedCount = states[0]!.lexicalDocumentCount;
+      const preservedSize = states[0]!.lexicalIndexSizeBytes;
       await db.upsertIndexState({
         repoId: repoId("service-a"), repoName: "service-a", lastBatchId: "batch:failed", lastIndexedAt: new Date().toISOString(),
         lastCommitSha: "", filesScanned: 0, filesChanged: 0, filesStale: 0, status: "failed", error: "injected"
       });
-      expect(await db.query<{ lexicalDocumentCount: number; lexicalIndexStatus: string }>(
-        "MATCH (s:IndexState {repoId: $repoId}) RETURN s.lexicalDocumentCount AS lexicalDocumentCount, s.lexicalIndexStatus AS lexicalIndexStatus;",
+      expect(await db.query<{ lexicalDocumentCount: number; lexicalIndexSizeBytes: number; lexicalIndexStatus: string }>(
+        "MATCH (s:IndexState {repoId: $repoId}) RETURN s.lexicalDocumentCount AS lexicalDocumentCount, s.lexicalIndexSizeBytes AS lexicalIndexSizeBytes, s.lexicalIndexStatus AS lexicalIndexStatus;",
         { repoId: repoId("service-a") }
-      )).toEqual([{ lexicalDocumentCount: preservedCount, lexicalIndexStatus: "healthy" }]);
+      )).toEqual([{ lexicalDocumentCount: preservedCount, lexicalIndexSizeBytes: preservedSize, lexicalIndexStatus: "healthy" }]);
     } finally {
       await db.close();
       await fs.rm(dir, { recursive: true, force: true });

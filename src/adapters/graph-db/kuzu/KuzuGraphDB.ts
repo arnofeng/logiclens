@@ -195,6 +195,7 @@ export class KuzuGraphDB implements GraphDB {
     await this.ensureColumn("IndexState", "graphWriteAtomicity", "STRING");
     await this.ensureColumn("IndexState", "graphWriteStatus", "STRING");
     await this.ensureColumn("IndexState", "lexicalDocumentCount", "INT64");
+    await this.ensureColumn("IndexState", "lexicalIndexSizeBytes", "INT64");
     await this.ensureColumn("IndexState", "lexicalProjectionSchemaVersion", "STRING");
     await this.ensureColumn("IndexState", "lexicalTokenizerVersion", "STRING");
     await this.ensureColumn("IndexState", "lexicalIndexStatus", "STRING");
@@ -667,7 +668,7 @@ export class KuzuGraphDB implements GraphDB {
     return staleFileIds.length;
   }
 
-  async upsertIndexState(state: { repoId: string; repoName: string; lastBatchId: string; lastIndexedAt: string; lastCommitSha: string; filesScanned: number; filesChanged: number; filesStale: number; status: string; error?: string; graphWriteAtomicity?: GraphWriteAtomicityMode; graphWriteStatus?: GraphWriteBatchStatus }): Promise<void> {
+  async upsertIndexState(state: Parameters<GraphDB["upsertIndexState"]>[0]): Promise<void> {
     await this.crud.upsertIndexState(state);
   }
 

@@ -128,6 +128,7 @@ describe("index state commit phase", () => {
 
     expect(upsertIndexState).toHaveBeenCalledWith(expect.objectContaining({
       lexicalDocumentCount: 19,
+      lexicalIndexSizeBytes: 400,
       lexicalProjectionSchemaVersion: "schema-real",
       lexicalTokenizerVersion: "tokenizer-real",
       lexicalIndexStatus: "healthy",
@@ -143,6 +144,7 @@ describe("index state commit phase", () => {
       db,
       repoIds: ["repo:early", "repo:late", "repo:early"],
       lexicalDocumentCount: 42,
+      lexicalIndexSizeBytes: 840,
       lexicalProjectionSchemaVersion: "schema-current",
       lexicalTokenizerVersion: "tokenizer-current",
       lexicalIndexStatus: "healthy",
@@ -155,6 +157,7 @@ describe("index state commit phase", () => {
     expect(query.mock.calls[0]![1]).toEqual({
       repoIds: ["repo:early", "repo:late"],
       lexicalDocumentCount: 42,
+      lexicalIndexSizeBytes: 840,
       lexicalProjectionSchemaVersion: "schema-current",
       lexicalTokenizerVersion: "tokenizer-current",
       lexicalIndexStatus: "healthy",

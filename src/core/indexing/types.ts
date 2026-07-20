@@ -25,6 +25,7 @@ export type IndexResult = {
   entities: number;
   durationMs: number;
   lexicalDocumentCount: number;
+  lexicalIndexSizeBytes: number;
   lexicalProjectionSchemaVersion: string;
   lexicalTokenizerVersion: string;
   lexicalIndexStatus: "healthy" | "unhealthy" | "unavailable";

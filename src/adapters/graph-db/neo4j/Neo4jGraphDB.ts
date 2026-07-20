@@ -566,7 +566,7 @@ export class Neo4jGraphDB implements GraphDB {
     return staleFileIds.length;
   }
 
-  async upsertIndexState(state: { repoId: string; repoName: string; lastBatchId: string; lastIndexedAt: string; lastCommitSha: string; filesScanned: number; filesChanged: number; filesStale: number; status: string; error?: string; graphWriteAtomicity?: GraphWriteAtomicityMode; graphWriteStatus?: GraphWriteBatchStatus }): Promise<void> {
+  async upsertIndexState(state: Parameters<GraphDB["upsertIndexState"]>[0]): Promise<void> {
     await this.crud.upsertIndexState(state);
   }
 

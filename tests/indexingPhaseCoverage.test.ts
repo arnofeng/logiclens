@@ -13,6 +13,8 @@ import type { RepoNode } from "../src/core/parsing/types.js";
 import type { WorkspaceLexicalStore } from "../src/core/retrieval/provider.js";
 import { registerGraphProvider } from "../src/core/graph-model/factory.js";
 import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
+import { KuzuWorkspaceLexicalStore } from "../src/adapters/graph-db/kuzu/KuzuWorkspaceLexicalStore.js";
+import { createWorkspaceEvaluationFixture } from "./retrieval/workspaceEvaluationFixture.js";
 
 const repo: RepoNode = {
   id: "repo:phase-service",
@@ -46,6 +48,48 @@ function schemaReadyStore(): WorkspaceLexicalStore {
 }
 
 describe("indexing phase coverage", () => {
+  it("reports provider-derived performance and capacity metrics for full and changed-only indexing", async () => {
+    const health = vi.spyOn(KuzuWorkspaceLexicalStore.prototype, "health");
+    const fixture = await createWorkspaceEvaluationFixture({ copyWorkspace: true });
+    try {
+      const full = fixture.fullIndexResult;
+      await fs.appendFile(
+        path.join(fixture.reposDirectory, "api", "src", "contracts", "orders.ts"),
+        "\n// indexing phase changed-only marker\n",
+        "utf8",
+      );
+      const changedOnly = await fixture.client.index({ changedOnly: true, writeMode: "merge" });
+      const healthSnapshots = await Promise.all(health.mock.results
+        .filter(({ type }) => type === "return")
+        .map(({ value }) => value));
+
+      for (const result of [full, changedOnly]) {
+        expect(result).toEqual(expect.objectContaining({
+          durationMs: expect.any(Number),
+          lexicalDocumentCount: expect.any(Number),
+          lexicalIndexSizeBytes: expect.any(Number),
+          lexicalProjectionDurationMs: expect.any(Number),
+          lexicalWriteDurationMs: expect.any(Number),
+          lexicalIndexStatus: "healthy",
+        }));
+        for (const duration of [result.durationMs, result.lexicalProjectionDurationMs, result.lexicalWriteDurationMs]) {
+          expect(Number.isFinite(duration) && duration >= 0).toBe(true);
+        }
+        expect(Number.isSafeInteger(result.lexicalDocumentCount) && result.lexicalDocumentCount >= 0).toBe(true);
+        expect(Number.isSafeInteger(result.lexicalIndexSizeBytes) && result.lexicalIndexSizeBytes >= 0).toBe(true);
+        expect(healthSnapshots.some((snapshot) =>
+          snapshot.metrics.documentCount === result.lexicalDocumentCount
+          && snapshot.metrics.indexSizeBytes === result.lexicalIndexSizeBytes
+        )).toBe(true);
+      }
+      expect(changedOnly.filesChanged).toBeGreaterThan(0);
+      expect(Object.keys(full)).toEqual(Object.keys(changedOnly));
+    } finally {
+      health.mockRestore();
+      await fixture.close();
+    }
+  }, 45_000);
+
   it("binds one lexical store to the current db and derives workspace identity only from systemName", async () => {
     const db = dbWithRepoCount(0);
     const store = schemaReadyStore();

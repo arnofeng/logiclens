@@ -34,6 +34,7 @@ export async function refreshSucceededIndexStateLexicalMetrics(input: {
   db: GraphDB;
   repoIds: string[];
   lexicalDocumentCount: number;
+  lexicalIndexSizeBytes: number;
   lexicalProjectionSchemaVersion: string;
   lexicalTokenizerVersion: string;
   lexicalIndexStatus: string;
@@ -46,6 +47,7 @@ export async function refreshSucceededIndexStateLexicalMetrics(input: {
     `MATCH (s:IndexState)
      WHERE s.repoId IN $repoIds AND s.status = 'succeeded'
      SET s.lexicalDocumentCount = $lexicalDocumentCount,
+         s.lexicalIndexSizeBytes = $lexicalIndexSizeBytes,
          s.lexicalProjectionSchemaVersion = $lexicalProjectionSchemaVersion,
          s.lexicalTokenizerVersion = $lexicalTokenizerVersion,
          s.lexicalIndexStatus = $lexicalIndexStatus,
@@ -54,6 +56,7 @@ export async function refreshSucceededIndexStateLexicalMetrics(input: {
     {
       repoIds,
       lexicalDocumentCount: input.lexicalDocumentCount,
+      lexicalIndexSizeBytes: input.lexicalIndexSizeBytes,
       lexicalProjectionSchemaVersion: input.lexicalProjectionSchemaVersion,
       lexicalTokenizerVersion: input.lexicalTokenizerVersion,
       lexicalIndexStatus: input.lexicalIndexStatus,
@@ -107,6 +110,7 @@ export async function runIndexStateCommitPhase(input: {
         graphWriteAtomicity,
         graphWriteStatus,
         lexicalDocumentCount: lexical?.providerHealth.metrics.documentCount,
+        lexicalIndexSizeBytes: lexical?.providerHealth.metrics.indexSizeBytes,
         lexicalProjectionSchemaVersion: lexical?.projectionSchemaVersion,
         lexicalTokenizerVersion: lexical?.tokenizerVersion,
         lexicalIndexStatus: lexical?.indexStatus,

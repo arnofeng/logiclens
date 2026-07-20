@@ -65,6 +65,18 @@ import type {
 import type { CallRef, CodeSymbol, ImportRef, ParsedFile } from "./core/parsing/types.js";
 import type { AppConfig } from "./config/schema.js";
 import type { SemanticTraceGraph } from "./core/contracts/semanticTrace.js";
+import type { IndexOptions, IndexResult } from "./core/indexing/types.js";
+import type {
+  BenchmarkOptions,
+  BenchmarkQuery,
+  IndexingBenchmarkReport,
+  IndexingBenchmarkSample,
+  PercentileSummary,
+  RetrievalBenchmarkReport,
+  StageBenchmark,
+  StageSample,
+  WorkspaceBenchmarkReport,
+} from "./core/retrieval/benchmark.js";
 export {
   DEFAULT_RETRIEVE_OPTIONS,
   RETRIEVE_OPTION_LIMITS,
@@ -142,5 +154,16 @@ export type {
   LiteralFact,
   ImportRef,
   CodeSymbol,
-  CallRef
+  CallRef,
+  IndexOptions,
+  IndexResult,
+  BenchmarkOptions,
+  BenchmarkQuery,
+  IndexingBenchmarkReport,
+  IndexingBenchmarkSample,
+  PercentileSummary,
+  RetrievalBenchmarkReport,
+  StageBenchmark,
+  StageSample,
+  WorkspaceBenchmarkReport
 };

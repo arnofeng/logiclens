@@ -16,6 +16,13 @@ function addCounters(target: IndexCounters, increment: IndexCounters): void {
   target.filesChanged += increment.filesChanged;
 }
 
+function requireNonNegativeSafeInteger(value: number, label: string): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative safe integer.`);
+  }
+  return value;
+}
+
 export async function runIndexing(
   db: GraphDB,
   config: AppConfig,
@@ -107,10 +114,13 @@ export async function runIndexing(
   if (!options.changedOnly && !options.repo) await ctx.lexicalStore.commitVersions();
 
   const lexicalHealth = await ctx.lexicalStore.health(ctx.workspaceId);
+  const lexicalDocumentCount = requireNonNegativeSafeInteger(lexicalHealth.metrics.documentCount, "Lexical document count");
+  const lexicalIndexSizeBytes = requireNonNegativeSafeInteger(lexicalHealth.metrics.indexSizeBytes, "Lexical index size in bytes");
   await refreshSucceededIndexStateLexicalMetrics({
     db,
     repoIds: successfulRepoIds,
-    lexicalDocumentCount: lexicalHealth.metrics.documentCount,
+    lexicalDocumentCount,
+    lexicalIndexSizeBytes,
     lexicalProjectionSchemaVersion: lexicalHealth.projectionSchemaVersion,
     lexicalTokenizerVersion: lexicalHealth.tokenizerVersion,
     lexicalIndexStatus: lexicalHealth.status,
@@ -127,7 +137,8 @@ export async function runIndexing(
     importEdges: stats.importEdges,
     entities: stats.entities,
     durationMs: Date.now() - started,
-    lexicalDocumentCount: lexicalHealth.metrics.documentCount,
+    lexicalDocumentCount,
+    lexicalIndexSizeBytes,
     lexicalProjectionSchemaVersion: lexicalHealth.projectionSchemaVersion,
     lexicalTokenizerVersion: lexicalHealth.tokenizerVersion,
     lexicalIndexStatus: lexicalHealth.status,

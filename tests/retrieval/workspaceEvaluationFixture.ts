@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultConfig } from "../../src/config/loadConfig.js";
+import type { IndexResult } from "../../src/core/indexing/types.js";
 import type { EvaluationExecutionResult } from "../../src/core/retrieval/evaluation.js";
 import type { RetrieveOptions } from "../../src/features/ask/options.js";
 import type { RetrievalResult } from "../../src/features/ask/retrieve.js";
@@ -20,6 +21,8 @@ export const EVALUATION_RETRIEVE_OPTIONS = Object.freeze({
 export type WorkspaceEvaluationFixture = Readonly<{
   client: AppClient;
   directory: string;
+  reposDirectory: string;
+  fullIndexResult: IndexResult;
   execute: (question: string, options: RetrieveOptions) => Promise<EvaluationExecutionResult>;
   close: () => Promise<void>;
 }>;
@@ -40,23 +43,27 @@ export function projectEvaluationResult(result: RetrievalResult): EvaluationExec
   });
 }
 
-export async function createWorkspaceEvaluationFixture(): Promise<WorkspaceEvaluationFixture> {
+export async function createWorkspaceEvaluationFixture(
+  options: Readonly<{ copyWorkspace?: boolean }> = {},
+): Promise<WorkspaceEvaluationFixture> {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-retrieval-eval-"));
+  const reposDirectory = options.copyWorkspace ? path.join(directory, "fixture") : fixtureRoot;
   const base = defaultConfig();
   const config = {
     ...base,
     systemName: "workspace-retrieval-evaluation",
-    repos: ["api", "catalog", "worker"].map((name) => ({ name, path: path.join(fixtureRoot, name) })),
+    repos: ["api", "catalog", "worker"].map((name) => ({ name, path: path.join(reposDirectory, name) })),
     include: [...base.include, "**/*.json"],
     graph: { ...base.graph, provider: "kuzu", path: path.join(directory, "graph") },
     retrieval: { lexical: { provider: "auto", scope: "workspace" as const } },
     embedding: { ...base.embedding, provider: "off" as const, level: "off" as const },
-    indexing: { ...base.indexing, llmSummaryLevel: "off" as const },
+    indexing: { ...base.indexing, concurrency: 1, llmSummaryLevel: "off" as const },
   };
   let client: AppClient | undefined;
   try {
+    if (options.copyWorkspace) await fs.cp(fixtureRoot, reposDirectory, { recursive: true });
     client = await createClient({ cwd: directory, config, logger: { log() {}, warn() {}, error() {} } });
-    await client.index({ changedOnly: false, writeMode: "auto" });
+    const fullIndexResult = await client.index({ changedOnly: false, writeMode: "auto" });
     const execute = async (question: string, options: RetrieveOptions): Promise<EvaluationExecutionResult> => {
       const result = await client!.retrieve(question, options);
       return projectEvaluationResult(result);
@@ -65,6 +72,8 @@ export async function createWorkspaceEvaluationFixture(): Promise<WorkspaceEvalu
     return Object.freeze({
       client,
       directory,
+      reposDirectory,
+      fullIndexResult,
       execute,
       close: async () => {
         if (closed) return;

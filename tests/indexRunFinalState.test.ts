@@ -76,6 +76,7 @@ describe("index run final workspace state", () => {
     expect(query.mock.calls[0]![1]).toMatchObject({
       repoIds: ["repo:early", "repo:late"],
       lexicalDocumentCount: 19,
+      lexicalIndexSizeBytes: 100,
       lexicalProjectionSchemaVersion: "schema-current",
       lexicalTokenizerVersion: "tokenizer-current",
       lexicalIndexStatus: "healthy",
@@ -83,5 +84,6 @@ describe("index run final workspace state", () => {
       lexicalWriteDurationMs: 6
     });
     expect(result.lexicalDocumentCount).toBe(19);
+    expect(result.lexicalIndexSizeBytes).toBe(100);
   });
 });
