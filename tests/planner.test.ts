@@ -171,6 +171,19 @@ describe("query planner classification matrix", () => {
     expect(plan.enabledRoutes).toEqual(["exact", "contract", "entity", "lexical", "graph", "semantic"]);
   });
 
+  it("resolves repo-scoped paths by configured name rather than directory basename", () => {
+    const context = createQueryPlanningContext({
+      repos: [{ id: "repo:api", name: "api" }],
+    });
+    const plan = planQuestion("Open api/src/contracts/orders.ts", context);
+    expect(plan.paths).toEqual(["api/src/contracts/orders.ts"]);
+    expect(plan.scopedPaths).toEqual([{
+      repoId: "repo:api",
+      path: "src/contracts/orders.ts",
+      raw: "api/src/contracts/orders.ts",
+    }]);
+  });
+
   it("normalizes, bounds, and code-point truncates lexical queries", () => {
     const composed = planQuestion("  Cafe\u0301\n\tOrderService  ");
     expect(composed.normalizedLexicalQuery).toBe("Café OrderService");

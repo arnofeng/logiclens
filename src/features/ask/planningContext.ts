@@ -3,6 +3,7 @@ import type { LanguageParser } from "../../core/registries/types.js";
 
 export type QueryPlanningContext = Readonly<{
   fileExtensions: readonly string[];
+  repos?: readonly Readonly<{ id: string; name: string }>[];
 }>;
 
 export type QueryPlanningContextInput = Readonly<{
@@ -11,6 +12,7 @@ export type QueryPlanningContextInput = Readonly<{
   }>[];
   activeParsers?: readonly Pick<LanguageParser, "extensions" | "scopeRepoId">[];
   repoIds?: readonly string[];
+  repos?: readonly Readonly<{ id: string; name: string }>[];
 }>;
 
 const VALID_EXTENSION = /^\.[\p{L}\p{N}][\p{L}\p{N}._+-]{0,31}$/u;
@@ -43,7 +45,10 @@ export function createQueryPlanningContext(input: QueryPlanningContextInput = {}
     ...manifestExtensions,
     ...parserExtensions
   ]);
-  return Object.freeze({ fileExtensions });
+  const repos = Object.freeze([...(input.repos ?? [])]
+    .map((repo) => Object.freeze({ id: repo.id, name: repo.name }))
+    .sort((left, right) => left.id.localeCompare(right.id) || left.name.localeCompare(right.name)));
+  return Object.freeze({ fileExtensions, repos });
 }
 
 export const DEFAULT_QUERY_PLANNING_CONTEXT = createQueryPlanningContext();

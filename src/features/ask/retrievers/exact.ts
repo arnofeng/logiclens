@@ -113,12 +113,16 @@ export async function retrieveExactTargets(
     traceEntitiesExact: options.dependencies?.traceEntitiesExact ?? traceEntitiesExactWithQueryCount
   };
   const identifiers = uniqueSorted(plan.exactIdentifiers);
-  const paths = normalizeExactPaths(plan.paths, options.repoRoots);
+  const scopedRawPaths = new Set((plan.scopedPaths ?? []).map(({ raw }) => raw));
+  const paths = normalizeExactPaths(plan.paths.filter((value) => !scopedRawPaths.has(value)), options.repoRoots);
+  const scopedPaths = (plan.scopedPaths ?? []).flatMap((target) =>
+    normalizeExactPaths([target.path]).map((relativePath) => ({ repoId: target.repoId, path: relativePath }))
+  );
 
   let exact: RetrieverRouteResult<ExactLegacyRow> | undefined;
   if (!plan.enabledRoutes.includes("exact")) {
     exact = emptyRouteResult("exact", "disabled", "route-disabled");
-  } else if (identifiers.length === 0 && paths.length === 0) {
+  } else if (identifiers.length === 0 && paths.length === 0 && scopedPaths.length === 0) {
     exact = emptyRouteResult("exact", "disabled", "no-structured-targets");
   } else {
     const limit = Math.max(0, plan.budgets.exact.limit);
@@ -128,12 +132,12 @@ export async function retrieveExactTargets(
     try {
       if (limit > 0) {
         queryCount += 1;
-        codeRows = await deps.findExactCode(db, { identifiers, paths, limit });
+        codeRows = await deps.findExactCode(db, { identifiers, paths, ...(scopedPaths.length > 0 ? { scopedPaths } : {}), limit });
       }
       const remaining = Math.max(0, limit - codeRows.length);
-      if (remaining > 0 && paths.length > 0) {
+      if (remaining > 0 && (paths.length > 0 || scopedPaths.length > 0)) {
         queryCount += 1;
-        sectionRows = await deps.findSectionsAtExactPaths(db, paths, remaining);
+        sectionRows = await deps.findSectionsAtExactPaths(db, paths, remaining, scopedPaths);
       }
     } catch (error) {
       if (error instanceof RetrieverOperationalError) {

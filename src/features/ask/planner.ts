@@ -12,11 +12,14 @@ export type QueryPlan = {
   terms: string[];
   exactIdentifiers: string[];
   paths: string[];
+  scopedPaths?: RepoScopedPathTarget[];
   contractTargets: ContractTarget[];
   normalizedLexicalQuery: string;
   enabledRoutes: RetrievalRoute[];
   budgets: Record<RetrievalRoute, RouteBudget>;
 };
+
+export type RepoScopedPathTarget = Readonly<{ repoId: string; path: string; raw: string }>;
 
 export const MAX_LEXICAL_QUERY_CODE_POINTS = 512;
 
@@ -63,6 +66,18 @@ function stableUniqueContracts(targets: readonly ContractTarget[]): ContractTarg
   });
 }
 
+function scopedPaths(paths: readonly string[], context: QueryPlanningContext): RepoScopedPathTarget[] {
+  return paths.flatMap((raw) => {
+    const normalized = raw.replace(/\\/gu, "/");
+    const separator = normalized.indexOf("/");
+    if (separator <= 0) return [];
+    const prefix = normalized.slice(0, separator);
+    const relativePath = normalized.slice(separator + 1);
+    const repo = (context.repos ?? []).find(({ id, name }) => prefix === name || prefix === id || `repo:${prefix}` === id);
+    return repo && relativePath ? [{ repoId: repo.id, path: relativePath, raw }] : [];
+  });
+}
+
 export function normalizeLexicalQuery(question: string): string {
   const normalized = question.normalize("NFC").replace(/\s+/gu, " ").trim();
   return [...normalized].slice(0, MAX_LEXICAL_QUERY_CODE_POINTS).join("");
@@ -103,6 +118,7 @@ export function planQuestion(
     terms: terms.length > 0 ? terms : normalizedLexicalQuery ? [normalizedLexicalQuery] : [],
     exactIdentifiers,
     paths,
+    scopedPaths: scopedPaths(paths, context),
     contractTargets,
     normalizedLexicalQuery,
     enabledRoutes,

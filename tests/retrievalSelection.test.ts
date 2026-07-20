@@ -10,17 +10,18 @@ const WORKSPACE_ID = "workspace:test";
 function candidate(input: {
   id: string;
   repo?: string;
-  kind?: "code" | "section";
+  kind?: "code" | "section" | "file" | "contract" | "operation";
   routes?: RetrievalRoute[];
   confidence?: CandidateConfidence;
   locatable?: boolean;
   rank?: number;
   matchReasons?: string[];
+  path?: string;
 }): FusedRetrievalCandidate {
   const repoId = input.repo ?? "repo:a";
   const kind = input.kind ?? "code";
-  const path = `${repoId.slice(5)}/${input.id}.ts`;
-  const renderRef = createRenderRef({ workspaceId: WORKSPACE_ID, repoId, kind, canonicalId: input.id, fileId: `file:${input.id}`, path });
+  const path = input.path ?? `${repoId.slice(5)}/${input.id}.ts`;
+  const renderRef = createRenderRef({ workspaceId: WORKSPACE_ID, repoId, kind, canonicalId: input.id, fileId: kind === "file" ? input.id : `file:${input.id}`, path });
   const routes = input.routes ?? ["lexical"];
   const confidence = input.confidence ?? "corroborated";
   return reciprocalRankFusion([createRetrievalCandidate({
@@ -79,6 +80,20 @@ describe("retrieval candidate selection", () => {
     expect(result.selectedCandidates.map(({ canonicalId }) => canonicalId)).toEqual(["x", "y", "a", "b", "z"]);
     expect(result.rejections).toContainEqual(expect.objectContaining({ reason: "unlocatable" }));
     expect(result.rejections).toContainEqual(expect.objectContaining({ reason: "low_reliability" }));
+  });
+
+  it("prioritizes a direct file-path match over contained code", () => {
+    const containedCode = candidate({ id: "code", routes: ["exact", "lexical"], confidence: "exact", matchReasons: ["exact-path"] });
+    const directFile = candidate({ id: "file:repo:a:a/direct.ts", kind: "file", path: "a/direct.ts", confidence: "exact", matchReasons: ["exact-path"] });
+    const result = selectCandidates([containedCode, directFile], {
+      workspaceId: WORKSPACE_ID,
+      maxCandidates: 2,
+      maxPerRepo: 2,
+      maxPerKind: 2,
+      estimatedCharsPerCandidate: 1,
+      maxContextChars: 2,
+    });
+    expect(result.selectedCandidates.map(({ canonicalId }) => canonicalId)).toEqual(["file:repo:a:a/direct.ts", "code"]);
   });
 
   it("is repeatable and does not mutate inputs", () => {

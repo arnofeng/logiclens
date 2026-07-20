@@ -156,7 +156,8 @@ export class AppClient {
       }).then((snapshot) => createQueryPlanningContext({
         activePluginManifests: snapshot.activePluginManifests,
         activeParsers: snapshot.activeLanguageParsers,
-        repoIds: this.config.repos.map((repo) => toRepoNode(repo, this.cwd).id)
+        repoIds: this.config.repos.map((repo) => repoId(repo.name)),
+        repos: this.config.repos.map((repo) => ({ id: repoId(repo.name), name: repo.name }))
       })).catch((error) => {
         this.planningContextPromise = undefined;
         throw error;

@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { buildGraphFactsBatch } from "../src/core/graph-model/facts.js";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
-import { WORKSPACE_CORPUS } from "./retrieval/workspaceCorpus.js";
+import { QUALITY_GATE_CORPUS, QUALITY_GATE_CORPUS_IDS, WORKSPACE_CORPUS } from "./retrieval/workspaceCorpus.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "workspace-unified-retrieval");
 const sources = [
@@ -18,6 +18,23 @@ describe("workspace retrieval corpus", () => {
     for (const entry of WORKSPACE_CORPUS) {
       expect(entry.answerable ? entry.expectedCanonicalIds.length > 0 : entry.expectedCanonicalIds).toEqual(entry.answerable ? true : []);
     }
+  });
+
+  it("locks the version-one quality-gate query manifest", () => {
+    expect(QUALITY_GATE_CORPUS_IDS).toEqual([
+      "english-order-api",
+      "chinese-inventory",
+      "chinese-inventory-document",
+      "mixed-event",
+      "mixed-schema",
+      "identifier",
+      "path",
+      "contract",
+      "schema",
+      "refusal",
+    ]);
+    expect(QUALITY_GATE_CORPUS.map(({ id }) => id)).toEqual(QUALITY_GATE_CORPUS_IDS);
+    expect(QUALITY_GATE_CORPUS.filter(({ language, answerable }) => language === "en" && answerable).length).toBe(5);
   });
 
   it("derives every expected identity from parsed and normalized fixture facts", async () => {

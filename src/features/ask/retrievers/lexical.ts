@@ -20,23 +20,34 @@ function verifiedLexicalCandidates(
   plan: QueryPlan,
   repoRoots: readonly string[]
 ): RetrievalCandidate[] {
-  const exactPaths = new Set(normalizeExactPaths(plan.paths, repoRoots));
+  const scopedRawPaths = new Set((plan.scopedPaths ?? []).map(({ raw }) => raw));
+  const exactPaths = new Set(normalizeExactPaths(plan.paths.filter((value) => !scopedRawPaths.has(value)), repoRoots));
+  const scopedPaths = new Set((plan.scopedPaths ?? []).flatMap((target) =>
+    normalizeExactPaths([target.path]).map((relativePath) => `${target.repoId}\0${relativePath}`)
+  ));
   const canonicalIds = new Set(plan.exactIdentifiers.filter((value) => value.includes(":")));
   return candidates.map((candidate) => {
-    const reason = candidate.location?.path && exactPaths.has(candidate.location.path)
+    const reason = candidate.location?.path && (
+      exactPaths.has(candidate.location.path) || scopedPaths.has(`${candidate.repoId}\0${candidate.location.path}`)
+    )
       ? "exact-path"
       : canonicalIds.has(candidate.canonicalId)
         ? "canonical-id"
         : undefined;
-    if (!reason || (candidate.kind !== "code" && candidate.kind !== "contract")) return candidate;
+    const confidence = reason === "exact-path" && candidate.kind === "file"
+      ? "exact"
+      : candidate.kind === "code" || candidate.kind === "contract"
+        ? "corroborated"
+        : undefined;
+    if (!reason || !confidence) return candidate;
     return createRetrievalCandidate({
       canonicalId: candidate.canonicalId,
       repoId: candidate.repoId,
       kind: candidate.kind,
       routes: candidate.routes,
-      provenance: candidate.provenance.map((provenance) => ({ ...provenance, confidence: "corroborated" })),
+      provenance: candidate.provenance.map((provenance) => ({ ...provenance, confidence })),
       matchReasons: [...candidate.matchReasons, reason],
-      confidence: "corroborated"
+      confidence
     });
   });
 }

@@ -25,6 +25,7 @@ import { FallbackSemanticIndex, SemanticProviderOperationalError, type SemanticI
 import { EmbeddingProviderUnavailableError, type EmbeddingProvider } from "../src/core/semantic/embeddings.js";
 import { createRetrievalCandidate } from "../src/features/ask/candidates.js";
 import { reciprocalRankFusion } from "../src/features/ask/fusion.js";
+import { selectCandidates } from "../src/features/ask/selection.js";
 import type { QueryPlan, RetrievalRoute } from "../src/features/ask/planner.js";
 import { normalizeExactPaths, retrieveExactTargets } from "../src/features/ask/retrievers/exact.js";
 import { retrieveBoundedGraph } from "../src/features/ask/retrievers/graph.js";
@@ -117,6 +118,49 @@ describe("workspace lexical retriever", () => {
     expect(result.candidates[0]?.matchReasons).toContain("exact-path");
   });
 
+  it("verifies repo-prefixed paths only for the targeted repository", async () => {
+    const workspaceId = "workspace:test";
+    const hit = (repo: string, rank: number): LexicalHit => {
+      const repoId = `repo:${repo}`;
+      const canonicalId = `file:${repoId}:src/contracts/orders.ts`;
+      return {
+        canonicalId, documentId: `doc:${repo}`, repoId, kind: "file", rank, matchReasons: ["full-text"],
+        renderRef: createRenderRef({ workspaceId, repoId, kind: "file", canonicalId, fileId: canonicalId, path: "src/contracts/orders.ts" }),
+      };
+    };
+    const fake = lexicalStore({ search: () => [hit("api", 2), hit("worker", 3)] });
+    const result = await retrieveWorkspaceLexical(fake.store, plan({
+      paths: ["api/src/contracts/orders.ts"],
+      scopedPaths: [{ repoId: "repo:api", path: "src/contracts/orders.ts", raw: "api/src/contracts/orders.ts" }],
+    }), { workspaceId });
+    expect(result.candidates[0]).toMatchObject({
+      canonicalId: "file:repo:api:src/contracts/orders.ts",
+      confidence: "exact",
+      location: { path: "src/contracts/orders.ts" },
+    });
+    expect(result.candidates[0]?.matchReasons).toContain("exact-path");
+    expect(result.candidates[1]).toMatchObject({
+      canonicalId: "file:repo:worker:src/contracts/orders.ts",
+      confidence: "discovery",
+    });
+    expect(result.candidates[1]?.matchReasons).not.toContain("exact-path");
+  });
+
+  it("does not corroborate an unrelated low-ranked contract by kind alone", async () => {
+    const workspaceId = "workspace:test";
+    const canonicalId = "contract:event:orders.created";
+    const fake = lexicalStore({ search: () => [{
+      canonicalId, documentId: "doc:orders", repoId: "repo:worker", kind: "contract", rank: 20, matchReasons: ["full-text"],
+      renderRef: createRenderRef({ workspaceId, repoId: "repo:worker", kind: "contract", canonicalId, fileId: "file:repo:worker:src/worker.ts", path: "src/worker.ts" }),
+    }] });
+    const result = await retrieveWorkspaceLexical(fake.store, plan({
+      contractTargets: [{ kind: "event", value: "payment.failed" }],
+    }), { workspaceId });
+    expect(result.candidates[0]).toMatchObject({ confidence: "discovery", matchReasons: ["full-text"] });
+    const fused = reciprocalRankFusion(result.candidates);
+    expect(selectCandidates(fused, { workspaceId }).selectedCandidates).toEqual([]);
+  });
+
   it("returns structured provider failures but propagates unexpected errors", async () => {
     const expected = lexicalStore({ search: async () => { throw new WorkspaceLexicalStoreError("search_failed", { operation: "search" }); } });
     await expect(retrieveWorkspaceLexical(expected.store, plan(), { workspaceId: "workspace:test" })).resolves.toMatchObject({ status: "failed", reason: "search-failed", queryCount: 1 });
@@ -167,6 +211,26 @@ describe("exact contract and entity retriever", () => {
     const expected = ["repo/src/a.ts", "src/a.ts"];
     expect(normalizeExactPaths([file], roots)).toEqual(expected);
     expect(normalizeExactPaths([file], [...roots].reverse())).toEqual(expected);
+  });
+
+  it("does not erase a repository-looking prefix from an unscoped path", () => {
+    expect(normalizeExactPaths(["api/src/contracts/orders.ts"], ["C:\\workspace\\api"]))
+      .toEqual(["api/src/contracts/orders.ts"]);
+  });
+
+  it("binds exact graph path predicates to repository identity", async () => {
+    const calls: Array<{ sql: string; params?: Record<string, unknown> }> = [];
+    const db = { query: vi.fn(async (sql: string, params?: Record<string, unknown>) => {
+      calls.push({ sql, params });
+      return [];
+    }) } as unknown as GraphDB;
+    const scopedPaths = [{ repoId: "repo:api", path: "src/contracts/orders.ts" }];
+    await findExactCode(db, { identifiers: [], paths: [], scopedPaths, limit: 5 });
+    await findSectionsAtExactPaths(db, [], 5, scopedPaths);
+    for (const call of calls) {
+      expect(call.sql).toContain("r.id = $scopedRepo0 AND f.path = $scopedPath0");
+      expect(call.params).toEqual({ scopedRepo0: "repo:api", scopedPath0: "src/contracts/orders.ts" });
+    }
   });
 
   it("uses parameterized exact graph semantics and keeps method-specific contracts exact", async () => {

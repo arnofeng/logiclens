@@ -165,6 +165,8 @@ export type ActiveSemanticGraph = {
   relations: SemanticRelationEdge[];
 };
 
+export type RepoScopedPath = Readonly<{ repoId: string; path: string }>;
+
 export type CountedQueryResult<Row> = Readonly<{
   rows: Row[];
   queryCount: number;
@@ -243,9 +245,9 @@ export async function searchSections(db: GraphDB, term: string, limit = 20): Pro
 
 export async function findExactCode(
   db: GraphDB,
-  input: { identifiers: readonly string[]; paths: readonly string[]; limit: number }
+  input: { identifiers: readonly string[]; paths: readonly string[]; scopedPaths?: readonly RepoScopedPath[]; limit: number }
 ): Promise<CodeSearchRow[]> {
-  if (input.limit < 1 || (input.identifiers.length === 0 && input.paths.length === 0)) return [];
+  if (input.limit < 1 || (input.identifiers.length === 0 && input.paths.length === 0 && !input.scopedPaths?.length)) return [];
   const conditions: string[] = [];
   const params: Record<string, GraphValue> = {};
   if (input.identifiers.length > 0) {
@@ -255,6 +257,11 @@ export async function findExactCode(
   if (input.paths.length > 0) {
     conditions.push("f.path IN $paths");
     params.paths = [...input.paths];
+  }
+  for (const [index, target] of (input.scopedPaths ?? []).entries()) {
+    conditions.push(`(r.id = $scopedRepo${index} AND f.path = $scopedPath${index})`);
+    params[`scopedRepo${index}`] = target.repoId;
+    params[`scopedPath${index}`] = target.path;
   }
   return db.query<CodeSearchRow>(
     `MATCH (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(c:Code)
@@ -270,17 +277,29 @@ export async function findExactCode(
 export async function findSectionsAtExactPaths(
   db: GraphDB,
   paths: readonly string[],
-  limit: number
+  limit: number,
+  scopedPaths: readonly RepoScopedPath[] = []
 ): Promise<SectionSearchRow[]> {
-  if (limit < 1 || paths.length === 0) return [];
+  if (limit < 1 || (paths.length === 0 && scopedPaths.length === 0)) return [];
+  const conditions: string[] = [];
+  const params: Record<string, GraphValue> = {};
+  if (paths.length > 0) {
+    conditions.push("f.path IN $paths");
+    params.paths = [...paths];
+  }
+  for (const [index, target] of scopedPaths.entries()) {
+    conditions.push(`(r.id = $scopedRepo${index} AND f.path = $scopedPath${index})`);
+    params[`scopedRepo${index}`] = target.repoId;
+    params[`scopedPath${index}`] = target.path;
+  }
   return db.query<SectionSearchRow>(
     `MATCH (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(s:Section)
-     WHERE f.path IN $paths
+     WHERE (${conditions.join(" OR ")})
        AND (f.active IS NULL OR f.active = true) AND (s.active IS NULL OR s.active = true)
      RETURN r.name AS repoName, f.path AS filePath, s.id AS sectionId, s.heading AS heading, s.level AS level, s.startLine AS startLine, s.endLine AS endLine, s.summary AS summary, s.text AS text
      ORDER BY r.name, f.path, s.startLine, s.id
      LIMIT ${limit};`,
-    { paths: [...paths] }
+    params
   );
 }
 

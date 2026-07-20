@@ -101,11 +101,18 @@ function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+function directQueryMatchPriority(candidate: FusedRetrievalCandidate): number {
+  if (candidate.kind === "file" && candidate.matchReasons.includes("exact-path")) return 0;
+  if (candidate.matchReasons.includes("exact-path") || candidate.matchReasons.includes("canonical-id")) return 1;
+  return 2;
+}
+
 function priorityOrder(
   left: { candidate: FusedRetrievalCandidate; inputIndex: number },
   right: { candidate: FusedRetrievalCandidate; inputIndex: number }
 ): number {
-  return right.candidate.routes.length - left.candidate.routes.length ||
+  return directQueryMatchPriority(left.candidate) - directQueryMatchPriority(right.candidate) ||
+    right.candidate.routes.length - left.candidate.routes.length ||
     CONFIDENCE_PRIORITY[left.candidate.confidence] - CONFIDENCE_PRIORITY[right.candidate.confidence] ||
     right.candidate.fusionScore - left.candidate.fusionScore ||
     compareText(stableCandidateKey(left.candidate), stableCandidateKey(right.candidate)) ||
