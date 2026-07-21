@@ -33,6 +33,8 @@
     "prepack": "pnpm run build:prod",
     "pretest": "pnpm run build:packages",
     "test": "tsx scripts/test.ts",
+    "test:retrieval-release": "tsx scripts/test.ts --suite retrieval-release",
+    "test:neo4j-integration": "tsx scripts/test.ts --suite neo4j-integration",
     "typecheck": "tsc --noEmit && tsc -p packages/plugin-sdk/tsconfig.json --noEmit && pnpm --filter @logiclens/plugin-sdk build && tsc -p packages/plugin-runtime/tsconfig.json --noEmit && pnpm --filter @logiclens/plugin-csharp typecheck",
     "audit:prod": "pnpm audit --prod --audit-level=high --registry=https://registry.npmjs.org"
   },

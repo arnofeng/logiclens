@@ -188,11 +188,12 @@ describe("Neo4j registration", () => {
     await (await neo4jFactory()).open({
       url: "bolt://graph.example:7687",
       username: "neo4j",
-      password: "secret"
+      password: "secret",
+      database: "logiclens-test"
     });
     expect(adapterState.neo4jOpen).toHaveBeenCalledWith(
       "bolt://graph.example:7687",
-      { username: "neo4j", password: "secret" }
+      { username: "neo4j", password: "secret", database: "logiclens-test" }
     );
   });
 });

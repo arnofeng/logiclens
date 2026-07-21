@@ -12,8 +12,10 @@ registerGraphProvider("neo4j", {
         throw new Error("Neo4j configuration requires both username and password, or neither (defaults to neo4j/neo4j).");
       }
       const credentials = hasUsername && hasPassword
-        ? { username: config.username!, password: config.password! }
-        : undefined;
+        ? { username: config.username!, password: config.password!, database: config.database }
+        : config.database
+          ? { username: "neo4j", password: "neo4j", database: config.database }
+          : undefined;
       return Neo4jGraphDB.open(url, credentials);
     }
   },

@@ -13,23 +13,24 @@ import {
 import { runWorkspaceLexicalConformance, type LexicalProviderHarness } from "./retrieval/providerConformance.js";
 import { WORKSPACE_CORPUS } from "./retrieval/workspaceCorpus.js";
 import { workspaceSpikeDocuments } from "./retrieval/workspaceLexicalSpikeFixtures.js";
+import { resolveNeo4jTestEnvironment, type Neo4jTestConfiguration } from "./helpers/neo4jTestEnvironment.js";
 
 const WORKSPACE_ID = "workspace:spike";
-const required = ["LOGICLENS_TEST_NEO4J_URL", "LOGICLENS_TEST_NEO4J_USERNAME", "LOGICLENS_TEST_NEO4J_PASSWORD"] as const;
-const missing = required.filter((name) => !process.env[name]);
+const integration = resolveNeo4jTestEnvironment();
 
 class Neo4jHarness implements LexicalProviderHarness {
   readonly provider = "neo4j-fulltext";
   private readonly suffix = crypto.randomBytes(10).toString("hex");
   private readonly label = `WorkspaceLexicalSpike${this.suffix}`;
   private readonly index = `workspace_lexical_${this.suffix}`;
-  private readonly database = process.env.LOGICLENS_TEST_NEO4J_DATABASE;
+  private readonly database: string;
   private readonly driver: Driver;
   private readonly productionStore: Neo4jWorkspaceLexicalStore;
   private nativeCalls = 0;
 
-  constructor() {
-    this.driver = neo4j.driver(process.env.LOGICLENS_TEST_NEO4J_URL!, neo4j.auth.basic(process.env.LOGICLENS_TEST_NEO4J_USERNAME!, process.env.LOGICLENS_TEST_NEO4J_PASSWORD!));
+  constructor(configuration: Neo4jTestConfiguration) {
+    this.database = configuration.database;
+    this.driver = neo4j.driver(configuration.url, neo4j.auth.basic(configuration.username, configuration.password));
     const queryAdapter = {
       query: async <T>(cypher: string, params?: Record<string, GraphValue>): Promise<T[]> => {
         const session = this.session();
@@ -44,7 +45,7 @@ class Neo4jHarness implements LexicalProviderHarness {
     this.productionStore = new Neo4jWorkspaceLexicalStore(queryAdapter, { indexName: this.index });
   }
 
-  private session(): Session { return this.driver.session(this.database ? { database: this.database } : undefined); }
+  private session(): Session { return this.driver.session({ database: this.database }); }
 
   async prepare(): Promise<void> {
     await this.driver.verifyConnectivity();
@@ -78,12 +79,8 @@ class Neo4jHarness implements LexicalProviderHarness {
 }
 
 describe("Neo4j workspace lexical conformance spike", () => {
-  const integrationName = missing.length === 0
-    ? "runs real full-text conformance with isolated cleanup"
-    : `Neo4j integration skipped: missing ${missing.join(", ")}`;
-
-  it.skipIf(missing.length > 0)(integrationName, async () => {
-    const harness = new Neo4jHarness();
+  it.skipIf(!integration.enabled)(integration.testName, async () => {
+    const harness = new Neo4jHarness(integration.requireConfiguration());
     try {
       const report = await runWorkspaceLexicalConformance(harness, WORKSPACE_CORPUS, WORKSPACE_ID);
       await harness.cleanup();

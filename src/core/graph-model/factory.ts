@@ -4,7 +4,7 @@ import type { GraphProviderCapabilities, WorkspaceLexicalStore } from "../retrie
 export type GraphProviderId = string;
 
 export interface GraphDBFactory {
-  open(config: { path?: string; url?: string; username?: string; password?: string }): Promise<GraphDB>;
+  open(config: { path?: string; url?: string; username?: string; password?: string; database?: string }): Promise<GraphDB>;
 }
 
 export interface GraphProviderRegistration {
@@ -76,7 +76,7 @@ export async function getGraphProviderRegistration(
 
 export async function createGraphDB(
   provider: GraphProviderId,
-  config: { path?: string; url?: string; username?: string; password?: string }
+  config: { path?: string; url?: string; username?: string; password?: string; database?: string }
 ): Promise<GraphDB> {
   const registration = await getGraphProviderRegistration(provider);
   return registration.factory.open(config);

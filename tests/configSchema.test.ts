@@ -65,6 +65,14 @@ describe("config schema - graph provider", () => {
     expect(result.graph.provider).toBe("custom/provider:v1");
   });
 
+  it("accepts a trimmed dedicated Neo4j database and rejects an empty name", () => {
+    const result = configSchema.parse({
+      graph: { provider: "neo4j", database: "  logiclens-test  " }
+    });
+    expect(result.graph.database).toBe("logiclens-test");
+    expect(() => configSchema.parse({ graph: { provider: "neo4j", database: "   " } })).toThrow();
+  });
+
   it.each(["", " ", "\t\r\n"])("rejects an empty or whitespace graph provider ID", (provider) => {
     expect(() => configSchema.parse({ graph: { provider } })).toThrow(
       "Provider ID must contain at least one non-whitespace character"
@@ -82,7 +90,8 @@ describe("config schema - graph provider", () => {
       path: BRAND_PATHS.graph,
       url: undefined,
       username: undefined,
-      password: undefined
+      password: undefined,
+      database: undefined
     });
   });
 });

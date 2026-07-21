@@ -74,7 +74,8 @@ export const configSchema = z.object({
     path: z.string().default(BRAND_PATHS.graph),
     url: z.string().optional(),
     username: optionalSecretString,
-    password: optionalSecretString
+    password: optionalSecretString,
+    database: z.string().trim().min(1).optional()
   }).default({ provider: "kuzu", path: BRAND_PATHS.graph }),
   retrieval: z.object({
     lexical: z.object({

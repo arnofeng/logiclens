@@ -210,7 +210,8 @@ export class AppClient {
       path: graphPath,
       url: this.config.graph.url,
       username: this.config.graph.username,
-      password: this.config.graph.password
+      password: this.config.graph.password,
+      database: this.config.graph.database
     });
     try {
       await db.initSchema(this.config.systemName);

@@ -30,6 +30,9 @@ jobs:
       - name: Type check
         run: pnpm run typecheck
 
+      - name: Lexical retrieval release gate
+        run: pnpm run test:retrieval-release
+
       - name: Test
         run: pnpm test
 
@@ -61,3 +64,46 @@ jobs:
 
       - name: Audit production dependencies
         run: pnpm run audit:prod
+
+  neo4j-integration:
+    name: Neo4j integration (optional)
+    if: ${{ vars.LOGICLENS_RUN_NEO4J_INTEGRATION == '1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      neo4j:
+        image: neo4j:5.26-community
+        env:
+          NEO4J_AUTH: neo4j/logiclens-ci-test-only
+        ports:
+          - 7687:7687
+        options: >-
+          --health-cmd "neo4j status"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      LOGICLENS_RUN_NEO4J_INTEGRATION: "1"
+      LOGICLENS_TEST_NEO4J_URL: bolt://localhost:7687
+      LOGICLENS_TEST_NEO4J_USERNAME: neo4j
+      LOGICLENS_TEST_NEO4J_PASSWORD: logiclens-ci-test-only
+      LOGICLENS_TEST_NEO4J_DATABASE: neo4j
+      LOGICLENS_TEST_NEO4J_EPHEMERAL: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Neo4j integration release gate
+        run: pnpm run test:neo4j-integration

@@ -29,7 +29,13 @@ export async function qualityCommand(
   }
 
   const config = await loadConfig(cwd);
-  const db = await createGraphDB(config.graph.provider, { path: path.resolve(cwd, config.graph.path), url: config.graph.url, username: config.graph.username, password: config.graph.password });
+  const db = await createGraphDB(config.graph.provider, {
+    path: path.resolve(cwd, config.graph.path),
+    url: config.graph.url,
+    username: config.graph.username,
+    password: config.graph.password,
+    database: config.graph.database
+  });
   try {
     await db.initSchema(config.systemName);
     
