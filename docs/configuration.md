@@ -1,25 +1,92 @@
 # Configuration Guide
 
-This document describes all available configuration options in LogicLens. 
+LogicLens reads `.logiclens/config.yaml`. One LogicLens workspace corresponds to one configuration and its `repos` collection. `systemName` identifies the logical workspace; all configured repositories share one graph provider and one workspace-wide lexical retrieval scope. Retrieval evidence retains its repository, path, and render reference so callers can locate the original source.
 
-LogicLens uses sensible defaults for all settings. You do not need to specify most of these options in `.logiclens/config.yaml` unless you want to customize the behavior of the system.
+Configuration loading replaces `${ENV_VAR}` placeholders with environment-variable values before validation. Use placeholders for credentials instead of committing secrets.
 
-## Full Reference Configuration
+## Kuzu local profile
 
-Below is a complete configuration file showing all supported properties and their default values:
+Kuzu is the default local graph provider. Its graph and native workspace lexical index use local storage and need no external service or API key.
 
 ```yaml
-systemName: default-system
+systemName: commerce-workspace
 
 repos:
-  - name: service-a
-    path: ../service-a
-  - name: service-b
-    path: ../service-b
+  - name: orders
+    path: ../orders
+  - name: payments
+    path: ../payments
 
 graph:
   provider: kuzu
   path: .logiclens/graph
+
+retrieval:
+  lexical:
+    provider: auto
+    scope: workspace
+
+embedding:
+  provider: off
+  level: off
+
+indexing:
+  llmSummaryLevel: off
+```
+
+## Neo4j cloud profile
+
+Neo4j can host both the workspace graph and its native lexical index. Supply a dedicated database and inject credentials through the environment:
+
+```yaml
+systemName: commerce-workspace
+
+repos:
+  - name: orders
+    path: ../orders
+  - name: payments
+    path: ../payments
+
+graph:
+  provider: neo4j
+  url: ${NEO4J_URL}
+  username: ${NEO4J_USERNAME}
+  password: ${NEO4J_PASSWORD}
+  database: ${NEO4J_DATABASE}
+
+retrieval:
+  lexical:
+    provider: auto
+    scope: workspace
+```
+
+The `LOGICLENS_TEST_NEO4J_*` names used by repository tests are CI/test controls, not production credential conventions.
+
+## Workspace retrieval
+
+`retrieval.lexical.provider` defaults to `auto`, and `retrieval.lexical.scope` currently accepts only `workspace`. `auto` selects the native lexical capability declared by the configured graph provider. A retrieval performs one global top-k lexical query against the unified workspace index; it does not loop over repositories or maintain per-repository full-text indexes.
+
+The lexical provider gate checks the provider capability and version, projection schema, tokenizer version, and index health. A mismatch is reported as an unavailable or unhealthy lexical route. Exact, contract, entity, graph, and any user-enabled semantic routes can still run, so lexical provider unavailability does not necessarily fail the overall retrieval.
+
+Full indexing, changed-only indexing, and watch updates all maintain the lexical projection. Queries load only active workspace evidence. Graph and lexical writes share transaction/recovery boundaries, and committed lexical writes must be synchronously visible for both Kuzu and Neo4j.
+
+## Full reference configuration
+
+The following example shows the main supported settings and defaults. Provider credentials and API keys are intentionally omitted.
+
+```yaml
+systemName: default-system
+
+repos: []
+
+graph:
+  provider: kuzu
+  path: .logiclens/graph
+
+retrieval:
+  lexical:
+    provider: auto
+    scope: workspace
 
 llm:
   provider: openai
@@ -36,8 +103,7 @@ llm:
     minDelayMs: 0
 
 embedding:
-  provider: openai
-  model: text-embedding-3-small
+  provider: off
   level: off
   batchSize: 64
   concurrency: 2
@@ -74,47 +140,67 @@ indexing:
   llmSummaryLevel: off
 ```
 
-## Options Reference
+## Options reference
 
-### Global Settings
+### Workspace and repositories
 
-- `systemName`: The unique name for this logiclens project system (defaults to `"default-system"`).
-- `repos`: List of repositories to index and analyze. Each repo contains a `name` and relative/absolute `path`.
+- `systemName`: Logical workspace identifier; defaults to `default-system`.
+- `repos`: Repositories indexed into the shared workspace. Each entry has a `name` and `path`.
 
-### Graph Database (`graph`)
+### Graph database (`graph`)
 
-- `graph.provider`: Currently only supports `"kuzu"`.
-- `graph.path`: The directory path where the Kuzu graph database is persisted.
+- `graph.provider`: Registered graph provider ID. Built-in profiles are `kuzu` and `neo4j`; the default is `kuzu`.
+- `graph.path`: Kuzu database directory; defaults to `.logiclens/graph`.
+- `graph.url`, `graph.username`, `graph.password`, `graph.database`: Neo4j connection and database settings.
 
-### Large Language Model (`llm`)
+### Retrieval (`retrieval.lexical`)
 
-- `llm.provider`: The provider for LLM requests (defaults to `"openai"`).
-- `llm.model`: The specific LLM model to use (defaults to `"gpt-4.1-mini"`).
-- `llm.maxSourceCharsPerNode`: Maximum source code character count per graph node.
-- `llm.retry`: Network request retry policy configuration (exponential backoff parameters).
+- `provider`: Defaults to `auto`; currently resolves the graph provider's native lexical capability.
+- `scope`: Must be `workspace`.
 
-### Code Embedding (`embedding`)
+Companion lexical providers and per-repository lexical indexes are not currently implemented.
 
-- `embedding.provider`: The provider for embedding requests.
-- `embedding.model`: The specific embedding model.
-- `embedding.level`: Controls the scope of embedding generation (`off`, `repo`, `docs`, `file`, `node`, `all`).
+### LLM and embeddings
 
-### Semantic Index (`semantic`)
+- `llm.provider`, `llm.model`, and `llm.apiKey`: Answer-generation provider configuration.
+- `embedding.provider`, `embedding.model`, `embedding.apiKey`, and `embedding.level`: Semantic embedding configuration. `level` accepts `off`, `repo`, `docs`, `file`, `node`, or `all`.
+- `indexing.llmSummaryLevel`: Controls indexing summaries; accepts `off`, `repo`, `file`, or `node`.
 
-- `semantic.provider`: The storage provider for the semantic vector index (`json` or `chroma`).
-- `semantic.jsonPath`: The path to store the index when using the local JSON-based vector index.
+For a fully offline run, use the local Kuzu graph and local JSON semantic storage, disable embeddings and indexing summaries, and do not configure an LLM key:
 
-### MCP Settings (`mcp`)
-- `mcp.logCalls`: Logs MCP tool invocations.
+```yaml
+graph:
+  provider: kuzu
+  path: .logiclens/graph
 
-### Plugins (`plugins`)
+embedding:
+  provider: off
+  level: off
 
-- `plugins.failFast`: When `true`, abort discovery/loading on the first plugin error. The default `false` logs a warning and continues.
-- `plugins.enabled`: Compatibility setting for existing configurations. Install plugins with `logiclens plugin install <source>` or `--global`.
+semantic:
+  provider: json
+  jsonPath: .logiclens/semantic-index.json
 
-Plugin language detection automatically includes the extensions, markers, and globs declared by installed plugins. Root `exclude` rules and `.gitignore` still apply. See the [Plugin Guide](plugins.md) and [Plugin SDK Reference](plugin-sdk.md).
+indexing:
+  llmSummaryLevel: off
+```
 
-### Indexing (`indexing`)
+Also omit `llm.apiKey`, ensure `OPENAI_API_KEY` is unset in the process environment, and do not configure remote LLM or embedding endpoints. `ask` reads either `llm.apiKey` or `OPENAI_API_KEY`; if either is present, it can send selected evidence to that LLM endpoint. Without an LLM key, `ask` can still produce a deterministic citation fallback when reliable evidence exists. If no reliable evidence is available, it returns `no_reliable_evidence`.
 
-- `indexing.concurrency`: Concurrency for file scanner and indexing phases.
-- `indexing.summarizeChangedOnly`: Only request LLM summaries for modified/new files.
+Only explicitly configured remote Neo4j, LLM, embedding, or Chroma services cause the corresponding network access. Therefore LogicLens is local-first, but not every possible configuration is offline.
+
+### Semantic index (`semantic`)
+
+- `semantic.provider`: `json` or `chroma`; local JSON storage is the default.
+- `semantic.jsonPath`: Local JSON index path.
+- `semantic.chroma`: Chroma mode, URL, collection, and optional authentication/database settings.
+
+### MCP, plugins, and indexing
+
+- `mcp.logCalls`: Log MCP invocations; defaults to `false`.
+- `plugins.enabled`: Compatibility setting for existing configurations.
+- `plugins.failFast`: Stop on the first plugin discovery/loading error when `true`.
+- `indexing.concurrency`, `indexing.maxFilesPerRun`, and `indexing.batchSize`: Indexing controls.
+- `indexing.summarizeChangedOnly`: Request summaries only for new or changed files.
+
+See the [Plugin Guide](plugins.md) and [Plugin SDK Reference](plugin-sdk.md) for plugin configuration.

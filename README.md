@@ -204,12 +204,14 @@ You can use the interactive installer to automatically register the LogicLens MC
 | Tool Name | Description |
 |---|---|
 | `logiclens_get_stats` | Get summary statistics of the graph database (repository count, file count, code node count, call count, etc.) |
-| `logiclens_get_watch_status` | Get file watcher and startup catch-up indexing status |
+| `logiclens_get_watch_status` | Get graph/index freshness and a safely trimmed lexical-provider readiness summary; pass `refresh: true` to rerun the provider health check |
 | `logiclens_list_dependencies` | List cross-repository dependencies with evidence (filterable by strength/type) |
 | `logiclens_list_contracts` | List identified contracts with producer/consumer/shared counts (filterable by kind, repo, direction) |
 | `logiclens_trace` | Multi-hop semantic trace — find the producers, consumers, and request/response/payload schemas connected to a contract |
 | `logiclens_impact_analysis` | Evaluate downstream impact scope when modifying code symbols or contracts |
-| `logiclens_ask_question` | RAG-based Q&A, retrieving structured context from code symbols, documentation, contracts, dependencies, etc. |
+| `logiclens_ask_question` | Return structured workspace retrieval (`outcome`, `selectedEvidence`, and `diagnostics`); it does not generate LLM answer text |
+
+`logiclens_ask_question` accepts `question` plus the same retrieval controls as the SDK: `lexical` and `semantic` booleans, `topK` (`1..100`), `graphHops` (`0..5`), and `contextBudget` (`256..65536`). Its `selectedEvidence` exposes safe canonical/document identity, repository, path/line, confidence, match reasons, and render reference. Within ordinary Ask diagnostics, `providers.lexical` exposes only `status`; the response still includes routes, timings, queries, compatibility, source loading, and semantic provider diagnostics. Use `logiclens_get_watch_status` for the full safely trimmed lexical provider gate summary. Graph/index freshness and lexical provider readiness are independent states. LogicLens exposes neither a raw graph-query tool nor internal database query details.
 
 ### MCP Configuration Example
 
@@ -228,7 +230,7 @@ You can use the interactive installer to automatically register the LogicLens MC
 
 ## 🧠 SDK (Programmatic Access)
 
-LogicLens provides a Node.js SDK for building automation systems and AI toolchains.
+LogicLens provides a Node.js SDK for building automation systems and AI toolchains. `retrieve()` and `ask()` share the same retrieval pipeline.
 
 ```ts
 import { createClient } from "logiclens";
@@ -247,8 +249,20 @@ try {
   const contractsForRepo = await client.contracts({ repo: "order-service", direction: "outgoing" });
   const trace = await client.trace("http GET /api/order/:id");
   const impact = await client.impact("OrderCreatedEvent");
+  const retrieval = await client.retrieve("Where is order validation implemented?", {
+    lexical: true,
+    semantic: false,
+    topK: 20,
+    graphHops: 1,
+    contextBudget: 16_000,
+  });
+  const answer = await client.ask("Where is order validation implemented?", {
+    lexical: true,
+    semantic: true,
+  });
+  const lexicalStatus = await client.getLexicalProviderStatus({ refresh: true });
 
-  console.log({ stats, dependencies, contracts, trace, impact });
+  console.log({ stats, dependencies, contracts, trace, impact, retrieval, answer, lexicalStatus });
 } finally {
   await client.close();
 }
@@ -269,12 +283,51 @@ try {
 | `client.contracts(options)` | List identified contracts (filterable by kind, repo, direction). |
 | `client.trace(target)` | Multi-hop semantic trace of a contract spec. |
 | `client.impact(target)` | Analyze downstream impact scope. |
-| `client.retrieve(question)` | Return structured retrieval context without generating an answer. |
-| `client.ask(question)` | Generate an answer based on retrieval context. |
+| `client.retrieve(question, options)` | Return a structured `RetrievalResult` without generating an answer. |
+| `client.ask(question, options)` | Generate an answer or deterministic citation fallback from the same retrieval pipeline. |
+| `client.getLexicalProviderStatus(options)` | Return a safely trimmed lexical provider gate summary; `{ refresh: true }` reruns health checks instead of using the cache. |
 | `client.watch(options)` | Enable automatic changed-file indexing. |
 | `client.unwatch()` | Stop the watcher. |
 | `client.getWatchStatus()` | Check watcher, catch-up, pending files, and queue status. |
 | `client.close()` | Close watcher, queue, and graph database resources. |
+
+`RetrieveOptions` and `AskOptions` have the same fields and validation:
+
+| Option | Default | Range / meaning |
+|---|---:|---|
+| `lexical?: boolean` | `true` | Enable workspace lexical retrieval. |
+| `semantic?: boolean` | `true` | Enable configured semantic retrieval. |
+| `topK?: number` | `20` | Integer `1..100`. |
+| `graphHops?: number` | `1` | Integer `0..5`. |
+| `contextBudget?: number` | `16000` | Integer `256..65536` characters. |
+
+`RetrievalResult` contains `outcome`, fused and selected candidates, loaded evidence, selection and source-loading rejections, and diagnostics. `ask()` uses that same result: with an LLM key it generates a grounded answer; without a key it returns a deterministic `[C1]`-style citation fallback; without reliable evidence it returns `no_reliable_evidence`. The provider status API returns only a public gate summary. Do not depend on internal stores, Cypher, Kuzu SQL, `sourceHash`, `batchId`, or other storage details.
+
+### Retrieval diagnostics
+
+The `RetrievalDiagnostics` object contains the stable public layers `routes`, `timings`, `queries`, `providers`, `sourceLoading`, and `compatibility`. The retrieval response carries `outcome` as a separate top-level field. Every route reports `status`, `executed`, and `queryCount`. Timings cover planning, lexical provider search, fusion, selection, source loading, and total execution (alongside other route stages). A successful workspace lexical route performs one native lexical query per retrieval.
+
+`outcome` is `succeeded`, `degraded`, `no_results`, or `failed`. Unavailable and unhealthy routes are represented structurally and can coexist with evidence from other routes. Diagnostics are deliberately trimmed: they are not a container for full source text, secrets, raw database exceptions, or untrimmed provider metadata.
+
+### Retrieval performance measurement
+
+Run the repository's fixed quality corpus against a local Kuzu fixture with networking disabled:
+
+```bash
+pnpm exec tsx scripts/retrieval-benchmark.ts
+```
+
+The benchmark warms up once, measures three times, and writes one line of JSON. It reports provider search, fusion, selection, source loading, end-to-end retrieval, full-rebuild indexing, and changed-only indexing. P50/P95 use the nearest-rank method. The script reports measurements but does not itself run a Vitest threshold assertion. When publishing measurements, record the machine, operating system, Node version, provider, workspace/document size, and warm/cold cache conditions.
+
+The commands have distinct roles:
+
+```bash
+pnpm run test:retrieval-release # lexical contracts, quality, Kuzu lifecycle, and Kuzu E2E
+pnpm test                       # full suite; includes the fixed-fixture P95 assertion
+pnpm run test:neo4j-integration # optional; requires explicit test-environment configuration
+```
+
+`tests/retrievalBenchmark.test.ts`, collected by the full `pnpm test` command, enforces warmed end-to-end P95 of at most 500 ms for the fixed fixture. This is a regression gate, not a general promise for every machine or production workspace. The Neo4j gate is opt-in. Its CI test credential variables must not be reused as production database configuration.
 
 ---
 
@@ -320,9 +373,9 @@ For the complete list of supported parameters and their default values, see the 
 
 ### Cost and Privacy Notes
 
-Indexing, graph writes, `stats`, `deps`, `contracts`, `trace`, and `impact` are all local graph operations by default, not requiring an LLM provider.
+For a fully offline run, use the local Kuzu graph and local JSON semantic storage, set `embedding.provider: off`, `embedding.level: off`, and `indexing.llmSummaryLevel: off`, omit `llm.apiKey`, ensure `OPENAI_API_KEY` is unset, and do not configure remote LLM or embedding endpoints. Without an LLM key, `ask` still returns a citation fallback when reliable evidence exists.
 
-`ask` performs graph retrieval first, then calls the configured LLM to generate an answer. Optional LLM summaries and embeddings may also send selected source code or document text to your configured provider. If you want the indexing process to be completely local, keep `embedding.level: off` and `indexing.llmSummaryLevel: off`.
+Only explicitly configured remote Neo4j, LLM, embedding, or Chroma services produce the corresponding network access. LogicLens is local-first, but not every configuration is necessarily offline.
 
 ---
 

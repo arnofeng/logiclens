@@ -389,7 +389,7 @@ impact output. Explicit contract targets such as `schema Order` or
 
 ### `logiclens ask <question>`
 
-Answer natural language questions using an LLM based on graph data. This command first retrieves relevant context from the graph, then calls the configured LLM to generate an answer.
+Answer natural-language questions using the workspace retrieval pipeline. The command keeps its existing syntax and uses the default retrieval options; advanced route and budget options are available through the SDK and MCP interfaces.
 
 ```bash
 logiclens ask "Which services depend on OrderService?"
@@ -402,10 +402,11 @@ logiclens ask "What modules would be affected by modifying PaymentEvent?"
 |-----------|----------|-------------|
 | `<question>` | Yes | Natural language question |
 
-> [!NOTE]
-> This command requires LLM configuration (see the `llm` section in the [Configuration Guide](./configuration.md)). All other commands run locally and do not depend on LLM.
->
-> If LLM is not configured (missing `apiKey` or `OPENAI_API_KEY` environment variable not set), the command will not error out. Instead, it returns the raw structured results from graph retrieval, including: question type, matching code nodes, matching document segments, entity/contract context, repository dependencies, semantic match results, and call edge information.
+By default, retrieval fuses exact, contract, entity, workspace lexical, graph, and optional semantic routes. Workspace lexical retrieval issues one global top-k query against the unified workspace index rather than searching each repository in a loop.
+
+When an LLM key is configured, `ask` generates an answer grounded in the selected evidence. Without a key, reliable evidence produces a deterministic citation fallback: citations use markers such as `[C1]` and include a locatable repository and path. The fallback is a concise citation view, not a dump of every raw retrieval result. If no reliable evidence can be loaded, the command returns the stable string `no_reliable_evidence`.
+
+An unavailable or unhealthy provider is reported by the affected route and does not by itself make the whole Ask operation fail; other routes can still supply reliable evidence. With an LLM key, the CLI prints only the generated answer. The no-key citation fallback includes context-budget and concise diagnostics lines; refusal prints only `no_reliable_evidence`. The CLI does not expose complete internal lexical metadata or full structured diagnostics. See the [Configuration Guide](./configuration.md) for provider and local-operation settings.
 
 ---
 

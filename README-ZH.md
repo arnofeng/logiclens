@@ -204,12 +204,14 @@ logiclens install
 | 工具名称 | 功能说明 |
 |---|---|
 | `logiclens_get_stats` | 获取图数据库的汇总统计（仓库数、文件数、代码节点数、调用数等） |
-| `logiclens_get_watch_status` | 获取文件监听器和启动追赶索引的状态 |
+| `logiclens_get_watch_status` | 获取 graph/index freshness 与安全裁剪后的 lexical provider readiness 摘要；传入 `refresh: true` 可重新执行 provider health 检查 |
 | `logiclens_list_dependencies` | 列出跨仓库依赖及其证据（支持按 strength/type 过滤） |
 | `logiclens_list_contracts` | 列出已识别的契约及其生产者/消费者/共享计数（支持按 kind、repo、direction 过滤） |
 | `logiclens_trace` | 多跳语义追踪 — 查找契约关联的生产者、消费者和请求/响应/负载 schema |
 | `logiclens_impact_analysis` | 评估修改代码符号或契约的下游影响范围 |
-| `logiclens_ask_question` | 基于 RAG 的问答，检索代码符号、文档、契约、依赖等结构化上下文 |
+| `logiclens_ask_question` | 返回结构化 workspace retrieval（`outcome`、`selectedEvidence` 和 `diagnostics`）；它不会生成 LLM 回答文本 |
+
+`logiclens_ask_question` 接受 `question`，以及与 SDK 相同的检索控制项：布尔值 `lexical`、`semantic`，`topK`（`1..100`）、`graphHops`（`0..5`）和 `contextBudget`（`256..65536`）。`selectedEvidence` 安全公开 canonical/document identity、repository、path/line、confidence、match reasons 和 render reference。在普通 Ask diagnostics 中，只有 `providers.lexical` 被裁剪为仅公开 `status`；响应仍包含 routes、timings、queries、compatibility、source loading 和 semantic provider diagnostics。完整且安全裁剪的 lexical provider gate 摘要请通过 `logiclens_get_watch_status` 获取。graph/index freshness 与 lexical provider readiness 是两个独立状态。LogicLens 不提供 raw graph query 工具，也不公开内部数据库查询细节。
 
 ### MCP 配置示例
 
@@ -228,7 +230,7 @@ logiclens install
 
 ## 🧠 SDK（编程方式访问）
 
-LogicLens 提供 Node.js SDK，用于构建自动化系统与 AI 工具链。
+LogicLens 提供 Node.js SDK，用于构建自动化系统与 AI 工具链。`retrieve()` 和 `ask()` 使用同一条 retrieval pipeline。
 
 ```ts
 import { createClient } from "logiclens";
@@ -247,8 +249,20 @@ try {
   const contractsForRepo = await client.contracts({ repo: "order-service", direction: "outgoing" });
   const trace = await client.trace("http GET /api/order/:id");
   const impact = await client.impact("OrderCreatedEvent");
+  const retrieval = await client.retrieve("订单校验在哪里实现？", {
+    lexical: true,
+    semantic: false,
+    topK: 20,
+    graphHops: 1,
+    contextBudget: 16_000,
+  });
+  const answer = await client.ask("订单校验在哪里实现？", {
+    lexical: true,
+    semantic: true,
+  });
+  const lexicalStatus = await client.getLexicalProviderStatus({ refresh: true });
 
-  console.log({ stats, dependencies, contracts, trace, impact });
+  console.log({ stats, dependencies, contracts, trace, impact, retrieval, answer, lexicalStatus });
 } finally {
   await client.close();
 }
@@ -269,12 +283,51 @@ try {
 | `client.contracts(options)` | 列出识别到的契约（支持按 kind、repo、direction 过滤）。 |
 | `client.trace(target)` | 契约的多跳语义追踪。 |
 | `client.impact(target)` | 分析下游影响面。 |
-| `client.retrieve(question)` | 返回结构化检索上下文，不生成答案。 |
-| `client.ask(question)` | 基于检索上下文生成答案。 |
+| `client.retrieve(question, options)` | 返回结构化 `RetrievalResult`，不生成答案。 |
+| `client.ask(question, options)` | 基于同一 retrieval pipeline 生成回答或确定性的 citation fallback。 |
+| `client.getLexicalProviderStatus(options)` | 返回安全裁剪后的 lexical provider gate 摘要；`{ refresh: true }` 会重新检查 health，而非使用缓存。 |
 | `client.watch(options)` | 开启自动变更文件索引。 |
 | `client.unwatch()` | 停止 watcher。 |
 | `client.getWatchStatus()` | 查看 watcher、catch-up、pending files 和队列状态。 |
 | `client.close()` | 关闭 watcher、队列和图数据库资源。 |
+
+`RetrieveOptions` 与 `AskOptions` 使用相同字段和校验：
+
+| 选项 | 默认值 | 范围 / 含义 |
+|---|---:|---|
+| `lexical?: boolean` | `true` | 启用 workspace lexical retrieval。 |
+| `semantic?: boolean` | `true` | 启用已配置的 semantic retrieval。 |
+| `topK?: number` | `20` | 整数 `1..100`。 |
+| `graphHops?: number` | `1` | 整数 `0..5`。 |
+| `contextBudget?: number` | `16000` | 整数 `256..65536` 个字符。 |
+
+`RetrievalResult` 包含 `outcome`、fused/selected candidates、loaded evidence、selection/source-loading rejections 和 diagnostics。`ask()` 使用同一结果：配置 LLM key 时生成有证据约束的回答；无 key 时返回确定性的 `[C1]` 风格 citation fallback；没有可靠证据时返回 `no_reliable_evidence`。provider status API 只返回公共 gate 摘要。不要依赖内部 store、Cypher、Kuzu SQL、`sourceHash`、`batchId` 或其他存储实现细节。
+
+### Retrieval diagnostics
+
+`RetrievalDiagnostics` 对象包含稳定的公共层次 `routes`、`timings`、`queries`、`providers`、`sourceLoading` 和 `compatibility`；retrieval response 的 `outcome` 是与 diagnostics 分开的顶层字段。每条 route 都报告 `status`、`executed` 和 `queryCount`。timings 覆盖 planning、lexical provider search、fusion、selection、source loading 和 total（同时包含其他 route stage）。成功的 workspace lexical route 每次 retrieval 只执行一次 native lexical query。
+
+`outcome` 可能是 `succeeded`、`degraded`、`no_results` 或 `failed`。unavailable/unhealthy route 通过结构化字段表达，并可与其他 route 返回的证据共存。diagnostics 会有意裁剪：不包含完整源码、秘密、底层数据库异常或未裁剪的 provider metadata。
+
+### Retrieval 性能测量
+
+使用固定 quality corpus 和本地 Kuzu fixture 运行仓库 benchmark；执行期间禁止网络访问：
+
+```bash
+pnpm exec tsx scripts/retrieval-benchmark.ts
+```
+
+benchmark 默认 warmup 1 次、measured 3 次，并输出单行 JSON。报告包含 provider search、fusion、selection、source loading、end-to-end retrieval、full-rebuild indexing 和 changed-only indexing。P50/P95 使用 nearest-rank 算法。该脚本只输出测量报告，本身不执行 Vitest 阈值断言。发布实际测量结果时，应注明机器、操作系统、Node 版本、provider、workspace/document 规模以及冷热缓存条件。
+
+以下命令职责不同：
+
+```bash
+pnpm run test:retrieval-release # lexical contracts、quality、Kuzu lifecycle 与 Kuzu E2E
+pnpm test                       # 完整测试；包含固定 fixture 的 P95 断言
+pnpm run test:neo4j-integration # 可选；需要显式测试环境配置
+```
+
+完整 `pnpm test` 会收集 `tests/retrievalBenchmark.test.ts`，并执行固定 fixture 预热后 end-to-end P95 不高于 500 ms 的断言。这是回归门禁，不是对所有机器或真实 workspace 的普遍性能承诺。Neo4j 门禁需要显式启用；其 CI 测试凭据变量不应复用为生产数据库配置。
 
 ---
 
@@ -320,9 +373,9 @@ LogicLens 支持针对性能调优、索引设置、自定义 LLM 重试、以�
 
 ### 成本和隐私说明
 
-索引、图写入、`stats`、`deps`、`contracts`、`trace`、`impact` 和原始图查询默认都是本地图操作，不需要 LLM provider。
+若要完全离线运行，请使用本地 Kuzu graph 和本地 JSON semantic storage，设置 `embedding.provider: off`、`embedding.level: off` 和 `indexing.llmSummaryLevel: off`，省略 `llm.apiKey`、确保进程环境中未设置 `OPENAI_API_KEY`，并且不要配置远程 LLM 或 embedding endpoint。没有 LLM key 时，只要存在可靠证据，`ask` 仍会返回 citation fallback。
 
-`ask` 会先做图检索，再调用配置的 LLM 生成答案。可选的 LLM 摘要和 embedding 也可能把选中的源码或文档文本发送给你配置的 provider。如果你希望索引过程完全本地化，请保持 `embedding.level: off` 和 `indexing.llmSummaryLevel: off`。
+只有显式配置的远程 Neo4j、LLM、embedding 或 Chroma 服务才会产生对应网络访问。LogicLens 是 local-first，但并非所有配置组合都必然离线。
 
 ---
 
