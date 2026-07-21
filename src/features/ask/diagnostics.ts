@@ -98,6 +98,7 @@ export function safeLexicalProviderDiagnostic(
   health?: LexicalIndexHealth,
   gate?: LexicalProviderGateResult,
 ): RetrievalDiagnostics["providers"]["lexical"] {
+  const diagnosticHealth = health ?? gate?.health;
   return Object.freeze({
     status: route.status,
     ...(gate ? {
@@ -107,12 +108,12 @@ export function safeLexicalProviderDiagnostic(
       reasonCodes: Object.freeze([...gate.reasonCodes]),
       indexStatus: gate.health?.status,
     } : {}),
-    ...(health
+    ...(diagnosticHealth
       ? {
-          providerVersion: health.providerVersion,
-          projectionSchemaVersion: health.projectionSchemaVersion,
-          tokenizerVersion: health.tokenizerVersion,
-          indexStatus: health.status,
+          providerVersion: diagnosticHealth.providerVersion,
+          projectionSchemaVersion: diagnosticHealth.projectionSchemaVersion,
+          tokenizerVersion: diagnosticHealth.tokenizerVersion,
+          indexStatus: diagnosticHealth.status,
         }
       : {}),
   });

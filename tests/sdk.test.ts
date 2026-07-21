@@ -352,6 +352,31 @@ describe("SDK lexical provider health cache", () => {
     await concurrent.close();
   });
 
+  it("keeps cached gate versions in diagnostics when lexical is disabled or skipped by the planner", async () => {
+    const health = vi.fn().mockResolvedValue(healthy());
+    const client = await clientWithHealth(health);
+
+    const disabled = await client.retrieve("orders", { lexical: false });
+    const plannerSkipped = await client.retrieve("");
+
+    for (const result of [disabled, plannerSkipped]) {
+      expect(result.diagnostics.routes.lexical).toMatchObject({
+        status: "disabled", queryCount: 0
+      });
+      expect(result.diagnostics.providers.lexical).toMatchObject({
+        status: "disabled",
+        configuredProvider: "auto",
+        gateStatus: "ready",
+        providerVersion: "test-1",
+        projectionSchemaVersion: "1",
+        tokenizerVersion: "1",
+        indexStatus: "healthy"
+      });
+    }
+    expect(health).toHaveBeenCalledTimes(1);
+    await client.close();
+  });
+
   it("invalidates after indexing and supports explicit refresh in both health directions", async () => {
     const health = vi.fn()
       .mockResolvedValueOnce(unhealthy())
