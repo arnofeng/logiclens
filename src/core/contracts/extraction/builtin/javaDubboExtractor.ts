@@ -6,7 +6,7 @@ import { confidenceFor } from "../../../../shared/confidence.js";
 import { codeId } from "../../../../shared/path.js";
 import { hashText } from "../../../../shared/hash.js";
 import { parsedCodeFiles, javaPackageFromPath, pushDubboContract } from "./shared.js";
-import { namedChildren, parseSourceAst, walkSourceAst } from "./sourceAstUtils.js";
+import { indexedSourceAstNodes, namedChildren, parseSourceAst } from "./sourceAstUtils.js";
 
 type JavaImportMap = Map<string, string>;
 
@@ -172,12 +172,11 @@ export const javaDubboExtractor = compatExtractor({
       const imports = javaImports(ast.source);
       const packageName = javaPackage(ast.source, file);
 
-      walkSourceAst(ast.tree.rootNode, (node) => {
-        if (node.type !== "class_declaration") return;
-        if (!hasAnyAnnotation(node, DUBBO_SERVICE_ANNOTATIONS, imports)) return;
+      for (const node of indexedSourceAstNodes(ast, ["class_declaration"])) {
+        if (!hasAnyAnnotation(node, DUBBO_SERVICE_ANNOTATIONS, imports)) continue;
         const implemented = selectDubboInterface(implementedInterfaces(node));
         const interfaceName = resolveJavaType(implemented, imports, packageName);
-        if (!interfaceName) return;
+        if (!interfaceName) continue;
         const group = annotationValue(node, "DubboService", "group") ?? annotationValue(node, "Service", "group");
         const version = annotationValue(node, "DubboService", "version") ?? annotationValue(node, "Service", "version");
 
@@ -204,30 +203,29 @@ export const javaDubboExtractor = compatExtractor({
             framework: "dubbo-java"
           });
         }
-      });
+      }
 
       const referenceFields = new Map<string, { interfaceName: string; group?: string; version?: string }>();
-      walkSourceAst(ast.tree.rootNode, (node) => {
-        if (node.type !== "field_declaration") return;
-        if (!hasAnyAnnotation(node, DUBBO_REFERENCE_ANNOTATIONS, imports)) return;
+      for (const node of indexedSourceAstNodes(ast, ["field_declaration"])) {
+        if (!hasAnyAnnotation(node, DUBBO_REFERENCE_ANNOTATIONS, imports)) continue;
         const typeNode = node.namedChildren.find((child) => /type/.test(child.type));
         const declarator = node.namedChildren.find((child) => child.type === "variable_declarator");
         const fieldName = declarator?.childForFieldName("name")?.text;
         const interfaceName = resolveJavaType(typeNode?.text, imports, packageName);
-        if (!fieldName || !interfaceName) return;
+        if (!fieldName || !interfaceName) continue;
         const group = annotationValue(node, "DubboReference", "group") ?? annotationValue(node, "Reference", "group");
         const version = annotationValue(node, "DubboReference", "version") ?? annotationValue(node, "Reference", "version");
         referenceFields.set(fieldName, { interfaceName, group, version });
-      });
+      }
 
       const seen = new Set<string>();
-      walkSourceAst(ast.tree.rootNode, (node) => {
+      for (const node of indexedSourceAstNodes(ast, ["method_invocation"])) {
         const call = javaMethodCall(node);
-        if (!call?.object || !call.method) return;
+        if (!call?.object || !call.method) continue;
         const reference = referenceFields.get(referenceReceiverName(call.object));
-        if (!reference) return;
+        if (!reference) continue;
         const fullName = `${reference.interfaceName}#${call.method}`;
-        if (seen.has(fullName)) return;
+        if (seen.has(fullName)) continue;
         seen.add(fullName);
         const symbol = makeSymbol(file, node, "method", call.method, `${reference.interfaceName}.${call.method}`);
         pushDubboContract({
@@ -247,7 +245,7 @@ export const javaDubboExtractor = compatExtractor({
           config: "annotation",
           framework: "dubbo-java"
         });
-      });
+      }
     }
   }
 });

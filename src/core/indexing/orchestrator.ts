@@ -113,11 +113,12 @@ async function runGraphPipeline(input: {
   stageLabel?: string;
   repoName?: string;
   reconcileLexicalRepos?: boolean;
+  lexicalReconcileReason?: string;
   activeFileIdsByRepo?: ReadonlyMap<string, readonly string[]>;
   lexicalReconcileOnly?: boolean;
   selection: ReturnType<typeof selectGraphWriter>;
 }): Promise<GraphPipelineResult> {
-  const { db, ctx, batchId, indexedAt, repos, parsedFiles, label, stageLabel, repoName, selection, reconcileLexicalRepos, activeFileIdsByRepo, lexicalReconcileOnly = false } = input;
+  const { db, ctx, batchId, indexedAt, repos, parsedFiles, label, stageLabel, repoName, selection, reconcileLexicalRepos, lexicalReconcileReason, activeFileIdsByRepo, lexicalReconcileOnly = false } = input;
   const logPrefix = stageLabel ?? (repoName ? undefined : "");
   // Keep fact construction and graph writes as one reusable phase bundle so
   // full, batched, and per-repo paths share the same writer semantics.
@@ -182,6 +183,7 @@ async function runGraphPipeline(input: {
           repoName,
           repoId: repos.length === 1 ? repos[0]?.id : undefined,
           reconcileRepos: reconcileLexicalRepos,
+          reconcileReason: lexicalReconcileReason,
           activeFileIdsByRepo
         });
         log(ctx)(`${lexicalWriteLabel} complete: documents=${lexicalWrite.documentCount} indexSizeBytes=${lexicalWrite.providerHealth.metrics.indexSizeBytes} status=${lexicalWrite.indexStatus} duration=${(lexicalWrite.durationMs / 1000).toFixed(2)}s`);
@@ -198,6 +200,30 @@ export type GraphPipelineResult = {
   lexicalProjection: LexicalProjectionResult;
   lexicalWrite: LexicalWriteResult;
 };
+
+export type FullCopyLexicalReconcileDecision = {
+  reconcile: boolean;
+  reason: "non-kuzu-provider" | "health-check-failed" | "invalid-document-count" | "unreliable-stats" | "active-documents" | "empty-workspace";
+};
+
+export async function resolveFullCopyLexicalReconcile(ctx: IndexRunContext): Promise<FullCopyLexicalReconcileDecision> {
+  if (ctx.config.graph.provider !== "kuzu") return { reconcile: true, reason: "non-kuzu-provider" };
+  try {
+    const health = await ctx.lexicalStore.health(ctx.workspaceId);
+    const documentCount = health.metrics.documentCount;
+    if (!Number.isSafeInteger(documentCount) || documentCount < 0) {
+      return { reconcile: true, reason: "invalid-document-count" };
+    }
+    if (health.reasons.some((reason) => reason === "lexical_stats_table_missing" || reason === "lexical_stats_version_mismatch")) {
+      return { reconcile: true, reason: "unreliable-stats" };
+    }
+    return documentCount === 0
+      ? { reconcile: false, reason: "empty-workspace" }
+      : { reconcile: true, reason: "active-documents" };
+  } catch {
+    return { reconcile: true, reason: "health-check-failed" };
+  }
+}
 
 async function runSemanticPipeline(input: {
   ctx: IndexRunContext;
@@ -411,6 +437,7 @@ export async function runFullCopyBulkIndex(input: {
 
     const summaryFailures = await runSummaryPipeline({ ctx, batchId, repos, parsedFiles, label: "all repos" });
     logStage(ctx, "Scan/parse/summarize", scanStarted);
+    const lexicalReconcile = await resolveFullCopyLexicalReconcile(ctx);
     // Wrap graph writes + semantic + dependency rebuild + state commits
     // in a single transaction so the entire bulk-copy run is atomic.
     let graphPipeline: GraphPipelineResult | undefined;
@@ -428,6 +455,8 @@ export async function runFullCopyBulkIndex(input: {
         repos,
         parsedFiles,
         label: "bulk-copy",
+        reconcileLexicalRepos: lexicalReconcile.reconcile,
+        lexicalReconcileReason: lexicalReconcile.reason,
         selection: selectGraphWriter({ writeMode: ctx.writeMode, fullCopyBulk: true, provider: ctx.config.graph.provider })
       });
       semanticWarning = await runSemanticPipeline({ ctx, batchId, repos, parsedFiles, label: "all repos" });

@@ -6,7 +6,7 @@ import { confidenceFor } from "../../../../shared/confidence.js";
 import { codeId } from "../../../../shared/path.js";
 import { hashText } from "../../../../shared/hash.js";
 import { parsedCodeFiles, pushGrpcContract } from "./shared.js";
-import { namedChildren, parseSourceAst, walkSourceAst } from "./sourceAstUtils.js";
+import { indexedSourceAstNodes, namedChildren, parseSourceAst, walkSourceAst } from "./sourceAstUtils.js";
 import type { GrpcStreaming } from "../../spec.js";
 
 function upperFirst(value: string): string {
@@ -89,7 +89,7 @@ function isGrpcServerMethod(methodNode: Parser.SyntaxNode): boolean {
 /**
  * Best-effort streaming detection for an ImplBase server method. Client-/bidi-
  * streaming methods return a `StreamObserver<Request>`, whereas unary/server-
- * streaming methods return void â€?the latter two are indistinguishable from the
+ * streaming methods return void -- the latter two are indistinguishable from the
  * Java signature alone (the proto extractor remains the source of truth).
  */
 function javaServerStreaming(methodNode: Parser.SyntaxNode): GrpcStreaming {
@@ -128,10 +128,9 @@ export const javaGrpcExtractor = compatExtractor({
       const ast = parseSourceAst(file, "java");
       if (!ast) continue;
 
-      walkSourceAst(ast.tree.rootNode, (node) => {
-        if (node.type !== "class_declaration") return;
+      for (const node of indexedSourceAstNodes(ast, ["class_declaration"])) {
         const service = producerClassService(node);
-        if (!service) return;
+        if (!service) continue;
 
         walkSourceAst(node, (child) => {
           if (child.type !== "method_declaration") return;
@@ -159,25 +158,25 @@ export const javaGrpcExtractor = compatExtractor({
             framework: "grpc-java"
           });
         });
-      });
+      }
 
       const clientVariables = new Map<string, string>();
-      walkSourceAst(ast.tree.rootNode, (node) => {
+      for (const node of indexedSourceAstNodes(ast, ["variable_declarator"])) {
         const variable = variableDeclarator(node);
-        if (!variable?.name || !variable.value) return;
+        if (!variable?.name || !variable.value) continue;
         const service = serviceFromStubFactory(variable.value.text);
         if (service) clientVariables.set(variable.name, service);
-      });
+      }
 
       const seen = new Set<string>();
-      walkSourceAst(ast.tree.rootNode, (node) => {
+      for (const node of indexedSourceAstNodes(ast, ["method_invocation"])) {
         const call = javaMethodCall(node);
-        if (!call?.object || !call.method) return;
+        if (!call?.object || !call.method) continue;
         const service = clientVariables.get(call.object);
-        if (!service) return;
+        if (!service) continue;
         const method = upperFirst(call.method);
         const fullName = `${service}/${method}`;
-        if (seen.has(fullName)) return;
+        if (seen.has(fullName)) continue;
         seen.add(fullName);
 
         const symbol = makeSymbol(file, node, "method", method, `${service}.${method}`);
@@ -197,7 +196,7 @@ export const javaGrpcExtractor = compatExtractor({
           streaming: "unary",
           framework: "grpc-java"
         });
-      });
+      }
     }
   }
 });

@@ -14,7 +14,7 @@ import {
 
 import {
   parseJsAst,
-  walkAst,
+  indexedJsAstNodes,
   callArguments,
   resolveAstExpression,
   stringLiteralValue
@@ -146,7 +146,7 @@ export const envConfigExtractor = compatExtractor({
       const ast = parseJsAst(file);
       if (!ast) continue;
 
-      walkAst(ast.tree.rootNode, (node) => {
+      for (const node of indexedJsAstNodes(ast, ["member_expression", "subscript_expression", "call_expression"])) {
         // 7.2 process.env.KEY detection
         if (node.type === "member_expression") {
           const obj = node.childForFieldName("object");
@@ -211,7 +211,7 @@ export const envConfigExtractor = compatExtractor({
             }
           }
         }
-      });
+      }
     }
   }
 });

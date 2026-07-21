@@ -7,7 +7,7 @@ import type { FactCollector } from "../factCollector.js";
 import {
   parsedCodeFiles,
   pushApiContractFromPath, } from "./shared.js";
-import { findContainingSymbol, parseSourceAst, walkSourceAst } from "./sourceAstUtils.js";
+import { findContainingSymbol, indexedSourceAstNodes, parseSourceAst } from "./sourceAstUtils.js";
 import type Parser from "tree-sitter";
 
 const ANNOTATION_METHOD_MAP: Record<string, string> = {
@@ -68,10 +68,9 @@ function extractBodyTypes(file: ParsedFile): Map<string, BodyTypeInfo> {
   const ast = parseSourceAst(file, "java");
   if (!ast) return map;
 
-  walkSourceAst(ast.tree.rootNode, (node) => {
-    if (node.type !== "method_declaration") return;
+  for (const node of indexedSourceAstNodes(ast, ["method_declaration"])) {
     const methodSymbol = findContainingSymbol(file.symbols, node);
-    if (!methodSymbol) return;
+    if (!methodSymbol) continue;
 
     const info: BodyTypeInfo = {};
 
@@ -98,7 +97,7 @@ function extractBodyTypes(file: ParsedFile): Map<string, BodyTypeInfo> {
     if (info.requestBodyType || info.responseBodyType) {
       map.set(methodSymbol.id, info);
     }
-  });
+  }
 
   return map;
 }
@@ -127,7 +126,7 @@ function extractParameterTypeName(param: Parser.SyntaxNode): string | undefined 
     if (!child) continue;
     if (child.type === "type_identifier") return child.text;
     if (child.type === "generic_type") {
-      // ResponseEntity<CreateOrderDTO> â†?resolve the first type argument
+      // ResponseEntity<CreateOrderDTO> -> resolve the first type argument
       const typeArgs = child.childForFieldName("type_arguments");
       if (typeArgs) {
         const first = typeArgs.namedChild(0);
@@ -151,7 +150,7 @@ function extractResponseTypeName(returnType: Parser.SyntaxNode): string | undefi
   if (returnType.type === "type_identifier") {
     return returnType.text;
   }
-  // Generic type: ResponseEntity<OrderResponse> â†?extract first type argument
+  // Generic type: ResponseEntity<OrderResponse> -> extract first type argument
   if (returnType.type === "generic_type") {
     const baseName = returnType.childForFieldName("name");
     const baseTypeName = baseName?.text;
@@ -242,7 +241,7 @@ export const springMvcExtractor = compatExtractor({
   },
 
   /**
-   * P1-1 â€?postExtract: Cross-file Controller prefix finalization.
+   * P1-1 -- postExtract: Cross-file Controller prefix finalization.
    *
    * The per-file extract() phase handles same-file prefix+method merging.
    * This hook handles the edge case where a base @RequestMapping is on a
@@ -305,7 +304,7 @@ export const springMvcExtractor = compatExtractor({
               const httpMethod = annotationFact ? springHttpMethod(annotationFact) : undefined;
               const combined = joinApiPaths(prefix, mapping.path);
               // alreadyEmitted stores canonical keys (e.g. "get:/smart/customeractivity/list"),
-              // so we must compare against the same canonical form â€?the raw path would
+              // so we must compare against the same canonical form -- the raw path would
               // never match a method-prefixed key.
               const combinedKey = canonicalHttpContractKey({ method: httpMethod, path: combined });
               if (alreadyEmitted.has(combinedKey)) continue; // already correct

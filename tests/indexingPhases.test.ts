@@ -177,6 +177,25 @@ describe("indexing phases", () => {
     expect(store.commitVersions).not.toHaveBeenCalled();
   });
 
+  it("skips repo reconciliation when the pipeline proves the workspace was empty", async () => {
+    const store = fakeStore();
+    const projected = await runLexicalProjectionPhase({ facts: facts(), workspaceId: "workspace:a" });
+    const result = await runLexicalWritePhase({
+      store,
+      workspaceId: "workspace:a",
+      batchId: "batch:lexical",
+      repos: [repo],
+      documents: projected.documents,
+      reconcileRepos: false,
+      reconcileReason: "empty-workspace"
+    });
+
+    expect(store.upsertDocuments).toHaveBeenCalledOnce();
+    expect(store.reconcileRepoDocuments).not.toHaveBeenCalled();
+    expect(store.health).toHaveBeenCalledWith("workspace:a");
+    expect(result.reconciledRepoIds).toEqual([]);
+  });
+
   it("reports the provider's actual projection and tokenizer versions", async () => {
     const store = fakeStore();
     store.health.mockResolvedValueOnce({

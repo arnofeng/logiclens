@@ -8,6 +8,7 @@ import {
   pushApiContractFromPath, } from "./shared.js";
 import {
   callArguments,
+  indexedJsAstNodes,
   namedChildren,
   objectPropertyValue,
   parseJsAst,
@@ -53,21 +54,20 @@ function constructorName(node: Parser.SyntaxNode): string | undefined {
   return namedChildren(node).find((child) => child.type === "identifier" || child.type === "member_expression")?.text;
 }
 
-function collectClientInstances(root: Parser.SyntaxNode, importsByLocalName: Map<string, ImportedClient>): Map<string, ClientInstance> {
+function collectClientInstances(nodes: readonly Parser.SyntaxNode[], importsByLocalName: Map<string, ImportedClient>): Map<string, ClientInstance> {
   const instances = new Map<string, ClientInstance>();
-  walkAst(root, (node) => {
-    if (node.type !== "variable_declarator" && node.type !== "public_field_definition") return;
+  for (const node of nodes) {
     const nameNode = node.childForFieldName("name");
     const valueNode = node.childForFieldName("value");
     const className = valueNode ? constructorName(valueNode) : undefined;
     const imported = className ? importsByLocalName.get(className) : undefined;
-    if (!nameNode || !imported) return;
+    if (!nameNode || !imported) continue;
     instances.set(nameNode.text, {
       ...imported,
       instanceName: nameNode.text,
       raw: node.text
     });
-  });
+  }
   return instances;
 }
 
@@ -111,16 +111,15 @@ function generatedMethodBridges(file: ParsedFile): GeneratedMethodBridge[] {
   const ast = parseJsAst(file);
   if (!ast) return [];
   const bridges: GeneratedMethodBridge[] = [];
-  walkAst(ast.tree.rootNode, (node) => {
-    if (node.type !== "class_declaration") return;
+  for (const node of indexedJsAstNodes(ast, ["class_declaration"])) {
     const className = classNameFor(node);
-    if (!className || !CLIENT_CLASS_RE.test(className)) return;
+    if (!className || !CLIENT_CLASS_RE.test(className)) continue;
     for (const method of namedChildren(node).flatMap((child) => child.type === "class_body" ? namedChildren(child) : [])) {
       if (method.type !== "method_definition") continue;
       const bridge = bridgeFromMethod(className, method);
       if (bridge) bridges.push(bridge);
     }
-  });
+  }
   return bridges;
 }
 
@@ -194,13 +193,15 @@ export const sdkGeneratedClientExtractor = compatExtractor({
       if (!ast) continue;
       const importsByLocalName = new Map(importedClients(file).map((item) => [item.localName, item]));
       if (importsByLocalName.size === 0) continue;
-      const instances = collectClientInstances(ast.tree.rootNode, importsByLocalName);
+      const instances = collectClientInstances(
+        indexedJsAstNodes(ast, ["variable_declarator", "public_field_definition"]),
+        importsByLocalName
+      );
 
-      walkAst(ast.tree.rootNode, (node) => {
-        if (node.type !== "call_expression") return;
+      for (const node of indexedJsAstNodes(ast, ["call_expression"])) {
         const hit = sdkCallBridge(node, instances, importsByLocalName, bridges);
         const symbol = hit ? symbolForNode(file, node) : undefined;
-        if (!hit || !symbol) return;
+        if (!hit || !symbol) continue;
         // The SDK evidence chain is only accepted when import, construction,
         // method call, and generated-client bridge all agree on the same class.
         pushApiContractFromPath({
@@ -214,7 +215,7 @@ export const sdkGeneratedClientExtractor = compatExtractor({
           rule: "sdk-generated-client-consumer",
           confidence: confidenceFor("strong-static-import")
         });
-      });
+      }
     }
   }
 });

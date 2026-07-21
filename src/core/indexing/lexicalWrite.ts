@@ -29,6 +29,7 @@ export async function runLexicalWritePhase(input: {
   repoName?: string;
   repoId?: string;
   reconcileRepos?: boolean;
+  reconcileReason?: string;
   activeFileIdsByRepo?: ReadonlyMap<string, readonly string[]>;
 }): Promise<LexicalWriteResult> {
   const phase = await runIndexPhase({
@@ -54,7 +55,9 @@ export async function runLexicalWritePhase(input: {
     if (documents.length > 0) await input.store.upsertDocuments(documents);
     writeLexicalTrace(`phase upsert documents=${documents.length} duration=${Date.now() - upsertStarted}ms`);
     const reconcileStarted = Date.now();
-    if (input.reconcileRepos ?? true) for (const repo of repos) {
+    const reconcileRepos = input.reconcileRepos ?? true;
+    writeLexicalTrace(`phase reconcile decision=${reconcileRepos ? "execute" : "skip"} reason=${input.reconcileReason ?? (input.reconcileRepos === undefined ? "default" : "pipeline")}`);
+    if (reconcileRepos) for (const repo of repos) {
       const activeDocumentIds = [...new Set(documents
         .filter((document) => document.repoId === repo.id && document.active)
         .map((document) => document.id))]
@@ -80,7 +83,7 @@ export async function runLexicalWritePhase(input: {
     writeLexicalTrace(`phase health duration=${Date.now() - healthStarted}ms status=${providerHealth.status}`);
     return {
       documentCount: documents.length,
-      reconciledRepoIds: (input.reconcileRepos ?? true) ? repos.map((repo) => repo.id) : [],
+      reconciledRepoIds: reconcileRepos ? repos.map((repo) => repo.id) : [],
       providerHealth
     };
   });

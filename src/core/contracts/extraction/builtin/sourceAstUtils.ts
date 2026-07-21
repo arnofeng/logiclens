@@ -1,15 +1,16 @@
 import type Parser from "tree-sitter";
 import type { ParsedFile, SourceLanguage } from "../../../parsing/types.js";
-import { parseCachedAst, sourceForParsedFile } from "./astCache.js";
+import { astNodesOfTypes, parseCachedAst, sourceForParsedFile, type CachedAstContext } from "./astCache.js";
 
-export type SourceAstContext = {
-  tree: Parser.Tree;
-  source: string;
-};
+export type SourceAstContext = CachedAstContext;
 
 export function parseSourceAst(file: ParsedFile, language: SourceLanguage): SourceAstContext | undefined {
   if (file.language !== language) return undefined;
   return parseCachedAst(file, language);
+}
+
+export function indexedSourceAstNodes(context: SourceAstContext, types: readonly string[]): readonly Parser.SyntaxNode[] {
+  return astNodesOfTypes(context, types);
 }
 
 export function walkSourceAst(node: Parser.SyntaxNode, visit: (node: Parser.SyntaxNode) => void): void {

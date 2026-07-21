@@ -231,6 +231,14 @@ export function invoke(method: string) {
 }`);
     expect(bundle.contracts.some((c) => c.kind === "api" && c.key === "/api/orders")).toBe(true);
   });
+
+  it("does not reclassify a path nested inside an HTTP call", async () => {
+    const bundle = await extractFromSource(`
+export function createOrder() {
+  return axios.post(transform("/api/orders"));
+}`);
+    expect(bundle.contracts.filter((c) => c.kind === "api" && c.key === "/api/orders")).toHaveLength(0);
+  });
 });
 
 describe("JS HTTP Client Extractor HttpEndpointSpec production", () => {

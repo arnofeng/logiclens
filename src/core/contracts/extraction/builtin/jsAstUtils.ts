@@ -1,13 +1,10 @@
 import type Parser from "tree-sitter";
 import type { ParsedFile, SourceLanguage } from "../../../parsing/types.js";
-import { parseCachedAst } from "./astCache.js";
+import { astNodesOfTypes, parseCachedAst, type CachedAstContext } from "./astCache.js";
 
 type JsLikeLanguage = SourceLanguage | "vue";
 
-export type JsAstContext = {
-  tree: Parser.Tree;
-  source: string;
-};
+export type JsAstContext = CachedAstContext;
 
 export type ResolvedExpression = {
   value?: string;
@@ -18,6 +15,10 @@ export function parseJsAst(file: ParsedFile): JsAstContext | undefined {
   if (!isJsLikeLanguage(file.language)) return undefined;
   const parseLanguage = file.language === "vue" ? file.parseLanguage ?? "tsx" : file.language;
   return parseCachedAst(file, parseLanguage);
+}
+
+export function indexedJsAstNodes(context: JsAstContext, types: readonly string[]): readonly Parser.SyntaxNode[] {
+  return astNodesOfTypes(context, types);
 }
 
 export function walkAst(node: Parser.SyntaxNode, visit: (node: Parser.SyntaxNode) => void): void {
@@ -60,9 +61,9 @@ export function staticPropertyPath(node: Parser.SyntaxNode): string | undefined 
   return `${objectPath}.${property.text}`;
 }
 
-export function buildAstConstantIndex(root: Parser.SyntaxNode): Map<string, string> {
+export function buildAstConstantIndex(root: Parser.SyntaxNode, variableDeclarators?: readonly Parser.SyntaxNode[]): Map<string, string> {
   const constants = new Map<string, string>();
-  walkAst(root, (node) => {
+  const visit = (node: Parser.SyntaxNode) => {
     if (node.type !== "variable_declarator") return;
     if (!isConstDeclarator(node)) return;
     const nameNode = node.childForFieldName("name");
@@ -81,7 +82,12 @@ export function buildAstConstantIndex(root: Parser.SyntaxNode): Map<string, stri
         if (pairValue?.startsWith("/")) constants.set(`${nameNode.text}.${unquote(keyNode.text)}`, pairValue);
       }
     }
-  });
+  };
+  if (variableDeclarators) {
+    for (const node of variableDeclarators) visit(node);
+  } else {
+    walkAst(root, visit);
+  }
   return constants;
 }
 

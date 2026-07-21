@@ -11,12 +11,12 @@ import {
 import {
   buildAstConstantIndex,
   callArguments,
+  indexedJsAstNodes,
   objectPropertyValue,
   parseJsAst,
   resolveAstExpression,
   staticPropertyPath,
-  stringLiteralValue,
-  walkAst
+  stringLiteralValue
 } from "./jsAstUtils.js";
 
 const IMPORTED_HTTP_MODULE_RE = /^(axios|ky|umi-request|request|@?\/?request|.*\/request|.*\/http)$/i;
@@ -120,12 +120,11 @@ function methodAndUrlFromRequestObject(firstArg: Parser.SyntaxNode | undefined):
   };
 }
 
-function collectHttpCalls(root: Parser.SyntaxNode, knownClients: Set<string>): HttpCall[] {
+function collectHttpCalls(callNodes: readonly Parser.SyntaxNode[], knownClients: Set<string>): HttpCall[] {
   const calls: HttpCall[] = [];
-  walkAst(root, (node) => {
-    if (node.type !== "call_expression") return;
+  for (const node of callNodes) {
     const fn = node.childForFieldName("function");
-    if (!fn) return;
+    if (!fn) continue;
 
     const args = callArguments(node);
     let call: HttpCall | undefined;
@@ -152,7 +151,7 @@ function collectHttpCalls(root: Parser.SyntaxNode, knownClients: Set<string>): H
       };
     } else {
       const invocation = memberInvocation(fn);
-      if (!invocation?.methodName || !HTTP_METHODS.has(invocation.methodName)) return;
+      if (!invocation?.methodName || !HTTP_METHODS.has(invocation.methodName)) continue;
       const firstArg = args[0];
       const requestShape = invocation.methodName === "request"
         ? methodAndUrlFromRequestObject(firstArg)
@@ -174,7 +173,7 @@ function collectHttpCalls(root: Parser.SyntaxNode, knownClients: Set<string>): H
       };
     }
     if (call && (call.knownClient || Boolean(call.methodName && HTTP_METHODS.has(call.methodName)))) calls.push(call);
-  });
+  }
   return calls;
 }
 
@@ -212,12 +211,14 @@ function isApiPathLiteral(node: Parser.SyntaxNode): string | undefined {
   return value?.startsWith("/api/") ? value : undefined;
 }
 
-function isInsideKnownHttpCall(node: Parser.SyntaxNode, knownClients: Set<string>): boolean {
+function nodeRangeKey(node: Parser.SyntaxNode): string {
+  return `${node.startIndex}:${node.endIndex}`;
+}
+
+function isInsideKnownHttpCall(node: Parser.SyntaxNode, httpCallRanges: ReadonlySet<string>): boolean {
   let current: Parser.SyntaxNode | null = node.parent;
   while (current) {
-    if (current.type === "call_expression") {
-      return collectHttpCalls(current, knownClients).length > 0;
-    }
+    if (current.type === "call_expression" && httpCallRanges.has(nodeRangeKey(current))) return true;
     current = current.parent;
   }
   return false;
@@ -246,11 +247,16 @@ export const jsHttpClientExtractor = compatExtractor({
       const ast = parseJsAst(file);
       if (!ast) continue;
 
-      const constants = buildAstConstantIndex(ast.tree.rootNode);
+      const constants = buildAstConstantIndex(
+        ast.tree.rootNode,
+        indexedJsAstNodes(ast, ["variable_declarator"])
+      );
       const knownHttpClients = importedHttpClientNames(file);
       const seenPathOffsets = new Set<number>();
+      const httpCalls = collectHttpCalls(indexedJsAstNodes(ast, ["call_expression"]), knownHttpClients);
+      const httpCallRanges = new Set(httpCalls.map((call) => nodeRangeKey(call.node)));
 
-      for (const call of collectHttpCalls(ast.tree.rootNode, knownHttpClients)) {
+      for (const call of httpCalls) {
         const symbol = findContainingSymbol(file.symbols, call.node);
         if (!symbol || !call.urlNode) continue;
         const offset = symbolOffset(file, symbol, call.node);
@@ -288,11 +294,11 @@ export const jsHttpClientExtractor = compatExtractor({
         });
       }
 
-      walkAst(ast.tree.rootNode, (node) => {
+      for (const node of indexedJsAstNodes(ast, ["string", "string_fragment"])) {
         const apiPath = isApiPathLiteral(node);
-        if (!apiPath || seenPathOffsets.has(node.startIndex) || isInsideKnownHttpCall(node, knownHttpClients) || isInsideDynamicSubscriptCall(node)) return;
+        if (!apiPath || seenPathOffsets.has(node.startIndex) || isInsideKnownHttpCall(node, httpCallRanges) || isInsideDynamicSubscriptCall(node)) continue;
         const symbol = findContainingSymbol(file.symbols, node);
-        if (!symbol) return;
+        if (!symbol) continue;
         const isLikelyProducerFile = /controller|route|server|api/i.test(file.path + " " + symbol.qualifiedName);
         const role: ContractRole = isLikelyProducerFile ? "producer" : "consumer";
         pushApiContractFromPath({
@@ -307,7 +313,7 @@ export const jsHttpClientExtractor = compatExtractor({
           confidence: role === "producer" ? confidenceFor("probable-http-client") : confidenceFor("probable-http-route"),
           framework: "js-http-client"
         });
-      });
+      }
     }
   }
 });

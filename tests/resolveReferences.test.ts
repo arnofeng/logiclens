@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { resolveCalls, resolveImports } from "../src/core/extraction/resolveReferences.js";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import type { CodeSymbol, ParsedFile } from "../src/core/parsing/types.js";
@@ -283,6 +283,67 @@ describe("resolveReferences", () => {
         resolution: "exact",
         raw: "pay()"
       })]);
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reuses declaration lookups and keeps same-basename compiler targets isolated by absolute path", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "test-ts-compiler-cache-"));
+    const previousTrace = process.env.LOGICLENS_REFERENCE_TRACE;
+    const trace: string[] = [];
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(((chunk: string | Uint8Array) => {
+      trace.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write);
+    process.env.LOGICLENS_REFERENCE_TRACE = "1";
+    try {
+      const repo = repoId("service-cache");
+      const modernDir = path.join(tmpDir, "src", "modern");
+      const legacyDir = path.join(tmpDir, "src", "legacy");
+      await fs.mkdir(modernDir, { recursive: true });
+      await fs.mkdir(legacyDir, { recursive: true });
+      await fs.writeFile(path.join(modernDir, "payment.ts"), "export function charge(value: string) { return value; }\n", "utf8");
+      await fs.writeFile(path.join(legacyDir, "payment.ts"), "export function charge(value: string) { return `legacy:${value}`; }\n", "utf8");
+      await fs.writeFile(
+        path.join(tmpDir, "src", "app.ts"),
+        "import { charge as pay } from './modern/payment';\nexport function checkout() { pay('one'); return pay('two'); }\n",
+        "utf8"
+      );
+
+      const files = await Promise.all([
+        ["src/app.ts", path.join(tmpDir, "src", "app.ts")],
+        ["src/modern/payment.ts", path.join(modernDir, "payment.ts")],
+        ["src/legacy/payment.ts", path.join(legacyDir, "payment.ts")]
+      ].map(async ([relativePath, absolutePath]) => parseSourceFile({ repoId: repo, absolutePath, relativePath, language: "typescript" }) as Promise<ParsedFile>));
+      const modernCharge = files[1]!.symbols.find((symbol) => symbol.name === "charge");
+      const edges = resolveCalls(files).filter((edge) => edge.raw.startsWith("pay("));
+
+      expect(edges).toHaveLength(2);
+      expect(edges.every((edge) => edge.toCodeId === modernCharge?.id && edge.resolution === "exact")).toBe(true);
+      expect(trace.join("")).toMatch(/declarationCacheHits=[1-9]\d*/);
+    } finally {
+      if (previousTrace === undefined) delete process.env.LOGICLENS_REFERENCE_TRACE;
+      else process.env.LOGICLENS_REFERENCE_TRACE = previousTrace;
+      stderr.mockRestore();
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back cleanly when the TypeScript declaration belongs to an external library", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "test-ts-external-declaration-"));
+    try {
+      const repo = repoId("service-external");
+      const absolutePath = path.join(tmpDir, "math.ts");
+      await fs.writeFile(absolutePath, "export function clamp() { return Math.max(1, 2); }\n", "utf8");
+      const file = await parseSourceFile({
+        repoId: repo,
+        absolutePath,
+        relativePath: "math.ts",
+        language: "typescript"
+      }) as ParsedFile;
+
+      expect(resolveCalls([file])).toEqual([]);
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }

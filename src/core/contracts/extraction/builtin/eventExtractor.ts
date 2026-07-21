@@ -8,7 +8,7 @@ import {
   pushEventContract, } from "./shared.js";
 import {
   parseJsAst,
-  walkAst,
+  indexedJsAstNodes,
   callArguments,
   resolveAstExpression,
   staticPropertyPath
@@ -40,22 +40,20 @@ export const eventExtractor = compatExtractor({
 
       const importBroker = inferBrokerFromImports(file.imports);
 
-      walkAst(ast.tree.rootNode, (node) => {
-        if (node.type !== "call_expression") return;
-
+      for (const node of indexedJsAstNodes(ast, ["call_expression"])) {
         const fn = node.childForFieldName("function");
-        if (!fn) return;
+        if (!fn) continue;
 
-        if (fn.type !== "member_expression") return;
+        if (fn.type !== "member_expression") continue;
         const methodName = fn.childForFieldName("property")?.text;
 
-        if (!methodName || !EVENT_METHODS.has(methodName)) return;
+        if (!methodName || !EVENT_METHODS.has(methodName)) continue;
 
         const args = callArguments(node);
-        if (args.length === 0) return;
+        if (args.length === 0) continue;
 
         const resolved = resolveAstExpression(args[0]!, new Map());
-        if (resolved.dynamic || !resolved.value) return;
+        if (resolved.dynamic || !resolved.value) continue;
 
         const role: ContractRole = CONSUMER_METHODS.has(methodName) ? "consumer" : "producer";
 
@@ -69,7 +67,7 @@ export const eventExtractor = compatExtractor({
         // Import gate: generic method names (`send`/`on`/`emit`) only count as
         // events when a broker signal is present, filtering out `res.send()` /
         // `process.on()`. Specific names (`publish`/`subscribe`/`consume`) pass.
-        if (GENERIC_METHODS.has(methodName) && broker === "unknown") return;
+        if (GENERIC_METHODS.has(methodName) && broker === "unknown") continue;
 
         const framework = eventFramework(broker);
 
@@ -110,7 +108,7 @@ export const eventExtractor = compatExtractor({
             confidence: 0
           }));
         }
-      });
+      }
     }
   }
 });

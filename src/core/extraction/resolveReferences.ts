@@ -13,9 +13,17 @@ import type { ProgressReporter } from "../../shared/progress.js";
 export { scoreCallResolution } from "../../shared/confidence.js";
 
 type TypeScriptApi = typeof import("typescript");
+type CompilerTargetLookupStats = {
+  declarationLookups: number;
+  declarationCacheHits: number;
+  indexedFileHits: number;
+  indexedFileMisses: number;
+  pathCacheHits: number;
+};
 
 const require = createRequire(import.meta.url);
 const MAX_CALL_RAW_LENGTH = 512;
+const NO_DECLARATION_SYMBOL = Symbol("no-declaration-symbol");
 
 function warnReferenceResolution(message: string, error?: unknown): void {
   const detail = error instanceof Error ? error.message : error ? String(error) : "";
@@ -472,16 +480,35 @@ function buildTypeScriptCompilerTargets(parsedFiles: ParsedFile[]): Map<string, 
   if (sourceFiles.length === 0) return new Map();
 
   try {
-    const sourceByPath = new Map(sourceFiles.map((file) => [path.resolve(file.absolutePath!), file.source!]));
-    const parsedByPath = new Map(sourceFiles.map((file) => [path.resolve(file.absolutePath!), file]));
+    const stats: CompilerTargetLookupStats = {
+      declarationLookups: 0,
+      declarationCacheHits: 0,
+      indexedFileHits: 0,
+      indexedFileMisses: 0,
+      pathCacheHits: 0
+    };
+    const canonicalPathCache = new Map<string, string>();
+    const canonicalPath = (fileName: string): string => {
+      const cached = canonicalPathCache.get(fileName);
+      if (cached !== undefined) {
+        stats.pathCacheHits += 1;
+        return cached;
+      }
+      const resolved = path.resolve(fileName);
+      canonicalPathCache.set(fileName, resolved);
+      return resolved;
+    };
+    const sourceByPath = new Map(sourceFiles.map((file) => [canonicalPath(file.absolutePath!), file.source!]));
+    const parsedByPath = new Map(sourceFiles.map((file) => [canonicalPath(file.absolutePath!), file]));
+    const declarationCache = new WeakMap<object, CodeSymbol | typeof NO_DECLARATION_SYMBOL>();
     const host = ts.createCompilerHost({ allowJs: true, checkJs: true, noEmit: true, skipLibCheck: true });
     const defaultGetSourceFile = host.getSourceFile.bind(host);
     const defaultReadFile = host.readFile.bind(host);
     const defaultFileExists = host.fileExists.bind(host);
-    host.readFile = (fileName: string) => sourceByPath.get(path.resolve(fileName)) ?? defaultReadFile(fileName);
-    host.fileExists = (fileName: string) => sourceByPath.has(path.resolve(fileName)) || defaultFileExists(fileName);
+    host.readFile = (fileName: string) => sourceByPath.get(canonicalPath(fileName)) ?? defaultReadFile(fileName);
+    host.fileExists = (fileName: string) => sourceByPath.has(canonicalPath(fileName)) || defaultFileExists(fileName);
     host.getSourceFile = (fileName: string, languageVersion: any) => {
-      const source = sourceByPath.get(path.resolve(fileName));
+      const source = sourceByPath.get(canonicalPath(fileName));
       return source !== undefined
         ? ts.createSourceFile(fileName, source, languageVersion, true)
         : defaultGetSourceFile(fileName, languageVersion);
@@ -491,20 +518,32 @@ function buildTypeScriptCompilerTargets(parsedFiles: ParsedFile[]): Map<string, 
     const targets = new Map<string, CodeSymbol>();
 
     for (const sourceFile of program.getSourceFiles()) {
-      const parsed = parsedByPath.get(path.resolve(sourceFile.fileName));
+      const parsed = parsedByPath.get(canonicalPath(sourceFile.fileName));
       if (!parsed) continue;
       const visit = (node: any) => {
         if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
           const expression = ts.isNewExpression(node) ? node.expression : node.expression;
           const symbol = checker.getSymbolAtLocation(expression);
           const resolvedSymbol = symbol && (symbol.flags & ts.SymbolFlags.Alias) ? checker.getAliasedSymbol(symbol) : symbol;
-          const target = resolvedSymbol ? symbolFromDeclaration(ts, sourceFiles, resolvedSymbol.valueDeclaration ?? resolvedSymbol.declarations?.[0]) : undefined;
+          const target = resolvedSymbol ? symbolFromDeclaration(
+            ts,
+            parsedByPath,
+            canonicalPath,
+            resolvedSymbol.valueDeclaration ?? resolvedSymbol.declarations?.[0],
+            declarationCache,
+            stats
+          ) : undefined;
           if (target) targets.set(callKey(parsed.fileId, lineOf(ts, sourceFile, node), boundedRaw(node.getText(sourceFile))), target);
         }
         ts.forEachChild(node, visit);
       };
       visit(sourceFile);
     }
+    writeReferenceTrace(
+      `TypeScript compiler lookup: indexedFiles=${parsedByPath.size} declarations=${stats.declarationLookups}` +
+      ` declarationCacheHits=${stats.declarationCacheHits} pathHits=${stats.indexedFileHits}` +
+      ` pathMisses=${stats.indexedFileMisses} pathCacheHits=${stats.pathCacheHits}`
+    );
     return targets;
   } catch (error) {
     warnReferenceResolution("TypeScript compiler target extraction failed", error);
@@ -512,14 +551,36 @@ function buildTypeScriptCompilerTargets(parsedFiles: ParsedFile[]): Map<string, 
   }
 }
 
-function symbolFromDeclaration(ts: TypeScriptApi, parsedFiles: ParsedFile[], declaration: any): CodeSymbol | undefined {
+function symbolFromDeclaration(
+  ts: TypeScriptApi,
+  parsedByPath: ReadonlyMap<string, ParsedFile>,
+  canonicalPath: (fileName: string) => string,
+  declaration: any,
+  declarationCache: WeakMap<object, CodeSymbol | typeof NO_DECLARATION_SYMBOL>,
+  stats: CompilerTargetLookupStats
+): CodeSymbol | undefined {
   if (!declaration) return undefined;
+  stats.declarationLookups += 1;
+  if (typeof declaration === "object") {
+    const cached = declarationCache.get(declaration);
+    if (cached !== undefined) {
+      stats.declarationCacheHits += 1;
+      return cached === NO_DECLARATION_SYMBOL ? undefined : cached;
+    }
+  }
   const declarationSourceFile = declaration.getSourceFile();
-  const parsed = parsedFiles.find((file) => file.absolutePath && path.resolve(file.absolutePath) === path.resolve(declarationSourceFile.fileName));
-  if (!parsed) return undefined;
+  const parsed = parsedByPath.get(canonicalPath(declarationSourceFile.fileName));
+  if (!parsed) {
+    stats.indexedFileMisses += 1;
+    if (typeof declaration === "object") declarationCache.set(declaration, NO_DECLARATION_SYMBOL);
+    return undefined;
+  }
+  stats.indexedFileHits += 1;
   const name = declaration.name?.text;
   const line = lineOf(ts, declarationSourceFile, declaration.name ?? declaration);
-  return parsed.symbols.find((symbol) => (!name || symbol.name === name) && symbol.startLine <= line && symbol.endLine >= line);
+  const result = parsed.symbols.find((symbol) => (!name || symbol.name === name) && symbol.startLine <= line && symbol.endLine >= line);
+  if (typeof declaration === "object") declarationCache.set(declaration, result ?? NO_DECLARATION_SYMBOL);
+  return result;
 }
 
 function loadTypeScriptCompiler(): TypeScriptApi | undefined {

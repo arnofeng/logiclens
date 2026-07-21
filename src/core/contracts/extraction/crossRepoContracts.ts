@@ -41,6 +41,7 @@ import { buildExtractionFileIndex, filesForRepoId, filesForRepoIds } from "./fil
 import { registerBuiltinsForParsedFiles } from "../../plugins/bootstrap.js";
 import { ensureBuiltinGrammarsForParsedFiles } from "../../parsing/parserRegistry.js";
 import type { ProgressReporter } from "../../../shared/progress.js";
+import { astNodeIndexMetrics } from "./builtin/astCache.js";
 
 function shouldWriteExtractionTrace(): boolean {
   return getBrandedEnv("EXTRACT_TRACE") === "1" || getBrandedEnv("EXTRACT_TRACE") === "true";
@@ -506,6 +507,7 @@ export async function extractContractFactsWithRegistry(
   reportProgress("framework detection");
 
   const builder = new ExtractionBuilder();
+  const astMetricsStarted = astNodeIndexMetrics();
   const postExtractContexts = new Map<string, { repos: RepoNode[]; parsedFiles: ParsedGraphFile[] }>();
   const extractorFilesCache = new Map<string, ParsedGraphFile[]>();
   const extractorTimings: Array<{ name: string; durationMs: number; files: number; repos: number }> = [];
@@ -577,6 +579,16 @@ export async function extractContractFactsWithRegistry(
     writeExtractionTrace(`PostExtract ${extractor.name}: ${Date.now() - started}ms`);
     reportProgress(`${extractor.name} postExtract`);
   }
+
+  const astMetricsCompleted = astNodeIndexMetrics();
+  writeExtractionTrace(
+    `AST index summary: trees=${astMetricsCompleted.indexesBuilt - astMetricsStarted.indexesBuilt}` +
+    ` visited=${astMetricsCompleted.nodesVisited - astMetricsStarted.nodesVisited}` +
+    ` retained=${astMetricsCompleted.nodesRetained - astMetricsStarted.nodesRetained}` +
+    ` build=${astMetricsCompleted.buildDurationMs - astMetricsStarted.buildDurationMs}ms` +
+    ` queries=${astMetricsCompleted.queries - astMetricsStarted.queries}` +
+    ` queryCacheHits=${astMetricsCompleted.queryCacheHits - astMetricsStarted.queryCacheHits}`
+  );
 
   return builder.build();
 }

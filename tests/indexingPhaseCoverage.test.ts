@@ -5,7 +5,7 @@ import path from "node:path";
 import { configSchema } from "../src/config/schema.js";
 import type { KuzuGraphDB } from "../src/core/graph-model/db.js";
 import { runFactBuildPhase } from "../src/core/indexing/graphWrite.js";
-import { runFullCopyBulkIndex, sumCounts } from "../src/core/indexing/orchestrator.js";
+import { resolveFullCopyLexicalReconcile, runFullCopyBulkIndex, sumCounts } from "../src/core/indexing/orchestrator.js";
 import { planIndexRun } from "../src/core/indexing/planning.js";
 import { runLlmSummaryPhase } from "../src/core/indexing/summaries.js";
 import { createIndexRunContext, type IndexRunContext } from "../src/core/indexing/context.js";
@@ -48,6 +48,51 @@ function schemaReadyStore(): WorkspaceLexicalStore {
 }
 
 describe("indexing phase coverage", () => {
+  it.each([
+    { documentCount: 0, reasons: [] as string[], expected: { reconcile: false, reason: "empty-workspace" } },
+    { documentCount: 4, reasons: [] as string[], expected: { reconcile: true, reason: "active-documents" } },
+    { documentCount: 0, reasons: ["lexical_stats_version_mismatch"], expected: { reconcile: true, reason: "unreliable-stats" } },
+    { documentCount: Number.NaN, reasons: [] as string[], expected: { reconcile: true, reason: "invalid-document-count" } }
+  ])("guards full-copy lexical reconciliation for count=$documentCount reasons=$reasons", async ({ documentCount, reasons, expected }) => {
+    const base = configSchema.parse({});
+    const health = vi.fn().mockResolvedValue({
+      providerVersion: "0.11.3",
+      projectionSchemaVersion: "1",
+      tokenizerVersion: "1",
+      status: reasons.length > 0 ? "unhealthy" : "healthy",
+      reasons,
+      metrics: { documentCount, indexSizeBytes: 0 }
+    });
+    const ctx = {
+      config: { ...base, graph: { ...base.graph, provider: "kuzu" } },
+      workspaceId: "workspace:test",
+      lexicalStore: { health }
+    } as unknown as IndexRunContext;
+
+    await expect(resolveFullCopyLexicalReconcile(ctx)).resolves.toEqual(expected);
+    expect(health).toHaveBeenCalledWith("workspace:test");
+  });
+
+  it("keeps reconciliation enabled when the initial health check fails or the provider is not Kuzu", async () => {
+    const base = configSchema.parse({});
+    const failedHealth = vi.fn().mockRejectedValue(new Error("health unavailable"));
+    const kuzu = {
+      config: { ...base, graph: { ...base.graph, provider: "kuzu" } },
+      workspaceId: "workspace:test",
+      lexicalStore: { health: failedHealth }
+    } as unknown as IndexRunContext;
+    expect(await resolveFullCopyLexicalReconcile(kuzu)).toEqual({ reconcile: true, reason: "health-check-failed" });
+
+    const neo4jHealth = vi.fn();
+    const neo4j = {
+      config: { ...base, graph: { ...base.graph, provider: "neo4j" } },
+      workspaceId: "workspace:test",
+      lexicalStore: { health: neo4jHealth }
+    } as unknown as IndexRunContext;
+    expect(await resolveFullCopyLexicalReconcile(neo4j)).toEqual({ reconcile: true, reason: "non-kuzu-provider" });
+    expect(neo4jHealth).not.toHaveBeenCalled();
+  });
+
   it("reports provider-derived performance and capacity metrics for full and changed-only indexing", async () => {
     const health = vi.spyOn(KuzuWorkspaceLexicalStore.prototype, "health");
     const fixture = await createWorkspaceEvaluationFixture({ copyWorkspace: true });
