@@ -416,7 +416,10 @@ export async function runFullCopyBulkIndex(input: {
     let graphPipeline: GraphPipelineResult | undefined;
     let semanticWarning: string | undefined;
     let rebuilt = 0;
+    const transactionStarted = Date.now();
+    let transactionBodyDurationMs = 0;
     await withTransaction(db, async () => {
+      const transactionBodyStarted = Date.now();
       graphPipeline = await runGraphPipeline({
         db,
         ctx,
@@ -431,7 +434,10 @@ export async function runFullCopyBulkIndex(input: {
       rebuilt = await runRelationRebuildPhase({ db, batchId: createBatchId("deps"), log: log(ctx) });
       logStage(ctx, `Dependency rebuild (${rebuilt} edges)`, Date.now());
       await commitSucceededRepos({ db, repos, counts: perRepoCounts, batchId, indexedAt, summaryFailures, semanticWarning, graphPipeline });
+      transactionBodyDurationMs = Date.now() - transactionBodyStarted;
     });
+    const transactionDurationMs = Date.now() - transactionStarted;
+    log(ctx)(`Bulk transaction complete: body=${(transactionBodyDurationMs / 1000).toFixed(2)}s commit=${((transactionDurationMs - transactionBodyDurationMs) / 1000).toFixed(2)}s total=${(transactionDurationMs / 1000).toFixed(2)}s`);
     return {
       ...counts,
       repos,

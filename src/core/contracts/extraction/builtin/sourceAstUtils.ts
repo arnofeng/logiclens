@@ -1,6 +1,6 @@
 import type Parser from "tree-sitter";
-import { parseWithTreeSitter } from "../../../parsing/treeSitter.js";
 import type { ParsedFile, SourceLanguage } from "../../../parsing/types.js";
+import { parseCachedAst, sourceForParsedFile } from "./astCache.js";
 
 export type SourceAstContext = {
   tree: Parser.Tree;
@@ -9,9 +9,7 @@ export type SourceAstContext = {
 
 export function parseSourceAst(file: ParsedFile, language: SourceLanguage): SourceAstContext | undefined {
   if (file.language !== language) return undefined;
-  const source = file.source ?? sourceFromSymbols(file);
-  if (!source) return undefined;
-  return { tree: parseWithTreeSitter(source, language), source };
+  return parseCachedAst(file, language);
 }
 
 export function walkSourceAst(node: Parser.SyntaxNode, visit: (node: Parser.SyntaxNode) => void): void {
@@ -67,21 +65,9 @@ export function findContainingSymbol<T extends { startLine: number; endLine: num
 }
 
 export function symbolOffset(file: ParsedFile, symbol: { source: string }, node: Parser.SyntaxNode): number {
-  const source = file.source ?? sourceFromSymbols(file);
+  const source = sourceForParsedFile(file);
   const symbolStart = source.indexOf(symbol.source);
   return symbolStart >= 0 ? Math.max(0, node.startIndex - symbolStart) : 0;
-}
-
-function sourceFromSymbols(file: ParsedFile): string {
-  if (file.symbols.length === 0) return "";
-  const lines: string[] = Array.from({ length: Math.max(...file.symbols.map((symbol) => symbol.endLine), 1) }, () => "");
-  for (const symbol of file.symbols) {
-    const symbolLines = symbol.source.split(/\r?\n/);
-    for (const [index, line] of symbolLines.entries()) {
-      lines[symbol.startLine - 1 + index] = line;
-    }
-  }
-  return lines.join("\n");
 }
 
 function unquote(value: string): string {

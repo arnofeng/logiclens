@@ -251,8 +251,8 @@ describe("Kuzu workspace lexical lifecycle", () => {
     });
 
     const call = store.upsertDocuments([
-      document({ id: "lexical:code:a", canonicalId: "code:a" }),
-      document({ id: "lexical:code:b", canonicalId: "code:b" })
+      document({ id: "lexical:code:a", canonicalId: "code:a", tokens: ["unsafe,token"] }),
+      document({ id: "lexical:code:b", canonicalId: "code:b", tokens: ["unsafe,token"] })
     ]);
     await expect(call).rejects.toMatchObject({
       code: "write_failed",
@@ -264,6 +264,89 @@ describe("Kuzu workspace lexical lifecycle", () => {
       documentIds: ["lexical:code:a", "lexical:code:b"]
     })).toEqual([]);
   }
+
+  it("bulk-copies all-new documents once and keeps CSV, FTS, and stats semantics intact", async () => {
+    await store.ensureSchema();
+    const documents = [
+      document({
+        id: "lexical:copy:a",
+        canonicalId: "code:copy:a",
+        title: "Quoted \"title\"\nsecond line",
+        searchableText: "bulkcopymarker unicode 中文\nnext line",
+        tokens: ["bulkcopymarker", "cjk_中", "src/orders.ts"],
+        qualifiedName: undefined,
+        path: undefined
+      }),
+      document({
+        id: "lexical:copy:b",
+        canonicalId: "code:copy:b",
+        title: "Empty tokens",
+        searchableText: "secondary marker",
+        tokens: [],
+        active: false
+      })
+    ];
+    const query = vi.spyOn(db, "query");
+
+    await store.upsertDocuments(documents);
+
+    const statements = query.mock.calls.map(([cypher]) => String(cypher));
+    expect(statements.filter((cypher) => cypher.startsWith("COPY LexicalDocument ("))).toHaveLength(1);
+    expect(statements.some((cypher) => cypher.startsWith("MERGE (n:LexicalDocument"))).toBe(false);
+    query.mockRestore();
+
+    expect(await store.loadDocuments({
+      workspaceId: WORKSPACE,
+      documentIds: documents.map((entry) => entry.id)
+    })).toEqual([...documents].sort((left, right) => left.id.localeCompare(right.id)));
+    expect((await store.search({ workspaceId: WORKSPACE, text: "bulkcopymarker" }, { topK: 5 }))[0]?.documentId)
+      .toBe("lexical:copy:a");
+    expect((await store.health(WORKSPACE)).metrics).toEqual({
+      documentCount: 1,
+      indexSizeBytes: Buffer.byteLength([documents[0]!.searchableText, ...documents[0]!.tokens].join(" "), "utf8")
+    });
+  });
+
+  it("falls back to transactional merges for unsafe token lists", async () => {
+    await store.ensureSchema();
+    const unsafe = document({
+      id: "lexical:unsafe-token",
+      canonicalId: "code:unsafe-token",
+      tokens: ["token,with,commas"]
+    });
+    const query = vi.spyOn(db, "query");
+
+    await store.upsertDocuments([unsafe]);
+
+    const statements = query.mock.calls.map(([cypher]) => String(cypher));
+    expect(statements.some((cypher) => cypher.startsWith("COPY LexicalDocument ("))).toBe(false);
+    expect(statements.filter((cypher) => cypher.startsWith("MERGE (n:LexicalDocument"))).toHaveLength(1);
+    query.mockRestore();
+    expect(await store.loadDocuments({ workspaceId: WORKSPACE, documentIds: [unsafe.id] })).toEqual([unsafe]);
+  });
+
+  it("rolls back a failed COPY and removes its temporary staging directory", async () => {
+    await store.ensureSchema();
+    const prefix = "logiclens-lexical-copy-";
+    const before = new Set((await fs.readdir(os.tmpdir())).filter((name) => name.startsWith(prefix)));
+    const originalQuery = db.query.bind(db);
+    const query = vi.spyOn(db, "query").mockImplementation(async (cypher, params) => {
+      if (cypher.startsWith("COPY LexicalDocument (")) throw new Error("injected COPY failure");
+      return originalQuery(cypher, params) as ReturnType<typeof db.query>;
+    });
+    const failed = document({ id: "lexical:copy-failed", canonicalId: "code:copy-failed" });
+
+    await expect(store.upsertDocuments([failed])).rejects.toMatchObject({
+      code: "write_failed",
+      context: { operation: "upsertDocuments", workspaceId: WORKSPACE, batchId: failed.batchId }
+    });
+    query.mockRestore();
+
+    expect(await store.loadDocuments({ workspaceId: WORKSPACE, documentIds: [failed.id] })).toEqual([]);
+    expect((await store.health(WORKSPACE)).metrics).toEqual({ documentCount: 0, indexSizeBytes: 0 });
+    const after = (await fs.readdir(os.tmpdir())).filter((name) => name.startsWith(prefix) && !before.has(name));
+    expect(after).toEqual([]);
+  });
 
   it("reconciles only the requested repo and supports stale, delete, empty-set, and retry flows", async () => {
     await store.ensureSchema();

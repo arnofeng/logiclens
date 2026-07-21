@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import {
   WorkspaceLexicalStoreError,
   type CleanupBatchRequest,
@@ -22,6 +25,8 @@ import {
   type LexicalSearchOptions
 } from "../../../core/retrieval/types.js";
 import type { GraphValue } from "../../../core/graph-model/db.js";
+import { encodeCsvValue, type CsvScalar } from "../../../core/graph-model/csvStaging.js";
+import { brandedTempDirPrefix, getBrandedEnv } from "../../../shared/branding.js";
 import { KuzuGraphDB } from "./KuzuGraphDB.js";
 
 export const KUZU_LEXICAL_DOCUMENT_TABLE = "LexicalDocument";
@@ -37,6 +42,7 @@ const TOKENIZER_METADATA_KEY = "tokenizerVersion";
 const STATS_METADATA_KEY = "lexicalStatsSchemaVersion";
 const INCOMPLETE_STATS_METADATA_VALUE = "incomplete";
 const EXPECTED_FTS_PROPERTIES = ["ftsText"] as const;
+const COPY_SAFE_TOKEN = /^[\p{L}\p{M}\p{N}._/-]+$/u;
 const QUERY_STOP_WORDS = new Set([
   "a", "an", "and", "are", "declared", "defined", "does", "find", "for", "http", "is", "of",
   "on", "or", "owns", "service", "serves", "the", "to", "what", "where", "which", "who", "with"
@@ -60,6 +66,7 @@ const DOCUMENT_COLUMNS = [
   ["ftsText", "STRING"],
   ["ftsSizeBytes", "INT64"]
 ] as const;
+const DOCUMENT_COLUMN_NAMES = ["id", ...DOCUMENT_COLUMNS.map(([name]) => name)].join(", ");
 
 type TableRow = { name: string };
 type ColumnRow = { name: string };
@@ -212,37 +219,68 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
       batchId: documents[0]?.batchId
     };
     try {
+      const validationStarted = Date.now();
       const unique = validateDocuments(documents);
+      writeLexicalTrace(`validate documents=${unique.length} duration=${Date.now() - validationStarted}ms`);
       await this.db.transaction(async () => {
+        const lookupStarted = Date.now();
         const existingRows = await this.db.query<ExistingDocumentStateRow>(
           "MATCH (n:LexicalDocument) WHERE n.id IN $documentIds " +
           "RETURN n.id AS id, n.workspaceId AS workspaceId, n.active AS active, n.ftsSizeBytes AS ftsSizeBytes;",
           { documentIds: unique.map((document) => document.id) }
         );
+        const countRows = await this.db.query<{ count: number | bigint }>(
+          "MATCH (n:LexicalDocument) RETURN count(*) AS count;"
+        );
+        const storedDocumentCount = numeric(countRows[0]?.count);
+        writeLexicalTrace(`existing lookup documents=${unique.length} existing=${existingRows.length} stored=${storedDocumentCount} duration=${Date.now() - lookupStarted}ms`);
         const existing = new Map(existingRows.map((row) => [row.id, row]));
         let documentCountDelta = 0;
         let indexSizeBytesDelta = 0;
-        for (const document of unique) {
-          const previous = existing.get(document.id);
-          if (previous && previous.workspaceId !== document.workspaceId) {
-            throw new TypeError(`Document id cannot move between workspaces: ${document.id}.`);
+        // Kuzu 0.11.3 COPY is dramatically faster for an empty lexical table,
+        // but repeated COPY appends can collide in the FTS extension's
+        // auxiliary serial keys. Keep the fast path intentionally scoped to
+        // the initial workspace import.
+        const copyEligible = storedDocumentCount === 0 && existingRows.length === 0 && unique.every(hasCopySafeTokens);
+        if (copyEligible) {
+          for (const document of unique) {
+            if (!document.active) continue;
+            documentCountDelta += 1;
+            indexSizeBytesDelta += ftsSizeBytes(document);
           }
-          const previousCount = previous?.active ? 1 : 0;
-          const previousBytes = previous?.active ? numeric(previous.ftsSizeBytes) : 0;
-          const nextBytes = document.active ? ftsSizeBytes(document) : 0;
-          documentCountDelta += (document.active ? 1 : 0) - previousCount;
-          indexSizeBytesDelta += nextBytes - previousBytes;
-          await this.db.query(
-            "MERGE (n:LexicalDocument {id: $id}) " +
-            "SET n.canonicalId = $canonicalId, n.workspaceId = $workspaceId, n.repoId = $repoId, " +
-            "n.kind = $kind, n.title = $title, n.qualifiedName = $qualifiedName, n.path = $path, " +
-            "n.searchableText = $searchableText, n.tokens = $tokens, n.active = $active, " +
-            "n.sourceHash = $sourceHash, n.batchId = $batchId, n.renderRef = $renderRef, n.fileId = $fileId, " +
-            "n.ftsText = $ftsText, n.ftsSizeBytes = $ftsSizeBytes;",
-            documentParameters(document)
-          );
+          await copyNewDocuments(this.db, unique);
+        } else {
+          const mergeStarted = Date.now();
+          for (const document of unique) {
+            const previous = existing.get(document.id);
+            if (previous && previous.workspaceId !== document.workspaceId) {
+              throw new TypeError(`Document id cannot move between workspaces: ${document.id}.`);
+            }
+            const previousCount = previous?.active ? 1 : 0;
+            const previousBytes = previous?.active ? numeric(previous.ftsSizeBytes) : 0;
+            const nextBytes = document.active ? ftsSizeBytes(document) : 0;
+            documentCountDelta += (document.active ? 1 : 0) - previousCount;
+            indexSizeBytesDelta += nextBytes - previousBytes;
+            await this.db.query(
+              "MERGE (n:LexicalDocument {id: $id}) " +
+              "SET n.canonicalId = $canonicalId, n.workspaceId = $workspaceId, n.repoId = $repoId, " +
+              "n.kind = $kind, n.title = $title, n.qualifiedName = $qualifiedName, n.path = $path, " +
+              "n.searchableText = $searchableText, n.tokens = $tokens, n.active = $active, " +
+              "n.sourceHash = $sourceHash, n.batchId = $batchId, n.renderRef = $renderRef, n.fileId = $fileId, " +
+              "n.ftsText = $ftsText, n.ftsSizeBytes = $ftsSizeBytes;",
+              documentParameters(document)
+            );
+          }
+          const reason = storedDocumentCount > 0
+            ? "nonempty-store"
+            : existingRows.length > 0
+              ? "existing-documents"
+              : "unsafe-token";
+          writeLexicalTrace(`writer=merge documents=${unique.length} duration=${Date.now() - mergeStarted}ms reason=${reason}`);
         }
+        const statsStarted = Date.now();
         await this.adjustWorkspaceStats(unique[0]!.workspaceId, documentCountDelta, indexSizeBytesDelta);
+        writeLexicalTrace(`stats documentDelta=${documentCountDelta} byteDelta=${indexSizeBytesDelta} duration=${Date.now() - statsStarted}ms`);
       });
     } catch (error) {
       throw wrap("write_failed", context, error);
@@ -597,6 +635,62 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
       );
     }
   }
+}
+
+async function copyNewDocuments(db: KuzuGraphDB, documents: readonly LexicalDocument[]): Promise<void> {
+  const stagingStarted = Date.now();
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), brandedTempDirPrefix("lexical-copy")));
+  const filePath = path.join(directory, "LexicalDocument.csv");
+  try {
+    const rows = documents.map((document) => documentCsvRow(document).map(encodeCsvValue).join(","));
+    await fs.writeFile(filePath, rows.join("\n"), "utf8");
+    const stageDurationMs = Date.now() - stagingStarted;
+    const copyStarted = Date.now();
+    await db.query(`COPY LexicalDocument (${DOCUMENT_COLUMN_NAMES}) FROM "${toKuzuPath(filePath)}" (PARALLEL=false);`);
+    writeLexicalTrace(`writer=copy documents=${documents.length} stage=${stageDurationMs}ms copy=${Date.now() - copyStarted}ms`);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+}
+
+function documentCsvRow(document: LexicalDocument): CsvScalar[] {
+  const ftsText = indexedText(document);
+  return [
+    document.id,
+    document.canonicalId,
+    document.workspaceId,
+    document.repoId,
+    document.kind,
+    document.title,
+    document.qualifiedName,
+    document.path,
+    document.searchableText,
+    `[${document.tokens.join(",")}]`,
+    document.active,
+    document.sourceHash,
+    document.batchId,
+    document.renderRef,
+    fileIdFromRenderRef(document),
+    ftsText,
+    Buffer.byteLength(ftsText, "utf8")
+  ];
+}
+
+function hasCopySafeTokens(document: LexicalDocument): boolean {
+  return document.tokens.every((token) => COPY_SAFE_TOKEN.test(token));
+}
+
+function toKuzuPath(filePath: string): string {
+  return path.resolve(filePath).replace(/\\/g, "/").replace(/"/g, '\\"');
+}
+
+function shouldWriteLexicalTrace(): boolean {
+  const value = getBrandedEnv("LEXICAL_TRACE");
+  return value === "1" || value === "true";
+}
+
+function writeLexicalTrace(message: string): void {
+  if (shouldWriteLexicalTrace()) process.stderr.write(`Lexical write ${message}\n`);
 }
 
 function validateDocuments(documents: readonly LexicalDocument[]): LexicalDocument[] {

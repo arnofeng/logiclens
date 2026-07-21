@@ -41,9 +41,10 @@ export type CsvStagingResult = {
   rowCounts: Partial<Record<CsvTableName, number>>;
 };
 
-type CsvRow = Array<string | number | boolean | undefined | null>;
+export type CsvScalar = string | number | boolean | undefined | null;
+type CsvRow = CsvScalar[];
 
-function csvValue(value: string | number | boolean | undefined | null): string {
+export function encodeCsvValue(value: CsvScalar): string {
   if (value === undefined || value === null) return "";
   if (typeof value === "boolean") return value ? "true" : "false";
   return `"${String(value).replace(/"/g, '""')}"`;
@@ -57,7 +58,7 @@ function formatDouble(value: number | undefined | null): string | number {
 async function writeTable(outputDir: string, tableName: CsvTableName, rows: CsvRow[], result: CsvStagingResult): Promise<void> {
   if (rows.length === 0) return;
   const filePath = path.join(outputDir, `${tableName}.csv`);
-  await fs.writeFile(filePath, rows.map((row) => row.map(csvValue).join(",")).join("\n"), "utf8");
+  await fs.writeFile(filePath, rows.map((row) => row.map(encodeCsvValue).join(",")).join("\n"), "utf8");
   result.files[tableName] = filePath;
   result.rowCounts[tableName] = rows.length;
 }

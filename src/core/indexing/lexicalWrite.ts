@@ -1,6 +1,7 @@
 import type { RepoNode } from "../parsing/types.js";
 import type { WorkspaceLexicalStore } from "../retrieval/provider.js";
 import type { LexicalDocument, LexicalIndexHealth } from "../retrieval/types.js";
+import { getBrandedEnv } from "../../shared/branding.js";
 import { runIndexPhase, type IndexPhaseName } from "./phases.js";
 
 export type LexicalWriteResult = {
@@ -36,6 +37,7 @@ export async function runLexicalWritePhase(input: {
     repoName: input.repoName,
     repoId: input.repoId
   }, async () => {
+    const validationStarted = Date.now();
     const documents = [...input.documents].sort((left, right) => compareText(left.id, right.id));
     for (const document of documents) {
       if (document.workspaceId !== input.workspaceId) {
@@ -45,9 +47,13 @@ export async function runLexicalWritePhase(input: {
         throw new Error(`Lexical document ${document.id} belongs to a different batch.`);
       }
     }
+    writeLexicalTrace(`phase validation documents=${documents.length} duration=${Date.now() - validationStarted}ms`);
     const repos = [...new Map(input.repos.map((repo) => [repo.id, repo])).values()]
       .sort((left, right) => compareText(left.id, right.id));
+    const upsertStarted = Date.now();
     if (documents.length > 0) await input.store.upsertDocuments(documents);
+    writeLexicalTrace(`phase upsert documents=${documents.length} duration=${Date.now() - upsertStarted}ms`);
+    const reconcileStarted = Date.now();
     if (input.reconcileRepos ?? true) for (const repo of repos) {
       const activeDocumentIds = [...new Set(documents
         .filter((document) => document.repoId === repo.id && document.active)
@@ -68,7 +74,10 @@ export async function runLexicalWritePhase(input: {
         activeFileIds: input.activeFileIdsByRepo.get(repo.id) ?? []
       });
     }
+    writeLexicalTrace(`phase reconcile repos=${repos.length} duration=${Date.now() - reconcileStarted}ms`);
+    const healthStarted = Date.now();
     const providerHealth = await input.store.health(input.workspaceId);
+    writeLexicalTrace(`phase health duration=${Date.now() - healthStarted}ms status=${providerHealth.status}`);
     return {
       documentCount: documents.length,
       reconciledRepoIds: (input.reconcileRepos ?? true) ? repos.map((repo) => repo.id) : [],
@@ -86,4 +95,9 @@ export async function runLexicalWritePhase(input: {
     indexStatus: phase.result.providerHealth.status,
     indexReasons: [...phase.result.providerHealth.reasons]
   };
+}
+
+function writeLexicalTrace(message: string): void {
+  const value = getBrandedEnv("LEXICAL_TRACE");
+  if (value === "1" || value === "true") process.stderr.write(`Lexical write ${message}\n`);
 }

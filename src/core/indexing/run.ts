@@ -31,6 +31,7 @@ export async function runIndexing(
   const started = Date.now();
   const cwd = options.cwd ?? process.cwd();
   const logger = options.logger ?? {};
+  const setupStarted = Date.now();
   const planning = await planIndexRun({ db, config, options });
   const pluginBootstrap = await autoDetectAndRegisterPlugins({
     config,
@@ -49,6 +50,7 @@ export async function runIndexing(
     additionalIndexFilesByRepo: pluginBootstrap.additionalIndexFilesByRepo,
     activePluginSourceGlobsByRepo: pluginBootstrap.activePluginSourceGlobsByRepo
   });
+  logger.log?.(`Index setup: ${((Date.now() - setupStarted) / 1000).toFixed(2)}s`);
   const totals: IndexCounters = { filesScanned: 0, filesChanged: 0 };
   let lexicalProjectionDurationMs = 0;
   let lexicalWriteDurationMs = 0;
@@ -111,6 +113,7 @@ export async function runIndexing(
   // Compatibility metadata advances only after the complete workspace rebuild
   // (including the final cross-repo relation rebuild) has succeeded. Batched
   // indexing therefore commits versions once per run, never once per batch.
+  const finalizationStarted = Date.now();
   if (!options.changedOnly && !options.repo) await ctx.lexicalStore.commitVersions();
 
   const lexicalHealth = await ctx.lexicalStore.health(ctx.workspaceId);
@@ -128,6 +131,7 @@ export async function runIndexing(
     lexicalWriteDurationMs
   });
   const stats = await db.stats();
+  logger.log?.(`Index finalization: ${((Date.now() - finalizationStarted) / 1000).toFixed(2)}s`);
   return {
     filesScanned: totals.filesScanned,
     filesChanged: totals.filesChanged,

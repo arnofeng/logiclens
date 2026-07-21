@@ -1,6 +1,6 @@
 import type Parser from "tree-sitter";
-import { parseWithTreeSitter } from "../../../parsing/treeSitter.js";
 import type { ParsedFile, SourceLanguage } from "../../../parsing/types.js";
+import { parseCachedAst } from "./astCache.js";
 
 type JsLikeLanguage = SourceLanguage | "vue";
 
@@ -16,10 +16,8 @@ export type ResolvedExpression = {
 
 export function parseJsAst(file: ParsedFile): JsAstContext | undefined {
   if (!isJsLikeLanguage(file.language)) return undefined;
-  const source = file.source ?? sourceFromSymbols(file);
-  if (!source) return undefined;
   const parseLanguage = file.language === "vue" ? file.parseLanguage ?? "tsx" : file.language;
-  return { tree: parseWithTreeSitter(source, parseLanguage), source };
+  return parseCachedAst(file, parseLanguage);
 }
 
 export function walkAst(node: Parser.SyntaxNode, visit: (node: Parser.SyntaxNode) => void): void {
@@ -174,16 +172,4 @@ function unquote(value: string): string {
 
 function isJsLikeLanguage(language: string): language is JsLikeLanguage {
   return language === "typescript" || language === "tsx" || language === "javascript" || language === "jsx" || language === "vue";
-}
-
-function sourceFromSymbols(file: ParsedFile): string {
-  if (file.symbols.length === 0) return "";
-  const lines: string[] = Array.from({ length: Math.max(...file.symbols.map((symbol) => symbol.endLine), 1) }, () => "");
-  for (const symbol of file.symbols) {
-    const symbolLines = symbol.source.split(/\r?\n/);
-    for (const [index, line] of symbolLines.entries()) {
-      lines[symbol.startLine - 1 + index] = line;
-    }
-  }
-  return lines.join("\n");
 }
