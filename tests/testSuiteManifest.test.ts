@@ -10,6 +10,7 @@ describe("release test suite manifest", () => {
   it("covers lexical contracts, quality, Ask, and native Kuzu lifecycle gates", () => {
     expect(filesForSuite("retrieval-release")).toEqual(expect.arrayContaining([
       "tests/lexicalContracts.test.ts",
+      "tests/lexicalProjectionPerformance.test.ts",
       "tests/retrievalProviderContracts.test.ts",
       "tests/providerLexicalConformance.test.ts",
       "tests/kuzuLexicalLifecycle.test.ts",

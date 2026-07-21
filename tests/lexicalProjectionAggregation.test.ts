@@ -75,6 +75,18 @@ describe("complete lexical projection aggregation", () => {
     expect(JSON.stringify(projectLexicalDocuments(facts, "workspace:test"))).toBe(before);
   });
 
+  it("changes source-backed fingerprints when the source file hash changes", () => {
+    const facts = completeFacts();
+    const before = projectLexicalDocuments(facts, "workspace:test")
+      .find((document) => document.kind === "evidence")?.sourceHash;
+    facts.files[0]!.hash = "changed-file-hash";
+    const after = projectLexicalDocuments(facts, "workspace:test")
+      .find((document) => document.kind === "evidence")?.sourceHash;
+    expect(before).toBeDefined();
+    expect(after).toBeDefined();
+    expect(after).not.toBe(before);
+  });
+
   it("filters invalid duplicates and deduplicates identical source facts independently of order", () => {
     const facts = completeFacts();
     facts.evidence.unshift({ ...facts.evidence[0]!, filePath: "invalid/location.ts" });

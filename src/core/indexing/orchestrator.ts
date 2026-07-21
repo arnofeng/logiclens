@@ -134,14 +134,21 @@ async function runGraphPipeline(input: {
   });
   logStage(ctx, repoName ? `Facts build ${repoName}` : logPrefix ? `${logPrefix} facts build` : "Facts build", factsStarted);
 
+  const lexicalLabel = repoName ? `Lexical projection ${repoName}` : logPrefix ? `${logPrefix} lexical projection` : "Lexical projection";
+  const projectionFacts = lexicalReconcileOnly ? { ...factBuild.facts, repos: [] } : factBuild.facts;
+  log(ctx)(`${lexicalLabel} start: repos=${projectionFacts.repos.length} files=${projectionFacts.files.length} evidence=${projectionFacts.evidence.length}`);
   const lexicalProjection = await runLexicalProjectionPhase({
-    facts: lexicalReconcileOnly ? { ...factBuild.facts, repos: [] } : factBuild.facts,
+    facts: projectionFacts,
     workspaceId: ctx.workspaceId,
     repoName,
-    repoId: repos.length === 1 ? repos[0]?.id : undefined
+    repoId: repos.length === 1 ? repos[0]?.id : undefined,
+    createProgressBar: createProgressBar(ctx)
   });
+  log(ctx)(`${lexicalLabel} complete: documents=${lexicalProjection.documentCount} duration=${(lexicalProjection.durationMs / 1000).toFixed(2)}s`);
 
   const writeStarted = Date.now();
+  const graphLabel = repoName ? `Graph write ${repoName}` : logPrefix ? `${logPrefix} graph write` : "Graph write";
+  log(ctx)(`${graphLabel} start: writer=${selection.mode} files=${factBuild.facts.files.length} code=${factBuild.facts.code.length} relations=${factBuild.facts.imports.length + factBuild.facts.calls.length}`);
   let lexicalWrite: LexicalWriteResult | undefined;
   const graphWrite = await runGraphWritePhase({
     db,
@@ -164,6 +171,8 @@ async function runGraphPipeline(input: {
       store: ctx.lexicalStore,
       workspaceId: ctx.workspaceId,
       write: async () => {
+        const lexicalWriteLabel = repoName ? `Lexical write ${repoName}` : logPrefix ? `${logPrefix} lexical write` : "Lexical write";
+        log(ctx)(`${lexicalWriteLabel} start: documents=${lexicalProjection.documentCount}`);
         lexicalWrite = await runLexicalWritePhase({
           store: ctx.lexicalStore,
           workspaceId: ctx.workspaceId,
@@ -175,11 +184,12 @@ async function runGraphPipeline(input: {
           reconcileRepos: reconcileLexicalRepos,
           activeFileIdsByRepo
         });
+        log(ctx)(`${lexicalWriteLabel} complete: documents=${lexicalWrite.documentCount} indexSizeBytes=${lexicalWrite.providerHealth.metrics.indexSizeBytes} status=${lexicalWrite.indexStatus} duration=${(lexicalWrite.durationMs / 1000).toFixed(2)}s`);
       }
     }
   });
   if (!lexicalWrite) throw new Error("Graph write completed without executing its lexical write callback.");
-  logStage(ctx, repoName ? `Graph write ${repoName}` : logPrefix ? `${logPrefix} graph write` : "Graph write", writeStarted);
+  log(ctx)(`${graphLabel} complete: writer=${graphWrite.writerMode} duration=${((Date.now() - writeStarted) / 1000).toFixed(2)}s`);
   return { graphWrite, lexicalProjection, lexicalWrite };
 }
 

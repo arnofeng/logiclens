@@ -119,6 +119,29 @@ describe("indexing phases", () => {
     expect(JSON.stringify(first.documents)).toBe(JSON.stringify(second.documents));
   });
 
+  it("reports lexical projection progress in the fixed document-kind order", async () => {
+    const events: Array<{ current: number; total: number; label?: string }> = [];
+    const complete = vi.fn();
+    const createProgressBar = vi.fn(() => ({
+      reporter: () => (event: { current: number; total: number; label?: string }) => events.push(event),
+      complete
+    }));
+    const result = await runLexicalProjectionPhase({
+      facts: facts(),
+      workspaceId: "workspace:a",
+      repoName: repo.name,
+      repoId: repo.id,
+      createProgressBar
+    });
+    expect(createProgressBar).toHaveBeenCalledWith(`Lexical projection ${repo.name}`, 11);
+    expect(events.filter(({ label }) => label?.includes("documents=")).map(({ label }) => label?.split(" ")[0])).toEqual([
+      "repo", "file", "code", "section", "contract", "contractSpec", "evidence", "entity", "operation", "workflow", "package"
+    ]);
+    expect(events.at(-1)).toEqual({ current: 11, total: 11, label: "package documents=0" });
+    expect(result.documentCount).toBe(1);
+    expect(complete).toHaveBeenCalledWith("done");
+  });
+
   it("returns an empty lexical projection while retaining phase metadata", async () => {
     const result = await runLexicalProjectionPhase({ facts: facts({ repos: [] }), workspaceId: "workspace:a" });
     expect(result).toMatchObject({ phase: "lexical-projection", documentCount: 0, documents: [] });
@@ -126,11 +149,18 @@ describe("indexing phases", () => {
 
   it("wraps lexical projection errors and preserves the cause", async () => {
     const invalid = facts({ files: [{ id: "file:a", repoId: repo.id, path: "../escape.ts" } as GraphFactsBatch["files"][number]] });
-    await expect(runLexicalProjectionPhase({ facts: invalid, workspaceId: "workspace:a" })).rejects.toMatchObject({
+    const complete = vi.fn();
+    await expect(runLexicalProjectionPhase({
+      facts: invalid,
+      workspaceId: "workspace:a",
+      createProgressBar: () => ({ reporter: () => () => {}, complete })
+    })).rejects.toMatchObject({
       name: "IndexPhaseError",
       scope: { phase: "lexical-projection", batchId: "batch:lexical" },
       cause: expect.any(Error)
     });
+    expect(complete).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledWith("failed");
   });
 
   it("writes lexical documents without repeating schema DDL inside the journal boundary", async () => {

@@ -14,6 +14,7 @@ import type {
   WorkflowNode
 } from "../parsing/types.js";
 import { hashText } from "../../shared/hash.js";
+import type { ProgressReporter } from "../../shared/progress.js";
 import { createRenderRef } from "./renderRef.js";
 import { tokenizeLexicalText } from "./tokenizer.js";
 import {
@@ -32,6 +33,12 @@ type FactLifecycle = {
 type FileLocation = {
   file: FileNode;
   path: string;
+};
+
+type LexicalProjectionContext = {
+  files: Map<string, FileLocation>;
+  evidence?: Map<string, EvidenceNode>;
+  contracts?: Map<string, ContractNode>;
 };
 
 export const MAX_LEXICAL_SEARCHABLE_TEXT_LENGTH = 8_192;
@@ -315,8 +322,22 @@ function contractById(facts: GraphFactsBatch): Map<string, ContractNode> {
   return new Map(deterministicUnique(facts.contracts ?? [], "contract").map((contract) => [contract.id, contract]));
 }
 
+function createProjectionContext(facts: GraphFactsBatch): LexicalProjectionContext {
+  const files = fileLocations(facts);
+  return { files };
+}
+
+function contextEvidence(context: LexicalProjectionContext, facts: GraphFactsBatch): Map<string, EvidenceNode> {
+  context.evidence ??= evidenceById(facts, context.files);
+  return context.evidence;
+}
+
+function contextContracts(context: LexicalProjectionContext, facts: GraphFactsBatch): Map<string, ContractNode> {
+  context.contracts ??= contractById(facts);
+  return context.contracts;
+}
+
 function makeLocatedDocument(input: {
-  facts: GraphFactsBatch;
   workspaceId: string;
   kind: LexicalDocumentKind;
   canonicalId: string;
@@ -330,6 +351,7 @@ function makeLocatedDocument(input: {
   qualifiedName?: string;
   active: boolean;
   batchId: string;
+  sourceFileHash: string;
   fingerprintFields: unknown[];
 }): LexicalDocument {
   const renderRef = createRenderRef({
@@ -342,8 +364,7 @@ function makeLocatedDocument(input: {
     startLine: input.line
   });
   const searchableText = truncateText(input.searchableText, MAX_LEXICAL_SEARCHABLE_TEXT_LENGTH);
-  const sourceFileHash = fileLocations(input.facts).get(input.fileId)?.file.hash;
-  if (!sourceFileHash) throw new Error(`Located lexical document is missing its source file hash: ${input.fileId}.`);
+  if (!input.sourceFileHash) throw new Error(`Located lexical document is missing its source file hash: ${input.fileId}.`);
   return {
     id: lexicalDocumentId(input.workspaceId, input.repoId, input.kind, input.canonicalId, input.sourceDiscriminator),
     canonicalId: input.canonicalId,
@@ -359,22 +380,22 @@ function makeLocatedDocument(input: {
     // Source-backed projections use the parsed file hash plus stable identity.
     // This keeps full and batched runs byte-identical even when a batch-local
     // aggregate description contains fewer cross-repo aliases.
-    sourceHash: projectionFingerprint(input.kind, [input.canonicalId, input.repoId, input.fileId, sourceFileHash, input.sourceDiscriminator ?? "", renderRef]),
+    sourceHash: projectionFingerprint(input.kind, [input.canonicalId, input.repoId, input.fileId, input.sourceFileHash, input.sourceDiscriminator ?? "", renderRef]),
     batchId: input.batchId,
     renderRef
   };
 }
 
-export function projectRepoDocuments(facts: GraphFactsBatch, workspaceId: string): LexicalDocument[] {
+export function projectRepoDocuments(facts: GraphFactsBatch, workspaceId: string, _context?: LexicalProjectionContext): LexicalDocument[] {
   return deduplicateDocuments(deterministicUnique(facts.repos ?? [], "repository").map((repo) => projectRepo(repo, facts, workspaceId)));
 }
 
-export function projectFileDocuments(facts: GraphFactsBatch, workspaceId: string): LexicalDocument[] {
+export function projectFileDocuments(facts: GraphFactsBatch, workspaceId: string, _context?: LexicalProjectionContext): LexicalDocument[] {
   return deduplicateDocuments(deterministicUnique(facts.files ?? [], "file").map((file) => projectFile(file, facts, workspaceId)));
 }
 
-export function projectCodeDocuments(facts: GraphFactsBatch, workspaceId: string): LexicalDocument[] {
-  const files = fileLocations(facts);
+export function projectCodeDocuments(facts: GraphFactsBatch, workspaceId: string, context = createProjectionContext(facts)): LexicalDocument[] {
+  const files = context.files;
   return deduplicateDocuments((facts.code ?? []).flatMap((symbol) => {
     const location = files.get(symbol.fileId);
     if (!location || location.file.repoId !== symbol.repoId || !validLineRange(symbol.startLine, symbol.endLine)) return [];
@@ -382,8 +403,8 @@ export function projectCodeDocuments(facts: GraphFactsBatch, workspaceId: string
   }));
 }
 
-export function projectSectionDocuments(facts: GraphFactsBatch, workspaceId: string): LexicalDocument[] {
-  const files = fileLocations(facts);
+export function projectSectionDocuments(facts: GraphFactsBatch, workspaceId: string, context = createProjectionContext(facts)): LexicalDocument[] {
+  const files = context.files;
   return deduplicateDocuments((facts.sections ?? []).flatMap((section) => {
     const location = files.get(section.fileId);
     if (!location || location.file.repoId !== section.repoId || !validLineRange(section.startLine, section.endLine)) return [];
@@ -391,16 +412,15 @@ export function projectSectionDocuments(facts: GraphFactsBatch, workspaceId: str
   }));
 }
 
-export function projectEvidenceDocuments(facts: GraphFactsBatch, workspaceId: string): LexicalDocument[] {
-  const files = fileLocations(facts);
-  const evidence = evidenceById(facts, files);
+export function projectEvidenceDocuments(facts: GraphFactsBatch, workspaceId: string, context = createProjectionContext(facts)): LexicalDocument[] {
+  const files = context.files;
+  const evidence = contextEvidence(context, facts);
   return deduplicateDocuments([...evidence.values()].flatMap((item) => {
     const location = evidenceLocation(item, files);
     if (!location) return [];
     const raw = truncateText(item.raw, MAX_EVIDENCE_RAW_LENGTH);
     const searchableText = meaningfulText([item.rule, raw, item.confidence, location.path]);
     return [makeLocatedDocument({
-      facts,
       workspaceId,
       kind: "evidence",
       canonicalId: item.id,
@@ -412,15 +432,16 @@ export function projectEvidenceDocuments(facts: GraphFactsBatch, workspaceId: st
       searchableText,
       active: allActive(item, location.file),
       batchId: firstBatchId(facts, item, location.file),
+      sourceFileHash: location.file.hash,
       fingerprintFields: [item.id, item.repoId, item.fileId, location.path, item.line, item.rule, raw, item.confidence]
     })];
   }));
 }
 
-export function projectContractDocuments(facts: GraphFactsBatch, workspaceId: string): LexicalDocument[] {
-  const contracts = contractById(facts);
-  const files = fileLocations(facts);
-  const evidence = evidenceById(facts, files);
+export function projectContractDocuments(facts: GraphFactsBatch, workspaceId: string, context = createProjectionContext(facts)): LexicalDocument[] {
+  const contracts = contextContracts(context, facts);
+  const files = context.files;
+  const evidence = contextEvidence(context, facts);
   const sources = new Map<string, { contract: ContractNode; repoId: string; evidence: EvidenceNode; location: FileLocation; roles: string[]; edges: FactLifecycle[] }>();
   for (const edge of facts.repoContracts ?? []) {
     const contract = contracts.get(edge.contractId);
@@ -438,7 +459,6 @@ export function projectContractDocuments(facts: GraphFactsBatch, workspaceId: st
     const raw = truncateText(source.evidence.raw, MAX_EVIDENCE_RAW_LENGTH);
     const searchableText = meaningfulText([source.contract.kind, source.contract.key, source.contract.name, source.contract.description, ...roles, source.evidence.rule, raw, source.location.path]);
     return makeLocatedDocument({
-      facts,
       workspaceId,
       kind: "contract",
       canonicalId: source.contract.id,
@@ -451,14 +471,15 @@ export function projectContractDocuments(facts: GraphFactsBatch, workspaceId: st
       sourceDiscriminator: source.evidence.id,
       active: allActive(source.contract as ContractNode & FactLifecycle, source.evidence, source.location.file, ...source.edges),
       batchId: firstBatchId(facts, source.evidence, ...source.edges, source.location.file),
+      sourceFileHash: source.location.file.hash,
       fingerprintFields: [source.contract.id, source.contract.kind, source.contract.key, source.contract.name, source.contract.description, source.repoId, source.evidence.id, source.evidence.rule, raw, source.evidence.confidence, roles, source.location.path]
     });
   }));
 }
 
-export function projectContractSpecDocuments(facts: GraphFactsBatch, workspaceId: string): LexicalDocument[] {
-  const files = fileLocations(facts);
-  const evidence = evidenceById(facts, files);
+export function projectContractSpecDocuments(facts: GraphFactsBatch, workspaceId: string, context = createProjectionContext(facts)): LexicalDocument[] {
+  const files = context.files;
+  const evidence = contextEvidence(context, facts);
   const edgesBySpec = new Map<string, ContractSpecEdge[]>();
   for (const edge of facts.contractSpecEdges ?? []) {
     const rows = edgesBySpec.get(edge.specId) ?? [];
@@ -472,7 +493,6 @@ export function projectContractSpecDocuments(facts: GraphFactsBatch, workspaceId
     const edges = (edgesBySpec.get(spec.id) ?? []).filter((edge) => edge.contractId === spec.contractId && edge.evidenceId === spec.evidenceId);
     const searchableText = meaningfulText([spec.specKind, spec.canonicalKey, spec.httpMethod, spec.pathTemplate, spec.eventTopic, spec.framework, spec.version, location.path]);
     return [makeLocatedDocument({
-      facts,
       workspaceId,
       kind: "contractSpec",
       canonicalId: spec.id,
@@ -484,6 +504,7 @@ export function projectContractSpecDocuments(facts: GraphFactsBatch, workspaceId
       searchableText,
       active: allActive(spec, proof, location.file, ...edges),
       batchId: firstBatchId(facts, spec, proof, ...edges, location.file),
+      sourceFileHash: location.file.hash,
       fingerprintFields: [spec.id, spec.contractId, spec.specKind, spec.repoId, spec.fileId, spec.evidenceId, spec.canonicalKey, spec.httpMethod ?? "", spec.pathTemplate ?? "", spec.eventTopic ?? "", spec.framework ?? "", spec.version ?? "", location.path]
     })];
   }));
@@ -504,7 +525,6 @@ function entityDocumentsFromMentions(facts: GraphFactsBatch, workspaceId: string
       : meaningfulText([(source as DocSection).heading, truncateText((source as DocSection).text, MAX_SOURCE_CONTEXT_LENGTH)], MAX_SOURCE_CONTEXT_LENGTH);
     const searchableText = meaningfulText([entity.name, entity.kind, entity.description, sourceText, location.path]);
     return [makeLocatedDocument({
-      facts,
       workspaceId,
       kind: "entity",
       canonicalId: entity.id,
@@ -517,15 +537,16 @@ function entityDocumentsFromMentions(facts: GraphFactsBatch, workspaceId: string
       sourceDiscriminator: `${mention.sourceKind}:${mention.fromId}`,
       active: allActive(entity as EntityNode & FactLifecycle, source, location.file),
       batchId: firstBatchId(facts, source, location.file, entity as EntityNode & FactLifecycle),
+      sourceFileHash: location.file.hash,
       fingerprintFields: [entity.id, entity.name, entity.kind, entity.description, mention.sourceKind, mention.fromId, mention.confidence, sourceText, location.path]
     })];
   });
 }
 
-export function projectEntityDocuments(facts: GraphFactsBatch, workspaceId: string): LexicalDocument[] {
+export function projectEntityDocuments(facts: GraphFactsBatch, workspaceId: string, context = createProjectionContext(facts)): LexicalDocument[] {
   const entities = new Map(deterministicUnique(facts.entities ?? [], "entity").map((entity) => [entity.id, entity]));
-  const files = fileLocations(facts);
-  const evidence = evidenceById(facts, files);
+  const files = context.files;
+  const evidence = contextEvidence(context, facts);
   const documents = entityDocumentsFromMentions(facts, workspaceId, entities, files);
   for (const edge of facts.contractEntities ?? []) {
     const entity = entities.get(edge.entityId);
@@ -533,10 +554,9 @@ export function projectEntityDocuments(facts: GraphFactsBatch, workspaceId: stri
     const location = proof ? evidenceLocation(proof, files) : undefined;
     if (!entity || !proof || !location) continue;
     const raw = truncateText(proof.raw, MAX_EVIDENCE_RAW_LENGTH);
-    const contract = (facts.contracts ?? []).find((candidate) => candidate.id === edge.contractId);
+    const contract = contextContracts(context, facts).get(edge.contractId);
     const searchableText = meaningfulText([entity.name, entity.kind, entity.description, contract?.kind, contract?.key, proof.rule, raw, location.path]);
     documents.push(makeLocatedDocument({
-      facts,
       workspaceId,
       kind: "entity",
       canonicalId: entity.id,
@@ -549,16 +569,17 @@ export function projectEntityDocuments(facts: GraphFactsBatch, workspaceId: stri
       sourceDiscriminator: `evidence:${proof.id}:${edge.contractId}`,
       active: allActive(entity as EntityNode & FactLifecycle, edge, proof, location.file),
       batchId: firstBatchId(facts, proof, edge, location.file, entity as EntityNode & FactLifecycle),
+      sourceFileHash: location.file.hash,
       fingerprintFields: [entity.id, entity.name, entity.kind, entity.description, edge.contractId, proof.id, proof.rule, raw, edge.confidence, location.path]
     }));
   }
   return deduplicateDocuments(documents);
 }
 
-export function projectOperationDocuments(facts: GraphFactsBatch, workspaceId: string): LexicalDocument[] {
+export function projectOperationDocuments(facts: GraphFactsBatch, workspaceId: string, context = createProjectionContext(facts)): LexicalDocument[] {
   const operations = new Map(deterministicUnique(facts.operations ?? [], "operation").map((operation) => [operation.id, operation]));
-  const files = fileLocations(facts);
-  const evidence = evidenceById(facts, files);
+  const files = context.files;
+  const evidence = contextEvidence(context, facts);
   const operationRepos = facts.operationRepos ?? [];
   assertNoConflictingSources(operationRepos, (edge) => `${edge.operationId}:${edge.repoId}:${edge.role}:${edge.evidenceId}`);
   return deduplicateDocuments(operationRepos.flatMap((edge) => {
@@ -569,7 +590,6 @@ export function projectOperationDocuments(facts: GraphFactsBatch, workspaceId: s
     const raw = truncateText(proof.raw, MAX_EVIDENCE_RAW_LENGTH);
     const searchableText = meaningfulText([operation.verb, operation.entityName, operation.description, edge.role, proof.rule, raw, location.path]);
     return [makeLocatedDocument({
-      facts,
       workspaceId,
       kind: "operation",
       canonicalId: operation.id,
@@ -582,16 +602,17 @@ export function projectOperationDocuments(facts: GraphFactsBatch, workspaceId: s
       sourceDiscriminator: `${edge.role}:${proof.id}`,
       active: allActive(operation as OperationNode & FactLifecycle, edge, proof, location.file),
       batchId: firstBatchId(facts, proof, edge, location.file, operation as OperationNode & FactLifecycle),
+      sourceFileHash: location.file.hash,
       fingerprintFields: [operation.id, operation.verb, operation.entityName, operation.description, edge.repoId, edge.role, proof.id, proof.rule, raw, edge.confidence, location.path]
     })];
   }));
 }
 
-export function projectWorkflowDocuments(facts: GraphFactsBatch, workspaceId: string): LexicalDocument[] {
+export function projectWorkflowDocuments(facts: GraphFactsBatch, workspaceId: string, context = createProjectionContext(facts)): LexicalDocument[] {
   const workflows = new Map(deterministicUnique(facts.workflows ?? [], "workflow").map((workflow) => [workflow.id, workflow]));
   const operations = new Map(deterministicUnique(facts.operations ?? [], "operation").map((operation) => [operation.id, operation]));
-  const files = fileLocations(facts);
-  const evidence = evidenceById(facts, files);
+  const files = context.files;
+  const evidence = contextEvidence(context, facts);
   const workflowOperations = facts.workflowOperations ?? [];
   assertNoConflictingSources(workflowOperations, (edge) => `${edge.workflowId}:${edge.operationId}:${edge.step}:${edge.evidenceId}`);
   return deduplicateDocuments(workflowOperations.flatMap((edge) => {
@@ -603,7 +624,6 @@ export function projectWorkflowDocuments(facts: GraphFactsBatch, workspaceId: st
     const raw = truncateText(proof.raw, MAX_EVIDENCE_RAW_LENGTH);
     const searchableText = meaningfulText([workflow.name, workflow.description, edge.step, operation.verb, operation.entityName, operation.description, proof.rule, raw, location.path]);
     return [makeLocatedDocument({
-      facts,
       workspaceId,
       kind: "workflow",
       canonicalId: workflow.id,
@@ -616,14 +636,15 @@ export function projectWorkflowDocuments(facts: GraphFactsBatch, workspaceId: st
       sourceDiscriminator: `${edge.step}:${edge.operationId}:${proof.id}`,
       active: allActive(workflow as WorkflowNode & FactLifecycle, operation as OperationNode & FactLifecycle, edge, proof, location.file),
       batchId: firstBatchId(facts, proof, edge, location.file, workflow as WorkflowNode & FactLifecycle),
+      sourceFileHash: location.file.hash,
       fingerprintFields: [workflow.id, workflow.name, workflow.description, edge.step, operation.id, operation.verb, operation.entityName, operation.description, proof.id, proof.rule, raw, edge.confidence, location.path]
     })];
   }));
 }
 
-export function projectPackageDocuments(facts: GraphFactsBatch, workspaceId: string): LexicalDocument[] {
-  const files = fileLocations(facts);
-  const evidence = evidenceById(facts, files);
+export function projectPackageDocuments(facts: GraphFactsBatch, workspaceId: string, context = createProjectionContext(facts)): LexicalDocument[] {
+  const files = context.files;
+  const evidence = contextEvidence(context, facts);
   const packageUsages = facts.packageUsages ?? [];
   assertNoConflictingSources(packageUsages, (usage) => `${usage.packageContractId}:${usage.repoId}:${usage.evidenceId}`);
   return deduplicateDocuments(packageUsages.flatMap((usage) => {
@@ -633,7 +654,6 @@ export function projectPackageDocuments(facts: GraphFactsBatch, workspaceId: str
     const raw = truncateText(usage.raw, MAX_EVIDENCE_RAW_LENGTH);
     const searchableText = meaningfulText([usage.packageName, usage.packageContractId, raw, proof.rule, location.path]);
     return [makeLocatedDocument({
-      facts,
       workspaceId,
       kind: "package",
       canonicalId: usage.packageContractId,
@@ -646,25 +666,34 @@ export function projectPackageDocuments(facts: GraphFactsBatch, workspaceId: str
       sourceDiscriminator: proof.id,
       active: allActive(usage, proof, location.file),
       batchId: firstBatchId(facts, proof, usage, location.file),
+      sourceFileHash: location.file.hash,
       fingerprintFields: [usage.packageContractId, usage.packageName, usage.repoId, proof.id, raw, proof.rule, usage.confidence, location.path]
     })];
   }));
 }
 
-export function projectLexicalDocuments(facts: GraphFactsBatch, workspaceId: string): LexicalDocument[] {
-  const documents = [
-    ...projectRepoDocuments(facts, workspaceId),
-    ...projectFileDocuments(facts, workspaceId),
-    ...projectCodeDocuments(facts, workspaceId),
-    ...projectSectionDocuments(facts, workspaceId),
-    ...projectContractDocuments(facts, workspaceId),
-    ...projectContractSpecDocuments(facts, workspaceId),
-    ...projectEvidenceDocuments(facts, workspaceId),
-    ...projectEntityDocuments(facts, workspaceId),
-    ...projectOperationDocuments(facts, workspaceId),
-    ...projectWorkflowDocuments(facts, workspaceId),
-    ...projectPackageDocuments(facts, workspaceId)
-  ];
+export function projectLexicalDocuments(facts: GraphFactsBatch, workspaceId: string, progress?: ProgressReporter): LexicalDocument[] {
+  const context = createProjectionContext(facts);
+  const steps = [
+    ["repo", projectRepoDocuments],
+    ["file", projectFileDocuments],
+    ["code", projectCodeDocuments],
+    ["section", projectSectionDocuments],
+    ["contract", projectContractDocuments],
+    ["contractSpec", projectContractSpecDocuments],
+    ["evidence", projectEvidenceDocuments],
+    ["entity", projectEntityDocuments],
+    ["operation", projectOperationDocuments],
+    ["workflow", projectWorkflowDocuments],
+    ["package", projectPackageDocuments]
+  ] as const;
+  const documents: LexicalDocument[] = [];
+  progress?.({ current: 0, total: steps.length, label: `${steps[0][0]} start` });
+  for (const [index, [kind, project]] of steps.entries()) {
+    const projected = project(facts, workspaceId, context);
+    documents.push(...projected);
+    progress?.({ current: index + 1, total: steps.length, label: `${kind} documents=${projected.length}` });
+  }
   const byId = new Map<string, LexicalDocument>();
   for (const document of documents) {
     const previous = byId.get(document.id);

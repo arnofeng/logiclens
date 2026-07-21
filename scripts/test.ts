@@ -8,6 +8,7 @@ export const TEST_SUITES = Object.freeze({
     "tests/kuzuLexicalLifecycle.test.ts",
     "tests/kuzuWorkspaceLexicalSpike.test.ts",
     "tests/lexicalContracts.test.ts",
+    "tests/lexicalProjectionPerformance.test.ts",
     "tests/providerLexicalConformance.test.ts",
     "tests/retrieval/workspaceLifecycleConformance.test.ts",
     "tests/retrievalProviderContracts.test.ts",

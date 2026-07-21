@@ -77,6 +77,16 @@ describe("batched indexing", () => {
       const config = configFor(repos, 2);
       const result = await runIndexing(db, config, { cwd, writeMode: "auto", batchSize: 2, logger: { log: (message) => logs.push(message) } });
       expect(logs.some((message) => message.includes("Batched indexing: batches=2 batchSize=2"))).toBe(true);
+      for (const expected of [
+        "lexical projection start:",
+        "lexical projection complete: documents=",
+        "graph write start: writer=",
+        "lexical write start: documents=",
+        "lexical write complete: documents=",
+        "graph write complete: writer="
+      ]) {
+        expect(logs.some((message) => message.toLowerCase().includes(expected))).toBe(true);
+      }
       expect(commitVersions).toHaveBeenCalledTimes(1);
       expect(ensureSchema).toHaveBeenCalledTimes(1);
       commitVersions.mockRestore();
