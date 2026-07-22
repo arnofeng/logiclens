@@ -196,4 +196,81 @@ describe("semantic impact survey", () => {
     ]);
     expect(report!.affectedRepos).toEqual(["center-service", "front-service", "web-frontend"]);
   });
+
+  it("does not fan a concrete HTTP implementation through a Dubbo interface wildcard", () => {
+    const http = {
+      ...httpSpec("spec:http", "front-service", "POST", "/orders/createOrder"),
+      fileId: "file:front-service:src/CreateController.java"
+    };
+    const localCreateConsumer = dubboSpec(
+      "spec:dubbo-create-consumer",
+      "front-service",
+      "src/CreateController.java",
+      "createOrder"
+    );
+    const wildcardProducer = dubboSpec("spec:dubbo-wildcard", "center-service", "src/dubbo.xml", "*");
+    const siblingConsumer = dubboSpec(
+      "spec:dubbo-delete-consumer",
+      "front-service",
+      "src/DeleteController.java",
+      "deleteOrder"
+    );
+    const siblingHttp = {
+      ...httpSpec("spec:http-delete", "front-service", "POST", "/orders/deleteOrder"),
+      fileId: "file:front-service:src/DeleteController.java"
+    };
+    const frontendConsumer = httpSpec("spec:http-consumer", "web-frontend", "POST", "/orders/createOrder");
+    const relations: SemanticRelationEdge[] = [
+      { fromSpecId: localCreateConsumer.id, toSpecId: wildcardProducer.id, kind: "CALLS_ENDPOINT", evidenceId: "ev:create", reason: "interface fallback", confidence: 0.6 },
+      { fromSpecId: siblingConsumer.id, toSpecId: wildcardProducer.id, kind: "CALLS_ENDPOINT", evidenceId: "ev:delete", reason: "interface fallback", confidence: 0.6 },
+      { fromSpecId: frontendConsumer.id, toSpecId: http.id, kind: "CALLS_ENDPOINT", evidenceId: "ev:http", reason: "exact HTTP match", confidence: 0.95 }
+    ];
+
+    const report = analyzeSemanticImpact(
+      "http POST /orders/createOrder",
+      [http, localCreateConsumer, wildcardProducer, siblingConsumer, siblingHttp, frontendConsumer],
+      relations
+    );
+
+    expect(report).not.toBeNull();
+    expect(report!.affectedRepos).toEqual(["center-service", "front-service", "web-frontend"]);
+    expect(report!.nodes.map((node) => node.specId)).toEqual([
+      http.id,
+      wildcardProducer.id,
+      frontendConsumer.id
+    ]);
+    expect(report!.nodes.map((node) => node.specId)).not.toContain(siblingConsumer.id);
+    expect(report!.nodes.map((node) => node.specId)).not.toContain(siblingHttp.id);
+    expect(report!.truncated).toBe(false);
+  });
+
+  it("does not turn a downstream exact RPC provider into impacts on sibling HTTP entrypoints", () => {
+    const http = {
+      ...httpSpec("spec:http", "front-service", "POST", "/orders/createOrder"),
+      fileId: "file:front-service:src/CreateController.java"
+    };
+    const localConsumer = dubboSpec("spec:dubbo-local", "front-service", "src/CreateController.java", "createOrder");
+    const provider = dubboSpec("spec:dubbo-provider", "center-service", "src/OrderServiceImpl.java", "createOrder");
+    const siblingConsumer = dubboSpec("spec:dubbo-sibling", "front-service", "src/LotteryController.java", "createOrder");
+    const siblingHttp = {
+      ...httpSpec("spec:http-sibling", "front-service", "POST", "/lottery/createOrder"),
+      fileId: "file:front-service:src/LotteryController.java"
+    };
+    const relations: SemanticRelationEdge[] = [
+      { fromSpecId: localConsumer.id, toSpecId: provider.id, kind: "CALLS_ENDPOINT", evidenceId: "ev:local", reason: "exact Dubbo match", confidence: 0.9 },
+      { fromSpecId: siblingConsumer.id, toSpecId: provider.id, kind: "CALLS_ENDPOINT", evidenceId: "ev:sibling", reason: "exact Dubbo match", confidence: 0.9 }
+    ];
+
+    const report = analyzeSemanticImpact(
+      "http POST /orders/createOrder",
+      [http, localConsumer, provider, siblingConsumer, siblingHttp],
+      relations
+    );
+
+    expect(report).not.toBeNull();
+    expect(report!.nodes.map((node) => node.specId)).toEqual([http.id, provider.id]);
+    expect(report!.nodes.map((node) => node.specId)).not.toContain(siblingConsumer.id);
+    expect(report!.nodes.map((node) => node.specId)).not.toContain(siblingHttp.id);
+    expect(report!.truncated).toBe(false);
+  });
 });

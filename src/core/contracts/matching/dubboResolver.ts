@@ -42,11 +42,13 @@ export function resolveDubboRelations(
   const seen = new Set<string>();
   for (const consumerSpec of consumers) {
     const consumer = deserializeSpec(consumerSpec.specJson) as DubboMethodSpec;
-    const candidates = producerBuckets.get(interfaceKey(consumer.interfaceName)) ?? [];
+    const candidates = selectProducerCandidates(
+      consumer,
+      producerBuckets.get(interfaceKey(consumer.interfaceName)) ?? []
+    );
     for (const producer of candidates) {
       if (consumerSpec.id === producer.specNode.id) continue;
       if (consumerSpec.repoId === producer.specNode.repoId) continue;
-      if (!methodsCompatible(consumer.method, producer.dubboSpec.method)) continue;
 
       const dedupKey = `${consumerSpec.id}:${producer.specNode.id}:CALLS_ENDPOINT`;
       if (seen.has(dedupKey)) continue;
@@ -65,6 +67,41 @@ export function resolveDubboRelations(
   }
 
   return edges;
+}
+
+function selectProducerCandidates(
+  consumer: DubboMethodSpec,
+  candidates: ParsedDubboSpec[]
+): ParsedDubboSpec[] {
+  const compatible = candidates.filter((candidate) => methodsCompatible(consumer.method, candidate.dubboSpec.method));
+  const deduped = new Map<string, ParsedDubboSpec>();
+  for (const candidate of compatible) {
+    const method = candidate.dubboSpec.method || "*";
+    const key = [
+      candidate.specNode.repoId,
+      method,
+      candidate.dubboSpec.group ?? "",
+      candidate.dubboSpec.version ?? ""
+    ].join(":");
+    const existing = deduped.get(key);
+    if (!existing || candidate.specNode.confidence > existing.specNode.confidence || (
+      candidate.specNode.confidence === existing.specNode.confidence && candidate.specNode.id < existing.specNode.id
+    )) {
+      deduped.set(key, candidate);
+    }
+  }
+
+  const selected = [...deduped.values()];
+  if (!consumer.method || consumer.method === "*") return selected;
+
+  const reposWithExactMethod = new Set(
+    selected
+      .filter((candidate) => candidate.dubboSpec.method === consumer.method)
+      .map((candidate) => candidate.specNode.repoId)
+  );
+  return selected.filter((candidate) => (
+    candidate.dubboSpec.method !== "*" || !reposWithExactMethod.has(candidate.specNode.repoId)
+  ));
 }
 
 function interfaceKey(interfaceName: string): string {

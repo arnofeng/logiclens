@@ -9,14 +9,32 @@ import { builtinLanguageForPath, parseSourceFile } from "../src/core/parsing/par
 import { repoId } from "../src/shared/path.js";
 
 async function extract(source: string): Promise<ExtractorFactBundle> {
+  return extractWorkspace(source, []);
+}
+
+async function extractWorkspace(
+  source: string,
+  javaFiles: Array<{ path: string; source: string }>
+): Promise<ExtractorFactBundle> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-dubbo-xml-"));
   const rel = "src/main/resources/dubbo.xml";
   const abs = path.join(dir, rel);
   await fs.mkdir(path.dirname(abs), { recursive: true });
   await fs.writeFile(abs, source, "utf8");
   const repo = { id: repoId("dubbo-xml"), name: "dubbo-xml", path: dir, remoteUrl: "", branch: "", commitSha: "", language: "java", indexedAt: "now" } as any;
-  const parsed = await parseSourceFile({ repoId: repo.id, absolutePath: abs, relativePath: rel, language: "xml" });
-  const bundle = await dubboXmlExtractor.extract({ repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
+  const parsedFiles = [await parseSourceFile({ repoId: repo.id, absolutePath: abs, relativePath: rel, language: "xml" })];
+  for (const javaFile of javaFiles) {
+    const javaAbs = path.join(dir, javaFile.path);
+    await fs.mkdir(path.dirname(javaAbs), { recursive: true });
+    await fs.writeFile(javaAbs, javaFile.source, "utf8");
+    parsedFiles.push(await parseSourceFile({
+      repoId: repo.id,
+      absolutePath: javaAbs,
+      relativePath: javaFile.path,
+      language: "java"
+    }));
+  }
+  const bundle = await dubboXmlExtractor.extract({ repos: [repo], parsedFiles, repoResolver: () => repo });
   await fs.rm(dir, { recursive: true, force: true });
   return bundle;
 }
@@ -93,6 +111,60 @@ describe("Dubbo XML extractor", () => {
         framework: "dubbo-java"
       })
     ]));
+  });
+
+  it("ignores commented declarations while preserving the active declaration line", async () => {
+    const bundle = await extract(`<beans xmlns:dubbo="http://dubbo.apache.org/schema/dubbo">
+      <!--
+        <dubbo:service interface="com.acme.api.OrderService" ref="oldOrderService" />
+      -->
+      <dubbo:service interface="com.acme.api.OrderService" ref="orderService" />
+    </beans>`);
+
+    expect(bundle.contractSpecs).toHaveLength(1);
+    expect(bundle.evidence).toHaveLength(1);
+    expect(bundle.evidence[0]!.line).toBe(5);
+    expect(bundle.evidence[0]!.raw).toContain("ref=\"orderService\"");
+  });
+
+  it("extracts explicitly configured Dubbo methods instead of an interface wildcard", async () => {
+    const bundle = await extract(`<beans xmlns:dubbo="http://dubbo.apache.org/schema/dubbo">
+      <dubbo:service interface="com.acme.api.OrderService" ref="orderService">
+        <dubbo:method name="createOrder" timeout="1000" />
+      </dubbo:service>
+    </beans>`);
+
+    expect(roleKeys(bundle, "producer")).toEqual(["com.acme.api.orderservice#createOrder"]);
+    expect(specs(bundle)).toEqual([
+      expect.objectContaining({ interfaceName: "com.acme.api.OrderService", method: "createOrder" })
+    ]);
+  });
+
+  it("resolves an XML service ref to exact methods on its Java implementation", async () => {
+    const bundle = await extractWorkspace(
+      `<beans xmlns:dubbo="http://dubbo.apache.org/schema/dubbo">
+        <dubbo:service interface="com.acme.api.OrderService" ref="orderServiceImpl" />
+      </beans>`,
+      [{
+        path: "src/main/java/com/acme/server/OrderServiceImpl.java",
+        source: `package com.acme.server;
+          import com.acme.api.OrderService;
+          import org.springframework.stereotype.Component;
+          @Component
+          public class OrderServiceImpl implements OrderService {
+            public String createOrder(CreateOrderRequest request) { return "ok"; }
+            public void cancelOrder(CancelOrderRequest request) {}
+          }`
+      }]
+    );
+
+    expect(roleKeys(bundle, "producer")).toEqual([
+      "com.acme.api.orderservice#cancelOrder",
+      "com.acme.api.orderservice#createOrder"
+    ]);
+    expect(specs(bundle).map((spec) => spec.method).sort()).toEqual(["cancelOrder", "createOrder"]);
+    expect(bundle.contractSpecs.every((spec) => spec.fileId.includes("OrderServiceImpl.java"))).toBe(true);
+    expect(bundle.evidence.every((evidence) => evidence.rule === "dubbo-xml-service-implementation")).toBe(true);
   });
 
   it("ignores unrelated XML", async () => {

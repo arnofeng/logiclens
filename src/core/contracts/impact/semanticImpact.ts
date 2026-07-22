@@ -93,6 +93,7 @@ export function traceImpactPropagation(
   let truncated = false;
   const specMap = new Map(specs.map((s) => [s.id, s]));
   const bridgedLocalSpecs = new Set<string>();
+  const terminalImplementationProviders = new Set<string>();
 
   for (const id of frontier) visited.set(id, 0);
 
@@ -125,6 +126,7 @@ export function traceImpactPropagation(
   for (let hop = 1; hop <= maxHops; hop++) {
     const next = new Set<string>();
     for (const currentSpecId of frontier) {
+      if (terminalImplementationProviders.has(currentSpecId)) continue;
       const spec = specMap.get(currentSpecId);
       const activeRelations = new Set<SemanticRelationEdge>();
 
@@ -150,6 +152,9 @@ export function traceImpactPropagation(
             bridgedLocalSpecs.add(step.edge.fromSpecId);
           }
           next.add(step.impactedSpecId);
+          if (isImplementationProviderTerminal(step, specMap)) {
+            terminalImplementationProviders.add(step.impactedSpecId);
+          }
           incomingStep.set(step.impactedSpecId, step);
           pathEdges.push({
             fromSpecId: edge.fromSpecId,
@@ -169,7 +174,14 @@ export function traceImpactPropagation(
     for (const id of next) visited.set(id, hop);
 
     if (hop === maxHops) {
-      truncated = hasMoreImpactTargets(next, specs, relationsBySpecId, relationsByFileId, visited);
+      truncated = hasMoreImpactTargets(
+        next,
+        specs,
+        relationsBySpecId,
+        relationsByFileId,
+        visited,
+        terminalImplementationProviders
+      );
       break;
     }
     frontier = next;
@@ -183,10 +195,12 @@ function hasMoreImpactTargets(
   specs: ReadableContractSpecNode[],
   relationsBySpecId: Map<string, SemanticRelationEdge[]>,
   relationsByFileId: Map<string, SemanticRelationEdge[]>,
-  visited: Map<string, number>
+  visited: Map<string, number>,
+  terminalImplementationProviders: Set<string>
 ): boolean {
   const specMap = new Map(specs.map((s) => [s.id, s]));
   for (const currentSpecId of frontier) {
+    if (terminalImplementationProviders.has(currentSpecId)) continue;
     const spec = specMap.get(currentSpecId);
     const activeRelations = new Set<SemanticRelationEdge>();
 
@@ -210,6 +224,16 @@ function hasMoreImpactTargets(
     }
   }
   return false;
+}
+
+function isImplementationProviderTerminal(
+  step: ImpactStep,
+  specMap: Map<string, ReadableContractSpecNode>
+): boolean {
+  if (step.materialization !== "inferred" || step.impactedSpecId !== step.edge.toSpecId) return false;
+  const consumer = specMap.get(step.edge.fromSpecId);
+  const producer = specMap.get(step.edge.toSpecId);
+  return consumer?.specKind === "dubbo-method" && producer?.specKind === "dubbo-method";
 }
 
 function impactStepsFromEdge(

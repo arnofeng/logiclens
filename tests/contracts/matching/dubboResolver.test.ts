@@ -122,4 +122,31 @@ describe("Dubbo Resolver", () => {
     expect(edges).toHaveLength(1);
     expect(edges[0]!.confidence).toBe(0.6);
   });
+
+  it("prefers a concrete producer over an interface wildcard in the same repo", () => {
+    const exact = makeDubboSpec({ id: "spec-exact", contractId: "c-exact", repoId: "repo-p", interfaceName: "com.acme.OrderService", method: "createOrder" });
+    const wildcard = makeDubboSpec({ id: "spec-wildcard", contractId: "c-wildcard", repoId: "repo-p", interfaceName: "com.acme.OrderService", method: "*" });
+    const consumer = makeDubboSpec({ id: "spec-c", contractId: "c-c", repoId: "repo-c", interfaceName: "com.acme.OrderService", method: "createOrder" });
+    const edges = resolveDubboRelations([exact, wildcard, consumer], makeRoleMap([exact, wildcard, consumer], {
+      "spec-exact": "producer",
+      "spec-wildcard": "producer",
+      "spec-c": "consumer"
+    }));
+
+    expect(edges).toHaveLength(1);
+    expect(edges[0]).toMatchObject({ fromSpecId: consumer.id, toSpecId: exact.id, confidence: 0.9 });
+  });
+
+  it("deduplicates equivalent wildcard registrations in one repo", () => {
+    const wildcardA = makeDubboSpec({ id: "spec-wildcard-a", contractId: "c-wildcard-a", repoId: "repo-p", interfaceName: "com.acme.OrderService", method: "*" });
+    const wildcardB = makeDubboSpec({ id: "spec-wildcard-b", contractId: "c-wildcard-b", repoId: "repo-p", interfaceName: "com.acme.OrderService", method: "*" });
+    const consumer = makeDubboSpec({ id: "spec-c", contractId: "c-c", repoId: "repo-c", interfaceName: "com.acme.OrderService", method: "createOrder" });
+    const edges = resolveDubboRelations([wildcardA, wildcardB, consumer], makeRoleMap([wildcardA, wildcardB, consumer], {
+      "spec-wildcard-a": "producer",
+      "spec-wildcard-b": "producer",
+      "spec-c": "consumer"
+    }));
+
+    expect(edges).toHaveLength(1);
+  });
 });
