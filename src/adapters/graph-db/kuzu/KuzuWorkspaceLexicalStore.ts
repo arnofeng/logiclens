@@ -66,7 +66,14 @@ const DOCUMENT_COLUMNS = [
   ["ftsText", "STRING"],
   ["ftsSizeBytes", "INT64"]
 ] as const;
+const DOCUMENT_LOAD_COLUMNS = [["id", "STRING"], ...DOCUMENT_COLUMNS] as const;
 const DOCUMENT_COLUMN_NAMES = ["id", ...DOCUMENT_COLUMNS.map(([name]) => name)].join(", ");
+const DOCUMENT_LOAD_BINDINGS = DOCUMENT_LOAD_COLUMNS
+  .map(([name, type], index) => `CAST(COLUMN${index} AS ${type}) AS ${name}`)
+  .join(", ");
+const DOCUMENT_LOAD_SET = DOCUMENT_COLUMNS
+  .map(([name]) => `n.${name} = ${name}`)
+  .join(", ");
 
 type TableRow = { name: string };
 type ColumnRow = { name: string };
@@ -241,7 +248,9 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
         // but repeated COPY appends can collide in the FTS extension's
         // auxiliary serial keys. Keep the fast path intentionally scoped to
         // the initial workspace import.
-        const copyEligible = storedDocumentCount === 0 && existingRows.length === 0 && unique.every(hasCopySafeTokens);
+        const csvEligible = unique.every(hasCopySafeTokens);
+        const copyEligible = storedDocumentCount === 0 && existingRows.length === 0 && csvEligible;
+        const appendLoadEligible = storedDocumentCount > 0 && existingRows.length === 0 && csvEligible;
         if (copyEligible) {
           for (const document of unique) {
             if (!document.active) continue;
@@ -249,6 +258,13 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
             indexSizeBytesDelta += ftsSizeBytes(document);
           }
           await copyNewDocuments(this.db, unique);
+        } else if (appendLoadEligible) {
+          for (const document of unique) {
+            if (!document.active) continue;
+            documentCountDelta += 1;
+            indexSizeBytesDelta += ftsSizeBytes(document);
+          }
+          await appendLoadNewDocuments(this.db, unique);
         } else {
           const mergeStarted = Date.now();
           for (const document of unique) {
@@ -271,11 +287,11 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
               documentParameters(document)
             );
           }
-          const reason = storedDocumentCount > 0
-            ? "nonempty-store"
-            : existingRows.length > 0
-              ? "existing-documents"
-              : "unsafe-token";
+          const reason = existingRows.length > 0
+            ? "existing-documents"
+            : !csvEligible
+              ? "unsafe-token"
+              : "nonempty-store";
           writeLexicalTrace(`writer=merge documents=${unique.length} duration=${Date.now() - mergeStarted}ms reason=${reason}`);
         }
         const statsStarted = Date.now();
@@ -638,16 +654,36 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
 }
 
 async function copyNewDocuments(db: KuzuGraphDB, documents: readonly LexicalDocument[]): Promise<void> {
+  await withStagedDocuments("lexical-copy", documents, async (filePath, stageDurationMs) => {
+    const copyStarted = Date.now();
+    await db.query(`COPY LexicalDocument (${DOCUMENT_COLUMN_NAMES}) FROM "${toKuzuPath(filePath)}" (PARALLEL=false);`);
+    writeLexicalTrace(`writer=copy documents=${documents.length} stage=${stageDurationMs}ms copy=${Date.now() - copyStarted}ms`);
+  });
+}
+
+async function appendLoadNewDocuments(db: KuzuGraphDB, documents: readonly LexicalDocument[]): Promise<void> {
+  await withStagedDocuments("lexical-append-load", documents, async (filePath, stageDurationMs) => {
+    const loadStarted = Date.now();
+    await db.query(
+      `LOAD FROM "${toKuzuPath(filePath)}" (PARALLEL=false) WITH ${DOCUMENT_LOAD_BINDINGS} ` +
+      `MERGE (n:LexicalDocument {id: id}) SET ${DOCUMENT_LOAD_SET};`
+    );
+    writeLexicalTrace(`writer=append-load documents=${documents.length} stage=${stageDurationMs}ms load=${Date.now() - loadStarted}ms`);
+  });
+}
+
+async function withStagedDocuments(
+  prefix: string,
+  documents: readonly LexicalDocument[],
+  write: (filePath: string, stageDurationMs: number) => Promise<void>
+): Promise<void> {
   const stagingStarted = Date.now();
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), brandedTempDirPrefix("lexical-copy")));
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), brandedTempDirPrefix(prefix)));
   const filePath = path.join(directory, "LexicalDocument.csv");
   try {
     const rows = documents.map((document) => documentCsvRow(document).map(encodeCsvValue).join(","));
     await fs.writeFile(filePath, rows.join("\n"), "utf8");
-    const stageDurationMs = Date.now() - stagingStarted;
-    const copyStarted = Date.now();
-    await db.query(`COPY LexicalDocument (${DOCUMENT_COLUMN_NAMES}) FROM "${toKuzuPath(filePath)}" (PARALLEL=false);`);
-    writeLexicalTrace(`writer=copy documents=${documents.length} stage=${stageDurationMs}ms copy=${Date.now() - copyStarted}ms`);
+    await write(filePath, Date.now() - stagingStarted);
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }

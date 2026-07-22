@@ -5,6 +5,7 @@ import path from "node:path";
 
 export const TEST_SUITES = Object.freeze({
   "retrieval-release": Object.freeze([
+    "tests/kuzuLexicalAppendStatsRollback.test.ts",
     "tests/kuzuLexicalLifecycle.test.ts",
     "tests/kuzuWorkspaceLexicalSpike.test.ts",
     "tests/lexicalContracts.test.ts",

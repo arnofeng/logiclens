@@ -307,8 +307,98 @@ describe("Kuzu workspace lexical lifecycle", () => {
     });
   });
 
+  it("append-loads an all-new batch into a nonempty store without changing existing documents", async () => {
+    await store.ensureSchema();
+    const existing = document({
+      id: "lexical:append:existing",
+      canonicalId: "code:append:existing",
+      repoId: "repo:one",
+      title: "Existing Repo",
+      searchableText: "existing repository marker",
+      tokens: ["existing", "repository"],
+      batchId: "batch:existing"
+    });
+    await store.upsertDocuments([existing]);
+    const appended = [
+      document({
+        id: "lexical:append:new-active",
+        canonicalId: "code:append:new-active",
+        repoId: "repo:two",
+        title: "Quoted \"append title\"\n中文第二行",
+        searchableText: "appendloadmarker 中文 Unicode, comma\nnext line",
+        tokens: ["appendloadmarker", "cjk_追加", "src/append.ts"],
+        qualifiedName: undefined,
+        path: "src/中文,append.ts",
+        batchId: "batch:append"
+      }),
+      document({
+        id: "lexical:append:new-inactive",
+        canonicalId: "code:append:new-inactive",
+        repoId: "repo:two",
+        title: "Inactive append",
+        searchableText: "inactive append marker",
+        tokens: [],
+        qualifiedName: undefined,
+        path: undefined,
+        active: false,
+        batchId: "batch:append"
+      })
+    ];
+    const query = vi.spyOn(db, "query");
+
+    await store.upsertDocuments(appended);
+
+    const statements = query.mock.calls.map(([cypher]) => String(cypher));
+    expect(statements.filter((cypher) => cypher.startsWith("LOAD FROM ") && cypher.includes("MERGE (n:LexicalDocument")))
+      .toHaveLength(1);
+    expect(statements.some((cypher) => cypher.startsWith("COPY LexicalDocument ("))).toBe(false);
+    expect(statements.some((cypher) => cypher.startsWith("MERGE (n:LexicalDocument {id: $id})"))).toBe(false);
+    query.mockRestore();
+
+    expect(await store.loadDocuments({
+      workspaceId: WORKSPACE,
+      documentIds: [existing.id, ...appended.map((entry) => entry.id)]
+    })).toEqual([existing, ...appended].sort((left, right) => left.id.localeCompare(right.id)));
+    expect((await store.search({ workspaceId: WORKSPACE, text: "appendloadmarker" }, { topK: 5 }))[0]?.documentId)
+      .toBe("lexical:append:new-active");
+    expect((await store.health(WORKSPACE)).metrics).toEqual({
+      documentCount: 2,
+      indexSizeBytes: Buffer.byteLength([existing.searchableText, ...existing.tokens].join(" "), "utf8") +
+        Buffer.byteLength([appended[0]!.searchableText, ...appended[0]!.tokens].join(" "), "utf8")
+    });
+  });
+
+  it("keeps existing-id batches on the transactional merge path", async () => {
+    await store.ensureSchema();
+    const existing = document({
+      id: "lexical:append:update",
+      canonicalId: "code:append:update",
+      searchableText: "before update",
+      tokens: ["before"],
+      active: false
+    });
+    await store.upsertDocuments([existing]);
+    const updated = { ...existing, searchableText: "after update", tokens: ["after"], active: true };
+    const query = vi.spyOn(db, "query");
+
+    await store.upsertDocuments([updated]);
+
+    const statements = query.mock.calls.map(([cypher]) => String(cypher));
+    expect(statements.some((cypher) => cypher.startsWith("LOAD FROM ") && cypher.includes("MERGE (n:LexicalDocument")))
+      .toBe(false);
+    expect(statements.filter((cypher) => cypher.startsWith("MERGE (n:LexicalDocument {id: $id})"))).toHaveLength(1);
+    query.mockRestore();
+    expect(await store.loadDocuments({ workspaceId: WORKSPACE, documentIds: [updated.id] })).toEqual([updated]);
+  });
+
   it("falls back to transactional merges for unsafe token lists", async () => {
     await store.ensureSchema();
+    const baseline = document({
+      id: "lexical:unsafe-baseline",
+      canonicalId: "code:unsafe-baseline",
+      tokens: ["baseline"]
+    });
+    await store.upsertDocuments([baseline]);
     const unsafe = document({
       id: "lexical:unsafe-token",
       canonicalId: "code:unsafe-token",
@@ -322,7 +412,53 @@ describe("Kuzu workspace lexical lifecycle", () => {
     expect(statements.some((cypher) => cypher.startsWith("COPY LexicalDocument ("))).toBe(false);
     expect(statements.filter((cypher) => cypher.startsWith("MERGE (n:LexicalDocument"))).toHaveLength(1);
     query.mockRestore();
-    expect(await store.loadDocuments({ workspaceId: WORKSPACE, documentIds: [unsafe.id] })).toEqual([unsafe]);
+    expect(await store.loadDocuments({ workspaceId: WORKSPACE, documentIds: [baseline.id, unsafe.id] }))
+      .toEqual([baseline, unsafe].sort((left, right) => left.id.localeCompare(right.id)));
+  });
+
+  it("rolls back a failed append LOAD and removes its temporary staging directory", async () => {
+    await store.ensureSchema();
+    const existing = document({ id: "lexical:append-load-existing", canonicalId: "code:append-load-existing" });
+    await store.upsertDocuments([existing]);
+    const prefix = "logiclens-lexical-append-load-";
+    const before = new Set((await fs.readdir(os.tmpdir())).filter((name) => name.startsWith(prefix)));
+    const originalQuery = db.query.bind(db);
+    const query = vi.spyOn(db, "query").mockImplementation(async (cypher, params) => {
+      if (cypher.startsWith("LOAD FROM ") && cypher.includes("MERGE (n:LexicalDocument")) {
+        throw new Error("injected append LOAD failure");
+      }
+      return originalQuery(cypher, params) as ReturnType<typeof db.query>;
+    });
+    const appended = document({
+      id: "lexical:append-load-failed",
+      canonicalId: "code:append-load-failed",
+      repoId: "repo:two",
+      batchId: "batch:append-load-failed"
+    });
+
+    await expect(store.upsertDocuments([appended])).rejects.toMatchObject({
+      code: "write_failed",
+      context: { operation: "upsertDocuments", workspaceId: WORKSPACE, batchId: appended.batchId }
+    });
+    query.mockRestore();
+
+    expect(await store.loadDocuments({ workspaceId: WORKSPACE, documentIds: [existing.id, appended.id] }))
+      .toEqual([existing]);
+    expect((await store.health(WORKSPACE)).metrics).toEqual({
+      documentCount: 1,
+      indexSizeBytes: Buffer.byteLength([existing.searchableText, ...existing.tokens].join(" "), "utf8")
+    });
+    const after = (await fs.readdir(os.tmpdir())).filter((name) => name.startsWith(prefix) && !before.has(name));
+    expect(after).toEqual([]);
+
+    await store.upsertDocuments([appended]);
+    expect(await store.loadDocuments({ workspaceId: WORKSPACE, documentIds: [existing.id, appended.id] }))
+      .toEqual([existing, appended].sort((left, right) => left.id.localeCompare(right.id)));
+    expect((await store.health(WORKSPACE)).metrics).toEqual({
+      documentCount: 2,
+      indexSizeBytes: Buffer.byteLength([existing.searchableText, ...existing.tokens].join(" "), "utf8") +
+        Buffer.byteLength([appended.searchableText, ...appended.tokens].join(" "), "utf8")
+    });
   });
 
   it("rolls back a failed COPY and removes its temporary staging directory", async () => {
