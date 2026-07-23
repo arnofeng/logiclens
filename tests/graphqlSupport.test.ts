@@ -253,7 +253,7 @@ describe("GraphQL Resolver", () => {
     expect(edges[0]).toMatchObject({
       fromSpecId: "spec-cons",
       toSpecId: "spec-prod",
-      kind: "CALLS_ENDPOINT"
+      kind: "CALLS_GRAPHQL"
     });
   });
 
@@ -378,7 +378,7 @@ describe("GraphQL Impact Analysis", () => {
       makeSemanticRel({
         fromSpecId: "spec-cons",
         toSpecId: "spec-prod",
-        kind: "CALLS_ENDPOINT"
+        kind: "CALLS_GRAPHQL"
       })
     ];
 

@@ -6,7 +6,7 @@ import { confidenceFor } from "../../../../shared/confidence.js";
 import { codeId } from "../../../../shared/path.js";
 import { hashText } from "../../../../shared/hash.js";
 import { parsedCodeFiles, javaPackageFromPath, pushDubboContract } from "./shared.js";
-import { indexedSourceAstNodes, namedChildren, parseSourceAst } from "./sourceAstUtils.js";
+import { findContainingSymbol, indexedSourceAstNodes, namedChildren, parseSourceAst, symbolOffset } from "./sourceAstUtils.js";
 
 type JavaImportMap = Map<string, string>;
 
@@ -51,17 +51,22 @@ function simpleTypeName(raw: string | undefined): string | undefined {
   return generic?.split(".").at(-1);
 }
 
+function declaredType(raw: string | undefined): string | undefined {
+  const value = raw?.replace(/\s+/g, " ").trim();
+  return value || undefined;
+}
+
 export function javaDubboParamTypes(methodNode: Parser.SyntaxNode): string[] {
   const params = methodNode.childForFieldName("parameters");
   if (!params) return [];
   return namedChildren(params)
     .filter((p) => p.type === "formal_parameter" || p.type === "spread_parameter")
-    .map((p) => simpleTypeName(p.childForFieldName("type")?.text) ?? "")
+    .map((p) => declaredType(p.childForFieldName("type")?.text) ?? "")
     .filter(Boolean);
 }
 
 export function javaDubboReturnType(methodNode: Parser.SyntaxNode): string | undefined {
-  return simpleTypeName(methodNode.childForFieldName("type")?.text);
+  return declaredType(methodNode.childForFieldName("type")?.text);
 }
 
 function annotationNames(node: Parser.SyntaxNode): string[] {
@@ -224,18 +229,20 @@ export const javaDubboExtractor = compatExtractor({
         if (!call?.object || !call.method) continue;
         const reference = referenceFields.get(referenceReceiverName(call.object));
         if (!reference) continue;
+        const caller = findContainingSymbol(file.symbols, node);
+        if (!caller) continue;
         const fullName = `${reference.interfaceName}#${call.method}`;
-        if (seen.has(fullName)) continue;
-        seen.add(fullName);
-        const symbol = makeJavaDubboSymbol(file, node, "method", call.method, `${reference.interfaceName}.${call.method}`);
+        const invocationKey = `${caller.id}:${fullName}`;
+        if (seen.has(invocationKey)) continue;
+        seen.add(invocationKey);
         pushDubboContract({
           collector,
           file,
-          symbol,
+          symbol: caller,
           interfaceName: reference.interfaceName,
           method: call.method,
           role: "consumer",
-          offset: 0,
+          offset: symbolOffset(file, caller, node),
           raw: node.text,
           rule: "java-dubbo-reference",
           confidence: confidenceFor("exact-parser-route"),

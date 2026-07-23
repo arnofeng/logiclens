@@ -7,6 +7,7 @@ function makeHttpSpec(opts: {
   id: string; contractId: string; repoId: string;
   method?: string; path: string; pathTemplate?: string;
   requestBodyType?: string; responseBodyType?: string;
+  sourceSymbolId?: string;
 }): ContractSpecNode {
   return {
     id: opts.id,
@@ -15,6 +16,7 @@ function makeHttpSpec(opts: {
     repoId: opts.repoId,
     fileId: `file:${opts.repoId}:test`,
     evidenceId: `ev:${opts.id}`,
+    sourceSymbolId: opts.sourceSymbolId,
     canonicalKey: opts.method ? `${opts.method}:${opts.pathTemplate ?? opts.path}` : (opts.pathTemplate ?? opts.path),
     httpMethod: opts.method,
     pathTemplate: opts.pathTemplate ?? opts.path,
@@ -91,7 +93,7 @@ function makeRepoContract(opts: {
 }
 
 describe("Resolver Integration", () => {
-  it("produces CALLS_ENDPOINT between consumer and producer across repos", () => {
+  it("produces CALLS_HTTP between consumer and producer across repos", () => {
     const producer = makeHttpSpec({
       id: "spec:p1", contractId: "c:p1", repoId: "repo-orders",
       method: "GET", path: "/api/orders"
@@ -111,7 +113,7 @@ describe("Resolver Integration", () => {
       existingSemanticRelations: []
     });
 
-    const callEdges = edges.filter((e) => e.kind === "CALLS_ENDPOINT");
+    const callEdges = edges.filter((e) => e.kind === "CALLS_HTTP");
     expect(callEdges).toHaveLength(1);
     expect(callEdges[0]!.fromSpecId).toBe(consumer.id);
     expect(callEdges[0]!.toSpecId).toBe(producer.id);
@@ -187,8 +189,8 @@ describe("Resolver Integration", () => {
       existingSemanticRelations: []
     });
 
-    // No duplicate CALLS_ENDPOINT edges
-    const callEdges = edges.filter((e) => e.kind === "CALLS_ENDPOINT");
+    // No duplicate CALLS_HTTP edges
+    const callEdges = edges.filter((e) => e.kind === "CALLS_HTTP");
     expect(callEdges).toHaveLength(1);
   });
 
@@ -279,14 +281,15 @@ describe("Resolver Integration", () => {
       existingSemanticRelations: []
     });
 
-    // No CALLS_ENDPOINT, PUBLISHES_EVENT, or SUBSCRIBES_EVENT within same repo
+    // No cross-repository call or event edges within the same repo.
     const crossEdges = edges.filter((e) =>
-      e.kind === "CALLS_ENDPOINT" || e.kind === "PUBLISHES_EVENT" || e.kind === "SUBSCRIBES_EVENT"
+      e.kind === "CALLS_HTTP" || e.kind === "CALLS_DUBBO" || e.kind === "CALLS_GRPC" ||
+      e.kind === "CALLS_GRAPHQL" || e.kind === "PUBLISHES_EVENT" || e.kind === "SUBSCRIBES_EVENT"
     );
     expect(crossEdges).toHaveLength(0);
   });
 
-  it("resolves gRPC CALLS_ENDPOINT relations across repos", () => {
+  it("resolves gRPC CALLS_GRPC relations across repos", () => {
     const producerSpec: ContractSpecNode = {
       id: "spec:g-p",
       contractId: "c:g-p",
@@ -338,14 +341,14 @@ describe("Resolver Integration", () => {
       existingSemanticRelations: []
     });
 
-    const callsEdges = edges.filter((e) => e.kind === "CALLS_ENDPOINT");
+    const callsEdges = edges.filter((e) => e.kind === "CALLS_GRPC");
     expect(callsEdges).toHaveLength(1);
     expect(callsEdges[0]!.fromSpecId).toBe("spec:g-c");
     expect(callsEdges[0]!.toSpecId).toBe("spec:g-p");
     expect(callsEdges[0]!.confidence).toBe(0.9); // consumer package unspecified -> 0.9
   });
 
-  it("resolves Dubbo CALLS_ENDPOINT relations across repos", () => {
+  it("resolves Dubbo CALLS_DUBBO relations across repos", () => {
     const producerSpec: ContractSpecNode = {
       id: "spec:d-p",
       contractId: "c:d-p",
@@ -397,10 +400,88 @@ describe("Resolver Integration", () => {
       existingSemanticRelations: []
     });
 
-    const callsEdges = edges.filter((e) => e.kind === "CALLS_ENDPOINT");
+    const callsEdges = edges.filter((e) => e.kind === "CALLS_DUBBO");
     expect(callsEdges).toHaveLength(1);
     expect(callsEdges[0]!.fromSpecId).toBe("spec:d-c");
     expect(callsEdges[0]!.toSpecId).toBe("spec:d-p");
     expect(callsEdges[0]!.confidence).toBe(0.95);
+  });
+
+  it("materializes INTERNAL_CALL from a shared real source symbol even when action names differ", () => {
+    const handler = makeHttpSpec({
+      id: "spec:http-add", contractId: "c:http-add", repoId: "repo-front",
+      method: "POST", path: "/activities", sourceSymbolId: "code:ActivityController#addActivity"
+    });
+    const rpcConsumer: ContractSpecNode = {
+      id: "spec:dubbo-create",
+      contractId: "c:dubbo-create",
+      specKind: "dubbo-method",
+      repoId: "repo-front",
+      fileId: "file:repo-front:ActivityController.java",
+      evidenceId: "ev:invoke-create",
+      sourceSymbolId: "code:ActivityController#addActivity",
+      canonicalKey: "com.acme.ActivityApi#createActivity",
+      specJson: serializeSpec({
+        kind: "dubbo-method",
+        interfaceName: "com.acme.ActivityApi",
+        method: "createActivity",
+        fullName: "com.acme.ActivityApi#createActivity",
+        config: "annotation"
+      }),
+      confidence: 0.9
+    };
+    const provider: ContractSpecNode = {
+      ...rpcConsumer,
+      id: "spec:dubbo-provider",
+      contractId: "c:dubbo-provider",
+      repoId: "repo-center",
+      fileId: "file:repo-center:ActivityApiImpl.java",
+      evidenceId: "ev:provider",
+      sourceSymbolId: "code:ActivityApiImpl#createActivity"
+    };
+    const repoContracts = [
+      makeRepoContract({ contractId: handler.contractId, repoId: handler.repoId, role: "producer" }),
+      makeRepoContract({ contractId: rpcConsumer.contractId, repoId: rpcConsumer.repoId, role: "consumer" }),
+      makeRepoContract({ contractId: provider.contractId, repoId: provider.repoId, role: "producer" })
+    ];
+
+    const edges = resolveSemanticRelations({
+      contractSpecs: [handler, rpcConsumer, provider],
+      repoContracts,
+      existingSemanticRelations: []
+    });
+
+    expect(edges).toContainEqual(expect.objectContaining({
+      fromSpecId: handler.id,
+      toSpecId: rpcConsumer.id,
+      kind: "INTERNAL_CALL",
+      evidenceId: rpcConsumer.evidenceId
+    }));
+    expect(edges).toContainEqual(expect.objectContaining({
+      fromSpecId: rpcConsumer.id,
+      toSpecId: provider.id,
+      kind: "CALLS_DUBBO"
+    }));
+  });
+
+  it("does not infer INTERNAL_CALL for same-file same-name specs without a shared source symbol", () => {
+    const handler = makeHttpSpec({
+      id: "spec:http", contractId: "c:http", repoId: "repo-front",
+      method: "POST", path: "/createActivity", sourceSymbolId: "code:Controller#createActivity"
+    });
+    const outbound = makeHttpSpec({
+      id: "spec:outbound", contractId: "c:outbound", repoId: "repo-front",
+      method: "POST", path: "/remote/createActivity", sourceSymbolId: "code:Other#createActivity"
+    });
+    const edges = resolveSemanticRelations({
+      contractSpecs: [handler, outbound],
+      repoContracts: [
+        makeRepoContract({ contractId: handler.contractId, repoId: handler.repoId, role: "producer" }),
+        makeRepoContract({ contractId: outbound.contractId, repoId: outbound.repoId, role: "consumer" })
+      ],
+      existingSemanticRelations: []
+    });
+
+    expect(edges.filter((edge) => edge.kind === "INTERNAL_CALL")).toHaveLength(0);
   });
 });

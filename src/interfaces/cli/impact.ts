@@ -124,7 +124,9 @@ function printLegacyImpactResult(result: ImpactResult, includeHeader: boolean): 
   for (const file of result.recommendedFiles) console.log(`- ${file}`);
 }
 
-function printSemanticImpactReport(
+type SemanticImpactRole = "origin" | "affected-consumer" | "implementation-dependency";
+
+export function printSemanticImpactReport(
   report: SemanticImpactReport,
   options: { showSymbolHint: boolean; rawTarget: string }
 ): void {
@@ -135,26 +137,26 @@ function printSemanticImpactReport(
   }
 
   const title = `Semantic Contract Impact: ${report.target}`;
+  const impactRoles = classifyImpactRoles(report);
+  const repoGroups = classifyImpactRepos(report, impactRoles);
   console.log(title);
   console.log("=".repeat(title.length));
-  console.log(`Impact Radius: ${report.affectedRepos.length} repos affected, ${Math.max(0, report.nodes.length - report.targets.length)} specs impacted (max-hops: ${report.maxHops})`);
-  console.log("Risk: unknown; provide --change for severity");
+  console.log(`Impact Scope: ${report.affectedRepos.length} related repos, ${Math.max(0, report.nodes.length - report.targets.length)} related specs (max-hops: ${report.maxHops})`);
+  console.log("Risk: unknown; provide --change for severity (for example, --change endpoint-removed)");
   console.log("");
 
-  if (report.affectedRepos.length > 0) {
-    console.log("Affected Repositories & Services:");
-    for (const repo of report.affectedRepos) console.log(`  - ${repo}`);
-    console.log("");
-  }
+  printRepoGroup("Change Origin:", repoGroups.origins);
+  printRepoGroup("Affected Consumers:", repoGroups.affectedConsumers);
+  printRepoGroup("Implementation Dependencies to Inspect:", repoGroups.implementationDependencies);
 
   console.log("Transitive Impact Chain:");
   const children = buildChildren(report);
   for (const target of report.targets) {
-    printImpactNode(target, children, report, 0);
+    printImpactNode(target, children, report, impactRoles, 0);
   }
 
   if (report.nodes.length === report.targets.length) {
-    console.log("  No downstream impacted specs found.");
+    console.log("  No related specs found.");
   }
 
   if (report.truncated) {
@@ -171,6 +173,59 @@ function printSemanticImpactReport(
   console.log("");
   console.log("Need raw relation evidence?");
   console.log(`  ${BRAND.cliName} trace ${quoteIfNeeded(report.target)}`);
+}
+
+function printRepoGroup(title: string, repos: string[]): void {
+  if (repos.length === 0) return;
+  console.log(title);
+  for (const repo of repos) console.log(`  - ${repo}`);
+  console.log("");
+}
+
+function classifyImpactRoles(report: SemanticImpactReport): Map<string, SemanticImpactRole> {
+  const roles = new Map<string, SemanticImpactRole>();
+  for (const target of report.targets) roles.set(target.specId, "origin");
+
+  const nodes = [...report.nodes].sort((a, b) => a.hop - b.hop);
+  for (const node of nodes) {
+    if (roles.has(node.specId)) continue;
+    const parentRole = node.viaSpecId ? roles.get(node.viaSpecId) : undefined;
+    const role = node.relationKind === "INTERNAL_CALL" || parentRole === "implementation-dependency"
+      ? "implementation-dependency"
+      : "affected-consumer";
+    roles.set(node.specId, role);
+  }
+  return roles;
+}
+
+function classifyImpactRepos(
+  report: SemanticImpactReport,
+  roles: Map<string, SemanticImpactRole>
+): {
+  origins: string[];
+  affectedConsumers: string[];
+  implementationDependencies: string[];
+} {
+  const origins = reposForRole(report, roles, "origin");
+  const originSet = new Set(origins);
+  const affectedConsumers = reposForRole(report, roles, "affected-consumer")
+    .filter((repo) => !originSet.has(repo));
+  const affectedSet = new Set(affectedConsumers);
+  const implementationDependencies = reposForRole(report, roles, "implementation-dependency")
+    .filter((repo) => !originSet.has(repo) && !affectedSet.has(repo));
+  return { origins, affectedConsumers, implementationDependencies };
+}
+
+function reposForRole(
+  report: SemanticImpactReport,
+  roles: Map<string, SemanticImpactRole>,
+  role: SemanticImpactRole
+): string[] {
+  return [...new Set(
+    report.nodes
+      .filter((node) => roles.get(node.specId) === role)
+      .map((node) => repoOf(node.repoId))
+  )].sort();
 }
 
 function buildChildren(report: SemanticImpactReport): Map<string, SemanticImpactNode[]> {
@@ -193,24 +248,24 @@ function printImpactNode(
   node: SemanticImpactNode,
   children: Map<string, SemanticImpactNode[]>,
   report: SemanticImpactReport,
+  impactRoles: Map<string, SemanticImpactRole>,
   depth: number
 ): void {
   const indent = "  ".repeat(depth + 1);
-  console.log(`${indent}[Hop ${node.hop}] ${node.summary} (${repoOf(node.repoId)})`);
+  console.log(`${indent}[Hop ${node.hop}] [${impactRoleLabel(impactRoles.get(node.specId))}] ${node.summary} (${repoOf(node.repoId)})`);
   if (node.filePath) console.log(`${indent}  file: ${node.filePath}`);
 
   for (const child of children.get(node.specId) ?? []) {
     const edge = edgeToChild(report, child);
+    const childRole = impactRoles.get(child.specId);
     console.log("");
     if (edge) {
-      const materialization = edge.materialization === "inferred" ? " inferred" : "";
-      console.log(`${indent}  -> [${edge.kind}${materialization}] confidence=${formatConfidence(edge.confidence)}`);
+      console.log(`${indent}  -> [impact: ${impactRoleLabel(childRole)}; via ${edge.kind} ${edge.resolution}] confidence=${formatConfidence(edge.confidence)}`);
     } else if (child.relationKind) {
-      const materialization = child.materialization === "inferred" ? " inferred" : "";
-      console.log(`${indent}  -> [${child.relationKind}${materialization}] confidence=${formatConfidence(child.confidence)}`);
+      console.log(`${indent}  -> [impact: ${impactRoleLabel(childRole)}; via ${child.relationKind}${child.resolution ? ` ${child.resolution}` : ""}] confidence=${formatConfidence(child.confidence)}`);
     }
-    printImpactNode(child, children, report, depth + 1);
     if (child.reason) console.log(`${"  ".repeat(depth + 2)}  reason: ${child.reason}`);
+    printImpactNode(child, children, report, impactRoles, depth + 1);
   }
 }
 
@@ -218,8 +273,25 @@ function edgeToChild(report: SemanticImpactReport, child: SemanticImpactNode): S
   return report.edges.find((e) =>
     e.hop === child.hop &&
     e.kind === child.relationKind &&
-    (e.fromSpecId === child.specId || e.toSpecId === child.specId)
+    !!child.viaSpecId &&
+    (
+      (e.fromSpecId === child.viaSpecId && e.toSpecId === child.specId) ||
+      (e.toSpecId === child.viaSpecId && e.fromSpecId === child.specId)
+    )
   );
+}
+
+function impactRoleLabel(role: SemanticImpactRole | undefined): string {
+  switch (role) {
+    case "origin":
+      return "change origin";
+    case "affected-consumer":
+      return "affected consumer";
+    case "implementation-dependency":
+      return "implementation dependency";
+    default:
+      return "related";
+  }
 }
 
 function printImpactReport(report: ImpactReport): void {

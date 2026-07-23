@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking semantic call relations:** Replaced `CALLS_ENDPOINT` with protocol-specific `CALLS_HTTP`, `CALLS_DUBBO`, `CALLS_GRPC`, and `CALLS_GRAPHQL` relations. Handler-to-local-consumer execution flow is now persisted as `INTERNAL_CALL` only when both specs share the parsed containing source symbol.
+- **Breaking trace JSON/SDK contract:** Trace edges now expose protocol-specific `kind`, `resolution` (`exact`, `probable`, or `heuristic`), `evidenceId`, and optional source evidence (`line`, `raw`, and `rule`). The former `materialization` and `sourceEdgeKind` fields were removed.
+- Dubbo and gRPC consumer specs now point at the containing caller method, preserving invocation evidence. Java extraction retains full generic request/response types and distinguishes Spring declared response types from wrapped body types.
+
+### Migration
+
+- A complete `logiclens index` is required after upgrading. `rebuild-relations` alone cannot repair legacy consumer `sourceSymbolId` values, and trace rejects graphs that still contain `CALLS_ENDPOINT`.
+
 ## [0.1.1-beta.15] - 2026-07-08
 
 ### Added

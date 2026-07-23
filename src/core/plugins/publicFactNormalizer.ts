@@ -56,6 +56,7 @@ function emitHttpEndpoint(fact: Extract<PublicContractFact, { kind: "httpEndpoin
     pathParams: apiPathParams(apiPathTemplate(contractNode.key)),
     requestBodyType: fact.requestBodyType,
     responseBodyType: fact.responseBodyType,
+    declaredResponseType: fact.declaredResponseType,
     auth: "unknown"
   };
   pushSpec(collector, fact, contractNode.id, contractNode.key, spec, evidenceNode.id, evidenceNode.confidence, fact.framework, method, apiPathTemplate(contractNode.key));

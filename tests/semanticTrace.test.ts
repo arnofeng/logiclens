@@ -139,7 +139,7 @@ describe("traceSemanticGraph", () => {
 
   const relations: SemanticRelationEdge[] = [
     // consumer -> producer (consumer calls the endpoint)
-    { fromSpecId: consumer.id, toSpecId: producer.id, kind: "CALLS_ENDPOINT", evidenceId: "ev:1", reason: "method+path match", confidence: 0.95 },
+    { fromSpecId: consumer.id, toSpecId: producer.id, kind: "CALLS_HTTP", evidenceId: "ev:1", reason: "method+path match", confidence: 0.95 },
     // producer -> request schema
     { fromSpecId: producer.id, toSpecId: reqSchema.id, kind: "REQUEST_SCHEMA", evidenceId: "ev:2", reason: "@RequestBody", confidence: 0.9 }
   ];
@@ -158,13 +158,41 @@ describe("traceSemanticGraph", () => {
     // Edges include both relation kinds.
     const kinds = new Set(graph.edges.map((e) => e.kind));
     expect(kinds.has("REQUEST_SCHEMA")).toBe(true);
-    expect(kinds.has("CALLS_ENDPOINT")).toBe(true);
+    expect(kinds.has("CALLS_HTTP")).toBe(true);
   });
 
   it("returns empty result for an unmatched target", () => {
     const graph = traceSemanticGraph("http DELETE /nonexistent", specs, relations);
     expect(graph.targets).toHaveLength(0);
     expect(graph.nodes).toHaveLength(0);
+  });
+
+  it("exposes unified resolution and source evidence on trace edges", () => {
+    const evidence = new Map([["ev:1", {
+      id: "ev:1",
+      repoId: "repo:web-app",
+      fileId: "file:web-app:api/order.ts",
+      filePath: "api/order.ts",
+      line: 12,
+      raw: "client.post('/orders', body)",
+      rule: "js-http-client",
+      confidence: 0.95,
+      batchId: "batch:test",
+      indexedAt: "now",
+      active: true
+    }]]);
+
+    const graph = traceSemanticGraph("http POST /orders", specs, relations, {}, evidence);
+    expect(graph.edges.find((edge) => edge.evidenceId === "ev:1")).toMatchObject({
+      kind: "CALLS_HTTP",
+      resolution: "exact",
+      evidenceId: "ev:1",
+      evidence: {
+        line: 12,
+        raw: "client.post('/orders', body)",
+        rule: "js-http-client"
+      }
+    });
   });
 
   it("respects direction (schema has only an incoming REQUEST_SCHEMA edge)", () => {
@@ -199,7 +227,7 @@ describe("traceSemanticGraph", () => {
       "http POST /orders",
       [producer, consumer, opaque],
       [
-        { fromSpecId: consumer.id, toSpecId: producer.id, kind: "CALLS_ENDPOINT", evidenceId: "ev:1", reason: "method+path match", confidence: 0.95 },
+        { fromSpecId: consumer.id, toSpecId: producer.id, kind: "CALLS_HTTP", evidenceId: "ev:1", reason: "method+path match", confidence: 0.95 },
         { fromSpecId: producer.id, toSpecId: opaque.id, kind: "IMPACTS", evidenceId: "ev:opaque", reason: "future relation", confidence: 0.5 }
       ]
     );
@@ -219,7 +247,7 @@ describe("traceSemanticGraph", () => {
       "graphql Query.user",
       [grpcProducer, grpcConsumer, gqlOperation, responseSchema],
       [
-        { fromSpecId: grpcConsumer.id, toSpecId: grpcProducer.id, kind: "CALLS_ENDPOINT", evidenceId: "ev:grpc", reason: "gRPC exact match: OrderService/CreateOrder", confidence: 0.95 },
+        { fromSpecId: grpcConsumer.id, toSpecId: grpcProducer.id, kind: "CALLS_GRPC", evidenceId: "ev:grpc", reason: "gRPC exact match: OrderService/CreateOrder", confidence: 0.95 },
         { fromSpecId: gqlOperation.id, toSpecId: responseSchema.id, kind: "RESPONSE_SCHEMA", evidenceId: "ev:gql", reason: "GraphQL response type User", confidence: 1 }
       ]
     );
@@ -230,10 +258,10 @@ describe("traceSemanticGraph", () => {
     const grpcGraph = traceSemanticGraph(
       "grpc OrderService/CreateOrder",
       [grpcProducer, grpcConsumer],
-      [{ fromSpecId: grpcConsumer.id, toSpecId: grpcProducer.id, kind: "CALLS_ENDPOINT", evidenceId: "ev:grpc", reason: "gRPC exact match: OrderService/CreateOrder", confidence: 0.95 }]
+      [{ fromSpecId: grpcConsumer.id, toSpecId: grpcProducer.id, kind: "CALLS_GRPC", evidenceId: "ev:grpc", reason: "gRPC exact match: OrderService/CreateOrder", confidence: 0.95 }]
     );
     expect(grpcGraph.targets.map((t) => t.specId).sort()).toEqual([grpcConsumer.id, grpcProducer.id].sort());
-    expect(grpcGraph.edges.map((e) => e.kind)).toContain("CALLS_ENDPOINT");
+    expect(grpcGraph.edges.map((e) => e.kind)).toContain("CALLS_GRPC");
   });
 });
 
@@ -255,7 +283,7 @@ describe("summarizeSpec", () => {
 });
 
 describe("printSemanticTrace CLI text rendering", () => {
-  it("renders non-CALLS_ENDPOINT target connections with correct verbs", () => {
+  it("renders non-protocol-call target connections with correct verbs", () => {
     const graph: SemanticTraceGraph = {
       target: "event OrderCreated",
       targets: [
@@ -315,6 +343,8 @@ describe("printSemanticTrace CLI text rendering", () => {
           fromSpecId: "spec:publisher",
           toSpecId: "spec:subscriber",
           kind: "PUBLISHES_EVENT",
+          evidenceId: "ev:publish",
+          resolution: "exact",
           reason: "annotated with @Publish",
           confidence: 0.95,
           hop: 1,
@@ -339,7 +369,7 @@ describe("printSemanticTrace CLI text rendering", () => {
     const output = logs.join("\n");
     expect(output).toContain("Target Specs:");
     expect(output).toContain("Relation Paths:");
-    expect(output).toContain("-> [PUBLISHES_EVENT materialized confidence=0.95]");
+    expect(output).toContain("-> [PUBLISHES_EVENT exact confidence=0.95]");
     expect(output).toContain("reason: annotated with @Publish");
     expect(output).toContain("Need change impact assessment?");
   });
@@ -415,8 +445,9 @@ describe("printSemanticTrace CLI text rendering", () => {
         {
           fromSpecId: "spec:reference",
           toSpecId: "spec:provider",
-          kind: "CALLS_ENDPOINT",
-          materialization: "materialized",
+          kind: "CALLS_DUBBO",
+          evidenceId: "ev:dubbo",
+          resolution: "exact",
           reason: "Dubbo method match",
           confidence: 0.9,
           hop: 1,
@@ -426,18 +457,19 @@ describe("printSemanticTrace CLI text rendering", () => {
           fromSpecId: "spec:http",
           toSpecId: "spec:reference",
           kind: "INTERNAL_CALL",
-          materialization: "inferred",
-          sourceEdgeKind: "CALLS_ENDPOINT",
-          reason: "same file and same action name",
-          confidence: 0.75,
+          evidenceId: "ev:invoke",
+          resolution: "exact",
+          reason: "activityApi.createOrder(req)",
+          confidence: 0.95,
           hop: 2,
           direction: "incoming"
         },
         {
           fromSpecId: "spec:web",
           toSpecId: "spec:http",
-          kind: "CALLS_ENDPOINT",
-          materialization: "materialized",
+          kind: "CALLS_HTTP",
+          evidenceId: "ev:http",
+          resolution: "exact",
           reason: "HTTP method match",
           confidence: 0.95,
           hop: 3,
@@ -460,9 +492,9 @@ describe("printSemanticTrace CLI text rendering", () => {
     }
 
     const output = logs.join("\n");
-    expect(output).toContain("[provider] center-service OrderService.java");
-    expect(output).toContain("<- [CALLS_ENDPOINT materialized confidence=0.90]");
-    expect(output).toContain("<- [INTERNAL_CALL inferred confidence=0.75]");
+    expect(output).toContain("[rpc-provider] center-service OrderService.java");
+    expect(output).toContain("<- [CALLS_DUBBO exact confidence=0.90]");
+    expect(output).toContain("<- [INTERNAL_CALL exact confidence=0.95]");
     expect(output).toContain("POST /orders (web-app)");
   });
 

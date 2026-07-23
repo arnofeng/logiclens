@@ -281,7 +281,7 @@ describe("extractor pipeline plumbing", () => {
       evidenceId: "ev:test", confidence: 0.9
     });
     result.semanticRelations.push({
-      fromSpecId: "spec:a", toSpecId: "spec:b", kind: "CALLS_ENDPOINT",
+      fromSpecId: "spec:a", toSpecId: "spec:b", kind: "CALLS_HTTP",
       evidenceId: "ev:test", reason: "test", confidence: 0.9
     });
     const bundle = toFactBundle(result);
@@ -361,7 +361,7 @@ describe("graph schema and GC for ContractSpec", () => {
         batchId: "batch:1", indexedAt: "now", active: true
       });
       await db.addSemanticRelation({
-        fromSpecId: "spec:stale", toSpecId: "spec:active", kind: "CALLS_ENDPOINT",
+        fromSpecId: "spec:stale", toSpecId: "spec:active", kind: "CALLS_HTTP",
         evidenceId: "ev:stale", reason: "test", confidence: 0.9,
         batchId: "batch:1", active: true
       });

@@ -121,7 +121,7 @@ describe("materializeDependenciesFromSemanticRelations", () => {
     expect(result).toEqual([]);
   });
 
-  it("materializes CALLS_ENDPOINT → api dependency (consumer→producer)", () => {
+  it("materializes CALLS_HTTP → api dependency (consumer→producer)", () => {
     const consumer = makeHttpSpec({
       id: "spec:c1", contractId: "c:web:get-orders", repoId: "repo-web",
       method: "GET", path: "/api/orders"
@@ -134,7 +134,7 @@ describe("materializeDependenciesFromSemanticRelations", () => {
     const rel: SemanticRelationEdge = {
       fromSpecId: consumer.id,
       toSpecId: producer.id,
-      kind: "CALLS_ENDPOINT",
+      kind: "CALLS_HTTP",
       evidenceId: "ev:resolver",
       reason: "GET /api/orders exact match",
       confidence: 0.95
@@ -257,7 +257,7 @@ describe("materializeDependenciesFromSemanticRelations", () => {
     const rel: SemanticRelationEdge = {
       fromSpecId: consumer.id,
       toSpecId: producer.id,
-      kind: "CALLS_ENDPOINT",
+      kind: "CALLS_HTTP",
       evidenceId: "ev:resolver",
       reason: "same-repo GET /api/orders",
       confidence: 0.95
@@ -317,7 +317,7 @@ describe("materializeDependenciesFromSemanticRelations", () => {
     const rel: SemanticRelationEdge = {
       fromSpecId: "spec:missing-from",
       toSpecId: "spec:exists",
-      kind: "CALLS_ENDPOINT",
+      kind: "CALLS_HTTP",
       evidenceId: "ev:missing",
       reason: "one spec missing",
       confidence: 0.9
@@ -341,7 +341,7 @@ describe("materializeDependenciesFromSemanticRelations", () => {
     const rel1: SemanticRelationEdge = {
       fromSpecId: consumer.id,
       toSpecId: producer.id,
-      kind: "CALLS_ENDPOINT",
+      kind: "CALLS_HTTP",
       evidenceId: "ev:same",
       reason: "GET /api/orders match",
       confidence: 0.95
@@ -373,7 +373,7 @@ describe("materializeDependenciesFromSemanticRelations", () => {
     const relations: SemanticRelationEdge[] = [
       {
         fromSpecId: apiConsumer.id, toSpecId: apiProducer.id,
-        kind: "CALLS_ENDPOINT", evidenceId: "ev:api", reason: "api", confidence: 0.95
+        kind: "CALLS_HTTP", evidenceId: "ev:api", reason: "api", confidence: 0.95
       },
       {
         fromSpecId: eventProducer.id, toSpecId: eventConsumer.id,
@@ -511,7 +511,7 @@ describe("evaluatePrecisionRecallInMemory", () => {
     const semanticRels: SemanticRelationEdge[] = [{
       fromSpecId: consumer.id,
       toSpecId: producer.id,
-      kind: "CALLS_ENDPOINT",
+      kind: "CALLS_HTTP",
       evidenceId: "ev:resolver",
       reason: "exact match",
       confidence: 0.95
@@ -556,7 +556,7 @@ describe("evaluatePrecisionRecallInMemory", () => {
 
     const semanticRels: SemanticRelationEdge[] = [{
       fromSpecId: consumer.id, toSpecId: producer.id,
-      kind: "CALLS_ENDPOINT", evidenceId: "ev:resolver",
+      kind: "CALLS_HTTP", evidenceId: "ev:resolver",
       reason: "exact match", confidence: 0.95
     }];
 

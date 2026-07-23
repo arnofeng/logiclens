@@ -395,7 +395,7 @@ describe("analyzeImpact — HTTP endpoint changes", () => {
   });
 
   const rels = [
-    makeSemanticRel({ fromSpecId: "spec-consumer", toSpecId: "spec-producer", kind: "CALLS_ENDPOINT", reason: "consumer calls producer" })
+    makeSemanticRel({ fromSpecId: "spec-consumer", toSpecId: "spec-producer", kind: "CALLS_HTTP", reason: "consumer calls producer" })
   ];
 
   it("endpoint-removed → breaking for consumer", () => {
@@ -641,7 +641,7 @@ describe("analyImpact — transitive traversal", () => {
     // Schema is the response body of the endpoint
     makeSemanticRel({ fromSpecId: "h1", toSpecId: "s1", kind: "RESPONSE_SCHEMA", reason: "response body" }),
     // Consumer calls the endpoint
-    makeSemanticRel({ fromSpecId: "h2", toSpecId: "h1", kind: "CALLS_ENDPOINT", reason: "consumer calls" })
+    makeSemanticRel({ fromSpecId: "h2", toSpecId: "h1", kind: "CALLS_HTTP", reason: "consumer calls" })
   ];
 
   it("traverses 2-hop transitive impact (schema → endpoint → consumer)", () => {
@@ -684,7 +684,7 @@ describe("httpImpactRules", () => {
   it("endpoint-removed → breaking", () => {
     const items = assessHttpEndpointChange(
       { target: "api:POST:/api/orders", changeType: "endpoint-removed" },
-      consumerSpec, "CALLS_ENDPOINT", "consumer calls endpoint", 0.9
+      consumerSpec, "CALLS_HTTP", "consumer calls endpoint", 0.9
     );
     expect(items).toHaveLength(1);
     expect(items[0]!.severity).toBe("breaking");
@@ -694,7 +694,7 @@ describe("httpImpactRules", () => {
   it("endpoint-renamed → breaking", () => {
     const items = assessHttpEndpointChange(
       { target: "api:POST:/api/orders", changeType: "endpoint-renamed", detail: "POST:/api/v2/orders" },
-      consumerSpec, "CALLS_ENDPOINT", "consumer calls", 0.9
+      consumerSpec, "CALLS_HTTP", "consumer calls", 0.9
     );
     expect(items).toHaveLength(1);
     expect(items[0]!.severity).toBe("breaking");
@@ -703,7 +703,7 @@ describe("httpImpactRules", () => {
   it("endpoint-schema-change → risky", () => {
     const items = assessHttpEndpointChange(
       { target: "api:POST:/api/orders", changeType: "endpoint-schema-change" },
-      consumerSpec, "CALLS_ENDPOINT", "schema changed", 0.9
+      consumerSpec, "CALLS_HTTP", "schema changed", 0.9
     );
     expect(items).toHaveLength(1);
     expect(items[0]!.severity).toBe("risky");
@@ -923,7 +923,7 @@ describe("grpc impact analysis", () => {
       {
         fromSpecId: "spec:cons",
         toSpecId: "spec:prod",
-        kind: "CALLS_ENDPOINT",
+        kind: "CALLS_GRPC",
         evidenceId: "ev:call",
         reason: "gRPC call",
         confidence: 0.9
@@ -1046,7 +1046,7 @@ describe("dubbo impact analysis", () => {
       makeSemanticRel({
         fromSpecId: "spec:dubbo-cons",
         toSpecId: "spec:dubbo-prod",
-        kind: "CALLS_ENDPOINT",
+        kind: "CALLS_DUBBO",
         reason: "Dubbo exact match",
         confidence: 0.95
       })
@@ -1094,7 +1094,7 @@ describe("dubbo impact analysis", () => {
 });
 
 describe("analyzeImpact — implementation bridge", () => {
-  it("propagates a downstream dubbo provider change through a same-file HTTP endpoint to HTTP consumers", () => {
+  it("does not reverse an INTERNAL_CALL from a changed provider into upstream HTTP consumers", () => {
     const provider = makeDubboSpec({
       id: "spec:dubbo-provider",
       contractId: "contract:api:com.acme.orderservice#pageQueryPromotionList",
@@ -1128,8 +1128,9 @@ describe("analyzeImpact — implementation bridge", () => {
       path: "/orders/pageQueryPromotionList"
     });
     const rels = [
-      makeSemanticRel({ fromSpecId: localConsumer.id, toSpecId: provider.id, kind: "CALLS_ENDPOINT", reason: "dubbo match" }),
-      makeSemanticRel({ fromSpecId: frontend.id, toSpecId: localHttp.id, kind: "CALLS_ENDPOINT", reason: "http match" })
+      makeSemanticRel({ fromSpecId: localHttp.id, toSpecId: localConsumer.id, kind: "INTERNAL_CALL", reason: "real invocation" }),
+      makeSemanticRel({ fromSpecId: localConsumer.id, toSpecId: provider.id, kind: "CALLS_DUBBO", reason: "dubbo match" }),
+      makeSemanticRel({ fromSpecId: frontend.id, toSpecId: localHttp.id, kind: "CALLS_HTTP", reason: "http match" })
     ];
 
     const report = analyzeImpact(
@@ -1139,8 +1140,8 @@ describe("analyzeImpact — implementation bridge", () => {
     );
 
     expect(report.impacts.map((i) => i.repoId)).toContain("front-service");
-    expect(report.impacts.map((i) => i.repoId)).toContain("web-frontend");
-    expect(report.inspectedSpecCount).toBeGreaterThanOrEqual(4);
+    expect(report.impacts.map((i) => i.repoId)).not.toContain("web-frontend");
+    expect(report.inspectedSpecCount).toBe(2);
   });
 });
 

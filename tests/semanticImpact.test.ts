@@ -99,7 +99,7 @@ describe("semantic impact survey", () => {
     const consumer = httpSpec("spec:consumer", "web-frontend", "POST", "/orders");
     const relations: SemanticRelationEdge[] = [
       { fromSpecId: endpoint.id, toSpecId: schema.id, kind: "REQUEST_SCHEMA", evidenceId: "ev:req", reason: "request schema", confidence: 0.95 },
-      { fromSpecId: consumer.id, toSpecId: endpoint.id, kind: "CALLS_ENDPOINT", evidenceId: "ev:call", reason: "method+path match", confidence: 0.9 }
+      { fromSpecId: consumer.id, toSpecId: endpoint.id, kind: "CALLS_HTTP", evidenceId: "ev:call", reason: "method+path match", confidence: 0.9 }
     ];
 
     const report = analyzeSemanticImpact("schema CreateOrderRequest", [schema, endpoint, consumer], relations);
@@ -111,7 +111,7 @@ describe("semantic impact survey", () => {
       [consumer.id, 2]
     ]);
     expect(report!.affectedRepos).toEqual(["order-service", "web-frontend"]);
-    expect(report!.edges.map((e) => e.kind)).toEqual(["REQUEST_SCHEMA", "CALLS_ENDPOINT"]);
+    expect(report!.edges.map((e) => e.kind)).toEqual(["REQUEST_SCHEMA", "CALLS_HTTP"]);
   });
 
   it("uses relation-specific impact direction for event producer to consumer", () => {
@@ -147,13 +147,14 @@ describe("semantic impact survey", () => {
     expect(report!.edges).toHaveLength(0);
   });
 
-  it("surfaces same-file same-action downstream RPC providers in the semantic survey", () => {
+  it("follows an explicit handler-to-RPC call downstream to the provider", () => {
     const http = httpSpec("spec:http", "front-service", "POST", "/orders/pageQueryPromotionList");
     const localDubboConsumer = dubboSpec("spec:dubbo-consumer", "front-service", "src/orders.ts", "pageQueryPromotionList");
     const centerDubboProducer = dubboSpec("spec:dubbo-producer", "center-service", "src/OrderService.ts", "pageQueryPromotionList");
     const sameFileHttp = { ...http, fileId: "file:front-service:src/orders.ts" };
     const relations: SemanticRelationEdge[] = [
-      { fromSpecId: localDubboConsumer.id, toSpecId: centerDubboProducer.id, kind: "CALLS_ENDPOINT", evidenceId: "ev:dubbo", reason: "dubbo method match", confidence: 0.9 }
+      { fromSpecId: sameFileHttp.id, toSpecId: localDubboConsumer.id, kind: "INTERNAL_CALL", evidenceId: "ev:invoke", reason: "activityApi invocation", confidence: 0.95 },
+      { fromSpecId: localDubboConsumer.id, toSpecId: centerDubboProducer.id, kind: "CALLS_DUBBO", evidenceId: "ev:dubbo", reason: "dubbo method match", confidence: 0.9 }
     ];
 
     const report = analyzeSemanticImpact(
@@ -165,20 +166,22 @@ describe("semantic impact survey", () => {
     expect(report).not.toBeNull();
     expect(report!.nodes.map((n) => [n.specId, n.hop])).toEqual([
       [sameFileHttp.id, 0],
-      [centerDubboProducer.id, 1]
+      [localDubboConsumer.id, 1],
+      [centerDubboProducer.id, 2]
     ]);
     expect(report!.affectedRepos).toEqual(["center-service", "front-service"]);
   });
 
-  it("bridges an impacted same-file RPC consumer upstream to the local HTTP endpoint", () => {
+  it("does not infer an upstream handler from an impacted RPC provider", () => {
     const http = httpSpec("spec:http", "front-service", "POST", "/orders/pageQueryPromotionList");
     const localDubboConsumer = dubboSpec("spec:dubbo-consumer", "front-service", "src/orders.ts", "pageQueryPromotionList");
     const centerDubboProducer = dubboSpec("spec:dubbo-producer", "center-service", "src/OrderService.ts", "pageQueryPromotionList");
     const sameFileHttp = { ...http, fileId: "file:front-service:src/orders.ts" };
     const frontendConsumer = httpSpec("spec:http-consumer", "web-frontend", "POST", "/orders/pageQueryPromotionList");
     const relations: SemanticRelationEdge[] = [
-      { fromSpecId: localDubboConsumer.id, toSpecId: centerDubboProducer.id, kind: "CALLS_ENDPOINT", evidenceId: "ev:dubbo", reason: "dubbo method match", confidence: 0.9 },
-      { fromSpecId: frontendConsumer.id, toSpecId: sameFileHttp.id, kind: "CALLS_ENDPOINT", evidenceId: "ev:http", reason: "http method match", confidence: 0.95 }
+      { fromSpecId: sameFileHttp.id, toSpecId: localDubboConsumer.id, kind: "INTERNAL_CALL", evidenceId: "ev:invoke", reason: "real invocation", confidence: 0.95 },
+      { fromSpecId: localDubboConsumer.id, toSpecId: centerDubboProducer.id, kind: "CALLS_DUBBO", evidenceId: "ev:dubbo", reason: "dubbo method match", confidence: 0.9 },
+      { fromSpecId: frontendConsumer.id, toSpecId: sameFileHttp.id, kind: "CALLS_HTTP", evidenceId: "ev:http", reason: "http method match", confidence: 0.95 }
     ];
 
     const report = analyzeSemanticImpact(
@@ -190,11 +193,9 @@ describe("semantic impact survey", () => {
     expect(report).not.toBeNull();
     expect(report!.nodes.map((n) => [n.specId, n.hop])).toEqual([
       [centerDubboProducer.id, 0],
-      [localDubboConsumer.id, 1],
-      [sameFileHttp.id, 2],
-      [frontendConsumer.id, 3]
+      [localDubboConsumer.id, 1]
     ]);
-    expect(report!.affectedRepos).toEqual(["center-service", "front-service", "web-frontend"]);
+    expect(report!.affectedRepos).toEqual(["center-service", "front-service"]);
   });
 
   it("does not fan a concrete HTTP implementation through a Dubbo interface wildcard", () => {
@@ -221,9 +222,10 @@ describe("semantic impact survey", () => {
     };
     const frontendConsumer = httpSpec("spec:http-consumer", "web-frontend", "POST", "/orders/createOrder");
     const relations: SemanticRelationEdge[] = [
-      { fromSpecId: localCreateConsumer.id, toSpecId: wildcardProducer.id, kind: "CALLS_ENDPOINT", evidenceId: "ev:create", reason: "interface fallback", confidence: 0.6 },
-      { fromSpecId: siblingConsumer.id, toSpecId: wildcardProducer.id, kind: "CALLS_ENDPOINT", evidenceId: "ev:delete", reason: "interface fallback", confidence: 0.6 },
-      { fromSpecId: frontendConsumer.id, toSpecId: http.id, kind: "CALLS_ENDPOINT", evidenceId: "ev:http", reason: "exact HTTP match", confidence: 0.95 }
+      { fromSpecId: http.id, toSpecId: localCreateConsumer.id, kind: "INTERNAL_CALL", evidenceId: "ev:invoke", reason: "real invocation", confidence: 0.95 },
+      { fromSpecId: localCreateConsumer.id, toSpecId: wildcardProducer.id, kind: "CALLS_DUBBO", evidenceId: "ev:create", reason: "interface fallback", confidence: 0.6 },
+      { fromSpecId: siblingConsumer.id, toSpecId: wildcardProducer.id, kind: "CALLS_DUBBO", evidenceId: "ev:delete", reason: "interface fallback", confidence: 0.6 },
+      { fromSpecId: frontendConsumer.id, toSpecId: http.id, kind: "CALLS_HTTP", evidenceId: "ev:http", reason: "exact HTTP match", confidence: 0.95 }
     ];
 
     const report = analyzeSemanticImpact(
@@ -236,8 +238,9 @@ describe("semantic impact survey", () => {
     expect(report!.affectedRepos).toEqual(["center-service", "front-service", "web-frontend"]);
     expect(report!.nodes.map((node) => node.specId)).toEqual([
       http.id,
-      wildcardProducer.id,
-      frontendConsumer.id
+      localCreateConsumer.id,
+      frontendConsumer.id,
+      wildcardProducer.id
     ]);
     expect(report!.nodes.map((node) => node.specId)).not.toContain(siblingConsumer.id);
     expect(report!.nodes.map((node) => node.specId)).not.toContain(siblingHttp.id);
@@ -257,8 +260,9 @@ describe("semantic impact survey", () => {
       fileId: "file:front-service:src/LotteryController.java"
     };
     const relations: SemanticRelationEdge[] = [
-      { fromSpecId: localConsumer.id, toSpecId: provider.id, kind: "CALLS_ENDPOINT", evidenceId: "ev:local", reason: "exact Dubbo match", confidence: 0.9 },
-      { fromSpecId: siblingConsumer.id, toSpecId: provider.id, kind: "CALLS_ENDPOINT", evidenceId: "ev:sibling", reason: "exact Dubbo match", confidence: 0.9 }
+      { fromSpecId: http.id, toSpecId: localConsumer.id, kind: "INTERNAL_CALL", evidenceId: "ev:invoke", reason: "real invocation", confidence: 0.95 },
+      { fromSpecId: localConsumer.id, toSpecId: provider.id, kind: "CALLS_DUBBO", evidenceId: "ev:local", reason: "exact Dubbo match", confidence: 0.9 },
+      { fromSpecId: siblingConsumer.id, toSpecId: provider.id, kind: "CALLS_DUBBO", evidenceId: "ev:sibling", reason: "exact Dubbo match", confidence: 0.9 }
     ];
 
     const report = analyzeSemanticImpact(
@@ -268,7 +272,7 @@ describe("semantic impact survey", () => {
     );
 
     expect(report).not.toBeNull();
-    expect(report!.nodes.map((node) => node.specId)).toEqual([http.id, provider.id]);
+    expect(report!.nodes.map((node) => node.specId)).toEqual([http.id, localConsumer.id, provider.id]);
     expect(report!.nodes.map((node) => node.specId)).not.toContain(siblingConsumer.id);
     expect(report!.nodes.map((node) => node.specId)).not.toContain(siblingHttp.id);
     expect(report!.truncated).toBe(false);

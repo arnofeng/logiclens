@@ -162,7 +162,7 @@ function buildCustomerActivityFixtures() {
   const allSpecs = [beList, beExport, beGetById, beAdd, beEdit, beDelete,
                     feList, feGetById, feAdd, feEdit, feDelete];
 
-  // Build CALLS_ENDPOINT edges: frontend consumer → backend producer
+  // Build CALLS_HTTP edges: frontend consumer → backend producer
   // (these are what resolveHttpRelations would create cross-repo)
   const rels: SemanticRelationEdge[] = [];
   const consumerPairs: [ContractSpecNode, ContractSpecNode][] = [
@@ -174,7 +174,7 @@ function buildCustomerActivityFixtures() {
   ];
   for (const [fe, be] of consumerPairs) {
     rels.push(makeRel({
-      from: fe.id, to: be.id, kind: "CALLS_ENDPOINT",
+      from: fe.id, to: be.id, kind: "CALLS_HTTP",
       reason: `Exact method+path match: ${fe.httpMethod} ${fe.pathTemplate}`,
       confidence: 0.95
     }));
@@ -350,7 +350,7 @@ describe("traceSemanticGraph — real-world controller patterns", () => {
   });
 
   it("does NOT show sibling endpoints (DELETE /{IDs}, GET /{ID}) as downstream from GET /list", () => {
-    // Bug 2 verification: GET /list should not have CALLS_ENDPOINT edges to
+    // Bug 2 verification: GET /list should not have CALLS_HTTP edges to
     // DELETE /{IDs} or GET /{ID} — these are independent endpoints, not callees.
     const graph = traceSemanticGraph("http GET /smart/customerActivity/list", fixtures.specs, fixtures.rels);
 
@@ -359,8 +359,8 @@ describe("traceSemanticGraph — real-world controller patterns", () => {
       .map(n => n.summary);
 
     // Response schemas are upstream (schema → endpoint edge direction), not downstream
-    // Downstream from GET /list: only CALLS_ENDPOINT edges FROM the target
-    // Since the target doesn't have outgoing CALLS_ENDPOINT edges to sibling endpoints
+    // Downstream from GET /list: only CALLS_HTTP edges FROM the target
+    // Since the target doesn't have outgoing CALLS_HTTP edges to sibling endpoints
     // (the fix prevents method-mismatch edges), downstream should be clean.
 
     // Should NOT see sibling endpoints
@@ -396,8 +396,8 @@ describe("traceSemanticGraph — Bug 1 regression (duplicate specs)", () => {
 
     const specs = [beOriginal, beDuplicate, feList];
     const rels = [
-      makeRel({ from: feList.id, to: beOriginal.id, kind: "CALLS_ENDPOINT" }),
-      makeRel({ from: feList.id, to: beDuplicate.id, kind: "CALLS_ENDPOINT" }),
+      makeRel({ from: feList.id, to: beOriginal.id, kind: "CALLS_HTTP" }),
+      makeRel({ from: feList.id, to: beDuplicate.id, kind: "CALLS_HTTP" }),
     ];
 
     const graph = traceSemanticGraph("http GET /smart/customerActivity/list", specs, rels);
@@ -424,7 +424,7 @@ describe("traceSemanticGraph — Bug 1 regression (duplicate specs)", () => {
     const specs = [...buildCustomerActivityFixtures().specs, duplicate];
     const rels = [
       ...buildCustomerActivityFixtures().rels,
-      makeRel({ from: feList.id, to: duplicate.id, kind: "CALLS_ENDPOINT" })
+      makeRel({ from: feList.id, to: duplicate.id, kind: "CALLS_HTTP" })
     ];
 
     const graph = traceSemanticGraph("http GET /smart/customerActivity/list", specs, rels);
@@ -455,14 +455,14 @@ describe("traceSemanticGraph — Bug 2 regression (method mismatch)", () => {
     // Manually add the spurious edges that the httpResolver bug would have created
     const rels = [
       // Correct: frontend GET /list → backend GET /list
-      makeRel({ from: feList.id, to: beList.id, kind: "CALLS_ENDPOINT",
+      makeRel({ from: feList.id, to: beList.id, kind: "CALLS_HTTP",
         reason: "Exact method+path match", confidence: 0.95 }),
       // Bug would create: frontend GET /list → backend DELETE /{IDs} (static-to-template, method differs!)
-      makeRel({ from: feList.id, to: beDelete.id, kind: "CALLS_ENDPOINT",
+      makeRel({ from: feList.id, to: beDelete.id, kind: "CALLS_HTTP",
         reason: "Static path /smart/customerActivity/list matches template /smart/customerActivity/{IDs} method differs (GET vs DELETE)",
         confidence: 0.7 }),
       // Bug would create: frontend GET /list → backend GET /{ID} (static-to-template, method same)
-      makeRel({ from: feList.id, to: beGetById.id, kind: "CALLS_ENDPOINT",
+      makeRel({ from: feList.id, to: beGetById.id, kind: "CALLS_HTTP",
         reason: "Static path /smart/customerActivity/list matches template /smart/customerActivity/{ID} GET",
         confidence: 0.8 }),
     ];
@@ -495,7 +495,7 @@ describe("traceSemanticGraph — Bug 2 regression (method mismatch)", () => {
     // Only the correct edge exists (method mismatch edges NOT created by fixed httpResolver)
     const specs = [beList, beDelete, feList];
     const rels = [
-      makeRel({ from: feList.id, to: beList.id, kind: "CALLS_ENDPOINT", reason: "exact match", confidence: 0.95 }),
+      makeRel({ from: feList.id, to: beList.id, kind: "CALLS_HTTP", reason: "exact match", confidence: 0.95 }),
     ];
 
     const graph = traceSemanticGraph("http GET /smart/customerActivity/list", specs, rels);
@@ -526,7 +526,7 @@ describe("traceSemanticGraph — multi-hop traversal", () => {
     const specs = [dto, beAdd, feAdd];
     const rels = [
       makeRel({ from: beAdd.id, to: dto.id, kind: "REQUEST_SCHEMA", reason: "@RequestBody SmartCustomerActivity" }),
-      makeRel({ from: feAdd.id, to: beAdd.id, kind: "CALLS_ENDPOINT", reason: "exact match" }),
+      makeRel({ from: feAdd.id, to: beAdd.id, kind: "CALLS_HTTP", reason: "exact match" }),
     ];
 
     // Trace from the schema outward: downstream → endpoint that uses it, then → consumer
@@ -559,8 +559,8 @@ describe("traceSemanticGraph — multi-hop traversal", () => {
     const rels = [
       makeRel({ from: beGetById.id, to: ajaxResult.id, kind: "RESPONSE_SCHEMA" }),
       makeRel({ from: beDelete.id,  to: ajaxResult.id, kind: "RESPONSE_SCHEMA" }),
-      makeRel({ from: feGetById.id, to: beGetById.id, kind: "CALLS_ENDPOINT" }),
-      makeRel({ from: feDelete.id,  to: beDelete.id,  kind: "CALLS_ENDPOINT" }),
+      makeRel({ from: feGetById.id, to: beGetById.id, kind: "CALLS_HTTP" }),
+      makeRel({ from: feDelete.id,  to: beDelete.id,  kind: "CALLS_HTTP" }),
     ];
 
     // Trace incoming from the schema: find all endpoints that reference it

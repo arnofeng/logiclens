@@ -142,7 +142,7 @@ describe("addSemanticRelationsBatch", () => {
       const edge: SemanticRelationEdge = {
         fromSpecId: from.id,
         toSpecId: to.id,
-        kind: "CALLS_ENDPOINT",
+        kind: "CALLS_HTTP",
         evidenceId: "ev:test",
         reason: "HTTP method + path template match",
         confidence: 0.95,
@@ -165,7 +165,7 @@ describe("addSemanticRelationsBatch", () => {
       const row = rows[0]!;
       expect(row.fromSpecId).toBe(from.id);
       expect(row.toSpecId).toBe(to.id);
-      expect(row.kind).toBe("CALLS_ENDPOINT");
+      expect(row.kind).toBe("CALLS_HTTP");
       expect(row.evidenceId).toBe("ev:test");
       expect(row.reason).toBe("HTTP method + path template match");
       expect(Number(row.confidence)).toBe(0.95);
@@ -195,7 +195,7 @@ describe("addSemanticRelationsBatch", () => {
       const edges: SemanticRelationEdge[] = producers.map((p, i) => ({
         fromSpecId: consumers[i]!.id,
         toSpecId: p.id,
-        kind: "CALLS_ENDPOINT" as const,
+        kind: "CALLS_HTTP" as const,
         evidenceId: `ev:batch:${i}`,
         reason: `match ${i}`,
         confidence: 0.8 + i * 0.02,
@@ -226,7 +226,7 @@ describe("addSemanticRelationsBatch", () => {
       const edge: SemanticRelationEdge = {
         fromSpecId: from.id,
         toSpecId: to.id,
-        kind: "CALLS_ENDPOINT",
+        kind: "CALLS_HTTP",
         evidenceId: "ev:defaults",
         reason: "no batchId or active provided",
         confidence: 0.7
@@ -257,7 +257,7 @@ describe("addSemanticRelationsBatch", () => {
       const edge: SemanticRelationEdge = {
         fromSpecId: from.id,
         toSpecId: to.id,
-        kind: "CALLS_ENDPOINT",
+        kind: "CALLS_HTTP",
         evidenceId: "ev:merge",
         reason: "first reason",
         confidence: 0.5,
@@ -363,7 +363,7 @@ async function semanticRelRows(
 }
 
 describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
-  it("resolves cross-repo CALLS_ENDPOINT between HTTP consumer and producer in different repos", async () => {
+  it("resolves cross-repo CALLS_HTTP between HTTP consumer and producer in different repos", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-scoped-http-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
@@ -443,7 +443,7 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
 
       // Before rebuild: no SEMANTIC_REL edges
       const before = await semanticRelRows(db);
-      expect(before.filter((r) => r.kind === "CALLS_ENDPOINT")).toHaveLength(0);
+      expect(before.filter((r) => r.kind === "CALLS_HTTP")).toHaveLength(0);
 
       // Rebuild targeting only the consumer repo
       await rebuildRepoDependencies(db, {
@@ -451,9 +451,9 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
         batchId: "batch:scoped"
       });
 
-      // After rebuild: CALLS_ENDPOINT edge should exist
+      // After rebuild: CALLS_HTTP edge should exist
       const after = await semanticRelRows(db);
-      const callEdges = after.filter((r) => r.kind === "CALLS_ENDPOINT");
+      const callEdges = after.filter((r) => r.kind === "CALLS_HTTP");
       expect(callEdges).toHaveLength(1);
       expect(callEdges[0]!.fromSpecId).toBe(consumerSpec.id);
       expect(callEdges[0]!.toSpecId).toBe(producerSpec.id);
@@ -617,9 +617,9 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
       });
 
       const after = await semanticRelRows(db);
-      const callEdges = after.filter((r) => r.kind === "CALLS_ENDPOINT");
+      const callEdges = after.filter((r) => r.kind === "CALLS_HTTP");
 
-      // All CALLS_ENDPOINT edges involve targetRepo
+      // All CALLS_HTTP edges involve targetRepo
       for (const e of callEdges) {
         const involves = [e.fromSpecId, e.toSpecId].some(
           (sid) => sid === targetSpec.id
@@ -689,7 +689,7 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
       await rebuildRepoDependencies(db, { batchId: "batch:full" });
 
       const after = await semanticRelRows(db);
-      const callEdges = after.filter((r) => r.kind === "CALLS_ENDPOINT");
+      const callEdges = after.filter((r) => r.kind === "CALLS_HTTP");
       expect(callEdges).toHaveLength(1);
     } finally {
       await db.close();
@@ -747,9 +747,9 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
       });
 
       const after = await semanticRelRows(db);
-      // No CALLS_ENDPOINT (intra-repo), no PUBLISHES/SUBSCRIBES
+      // No CALLS_HTTP (intra-repo), no PUBLISHES/SUBSCRIBES
       const crossEdges = after.filter((r) =>
-        r.kind === "CALLS_ENDPOINT" ||
+        r.kind === "CALLS_HTTP" ||
         r.kind === "PUBLISHES_EVENT" ||
         r.kind === "SUBSCRIBES_EVENT"
       );

@@ -9,6 +9,7 @@ export type HttpEndpointSpec = {
   queryParams?: { name: string; type?: string; required?: boolean }[];
   requestBodyType?: string;
   responseBodyType?: string;
+  declaredResponseType?: string;
   statusCodes?: number[];
   auth?: "unknown" | "none" | "required";
 };

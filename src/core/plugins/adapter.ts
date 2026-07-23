@@ -229,7 +229,7 @@ function createFactView(facts: ExtractedFacts, scopeRepoId?: string): PluginFact
     const parsed = safeParseSpec(spec.specJson);
     if (!parsed || typeof parsed !== "object" || !("kind" in parsed)) return [];
     if (parsed.kind === "http-endpoint") {
-      const http = parsed as { path?: unknown; requestBodyType?: string; responseBodyType?: string };
+      const http = parsed as { path?: unknown; requestBodyType?: string; responseBodyType?: string; declaredResponseType?: string };
       const role = facts.repoContracts.find((edge) =>
         edge.repoId === spec.repoId
         && edge.contractId === spec.contractId
@@ -246,6 +246,7 @@ function createFactView(facts: ExtractedFacts, scopeRepoId?: string): PluginFact
         sourceSymbolId: spec.sourceSymbolId,
         requestBodyType: http.requestBodyType,
         responseBodyType: http.responseBodyType,
+        declaredResponseType: http.declaredResponseType,
         evidence: baseEvidence
       }];
     }

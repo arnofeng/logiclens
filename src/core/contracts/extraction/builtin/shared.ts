@@ -279,7 +279,8 @@ function buildHttpEndpointSpec(
   apiPath: string,
   method?: string,
   requestBodyType?: string,
-  responseBodyType?: string
+  responseBodyType?: string,
+  declaredResponseType?: string
 ): HttpEndpointSpec {
   const pathTemplate = apiPathTemplate(apiContract.key);
   return {
@@ -290,6 +291,7 @@ function buildHttpEndpointSpec(
     pathParams: apiPathParams(pathTemplate),
     requestBodyType,
     responseBodyType,
+    declaredResponseType,
     auth: "unknown"
   };
 }
@@ -332,6 +334,7 @@ export function pushApiContractFromPath(input: {
   framework?: string;
   requestBodyType?: string;
   responseBodyType?: string;
+  declaredResponseType?: string;
 }): void {
   const apiContract = httpApiContract(input.method, input.apiPath, `HTTP API ${input.apiPath}`);
   const evidenceNode = evidence({
@@ -348,7 +351,7 @@ export function pushApiContractFromPath(input: {
   pushContractSpec({
     collector: input.collector,
     contractNode: apiContract,
-    spec: buildHttpEndpointSpec(apiContract, input.apiPath, input.method, input.requestBodyType, input.responseBodyType),
+    spec: buildHttpEndpointSpec(apiContract, input.apiPath, input.method, input.requestBodyType, input.responseBodyType, input.declaredResponseType),
     repoId: input.file.repoId,
     fileId: input.file.fileId,
     evidenceNode,

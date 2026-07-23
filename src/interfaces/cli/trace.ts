@@ -43,7 +43,11 @@ export function relationVerb(kind: string): string {
   switch (kind) {
     case "IMPLEMENTS":
       return "implements";
-    case "CALLS_ENDPOINT":
+    case "CALLS_HTTP":
+    case "CALLS_DUBBO":
+    case "CALLS_GRPC":
+    case "CALLS_GRAPHQL":
+    case "INTERNAL_CALL":
       return "calls";
     case "PUBLISHES_EVENT":
       return "publishes";
@@ -119,7 +123,7 @@ export function printSemanticTrace(target: string, graph: SemanticTraceGraph): v
 function relationRoots(graph: SemanticTraceGraph): SemanticTraceNode[] {
   const targetIds = new Set(graph.targets.map((t) => t.specId));
   const preferred = graph.targets.filter((t) =>
-    graph.edges.some((e) => e.toSpecId === t.specId && e.kind === "CALLS_ENDPOINT") ||
+    graph.edges.some((e) => e.toSpecId === t.specId && isProtocolCall(e.kind)) ||
     graph.edges.some((e) => e.fromSpecId === t.specId && e.kind === "INTERNAL_CALL")
   );
   const roots = preferred.length > 0 ? preferred : graph.targets;
@@ -141,6 +145,7 @@ function printRelationRoot(graph: SemanticTraceGraph, root: SemanticTraceNode): 
     console.log(`       ${from.summary} (${repoOf(from.repoId)})`);
     console.log(`       file: ${fileOf(from.fileId)}`);
     console.log(`       reason: ${edge.reason || "n/a"}`);
+    printEvidence(edge, "       ");
     const incomingSeen = new Set<string>([root.specId, from.specId]);
     printIncoming(graph, from, 1, incomingSeen);
   }
@@ -167,6 +172,7 @@ function printIncoming(
     console.log(`${indent}   ${from.summary} (${repoOf(from.repoId)})`);
     console.log(`${indent}   file: ${fileOf(from.fileId)}`);
     console.log(`${indent}   reason: ${edge.reason || "n/a"}`);
+    printEvidence(edge, `${indent}   `);
     seen.add(from.specId);
     printIncoming(graph, from, depth + 1, seen);
   }
@@ -190,6 +196,7 @@ function printOutgoing(
     console.log(`${indent}   ${to.summary} (${repoOf(to.repoId)})`);
     console.log(`${indent}   file: ${fileOf(to.fileId)}`);
     console.log(`${indent}   reason: ${edge.reason || "n/a"}`);
+    printEvidence(edge, `${indent}   `);
     seen.add(to.specId);
     printOutgoing(graph, to, depth + 1, seen);
   }
@@ -204,18 +211,33 @@ function byEdgeKindThenRepo(graph: SemanticTraceGraph): (a: SemanticTraceEdge, b
 }
 
 function edgeLabel(edge: SemanticTraceEdge): string {
-  const materialization = edge.materialization ?? "materialized";
-  return `${edge.kind} ${materialization} confidence=${formatConfidence(edge.confidence)}`;
+  return `${edge.kind} ${edge.resolution} confidence=${formatConfidence(edge.confidence)}`;
 }
 
 function roleLabel(graph: SemanticTraceGraph, node: SemanticTraceNode): string {
-  if (graph.edges.some((e) => e.toSpecId === node.specId && e.kind === "INTERNAL_CALL")) return "internal-reference inferred";
-  if (graph.edges.some((e) => e.fromSpecId === node.specId && e.kind === "CALLS_ENDPOINT")) return "consumer";
-  if (graph.edges.some((e) => e.toSpecId === node.specId && e.kind === "CALLS_ENDPOINT")) {
-    if (node.specKind === "dubbo-method" || node.specKind === "grpc-method") return "provider";
-    return "producer";
+  const outgoing = graph.edges.filter((e) => e.fromSpecId === node.specId);
+  const incoming = graph.edges.filter((e) => e.toSpecId === node.specId);
+  if (outgoing.some((e) => e.kind === "CALLS_HTTP")) return "http-consumer";
+  if (outgoing.some((e) => e.kind === "CALLS_DUBBO" || e.kind === "CALLS_GRPC")) return "rpc-consumer";
+  if (outgoing.some((e) => e.kind === "CALLS_GRAPHQL")) return "graphql-consumer";
+  if (incoming.some((e) => e.kind === "CALLS_HTTP")) return "http-producer";
+  if (incoming.some((e) => e.kind === "CALLS_DUBBO" || e.kind === "CALLS_GRPC")) return "rpc-provider";
+  if (incoming.some((e) => e.kind === "CALLS_GRAPHQL")) return "graphql-provider";
+  if (outgoing.some((e) => e.kind === "INTERNAL_CALL")) {
+    return node.specKind === "http-endpoint" ? "http-producer" : "handler";
   }
   return node.role;
+}
+
+function isProtocolCall(kind: string): boolean {
+  return kind === "CALLS_HTTP" || kind === "CALLS_DUBBO" || kind === "CALLS_GRPC" || kind === "CALLS_GRAPHQL";
+}
+
+function printEvidence(edge: SemanticTraceEdge, indent: string): void {
+  const evidence = edge.evidence;
+  if (!evidence) return;
+  console.log(`${indent}evidence: ${evidence.raw || "n/a"}`);
+  console.log(`${indent}source: ${evidence.filePath}:${evidence.line} [${evidence.rule}]`);
 }
 
 function nodeById(graph: SemanticTraceGraph, specId: string): SemanticTraceNode | undefined {

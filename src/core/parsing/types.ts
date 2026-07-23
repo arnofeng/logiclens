@@ -330,7 +330,11 @@ export type ContractSpecEdge = {
 
 export type SemanticRelationKind =
   | "IMPLEMENTS"
-  | "CALLS_ENDPOINT"
+  | "CALLS_HTTP"
+  | "CALLS_DUBBO"
+  | "CALLS_GRPC"
+  | "CALLS_GRAPHQL"
+  | "INTERNAL_CALL"
   | "PUBLISHES_EVENT"
   | "SUBSCRIBES_EVENT"
   | "USES_SCHEMA"

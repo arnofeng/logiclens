@@ -309,18 +309,18 @@ Example output:
 Semantic Trace: http POST /orders
 
 Target Specs:
-  [producer] order-service src/main/java/.../OrderController.java [spring-mvc]
+  [http-producer] order-service src/main/java/.../OrderController.java [spring-mvc]
       POST /orders  request=CreateOrderRequest  response=CreateOrderResponse
 
 Discovered Specs:
-  [upstream] web-app src/api/order.ts
+  [http-consumer] web-app src/api/order.ts
       POST /orders  request=OrderInput  response=OrderResult
 
 Relation Paths:
   [Target] POST /orders  request=CreateOrderRequest  response=CreateOrderResponse (order-service)
     file: src/main/java/.../OrderController.java
 
-    <- [CALLS_ENDPOINT materialized] confidence=0.95
+    <- [CALLS_HTTP exact confidence=0.95]
        POST /orders  request=OrderInput  response=OrderResult (web-app)
        file: src/api/order.ts
        reason: Exact method+path match: POST /orders
@@ -336,6 +336,16 @@ Relation Paths:
 > RPC service/method names and GraphQL fields are matched case-sensitively. Use
 > the same casing as the source definition, e.g. `OrderService/CreateOrder` and
 > `Query.user`.
+
+Trace call edges are protocol-specific (`CALLS_HTTP`, `CALLS_DUBBO`,
+`CALLS_GRPC`, or `CALLS_GRAPHQL`). A handler-to-RPC hop is reported as
+`INTERNAL_CALL` only when the index contains a real invocation in that handler;
+its source line, raw expression, and extraction rule are included in JSON and
+shown in text output when available.
+
+> Upgrading from a graph that contains `CALLS_ENDPOINT` requires a complete
+> `logiclens index`. Running only `rebuild-relations` is insufficient because
+> older consumer specs do not identify the containing caller method.
 
 **Options**:
 

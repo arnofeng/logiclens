@@ -50,7 +50,7 @@ export function resolveDubboRelations(
       if (consumerSpec.id === producer.specNode.id) continue;
       if (consumerSpec.repoId === producer.specNode.repoId) continue;
 
-      const dedupKey = `${consumerSpec.id}:${producer.specNode.id}:CALLS_ENDPOINT`;
+      const dedupKey = `${consumerSpec.id}:${producer.specNode.id}:CALLS_DUBBO`;
       if (seen.has(dedupKey)) continue;
       seen.add(dedupKey);
 
@@ -58,7 +58,7 @@ export function resolveDubboRelations(
       edges.push({
         fromSpecId: consumerSpec.id,
         toSpecId: producer.specNode.id,
-        kind: "CALLS_ENDPOINT",
+        kind: "CALLS_DUBBO",
         evidenceId: consumerSpec.evidenceId,
         reason: classified.reason,
         confidence: classified.confidence

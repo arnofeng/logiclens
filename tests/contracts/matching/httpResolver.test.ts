@@ -53,7 +53,7 @@ function makeRoleMap(
 }
 
 describe("HTTP Resolver", () => {
-  it("matches exact method+path (CALLS_ENDPOINT)", () => {
+  it("matches exact method+path (CALLS_HTTP)", () => {
     const producer = makeHttpSpec({
       id: "spec:p1", contractId: "c:p1", repoId: "repo-orders",
       method: "GET", path: "/api/orders"
@@ -68,7 +68,7 @@ describe("HTTP Resolver", () => {
     expect(edges).toHaveLength(1);
     expect(edges[0]!.fromSpecId).toBe(consumer.id);
     expect(edges[0]!.toSpecId).toBe(producer.id);
-    expect(edges[0]!.kind).toBe("CALLS_ENDPOINT");
+    expect(edges[0]!.kind).toBe("CALLS_HTTP");
     expect(edges[0]!.confidence).toBeGreaterThanOrEqual(0.9);
   });
 
@@ -85,7 +85,7 @@ describe("HTTP Resolver", () => {
 
     const edges = resolveHttpRelations([producer, consumer], roleMap);
     expect(edges).toHaveLength(1);
-    expect(edges[0]!.kind).toBe("CALLS_ENDPOINT");
+    expect(edges[0]!.kind).toBe("CALLS_HTTP");
     expect(edges[0]!.confidence).toBe(0.75); // path-only-match
   });
 

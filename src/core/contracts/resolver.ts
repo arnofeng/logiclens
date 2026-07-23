@@ -6,6 +6,7 @@ import { resolveSchemaRelations } from "./matching/schemaResolver.js";
 import { resolveGrpcRelations } from "./matching/grpcResolver.js";
 import { resolveDubboRelations } from "./matching/dubboResolver.js";
 import { resolveGraphqlRelations } from "./matching/graphqlResolver.js";
+import { resolveInternalCallRelations } from "./matching/internalCallResolver.js";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -29,7 +30,8 @@ export interface ResolveSemanticRelationsInput {
  *
  * This is the language-independent resolver that runs after all extractors
  * finish. It produces SEMANTIC_REL edges for:
- *   - HTTP endpoint matching    (CALLS_ENDPOINT)
+ *   - HTTP endpoint matching    (CALLS_HTTP)
+ *   - exact handler call flow   (INTERNAL_CALL)
  *   - Event topic matching      (PUBLISHES_EVENT / SUBSCRIBES_EVENT)
  *   - Schema associations       (REQUEST_SCHEMA / RESPONSE_SCHEMA / EVENT_PAYLOAD / USES_SCHEMA)
  *
@@ -54,9 +56,10 @@ export function resolveSemanticRelations(
   const grpcEdges = resolveGrpcRelations(contractSpecs, specRoles);
   const dubboEdges = resolveDubboRelations(contractSpecs, specRoles);
   const graphqlEdges = resolveGraphqlRelations(contractSpecs, specRoles);
+  const internalCallEdges = resolveInternalCallRelations(contractSpecs, specRoles);
 
   // Merge and deduplicate
-  const allEdges = [...httpEdges, ...eventEdges, ...schemaEdges, ...grpcEdges, ...dubboEdges, ...graphqlEdges];
+  const allEdges = [...httpEdges, ...eventEdges, ...schemaEdges, ...grpcEdges, ...dubboEdges, ...graphqlEdges, ...internalCallEdges];
   return deduplicateEdges(allEdges);
 }
 

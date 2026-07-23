@@ -57,6 +57,7 @@ function springMappingsFromFacts(file: ParsedFile): Map<string, { annotation: st
 type BodyTypeInfo = {
   requestBodyType?: string;
   responseBodyType?: string;
+  declaredResponseType?: string;
 };
 
 /**
@@ -90,11 +91,13 @@ function extractBodyTypes(file: ParsedFile): Map<string, BodyTypeInfo> {
     // Response body: extract type argument from ResponseEntity<T> return type
     const returnType = node.childForFieldName("type");
     if (returnType) {
-      const responseType = extractResponseTypeName(returnType);
-      if (responseType) info.responseBodyType = responseType;
+      const declaredResponseType = returnType.text.replace(/\s+/g, " ").trim();
+      const responseType = extractResponseTypeName(returnType) ?? declaredResponseType;
+      if (responseType && responseType !== "void") info.responseBodyType = responseType;
+      if (declaredResponseType && declaredResponseType !== "void") info.declaredResponseType = declaredResponseType;
     }
 
-    if (info.requestBodyType || info.responseBodyType) {
+    if (info.requestBodyType || info.responseBodyType || info.declaredResponseType) {
       map.set(methodSymbol.id, info);
     }
   }
@@ -104,18 +107,22 @@ function extractBodyTypes(file: ParsedFile): Map<string, BodyTypeInfo> {
 
 function hasAnnotation(node: Parser.SyntaxNode, annotationName: string): boolean {
   const modifiers = node.childForFieldName("modifiers");
-  if (!modifiers) return false;
-  for (let i = 0; i < modifiers.namedChildCount; i++) {
-    const mod = modifiers.namedChild(i);
-    if (!mod) continue;
-    if (mod.type === "annotation" || mod.type === "marker_annotation") {
-      const name = mod.childForFieldName("name");
-      if (name && (name.text === annotationName || name.text === `@${annotationName}`)) {
-        return true;
+  if (modifiers) {
+    for (let i = 0; i < modifiers.namedChildCount; i++) {
+      const mod = modifiers.namedChild(i);
+      if (!mod) continue;
+      if (mod.type === "annotation" || mod.type === "marker_annotation") {
+        const name = mod.childForFieldName("name");
+        if (name && (name.text === annotationName || name.text === `@${annotationName}`)) {
+          return true;
+        }
       }
     }
   }
-  return false;
+  // Java grammar versions differ on whether formal-parameter annotations are
+  // exposed through a named `modifiers` field. The AST node is already scoped
+  // to one parameter, so this fallback remains precise.
+  return new RegExp(`@(?:[A-Za-z_$][\\w$]*\\.)*${annotationName}\\b`).test(node.text);
 }
 
 function extractParameterTypeName(param: Parser.SyntaxNode): string | undefined {
@@ -146,6 +153,9 @@ function extractParameterTypeName(param: Parser.SyntaxNode): string | undefined 
 }
 
 function extractResponseTypeName(returnType: Parser.SyntaxNode): string | undefined {
+  const raw = returnType.text.replace(/\s+/g, " ").trim();
+  const wrapped = /^(?:ResponseEntity|Mono|Flux)\s*<([\s\S]+)>$/.exec(raw);
+  if (wrapped?.[1]) return wrapped[1].trim();
   // Direct type_identifier: `OrderResponse someMethod(...)`
   if (returnType.type === "type_identifier") {
     return returnType.text;
@@ -160,9 +170,7 @@ function extractResponseTypeName(returnType: Parser.SyntaxNode): string | undefi
         const first = typeArgs.namedChild(0);
         if (first?.type === "type_identifier") return first.text;
         if (first?.type === "generic_type") {
-          // Nested generic: ResponseEntity<List<OrderResponse>>
-          const innerName = first.childForFieldName("name");
-          return innerName?.text ?? first.text;
+          return first.text;
         }
         return first?.text;
       }
@@ -231,7 +239,8 @@ export const springMvcExtractor = compatExtractor({
                 method: httpMethod,
                 framework: "spring-mvc",
                 requestBodyType: bodyTypes?.requestBodyType,
-                responseBodyType: bodyTypes?.responseBodyType
+                responseBodyType: bodyTypes?.responseBodyType,
+                declaredResponseType: bodyTypes?.declaredResponseType
               });
             }
           }

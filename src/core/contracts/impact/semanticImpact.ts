@@ -1,20 +1,15 @@
 import type {
   ReadableContractSpecNode,
-  SemanticRelationEdge,
-  SemanticRelationKind
+  SemanticRelationEdge
 } from "../../parsing/types.js";
 import { isKnownContractSpecNode } from "../../parsing/types.js";
 import type { GraphDB } from "../../graph-model/db.js";
 import { loadActiveSemanticGraph } from "../../graph-model/queries.js";
-import { SEMANTIC_REL_META, selectImpactRootIds } from "../semanticRelations.js";
+import { SEMANTIC_REL_META, selectImpactRootIds, semanticRelationResolution } from "../semanticRelations.js";
 import { findTargetSpecs } from "./impactEngine.js";
 import { normalizeSemanticTarget } from "../targetNormalization.js";
 import { summarizeSpec } from "../semanticTrace.js";
-import {
-  getImpactPropagationSpecId,
-  implementationBridgeStepsFromEdge,
-  type TraceRelationKind
-} from "../inferredBridge.js";
+import type { ConfidenceBand } from "../../../shared/confidence.js";
 
 export type SemanticImpactNode = {
   specId: string;
@@ -26,9 +21,8 @@ export type SemanticImpactNode = {
   hop: number;
   summary: string;
   confidence: number;
-  relationKind?: TraceRelationKind;
-  materialization?: "materialized" | "inferred";
-  sourceEdgeKind?: SemanticRelationKind;
+  relationKind?: SemanticRelationEdge["kind"];
+  resolution?: ConfidenceBand;
   reason?: string;
   viaSpecId?: string;
 };
@@ -36,9 +30,9 @@ export type SemanticImpactNode = {
 export type SemanticImpactEdge = {
   fromSpecId: string;
   toSpecId: string;
-  kind: TraceRelationKind;
-  materialization: "materialized" | "inferred";
-  sourceEdgeKind?: SemanticRelationKind;
+  kind: SemanticRelationEdge["kind"];
+  evidenceId: string;
+  resolution: ConfidenceBand;
   reason: string;
   confidence: number;
   hop: number;
@@ -63,16 +57,23 @@ export type SemanticImpactOptions = {
 type ImpactStep = {
   impactedSpecId: string;
   edge: SemanticRelationEdge;
-  kind: TraceRelationKind;
-  materialization: "materialized" | "inferred";
-  sourceEdgeKind?: SemanticRelationKind;
   reason: string;
   confidence: number;
   viaSpecId?: string;
+  traversalMode: "normal" | "downstream";
 };
 
 export function getImpactedSpecId(edge: SemanticRelationEdge, currentSpecId: string): string | null {
-  return getImpactPropagationSpecId(edge, currentSpecId);
+  const meta = SEMANTIC_REL_META[edge.kind];
+  if (!meta) return null;
+  if (meta.category === "execution-flow") {
+    return edge.fromSpecId === currentSpecId ? edge.toSpecId : null;
+  }
+  if (meta.category !== "consumer-to-producer" && meta.category !== "schema-to-use") return null;
+  if (meta.direction === "forward") {
+    return edge.toSpecId === currentSpecId ? edge.fromSpecId : null;
+  }
+  return edge.fromSpecId === currentSpecId ? edge.toSpecId : null;
 }
 
 export function traceImpactPropagation(
@@ -89,22 +90,19 @@ export function traceImpactPropagation(
   const visited = new Map<string, number>();
   const incomingStep = new Map<string, ImpactStep>();
   const pathEdges: SemanticImpactEdge[] = [];
-  let frontier = new Set(startSpecIds);
+  let frontier: Map<string, "normal" | "downstream"> = new Map([...startSpecIds].map((id) => [id, "normal"]));
   let truncated = false;
-  const specMap = new Map(specs.map((s) => [s.id, s]));
-  const bridgedLocalSpecs = new Set<string>();
-  const terminalImplementationProviders = new Set<string>();
 
-  for (const id of frontier) visited.set(id, 0);
+  for (const id of frontier.keys()) visited.set(id, 0);
 
-  // Index relations by direct specId and by consumer fileKey to avoid O(E) scan
+  // Index relations by exact spec id. Execution flow must never be inferred
+  // merely because two contracts occur in the same file.
   const relationsBySpecId = new Map<string, SemanticRelationEdge[]>();
-  const relationsByFileId = new Map<string, SemanticRelationEdge[]>();
 
   for (const edge of relations) {
     const meta = SEMANTIC_REL_META[edge.kind];
     if (!meta) continue;
-    if (meta.category !== "consumer-to-producer" && meta.category !== "schema-to-use") continue;
+    if (meta.category !== "consumer-to-producer" && meta.category !== "schema-to-use" && meta.category !== "execution-flow") continue;
 
     const listFrom = relationsBySpecId.get(edge.fromSpecId) ?? [];
     listFrom.push(edge);
@@ -114,20 +112,11 @@ export function traceImpactPropagation(
     listTo.push(edge);
     relationsBySpecId.set(edge.toSpecId, listTo);
 
-    const consumerSpec = specMap.get(edge.fromSpecId);
-    if (consumerSpec && consumerSpec.fileId) {
-      const fileKey = `${consumerSpec.repoId}:${consumerSpec.fileId}`;
-      const listFile = relationsByFileId.get(fileKey) ?? [];
-      listFile.push(edge);
-      relationsByFileId.set(fileKey, listFile);
-    }
   }
 
   for (let hop = 1; hop <= maxHops; hop++) {
-    const next = new Set<string>();
-    for (const currentSpecId of frontier) {
-      if (terminalImplementationProviders.has(currentSpecId)) continue;
-      const spec = specMap.get(currentSpecId);
+    const next = new Map<string, "normal" | "downstream">();
+    for (const [currentSpecId, traversalMode] of frontier) {
       const activeRelations = new Set<SemanticRelationEdge>();
 
       const directRels = relationsBySpecId.get(currentSpecId);
@@ -135,33 +124,17 @@ export function traceImpactPropagation(
         for (const edge of directRels) activeRelations.add(edge);
       }
 
-      if (spec && spec.fileId) {
-        const fileKey = `${spec.repoId}:${spec.fileId}`;
-        const fileRels = relationsByFileId.get(fileKey);
-        if (fileRels) {
-          for (const edge of fileRels) activeRelations.add(edge);
-        }
-      }
-
       for (const edge of activeRelations) {
-        for (const step of impactStepsFromEdge(edge, currentSpecId, specMap)) {
-          if (bridgedLocalSpecs.has(step.impactedSpecId)) continue;
+        for (const step of impactStepsFromEdge(edge, currentSpecId, traversalMode)) {
           if (visited.has(step.impactedSpecId) || next.has(step.impactedSpecId)) continue;
-
-          if (step.viaSpecId && step.edge.fromSpecId !== step.viaSpecId) {
-            bridgedLocalSpecs.add(step.edge.fromSpecId);
-          }
-          next.add(step.impactedSpecId);
-          if (isImplementationProviderTerminal(step, specMap)) {
-            terminalImplementationProviders.add(step.impactedSpecId);
-          }
+          next.set(step.impactedSpecId, step.traversalMode);
           incomingStep.set(step.impactedSpecId, step);
           pathEdges.push({
             fromSpecId: edge.fromSpecId,
             toSpecId: edge.toSpecId,
-            kind: step.kind,
-            materialization: step.materialization,
-            sourceEdgeKind: step.sourceEdgeKind,
+            kind: edge.kind,
+            evidenceId: edge.evidenceId,
+            resolution: semanticRelationResolution(edge),
             reason: step.reason,
             confidence: step.confidence,
             hop
@@ -171,16 +144,13 @@ export function traceImpactPropagation(
     }
 
     if (next.size === 0) break;
-    for (const id of next) visited.set(id, hop);
+    for (const id of next.keys()) visited.set(id, hop);
 
     if (hop === maxHops) {
       truncated = hasMoreImpactTargets(
         next,
-        specs,
         relationsBySpecId,
-        relationsByFileId,
-        visited,
-        terminalImplementationProviders
+        visited
       );
       break;
     }
@@ -191,17 +161,11 @@ export function traceImpactPropagation(
 }
 
 function hasMoreImpactTargets(
-  frontier: Set<string>,
-  specs: ReadableContractSpecNode[],
+  frontier: Map<string, "normal" | "downstream">,
   relationsBySpecId: Map<string, SemanticRelationEdge[]>,
-  relationsByFileId: Map<string, SemanticRelationEdge[]>,
-  visited: Map<string, number>,
-  terminalImplementationProviders: Set<string>
+  visited: Map<string, number>
 ): boolean {
-  const specMap = new Map(specs.map((s) => [s.id, s]));
-  for (const currentSpecId of frontier) {
-    if (terminalImplementationProviders.has(currentSpecId)) continue;
-    const spec = specMap.get(currentSpecId);
+  for (const [currentSpecId, traversalMode] of frontier) {
     const activeRelations = new Set<SemanticRelationEdge>();
 
     const directRels = relationsBySpecId.get(currentSpecId);
@@ -209,16 +173,8 @@ function hasMoreImpactTargets(
       for (const edge of directRels) activeRelations.add(edge);
     }
 
-    if (spec && spec.fileId) {
-      const fileKey = `${spec.repoId}:${spec.fileId}`;
-      const fileRels = relationsByFileId.get(fileKey);
-      if (fileRels) {
-        for (const edge of fileRels) activeRelations.add(edge);
-      }
-    }
-
     for (const edge of activeRelations) {
-      for (const step of impactStepsFromEdge(edge, currentSpecId, specMap)) {
+      for (const step of impactStepsFromEdge(edge, currentSpecId, traversalMode)) {
         if (!visited.has(step.impactedSpecId)) return true;
       }
     }
@@ -226,43 +182,30 @@ function hasMoreImpactTargets(
   return false;
 }
 
-function isImplementationProviderTerminal(
-  step: ImpactStep,
-  specMap: Map<string, ReadableContractSpecNode>
-): boolean {
-  if (step.materialization !== "inferred" || step.impactedSpecId !== step.edge.toSpecId) return false;
-  const consumer = specMap.get(step.edge.fromSpecId);
-  const producer = specMap.get(step.edge.toSpecId);
-  return consumer?.specKind === "dubbo-method" && producer?.specKind === "dubbo-method";
-}
-
 function impactStepsFromEdge(
   edge: SemanticRelationEdge,
   currentSpecId: string,
-  specMap: Map<string, ReadableContractSpecNode>
+  traversalMode: "normal" | "downstream"
 ): ImpactStep[] {
-  const direct = getImpactedSpecId(edge, currentSpecId);
-  if (direct) {
-    return [{
-      impactedSpecId: direct,
-      edge,
-      kind: edge.kind,
-      materialization: "materialized",
-      reason: edge.reason,
-      confidence: edge.confidence
-    }];
+  const meta = SEMANTIC_REL_META[edge.kind];
+  if (traversalMode === "downstream") {
+    if (meta.category === "execution-flow" && edge.fromSpecId === currentSpecId) {
+      return [{ impactedSpecId: edge.toSpecId, edge, reason: edge.reason, confidence: edge.confidence, traversalMode }];
+    }
+    if (meta.category === "consumer-to-producer" && meta.direction === "forward" && edge.fromSpecId === currentSpecId) {
+      return [{ impactedSpecId: edge.toSpecId, edge, reason: edge.reason, confidence: edge.confidence, traversalMode }];
+    }
+    return [];
   }
-
-  return implementationBridgeStepsFromEdge(edge, currentSpecId, specMap).map((step) => ({
-    impactedSpecId: step.specId,
+  const direct = getImpactedSpecId(edge, currentSpecId);
+  if (!direct) return [];
+  return [{
+    impactedSpecId: direct,
     edge,
-    kind: step.kind,
-    materialization: step.materialization,
-    sourceEdgeKind: step.sourceEdgeKind,
-    reason: step.reason,
-    confidence: step.confidence,
-    viaSpecId: currentSpecId
-  }));
+    reason: edge.reason,
+    confidence: edge.confidence,
+    traversalMode: meta.category === "execution-flow" ? "downstream" : "normal"
+  }];
 }
 
 export function analyzeSemanticImpact(
@@ -301,9 +244,8 @@ export function analyzeSemanticImpact(
       hop,
       summary: summarizeSpec(spec),
       confidence: spec.confidence,
-      relationKind: step?.kind,
-      materialization: step?.materialization,
-      sourceEdgeKind: step?.sourceEdgeKind,
+      relationKind: step?.edge.kind,
+      resolution: step ? semanticRelationResolution(step.edge) : undefined,
       reason: step?.reason,
       viaSpecId: step?.viaSpecId ?? (step ? otherSpecId(step.edge, specId) : undefined)
     });

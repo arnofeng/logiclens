@@ -84,6 +84,23 @@ describe("query hotspots", () => {
     expect(query).toHaveBeenCalledTimes(2);
   });
 
+  it("rejects legacy generic call relations with a full reindex migration message", async () => {
+    const query = vi.fn(async (cypher: string) => {
+      if (cypher.includes("MATCH (s:ContractSpec)")) return [];
+      return [{
+        fromSpecId: "spec:consumer",
+        toSpecId: "spec:producer",
+        kind: "CALLS_ENDPOINT",
+        evidenceId: "ev:legacy",
+        reason: "legacy relation",
+        confidence: 0.9
+      }];
+    });
+    const db = { query } as unknown as GraphDB;
+
+    await expect(loadActiveSemanticGraph(db)).rejects.toThrow(/full `logiclens index`.*rebuild-relations/);
+  });
+
   it("centralizes low-confidence relation queries", async () => {
     const query = vi.fn(async (_cypher: string, params?: Record<string, unknown>) => {
       expect(params).toEqual({ minConfidence: 0.8, limit: 10 });

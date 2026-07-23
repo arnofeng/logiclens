@@ -74,7 +74,7 @@ describe("Dubbo Resolver", () => {
     expect(edges[0]).toMatchObject({
       fromSpecId: "spec-c",
       toSpecId: "spec-p",
-      kind: "CALLS_ENDPOINT",
+      kind: "CALLS_DUBBO",
       confidence: 0.95
     });
   });

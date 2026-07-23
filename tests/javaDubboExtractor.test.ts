@@ -95,6 +95,44 @@ describe("Java Dubbo extractor", () => {
         config: "annotation"
       })
     ]);
+    expect(bundle.contractSpecs[0]!.sourceSymbolId).toBeTruthy();
+    expect(bundle.evidence.find((row) => row.id === bundle.contractSpecs[0]!.evidenceId)).toMatchObject({
+      raw: "orderService.createOrder(new CreateOrderRequest())",
+      rule: "java-dubbo-reference"
+    });
+  });
+
+  it("keeps separate consumer specs for invocations in different containing methods", async () => {
+    const bundle = await extract(`
+      package com.acme.web;
+      import org.apache.dubbo.config.annotation.DubboReference;
+      import com.acme.api.OrderService;
+      class OrderController {
+        @DubboReference private OrderService orderService;
+        public void addActivity() { orderService.createActivity(null); }
+        public void copyActivity() { orderService.createActivity(null); }
+      }
+    `);
+
+    expect(bundle.contractSpecs).toHaveLength(2);
+    expect(new Set(bundle.contractSpecs.map((spec) => spec.sourceSymbolId)).size).toBe(2);
+  });
+
+  it("preserves complete generic request and response types", async () => {
+    const bundle = await extract(`
+      package com.acme.order;
+      import org.apache.dubbo.config.annotation.DubboService;
+      import com.acme.api.OrderService;
+      @DubboService
+      class OrderServiceImpl implements OrderService {
+        public SoaResponse<String,String> createActivity(ActivityCreateDTO request) { return null; }
+      }
+    `);
+
+    expect(specs(bundle)[0]).toMatchObject({
+      requestTypes: ["ActivityCreateDTO"],
+      responseType: "SoaResponse<String,String>"
+    });
   });
 
   it("does not treat Spring @Service as Dubbo without a Dubbo import", async () => {

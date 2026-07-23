@@ -15,6 +15,7 @@
 // ---------------------------------------------------------------------------
 
 import type {
+  EvidenceNode,
   ReadableContractSpecNode,
   SemanticRelationEdge
 } from "../parsing/types.js";
@@ -30,10 +31,8 @@ import {
 import { canonicalEventContractKey } from "./event.js";
 import type { GraphDB } from "../graph-model/db.js";
 import { loadActiveSemanticGraph } from "../graph-model/queries.js";
-import {
-  inferInternalCallEdges,
-  type TraceRelationKind
-} from "./inferredBridge.js";
+import type { ConfidenceBand } from "../../shared/confidence.js";
+import { semanticRelationResolution } from "./semanticRelations.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -63,9 +62,10 @@ export type SemanticTraceNode = {
 export type SemanticTraceEdge = {
   fromSpecId: string;
   toSpecId: string;
-  kind: TraceRelationKind;
-  materialization?: "materialized" | "inferred";
-  sourceEdgeKind?: SemanticRelationEdge["kind"];
+  kind: SemanticRelationEdge["kind"];
+  evidenceId: string;
+  resolution: ConfidenceBand;
+  evidence?: Pick<EvidenceNode, "repoId" | "fileId" | "filePath" | "line" | "raw" | "rule">;
   reason: string;
   confidence: number;
   /** Distance in hops of the deeper endpoint of this edge from a target. */
@@ -76,9 +76,8 @@ export type SemanticTraceEdge = {
 type TraversableTraceEdge = {
   fromSpecId: string;
   toSpecId: string;
-  kind: TraceRelationKind;
-  materialization: "materialized" | "inferred";
-  sourceEdgeKind?: SemanticRelationEdge["kind"];
+  kind: SemanticRelationEdge["kind"];
+  evidenceId: string;
   reason: string;
   confidence: number;
 };
@@ -240,7 +239,8 @@ export function traceSemanticGraph(
   target: string,
   specs: ReadableContractSpecNode[],
   relations: SemanticRelationEdge[],
-  options: SemanticTraceOptions = {}
+  options: SemanticTraceOptions = {},
+  evidence: ReadonlyMap<string, EvidenceNode> = new Map()
 ): SemanticTraceGraph {
   const maxHops = options.maxHops ?? 3;
   const direction = options.direction ?? "both";
@@ -255,17 +255,14 @@ export function traceSemanticGraph(
   const specMap = new Map(specs.map((s) => [s.id, s]));
   const targetIds = new Set(targetSpecs.map((s) => s.id));
 
-  const traceEdges: TraversableTraceEdge[] = [
-    ...relations.map((e) => ({
-      fromSpecId: e.fromSpecId,
-      toSpecId: e.toSpecId,
-      kind: e.kind,
-      materialization: "materialized" as const,
-      reason: e.reason,
-      confidence: e.confidence
-    })),
-    ...inferInternalCallEdges(specs, relations)
-  ];
+  const traceEdges: TraversableTraceEdge[] = relations.map((e) => ({
+    fromSpecId: e.fromSpecId,
+    toSpecId: e.toSpecId,
+    kind: e.kind,
+    evidenceId: e.evidenceId,
+    reason: e.reason,
+    confidence: e.confidence
+  }));
 
   // Adjacency lists keyed by specId.
   const outAdj = new Map<string, TraversableTraceEdge[]>();
@@ -301,15 +298,16 @@ export function traceSemanticGraph(
         if (!neighbors) continue;
         for (const e of neighbors) {
           const otherId = dir === "outgoing" ? e.toSpecId : e.fromSpecId;
-          const edgeKey = `${e.fromSpecId}->${e.toSpecId}:${e.kind}:${e.materialization}`;
+          const edgeKey = `${e.fromSpecId}->${e.toSpecId}:${e.kind}`;
           if (!seenEdges.has(edgeKey)) {
             seenEdges.add(edgeKey);
             edges.push({
               fromSpecId: e.fromSpecId,
               toSpecId: e.toSpecId,
               kind: e.kind,
-              materialization: e.materialization,
-              sourceEdgeKind: e.sourceEdgeKind,
+              evidenceId: e.evidenceId,
+              resolution: semanticRelationResolution(e),
+              evidence: traceEvidence(evidence.get(e.evidenceId)),
               reason: e.reason,
               confidence: e.confidence,
               hop,
@@ -382,6 +380,9 @@ export function summarizeSpec(node: ReadableContractSpecNode): string {
       const parts = [`${method} ${spec.path}`];
       if (spec.requestBodyType) parts.push(`request=${spec.requestBodyType}`);
       if (spec.responseBodyType) parts.push(`response=${spec.responseBodyType}`);
+      if (spec.declaredResponseType && spec.declaredResponseType !== spec.responseBodyType) {
+        parts.push(`declaredResponse=${spec.declaredResponseType}`);
+      }
       return parts.join("  ");
     }
     if (spec.kind === "event") {
@@ -435,6 +436,26 @@ export async function traceSemanticGraphFromDB(
   options: SemanticTraceOptions = {}
 ): Promise<SemanticTraceGraph> {
   const { specs, relations } = await loadActiveSemanticGraph(db);
+  const evidenceIds = [...new Set(relations.map((relation) => relation.evidenceId).filter(Boolean))];
+  const evidenceRows = evidenceIds.length === 0 ? [] : await db.query<EvidenceNode>(
+    `MATCH (e:Evidence)
+     WHERE e.id IN $evidenceIds AND (e.active IS NULL OR e.active = true)
+     RETURN e.id AS id, e.repoId AS repoId, e.fileId AS fileId, e.filePath AS filePath,
+       e.line AS line, e.raw AS raw, e.rule AS rule, e.confidence AS confidence,
+       e.batchId AS batchId, e.indexedAt AS indexedAt, e.active AS active`,
+    { evidenceIds }
+  );
+  return traceSemanticGraph(target, specs, relations, options, new Map(evidenceRows.map((row) => [row.id, row])));
+}
 
-  return traceSemanticGraph(target, specs, relations, options);
+function traceEvidence(value: EvidenceNode | undefined): SemanticTraceEdge["evidence"] {
+  if (!value) return undefined;
+  return {
+    repoId: value.repoId,
+    fileId: value.fileId,
+    filePath: value.filePath,
+    line: value.line,
+    raw: value.raw,
+    rule: value.rule
+  };
 }

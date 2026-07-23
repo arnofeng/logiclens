@@ -98,6 +98,14 @@ describe("multi-language gRPC extractors", () => {
     expect(roleKeys(bundle, "consumer")).toEqual(["OrderService/CreateOrder"]);
     const producer = specs(bundle).find((spec) => spec.framework === "grpc-java" && spec.requestType === "CreateOrderRequest" && spec.responseType === "Order");
     expect(producer).toMatchObject({ service: "OrderService", method: "CreateOrder", streaming: "unary" });
+    const consumerEvidenceIds = new Set(bundle.repoContracts.filter((edge) => edge.role === "consumer").map((edge) => edge.evidenceId));
+    const consumerRows = bundle.contractSpecs.filter((row) => consumerEvidenceIds.has(row.evidenceId));
+    expect(consumerRows).toHaveLength(1);
+    expect(consumerRows[0]!.sourceSymbolId).toBeTruthy();
+    expect(bundle.evidence.find((row) => row.id === consumerRows[0]!.evidenceId)).toMatchObject({
+      raw: "client.createOrder(CreateOrderRequest.newBuilder().build())",
+      rule: "java-grpc-client"
+    });
   });
 
   it("extracts Python grpcio producers and consumers", async () => {

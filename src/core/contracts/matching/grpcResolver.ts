@@ -10,7 +10,7 @@ interface ParsedGrpcSpec {
 }
 
 /**
- * Resolves CALLS_ENDPOINT relations between gRPC consumers (clients) and producers (servers).
+ * Resolves CALLS_GRPC relations between gRPC consumers (clients) and producers (servers).
  *
  * Matching is package-agnostic to handle cases where Go import package names
  * and actual proto packages differ. Matching relies on Service and Method name equality,
@@ -70,7 +70,7 @@ export function resolveGrpcRelations(
       if (consumerSpec.repoId === producer.specNode.repoId) continue;
 
       if (consumer.method === producer.grpcSpec.method) {
-        const dedupKey = `${consumerSpec.id}:${producer.specNode.id}:CALLS_ENDPOINT`;
+        const dedupKey = `${consumerSpec.id}:${producer.specNode.id}:CALLS_GRPC`;
         if (seen.has(dedupKey)) continue;
         seen.add(dedupKey);
 
@@ -96,7 +96,7 @@ export function resolveGrpcRelations(
         edges.push({
           fromSpecId: consumerSpec.id,
           toSpecId: producer.specNode.id,
-          kind: "CALLS_ENDPOINT",
+          kind: "CALLS_GRPC",
           evidenceId: consumerSpec.evidenceId,
           reason,
           confidence

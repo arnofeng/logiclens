@@ -149,7 +149,7 @@ export function buildExclusionClauses(
 // ---------------------------------------------------------------------------
 
 /**
- * Resolves SEMANTIC_REL edges (CALLS_ENDPOINT, REQUEST_SCHEMA,
+ * Resolves SEMANTIC_REL edges (protocol-specific CALLS_*, INTERNAL_CALL, REQUEST_SCHEMA,
  * RESPONSE_SCHEMA, etc.) with cross-repo visibility and writes them
  * back to the graph so the downstream dependency materialization can consume
  * them.

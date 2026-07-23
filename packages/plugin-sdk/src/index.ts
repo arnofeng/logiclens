@@ -100,6 +100,7 @@ export type PluginHttpEndpointFact = {
   sourceSymbolId?: string;
   requestBodyType?: string;
   responseBodyType?: string;
+  declaredResponseType?: string;
   evidence: PluginEvidenceInput;
 };
 
@@ -168,7 +169,11 @@ export type PluginSemanticRelationFact = {
   toSpecKey: string;
   relation:
     | "IMPLEMENTS"
-    | "CALLS_ENDPOINT"
+    | "CALLS_HTTP"
+    | "CALLS_DUBBO"
+    | "CALLS_GRPC"
+    | "CALLS_GRAPHQL"
+    | "INTERNAL_CALL"
     | "PUBLISHES_EVENT"
     | "SUBSCRIBES_EVENT"
     | "USES_SCHEMA"

@@ -27,6 +27,7 @@ export type PublicHttpEndpointFact = {
   sourceSymbolId?: string;
   requestBodyType?: string;
   responseBodyType?: string;
+  declaredResponseType?: string;
   evidence: PublicEvidence;
 };
 

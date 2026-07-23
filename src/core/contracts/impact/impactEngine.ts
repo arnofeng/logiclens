@@ -37,10 +37,6 @@ import { assessGrpcMethodChange, classifyGrpcMethodTargetChange } from "./rules/
 import { assessDubboMethodChange, classifyDubboMethodTargetChange } from "./rules/dubboImpactRules.js";
 import { assessGraphqlOperationChange, classifyGraphqlOperationTargetChange } from "./rules/graphqlImpactRules.js";
 import { normalizeSemanticTarget } from "../targetNormalization.js";
-import {
-  getImpactPropagationSpecId,
-  getImplementationUpstreamBridgeSteps
-} from "../inferredBridge.js";
 
 // Re-export for backward compatibility (tests and external consumers)
 export { findFieldReferences } from "./fieldSearch.js";
@@ -56,6 +52,8 @@ type ImpactPathStep = {
   hop: number;
 };
 
+type TraversalMode = "normal" | "downstream";
+
 export function traverseImpactSteps(
   startSpecIds: Set<string>,
   specs: ReadableContractSpecNode[],
@@ -64,18 +62,17 @@ export function traverseImpactSteps(
 ): { visited: Map<string, number>; steps: ImpactPathStep[] } {
   const visited = new Map<string, number>();
   const steps: ImpactPathStep[] = [];
-  const specMap = new Map(specs.map((s) => [s.id, s]));
-  let frontier = new Set(startSpecIds);
-  for (const id of frontier) visited.set(id, 0);
+  let frontier: Map<string, TraversalMode> = new Map([...startSpecIds].map((id) => [id, "normal"]));
+  for (const id of frontier.keys()) visited.set(id, 0);
 
-  // Index relations by direct specId and by consumer fileKey to avoid O(E) scan
+  // Index only explicit semantic relations. Same-file contracts are not
+  // execution-related unless an INTERNAL_CALL edge was materialized.
   const relationsBySpecId = new Map<string, SemanticRelationEdge[]>();
-  const relationsByFileId = new Map<string, SemanticRelationEdge[]>();
 
   for (const edge of relations) {
     const meta = SEMANTIC_REL_META[edge.kind];
     if (!meta) continue;
-    if (meta.category !== "consumer-to-producer" && meta.category !== "schema-to-use") continue;
+    if (meta.category !== "consumer-to-producer" && meta.category !== "schema-to-use" && meta.category !== "execution-flow") continue;
 
     const listFrom = relationsBySpecId.get(edge.fromSpecId) ?? [];
     listFrom.push(edge);
@@ -85,19 +82,11 @@ export function traverseImpactSteps(
     listTo.push(edge);
     relationsBySpecId.set(edge.toSpecId, listTo);
 
-    const consumerSpec = specMap.get(edge.fromSpecId);
-    if (consumerSpec && consumerSpec.fileId) {
-      const fileKey = `${consumerSpec.repoId}:${consumerSpec.fileId}`;
-      const listFile = relationsByFileId.get(fileKey) ?? [];
-      listFile.push(edge);
-      relationsByFileId.set(fileKey, listFile);
-    }
   }
 
   for (let hop = 1; hop <= maxHops; hop++) {
-    const next = new Set<string>();
-    for (const currentSpecId of frontier) {
-      const spec = specMap.get(currentSpecId);
+    const next = new Map<string, TraversalMode>();
+    for (const [currentSpecId, traversalMode] of frontier) {
       const activeRelations = new Set<SemanticRelationEdge>();
 
       const directRels = relationsBySpecId.get(currentSpecId);
@@ -105,24 +94,16 @@ export function traverseImpactSteps(
         for (const edge of directRels) activeRelations.add(edge);
       }
 
-      if (spec && spec.fileId) {
-        const fileKey = `${spec.repoId}:${spec.fileId}`;
-        const fileRels = relationsByFileId.get(fileKey);
-        if (fileRels) {
-          for (const edge of fileRels) activeRelations.add(edge);
-        }
-      }
-
       for (const edge of activeRelations) {
-        for (const impactedSpecId of getImpactStepSpecIds(edge, currentSpecId, specMap)) {
+        for (const { impactedSpecId, traversalMode: nextMode } of getImpactStepSpecIds(edge, currentSpecId, traversalMode)) {
           if (visited.has(impactedSpecId) || next.has(impactedSpecId)) continue;
-          next.add(impactedSpecId);
+          next.set(impactedSpecId, nextMode);
           steps.push({ impactedSpecId, edge, hop });
         }
       }
     }
     if (next.size === 0) break;
-    for (const id of next) visited.set(id, hop);
+    for (const id of next.keys()) visited.set(id, hop);
     frontier = next;
   }
 
@@ -132,15 +113,36 @@ export function traverseImpactSteps(
 function getImpactStepSpecIds(
   edge: SemanticRelationEdge,
   currentSpecId: string,
-  specMap: Map<string, ReadableContractSpecNode>
-): string[] {
+  traversalMode: TraversalMode
+): Array<{ impactedSpecId: string; traversalMode: TraversalMode }> {
+  const meta = SEMANTIC_REL_META[edge.kind];
+  if (traversalMode === "downstream") {
+    if (meta.category === "execution-flow" && edge.fromSpecId === currentSpecId) {
+      return [{ impactedSpecId: edge.toSpecId, traversalMode }];
+    }
+    if (meta.category === "consumer-to-producer" && meta.direction === "forward" && edge.fromSpecId === currentSpecId) {
+      return [{ impactedSpecId: edge.toSpecId, traversalMode }];
+    }
+    return [];
+  }
   const direct = getImpactedSpecId(edge, currentSpecId);
-  if (direct) return [direct];
-  return getImplementationUpstreamBridgeSteps(edge, currentSpecId, specMap).map((step) => step.specId);
+  return direct ? [{
+    impactedSpecId: direct,
+    traversalMode: meta.category === "execution-flow" ? "downstream" : "normal"
+  }] : [];
 }
 
 function getImpactedSpecId(edge: SemanticRelationEdge, currentSpecId: string): string | null {
-  return getImpactPropagationSpecId(edge, currentSpecId);
+  const meta = SEMANTIC_REL_META[edge.kind];
+  if (!meta) return null;
+  if (meta.category === "execution-flow") {
+    return edge.fromSpecId === currentSpecId ? edge.toSpecId : null;
+  }
+  if (meta.category !== "consumer-to-producer" && meta.category !== "schema-to-use") return null;
+  if (meta.direction === "forward") {
+    return edge.toSpecId === currentSpecId ? edge.fromSpecId : null;
+  }
+  return edge.fromSpecId === currentSpecId ? edge.toSpecId : null;
 }
 
 // ---------------------------------------------------------------------------

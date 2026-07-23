@@ -73,7 +73,7 @@ describe("gRPC Resolver", () => {
     expect(edges).toHaveLength(1);
     expect(edges[0]!.fromSpecId).toBe("spec-consumer");
     expect(edges[0]!.toSpecId).toBe("spec-producer");
-    expect(edges[0]!.kind).toBe("CALLS_ENDPOINT");
+    expect(edges[0]!.kind).toBe("CALLS_GRPC");
     expect(edges[0]!.confidence).toBe(0.9); // client package unspecified -> 0.9
   });
 

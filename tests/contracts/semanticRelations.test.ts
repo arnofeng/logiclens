@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   SEMANTIC_REL_META,
   CONSUMER_TO_PRODUCER_KINDS,
-  SCHEMA_TO_USE_KINDS
+  SCHEMA_TO_USE_KINDS,
+  semanticRelationResolution
 } from "../../src/core/contracts/semanticRelations.js";
 import type { SemanticRelationKind } from "../../src/core/parsing/types.js";
 
@@ -19,7 +20,11 @@ describe("SEMANTIC_REL_META", () => {
     // constraint is bypassed.
     const expectedKinds: SemanticRelationKind[] = [
       "IMPLEMENTS",
-      "CALLS_ENDPOINT",
+      "CALLS_HTTP",
+      "CALLS_DUBBO",
+      "CALLS_GRPC",
+      "CALLS_GRAPHQL",
+      "INTERNAL_CALL",
       "PUBLISHES_EVENT",
       "SUBSCRIBES_EVENT",
       "USES_SCHEMA",
@@ -45,9 +50,12 @@ describe("SEMANTIC_REL_META", () => {
 
 describe("CONSUMER_TO_PRODUCER_KINDS", () => {
   it("matches the old hard-coded set from impactEngine.ts byte-for-byte", () => {
-    // Old set: CALLS_ENDPOINT, SUBSCRIBES_EVENT, PUBLISHES_EVENT
+    // Protocol call kinds plus event consumption relations.
     const oldSet = new Set<SemanticRelationKind>([
-      "CALLS_ENDPOINT",
+      "CALLS_HTTP",
+      "CALLS_DUBBO",
+      "CALLS_GRPC",
+      "CALLS_GRAPHQL",
       "SUBSCRIBES_EVENT",
       "PUBLISHES_EVENT",
     ]);
@@ -74,7 +82,10 @@ describe("SCHEMA_TO_USE_KINDS", () => {
 
 describe("dependencyType mapping (replaces switch in crossRepoContracts.ts)", () => {
   it("maps materializable kinds to the correct dependencyType", () => {
-    expect(SEMANTIC_REL_META["CALLS_ENDPOINT"].dependencyType).toBe("api");
+    expect(SEMANTIC_REL_META["CALLS_HTTP"].dependencyType).toBe("api");
+    expect(SEMANTIC_REL_META["CALLS_DUBBO"].dependencyType).toBe("api");
+    expect(SEMANTIC_REL_META["CALLS_GRPC"].dependencyType).toBe("api");
+    expect(SEMANTIC_REL_META["CALLS_GRAPHQL"].dependencyType).toBe("api");
     expect(SEMANTIC_REL_META["SUBSCRIBES_EVENT"].dependencyType).toBe("event");
     expect(SEMANTIC_REL_META["PUBLISHES_EVENT"].dependencyType).toBe("event");
     expect(SEMANTIC_REL_META["USES_SCHEMA"].dependencyType).toBe("shared-contract");
@@ -89,6 +100,7 @@ describe("dependencyType mapping (replaces switch in crossRepoContracts.ts)", ()
       "COMPATIBLE_WITH",
       "BREAKS",
       "IMPACTS",
+      "INTERNAL_CALL",
     ] as SemanticRelationKind[];
     for (const kind of intraSpecKinds) {
       expect(SEMANTIC_REL_META[kind].dependencyType).toBeNull();
@@ -96,11 +108,27 @@ describe("dependencyType mapping (replaces switch in crossRepoContracts.ts)", ()
   });
 
   it("has correct direction for all consumer-to-producer kinds", () => {
-    // CALLS_ENDPOINT: fromSpec=consumer → forward
-    expect(SEMANTIC_REL_META["CALLS_ENDPOINT"].direction).toBe("forward");
+    // Protocol calls: fromSpec=consumer → forward
+    expect(SEMANTIC_REL_META["CALLS_HTTP"].direction).toBe("forward");
+    expect(SEMANTIC_REL_META["INTERNAL_CALL"].category).toBe("execution-flow");
     // SUBSCRIBES_EVENT: fromSpec=consumer → forward
     expect(SEMANTIC_REL_META["SUBSCRIBES_EVENT"].direction).toBe("forward");
     // PUBLISHES_EVENT: fromSpec=producer → reverse
     expect(SEMANTIC_REL_META["PUBLISHES_EVENT"].direction).toBe("reverse");
+  });
+});
+
+describe("semanticRelationResolution", () => {
+  it("distinguishes exact source calls from probable protocol matching", () => {
+    expect(semanticRelationResolution({
+      kind: "INTERNAL_CALL",
+      reason: "Direct contract invocation in parsed source symbol",
+      confidence: 0.9
+    })).toBe("exact");
+    expect(semanticRelationResolution({
+      kind: "CALLS_DUBBO",
+      reason: "Dubbo method match with group/version unspecified",
+      confidence: 0.9
+    })).toBe("probable");
   });
 });

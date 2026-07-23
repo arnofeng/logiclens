@@ -2,6 +2,7 @@ import { GraphDatabaseOperationalError, type GraphDB, type GraphValue, type Cont
 export type { ContractSummaryRow } from "./db.js";
 import { repoId } from "../../shared/path.js";
 import { confidenceBand, type ConfidenceBand } from "../../shared/confidence.js";
+import { BRAND } from "../../shared/branding.js";
 import { canonicalContractKey } from "../contracts/extraction/crossRepoContracts.js";
 import {
   DEP_EDGE_RETURN,
@@ -646,6 +647,12 @@ export async function loadActiveSemanticGraph(db: GraphDB): Promise<ActiveSemant
        RETURN ${SEMANTIC_REL_RETURN}`
     )
   ]);
+
+  if (relRows.some((row) => row.kind === "CALLS_ENDPOINT")) {
+    throw new Error(
+      `Legacy CALLS_ENDPOINT relations detected. Run a full \`${BRAND.cliName} index\` with this version; \`rebuild-relations\` alone cannot repair legacy caller symbols.`
+    );
+  }
 
   return {
     specs: specRows.map(rowToReadableContractSpec),

@@ -6,7 +6,7 @@ import { confidenceFor } from "../../../../shared/confidence.js";
 import { codeId } from "../../../../shared/path.js";
 import { hashText } from "../../../../shared/hash.js";
 import { parsedCodeFiles, pushGrpcContract } from "./shared.js";
-import { indexedSourceAstNodes, namedChildren, parseSourceAst, walkSourceAst } from "./sourceAstUtils.js";
+import { findContainingSymbol, indexedSourceAstNodes, namedChildren, parseSourceAst, symbolOffset, walkSourceAst } from "./sourceAstUtils.js";
 import type { GrpcStreaming } from "../../spec.js";
 
 function upperFirst(value: string): string {
@@ -175,18 +175,20 @@ export const javaGrpcExtractor = compatExtractor({
         const service = clientVariables.get(call.object);
         if (!service) continue;
         const method = upperFirst(call.method);
+        const caller = findContainingSymbol(file.symbols, node);
+        if (!caller) continue;
         const fullName = `${service}/${method}`;
-        if (seen.has(fullName)) continue;
-        seen.add(fullName);
+        const invocationKey = `${caller.id}:${fullName}`;
+        if (seen.has(invocationKey)) continue;
+        seen.add(invocationKey);
 
-        const symbol = makeSymbol(file, node, "method", method, `${service}.${method}`);
         pushGrpcContract({
           collector,
           file,
-          symbol,
+          symbol: caller,
           fullName,
           role: "consumer",
-          offset: 0,
+          offset: symbolOffset(file, caller, node),
           raw: node.text,
           rule: "java-grpc-client",
           confidence: confidenceFor("exact-parser-route"),

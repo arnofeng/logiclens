@@ -9,12 +9,12 @@
 // Edge direction conventions (from the resolver / schemaResolver):
 //   REQUEST_SCHEMA   endpoint → schema   ("this endpoint references that schema as request body")
 //   RESPONSE_SCHEMA  endpoint → schema   ("this endpoint references that schema as response body")
-//   CALLS_ENDPOINT   consumer → producer  ("consumer calls producer")
+//   CALLS_HTTP   consumer → producer  ("consumer calls producer")
 //   USES_SCHEMA      outer → inner       ("outer schema contains inner schema as a field type")
 //   SUBSCRIBES_EVENT subscriber → publisher
 //
 // Impact analysis traverses INCOMING edges starting from the target spec, so:
-//   schema target ◀── REQUEST_SCHEMA ◀── endpoint ◀── CALLS_ENDPOINT ◀── consumer ✓
+//   schema target ◀── REQUEST_SCHEMA ◀── endpoint ◀── CALLS_HTTP ◀── consumer ✓
 // ---------------------------------------------------------------------------
 
 import { describe, expect, it } from "vitest";
@@ -188,8 +188,8 @@ describe("impact analysis — DTO field change across repos", () => {
     makeRel({ from: beAdd.id, to: dto.id,  kind: "REQUEST_SCHEMA", reason: "@RequestBody SmartCustomerActivity" }),
     makeRel({ from: beEdit.id, to: dto.id, kind: "REQUEST_SCHEMA", reason: "@RequestBody SmartCustomerActivity" }),
     // consumer → producer (frontend calls backend)
-    makeRel({ from: feAdd.id,  to: beAdd.id,  kind: "CALLS_ENDPOINT", reason: "exact method+path match" }),
-    makeRel({ from: feEdit.id, to: beEdit.id, kind: "CALLS_ENDPOINT", reason: "exact method+path match" }),
+    makeRel({ from: feAdd.id,  to: beAdd.id,  kind: "CALLS_HTTP", reason: "exact method+path match" }),
+    makeRel({ from: feEdit.id, to: beEdit.id, kind: "CALLS_HTTP", reason: "exact method+path match" }),
   ];
 
   it("field-removed (required) → breaking for the schema owner", () => {
@@ -269,10 +269,10 @@ describe("impact analysis — endpoint removal breaks multiple consumers", () =>
   });
 
   const specs = [beList, feListApp, feListMobile];
-  // CALLS_ENDPOINT: consumer → producer
+  // CALLS_HTTP: consumer → producer
   const rels = [
-    makeRel({ from: feListApp.id,    to: beList.id, kind: "CALLS_ENDPOINT", reason: "exact match" }),
-    makeRel({ from: feListMobile.id, to: beList.id, kind: "CALLS_ENDPOINT", reason: "exact match" }),
+    makeRel({ from: feListApp.id,    to: beList.id, kind: "CALLS_HTTP", reason: "exact match" }),
+    makeRel({ from: feListMobile.id, to: beList.id, kind: "CALLS_HTTP", reason: "exact match" }),
   ];
 
   it("endpoint-removed → breaking for ALL consumers", () => {
@@ -426,10 +426,10 @@ describe("impact analysis — template parameter endpoint with multiple consumer
 
   const specs = [beDelete, beGetById, feDelete, feGetById];
   const rels = [
-    // consumer → producer (CALLS_ENDPOINT)
-    makeRel({ from: feDelete.id,  to: beDelete.id,  kind: "CALLS_ENDPOINT",
+    // consumer → producer (CALLS_HTTP)
+    makeRel({ from: feDelete.id,  to: beDelete.id,  kind: "CALLS_HTTP",
       reason: "Exact method+path match DELETE", confidence: 0.95 }),
-    makeRel({ from: feGetById.id, to: beGetById.id, kind: "CALLS_ENDPOINT",
+    makeRel({ from: feGetById.id, to: beGetById.id, kind: "CALLS_HTTP",
       reason: "Exact method+path match GET", confidence: 0.95 }),
   ];
 
@@ -505,7 +505,7 @@ describe("impact analysis — transitive multi-hop chain", () => {
     // schema ← endpoint (DTO IS the request body of the export endpoint)
     makeRel({ from: beExport.id, to: dto.id, kind: "REQUEST_SCHEMA", reason: "@RequestBody CustomerActivityDTO" }),
     // consumer → producer (frontend calls backend)
-    makeRel({ from: feExport.id, to: beExport.id, kind: "CALLS_ENDPOINT", reason: "exact method+path match" }),
+    makeRel({ from: feExport.id, to: beExport.id, kind: "CALLS_HTTP", reason: "exact method+path match" }),
   ];
 
   it("schema field removal propagates transitively to frontend consumer", () => {
@@ -515,8 +515,8 @@ describe("impact analysis — transitive multi-hop chain", () => {
     );
 
     // Schema → REQUEST_SCHEMA → backend endpoint (1 hop)
-    // Backend endpoint is the target of CALLS_ENDPOINT from frontend — but
-    // impact walks OUTGOING from the target. The CALLS_ENDPOINT edge goes
+    // Backend endpoint is the target of CALLS_HTTP from frontend — but
+    // impact walks OUTGOING from the target. The CALLS_HTTP edge goes
     // feExport → beExport, so outgoing from beExport does NOT reach feExport.
     // The impact is on the endpoint itself (breaking because its request schema changed).
     expect(report.inspectedSpecCount).toBeGreaterThanOrEqual(2); // DTO + endpoint
@@ -577,7 +577,7 @@ describe("impact analysis — composed DTOs via USES_SCHEMA", () => {
     // OrderDTO USES ItemDTO (field type reference)
     makeRel({ from: orderDto.id, to: itemDto.id, kind: "USES_SCHEMA", reason: "field items: List<OrderItemDTO>" }),
     // Frontend calls backend
-    makeRel({ from: feCreateOrder.id, to: beCreateOrder.id, kind: "CALLS_ENDPOINT", reason: "exact match" }),
+    makeRel({ from: feCreateOrder.id, to: beCreateOrder.id, kind: "CALLS_HTTP", reason: "exact match" }),
   ];
 
   it("changing OrderItemDTO impacts CreateOrderDTO via USES_SCHEMA", () => {
@@ -662,7 +662,7 @@ describe("impact analysis — edge cases with real patterns", () => {
     const specs = [beEndpoint, feConsumer];
     // consumer → producer
     const rels = [
-      makeRel({ from: feConsumer.id, to: beEndpoint.id, kind: "CALLS_ENDPOINT" })
+      makeRel({ from: feConsumer.id, to: beEndpoint.id, kind: "CALLS_HTTP" })
     ];
 
     const report = analyzeImpact(

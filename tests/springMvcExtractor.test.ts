@@ -159,4 +159,31 @@ public class OrderController {
     expect(spec!.httpMethod).toBeUndefined();
     expect(JSON.parse(spec!.specJson).method).toBeUndefined();
   });
+
+  it("preserves declared generic response types and unwraps HTTP body wrappers", async () => {
+    const { bundle } = await extractFromSource(`
+@RestController
+public class ActivityController {
+  @PostMapping("/plain")
+  public Resp<String,String> plain(@RequestBody ActivityCreateDTO request) { return null; }
+  @PostMapping("/wrapped")
+  public ResponseEntity<Resp<String,String>> wrapped(@RequestBody ActivityCreateDTO request) { return null; }
+}`);
+    const specs = bundle.contractSpecs.map((row) => JSON.parse(row.specJson));
+
+    expect(specs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: "/plain",
+        requestBodyType: "ActivityCreateDTO",
+        responseBodyType: "Resp<String,String>",
+        declaredResponseType: "Resp<String,String>"
+      }),
+      expect.objectContaining({
+        path: "/wrapped",
+        requestBodyType: "ActivityCreateDTO",
+        responseBodyType: "Resp<String,String>",
+        declaredResponseType: "ResponseEntity<Resp<String,String>>"
+      })
+    ]));
+  });
 });

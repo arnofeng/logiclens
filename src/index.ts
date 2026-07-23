@@ -64,7 +64,7 @@ import type {
 } from "./core/parsing/facts.js";
 import type { CallRef, CodeSymbol, ImportRef, ParsedFile } from "./core/parsing/types.js";
 import type { AppConfig } from "./config/schema.js";
-import type { SemanticTraceGraph } from "./core/contracts/semanticTrace.js";
+import type { SemanticTraceEdge, SemanticTraceGraph, SemanticTraceNode } from "./core/contracts/semanticTrace.js";
 import type { IndexOptions, IndexResult } from "./core/indexing/types.js";
 import type {
   BenchmarkOptions,
@@ -160,6 +160,8 @@ export type {
   QueryPlanningContext,
   ImpactResult,
   SemanticTraceGraph,
+  SemanticTraceEdge,
+  SemanticTraceNode,
   ParsedFile,
   ParsedSourceFacts,
   AnnotationArgument,

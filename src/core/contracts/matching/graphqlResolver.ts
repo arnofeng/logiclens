@@ -3,7 +3,7 @@ import type { SpecRoleMap } from "./types.js";
 import { confidenceFor } from "../../../shared/confidence.js";
 
 /**
- * Resolves CALLS_ENDPOINT relations between GraphQL consumers (clients) and producers (SDL schemas).
+ * Resolves CALLS_GRAPHQL relations between GraphQL consumers (clients) and producers (SDL schemas).
  */
 export function resolveGraphqlRelations(
   contractSpecs: ContractSpecNode[],
@@ -39,14 +39,14 @@ export function resolveGraphqlRelations(
       if (consumerSpec.repoId === producerSpec.repoId) continue;
 
       if (consumerSpec.canonicalKey === producerSpec.canonicalKey) {
-        const dedupKey = `${consumerSpec.id}:${producerSpec.id}:CALLS_ENDPOINT`;
+        const dedupKey = `${consumerSpec.id}:${producerSpec.id}:CALLS_GRAPHQL`;
         if (seen.has(dedupKey)) continue;
         seen.add(dedupKey);
 
         edges.push({
           fromSpecId: consumerSpec.id,
           toSpecId: producerSpec.id,
-          kind: "CALLS_ENDPOINT",
+          kind: "CALLS_GRAPHQL",
           evidenceId: consumerSpec.evidenceId,
           reason: `GraphQL operation match: ${consumerSpec.canonicalKey}`,
           confidence: confidenceFor("exact-graphql-match")

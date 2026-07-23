@@ -12,6 +12,7 @@ import type {
   SemanticRelationKind,
   RepoDependencyEdge
 } from "../parsing/types.js";
+import { confidenceBand, type ConfidenceBand } from "../../shared/confidence.js";
 
 export interface SemanticRelMeta {
   /**
@@ -23,7 +24,7 @@ export interface SemanticRelMeta {
 
   /**
    * Dependency direction:
-   *   "forward"  — fromSpec = consumer, toSpec = producer (e.g. CALLS_ENDPOINT)
+   *   "forward"  — fromSpec = consumer, toSpec = producer (e.g. CALLS_HTTP)
    *   "reverse"  — fromSpec = producer, toSpec = consumer (e.g. PUBLISHES_EVENT)
    */
   direction: "forward" | "reverse";
@@ -34,7 +35,7 @@ export interface SemanticRelMeta {
    *   "schema-to-use"        — schema used by endpoint / event / other schema
    *   "intra-spec"           — pure intra-spec association (no cross-repo dep)
    */
-  category: "consumer-to-producer" | "schema-to-use" | "intra-spec";
+  category: "consumer-to-producer" | "schema-to-use" | "execution-flow" | "intra-spec";
 }
 
 /**
@@ -45,10 +46,30 @@ export interface SemanticRelMeta {
  * automatically.  No need to touch crossRepoContracts.ts or impactEngine.ts.
  */
 export const SEMANTIC_REL_META: Record<SemanticRelationKind, SemanticRelMeta> = {
-  CALLS_ENDPOINT: {
+  CALLS_HTTP: {
     dependencyType: "api",
     direction: "forward",
     category: "consumer-to-producer",
+  },
+  CALLS_DUBBO: {
+    dependencyType: "api",
+    direction: "forward",
+    category: "consumer-to-producer",
+  },
+  CALLS_GRPC: {
+    dependencyType: "api",
+    direction: "forward",
+    category: "consumer-to-producer",
+  },
+  CALLS_GRAPHQL: {
+    dependencyType: "api",
+    direction: "forward",
+    category: "consumer-to-producer",
+  },
+  INTERNAL_CALL: {
+    dependencyType: null,
+    direction: "forward",
+    category: "execution-flow",
   },
   SUBSCRIBES_EVENT: {
     dependencyType: "event",
@@ -122,6 +143,17 @@ export const CONSUMER_TO_PRODUCER_KINDS: ReadonlySet<SemanticRelationKind> =
 /** Kinds that go from a schema to the endpoint/event/schema that uses it. */
 export const SCHEMA_TO_USE_KINDS: ReadonlySet<SemanticRelationKind> =
   deriveKinds("schema-to-use");
+
+export function semanticRelationResolution(edge: Pick<SemanticRelationEdge, "kind" | "reason" | "confidence">): ConfidenceBand {
+  if (edge.kind === "INTERNAL_CALL") return "exact";
+  if (edge.confidence < 0.8) return "heuristic";
+  const reason = edge.reason.toLowerCase();
+  if (/\b(unspecified|mismatch|compatible|wildcard|path-only|fallback|probable)\b/.test(reason)) {
+    return "probable";
+  }
+  if (/\bexact\b/.test(reason) || edge.confidence >= 0.95) return "exact";
+  return confidenceBand(edge.confidence);
+}
 
 export function selectImpactRootIds(matchedSpecIds: Set<string>, relations: SemanticRelationEdge[]): Set<string> {
   const roots = new Set<string>();

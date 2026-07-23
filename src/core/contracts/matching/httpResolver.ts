@@ -176,7 +176,7 @@ function classifyHttpMatch(
 // ---------------------------------------------------------------------------
 
 /**
- * Matches HTTP endpoint ContractSpecs across repos and produces CALLS_ENDPOINT
+ * Matches HTTP endpoint ContractSpecs across repos and produces CALLS_HTTP
  * SEMANTIC_REL edges (consumer → producer).
  *
  * Uses bucket indexing by first path segment for O(N) average performance.
@@ -243,7 +243,7 @@ export function resolveHttpRelations(
         const match = classifyHttpMatch(consumerSpec, producerSpec);
         if (!match) continue;
 
-        const dedupKey = `${consumerSpec.id}:${producerSpec.id}:CALLS_ENDPOINT`;
+        const dedupKey = `${consumerSpec.id}:${producerSpec.id}:CALLS_HTTP`;
         if (seen.has(dedupKey)) continue;
         seen.add(dedupKey);
 
@@ -254,7 +254,7 @@ export function resolveHttpRelations(
           edge: {
             fromSpecId: consumerSpec.id,
             toSpecId: producerSpec.id,
-            kind: "CALLS_ENDPOINT",
+            kind: "CALLS_HTTP",
             evidenceId: consumerSpec.evidenceId,
             reason: match.reason,
             confidence: match.confidence
@@ -276,7 +276,7 @@ export function resolveHttpRelations(
           const match = classifyHttpMatch(consumerSpec, producerSpec);
           if (!match) continue;
 
-          const dedupKey = `${consumerSpec.id}:${producerSpec.id}:CALLS_ENDPOINT`;
+          const dedupKey = `${consumerSpec.id}:${producerSpec.id}:CALLS_HTTP`;
           if (seen.has(dedupKey)) continue;
           seen.add(dedupKey);
 
@@ -287,7 +287,7 @@ export function resolveHttpRelations(
             edge: {
               fromSpecId: consumerSpec.id,
               toSpecId: producerSpec.id,
-              kind: "CALLS_ENDPOINT",
+              kind: "CALLS_HTTP",
               evidenceId: consumerSpec.evidenceId,
               reason: match.reason,
               confidence: match.confidence

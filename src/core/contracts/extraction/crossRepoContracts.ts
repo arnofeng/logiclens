@@ -265,7 +265,8 @@ export function buildRepoDependenciesFromParticipants(participants: ContractPart
  * `buildRepoDependenciesFromParticipants` for API and event contracts.
  *
  * Mapping:
- *   CALLS_ENDPOINT     (consumer -> producer) -> api dependency (consumer -> producer)
+ *   CALLS_HTTP/DUBBO/GRPC/GRAPHQL (consumer -> producer) -> api dependency
+ *   INTERNAL_CALL      (handler -> local consumer)        -> execution flow only
  *   PUBLISHES_EVENT    (producer -> consumer) -> event dependency (consumer -> producer, reversed)
  *   SUBSCRIBES_EVENT   (consumer -> producer) -> event dependency (consumer -> producer)
  *   USES_SCHEMA        (user -> provider) -> shared-contract dependency (user -> provider)
