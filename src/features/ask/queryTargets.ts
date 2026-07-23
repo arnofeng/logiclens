@@ -20,9 +20,9 @@ const CONTRACT_CONTEXT = /^(?:event|schema|dto|enum|事件|架构|模式|枚举|
 const FILE_LEADING_CONTEXT = /^(?:open|check|read|inspect|(?:然后)?(?:打开|查看|读取|检查))$/i;
 const FILE_LABEL_CONTEXT = /^(?:file|path|directory|folder|文件|路径|目录|文件夹)$/i;
 const FILE_CONTEXT = /^(?:file|path|directory|folder|open|check|read|inspect|文件|路径|目录|文件夹|(?:然后)?(?:打开|查看|读取|检查))$/i;
-const API_LEADING_CONTEXT = /^(?:calls?|serves?|consumes?|request|response|http|query|(?:然后)?(?:谁)?调用|(?:然后)?(?:查询|请求|消费|提供))$/i;
-const API_LABEL_CONTEXT = /^(?:api|endpoint|route|接口|端点|路由)$/i;
-const API_CONTEXT = /^(?:api|calls?|serves?|consumes?|endpoint|route|request|response|http|query|接口|端点|路由|(?:然后)?(?:谁)?调用|(?:然后)?(?:查询|请求|消费|提供))$/i;
+const API_LEADING_CONTEXT = /^(?:calls?|serves?|consumes?|request|response|http|query|(?:这个|分析|查看|解释)?(?:接口|端点|路由)|(?:然后)?(?:谁)?调用|(?:然后)?(?:查询|请求|消费|提供))$/i;
+const API_LABEL_CONTEXT = /^(?:api|endpoint|route|(?:这个|分析|查看|解释)?(?:接口|端点|路由))$/i;
+const API_CONTEXT = /^(?:api|calls?|serves?|consumes?|endpoint|route|request|response|http|query|(?:这个|分析|查看|解释)?(?:接口|端点|路由)|(?:然后)?(?:谁)?调用|(?:然后)?(?:查询|请求|消费|提供))$/i;
 const CODE_CONTEXT = /^(?:class|function|method|symbol|interface|type|类|函数|方法|符号|接口|类型)$/i;
 const URL_CONTEXT = /^(?:visit|url|website|site|访问|网址|网站)$/i;
 const CONNECTOR = /^(?:and|or|then|but|以及|并且|然后|但|而且)$/i;
@@ -227,6 +227,7 @@ function classifySpan(spans: readonly QuerySpan[], index: number, context: Query
     if (method) return { type: "contract", kind: "api", value, method, span };
     if (apiEvidence) return { type: "contract", kind: "api", value, span };
     if (fileEvidence) return { type: "path", value, span };
+    if (spans.length === 1) return { type: "contract", kind: "api", value, span };
     return { type: "ignored", reason: "ambiguous", span };
   }
 

@@ -57,7 +57,9 @@ describe("workspace Ask retrieval", () => {
     let sawCrossRepoRanking = false;
     for (const corpusCase of WORKSPACE_CORPUS) {
       const plan = planQuestion(corpusCase.question);
-      const direct = plan.normalizedLexicalQuery
+      const requiresExactContract = plan.contractTargets.length > 0 &&
+        plan.contractTargets.every(({ kind }) => kind === "api");
+      const direct = plan.enabledRoutes.includes("lexical") && plan.normalizedLexicalQuery
         ? await realStore.search({ workspaceId, text: plan.normalizedLexicalQuery }, { topK: plan.budgets.lexical.limit })
         : [];
       const before = search.mock.calls.length;
@@ -79,12 +81,15 @@ describe("workspace Ask retrieval", () => {
         .map(({ canonicalId }) => canonicalId);
       const directCanonicalOrder = [...new Set(direct.map(({ canonicalId }) => canonicalId))];
       expect(lexicalOrder, corpusCase.id).toEqual(directCanonicalOrder);
+      const fusedOrder = first.fusedCandidates.map(({ canonicalId }) => canonicalId);
       expect(first.fusedCandidates.every(({ repoId }) => repoId.startsWith("repo:")), corpusCase.id).toBe(true);
       const directRepos = new Set(direct.map(({ repoId }) => repoId));
       if (directRepos.size > 1) sawCrossRepoRanking = true;
 
-      if (corpusCase.answerable) {
-        expect(lexicalOrder.length, `${corpusCase.id}: lexical evidence`).toBeGreaterThan(0);
+      if (corpusCase.answerable && !requiresExactContract) {
+        if (plan.enabledRoutes.includes("lexical")) {
+          expect(lexicalOrder.length, `${corpusCase.id}: lexical evidence`).toBeGreaterThan(0);
+        }
         expect(first.selectedCandidates.length, `${corpusCase.id}: selected evidence`).toBeGreaterThan(0);
         expect(first.loadedEvidence.length, `${corpusCase.id}: loaded evidence`).toBeGreaterThan(0);
         expect(["succeeded", "degraded"], `${corpusCase.id}: outcome`).toContain(first.outcome);
@@ -95,7 +100,7 @@ describe("workspace Ask retrieval", () => {
         expect(localAnswer, `${corpusCase.id}: citation id`).toContain("[C1]");
         expect(localAnswer, `${corpusCase.id}: repo/path citation`).toContain(`${citedEvidence!.document.repoId}/${citedEvidence!.document.path}`);
         for (const expectedCanonicalId of corpusCase.expectedCanonicalIds) {
-          expect(lexicalOrder, corpusCase.id).toContain(expectedCanonicalId);
+          expect(fusedOrder, corpusCase.id).toContain(expectedCanonicalId);
           const expected = first.fusedCandidates.find(({ canonicalId }) => canonicalId === expectedCanonicalId);
           expect(expected, `${corpusCase.id}: ${expectedCanonicalId}`).toBeDefined();
           answerableRepos.add(expected!.repoId);
@@ -106,6 +111,13 @@ describe("workspace Ask retrieval", () => {
             expect(expected!.location?.path, `${corpusCase.id}: location`).toBeTruthy();
           }
         }
+      } else if (requiresExactContract) {
+        expect(lexicalOrder, `${corpusCase.id}: strict contract lexical exclusion`).toEqual([]);
+        expect(first.selectedCandidates, `${corpusCase.id}: unresolved strict contract`).toEqual([]);
+        expect(first.loadedEvidence, `${corpusCase.id}: unresolved strict contract evidence`).toEqual([]);
+        expect(first.outcome).toBe("no_results");
+        await expect(answerQuestion(corpusCase.question, first, "offline-test-model"))
+          .resolves.toBe(NO_RELIABLE_EVIDENCE);
       } else {
         expect(corpusCase.expectedCanonicalIds).toEqual([]);
         expect(lexicalOrder, `${corpusCase.id}: refusal`).toEqual([]);

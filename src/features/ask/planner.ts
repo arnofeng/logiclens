@@ -32,17 +32,26 @@ const ROUTE_BUDGETS: Record<RetrievalRoute, RouteBudget> = {
   semantic: { limit: 10 }
 };
 
-function questionKind(question: string): QuestionKind {
-  const lowered = question.toLowerCase();
-  return /impact|influence|who[\s_]*uses|\bref\b/.test(lowered)
+function questionIntentText(question: string, targets: readonly ReturnType<typeof classifyQueryTargets>[number][]): string {
+  const masked = question.split("");
+  for (const target of targets) {
+    if (target.type === "ignored") continue;
+    for (let index = target.span.start; index < target.span.end; index += 1) masked[index] = " ";
+  }
+  return masked.join("");
+}
+
+function questionKind(question: string, targets: readonly ReturnType<typeof classifyQueryTargets>[number][]): QuestionKind {
+  const lowered = questionIntentText(question, targets).toLowerCase();
+  return /impact|influence|who[\s_]*uses|\bref\b|影响|引用/.test(lowered)
     ? "impact"
-    : /flow|workflow|chain|create/.test(lowered)
+    : /\b(?:flow|workflow|chain|create|creates|created|creating|creation)\b|流程|工作流|调用链|创建/.test(lowered)
       ? "workflow"
-      : /dependency|depend|import/.test(lowered)
+      : /dependency|depend|import|依赖|导入/.test(lowered)
         ? "dependency"
-        : /error|bug|debug|exception/.test(lowered)
+        : /error|bug|debug|exception|错误|异常|调试/.test(lowered)
           ? "debugging"
-          : /function|class|symbol|method/.test(lowered)
+          : /function|class|symbol|method|函数|类|符号|方法/.test(lowered)
             ? "symbol"
             : "general";
 }
@@ -108,13 +117,18 @@ export function planQuestion(
   const terms = normalizedLexicalQuery
     ? [...normalizedLexicalQuery.matchAll(/[A-Za-z_][A-Za-z0-9_]+|[\u4e00-\u9fa5]{2,}/g)].map((match) => match[0])
     : [];
+  const strictApiTargets = contractTargets.length > 0 && contractTargets.every(({ kind }) => kind === "api");
   const enabledRoutes: RetrievalRoute[] = [];
   if (exactIdentifiers.length > 0 || paths.length > 0) enabledRoutes.push("exact");
-  if (contractTargets.length > 0) enabledRoutes.push("contract");
-  if (normalizedLexicalQuery) enabledRoutes.push("entity", "lexical", "graph", "semantic");
+  if (strictApiTargets) {
+    enabledRoutes.push("contract", "graph");
+  } else if (normalizedLexicalQuery) {
+    if (contractTargets.length > 0) enabledRoutes.push("contract");
+    enabledRoutes.push("entity", "lexical", "graph", "semantic");
+  }
 
   return {
-    kind: questionKind(question),
+    kind: questionKind(question, targets),
     terms: terms.length > 0 ? terms : normalizedLexicalQuery ? [normalizedLexicalQuery] : [],
     exactIdentifiers,
     paths,

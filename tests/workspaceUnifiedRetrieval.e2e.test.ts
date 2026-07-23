@@ -11,6 +11,7 @@ import {
 } from "../src/core/retrieval/types.js";
 import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
 import { parseRenderRef } from "../src/core/retrieval/renderRef.js";
+import { planQuestion } from "../src/features/ask/planner.js";
 import type { RetrievalResult } from "../src/features/ask/retrieve.js";
 import { NO_RELIABLE_EVIDENCE } from "../src/features/ask/answer.js";
 import { createClient, type AppClient } from "../src/interfaces/sdk/client.js";
@@ -157,14 +158,16 @@ describe("local workspace unified retrieval release", () => {
     let client: AppClient | undefined;
 
     const retrieveOnce = async (question: string): Promise<RetrievalResult> => {
+      const plan = planQuestion(question);
+      const strictApiTarget = plan.contractTargets.length > 0 &&
+        plan.contractTargets.every(({ kind }) => kind === "api");
       const searchesBefore = searchSpy.mock.calls.length;
       const result = await client!.retrieve(question, RETRIEVE_OPTIONS);
-      expect(searchSpy.mock.calls.length - searchesBefore, question).toBe(1);
-      expect(result.diagnostics.providers.lexical.status).toBe("succeeded");
-      expect(result.diagnostics.routes.lexical).toMatchObject({
-        status: "succeeded",
-        queryCount: 1,
-      });
+      expect(searchSpy.mock.calls.length - searchesBefore, question).toBe(strictApiTarget ? 0 : 1);
+      expect(result.diagnostics.providers.lexical.status).toBe(strictApiTarget ? "disabled" : "succeeded");
+      expect(result.diagnostics.routes.lexical).toMatchObject(strictApiTarget
+        ? { status: "disabled", queryCount: 0 }
+        : { status: "succeeded", queryCount: 1 });
       expect(result.diagnostics.providers.semantic.status).toBe("disabled");
       assertSafeEvidence(result, workspaceId);
       return result;

@@ -4,6 +4,7 @@ import {
   runRetrievalBenchmark,
   summarizeDurations,
 } from "../src/core/retrieval/benchmark.js";
+import { planQuestion } from "../src/features/ask/planner.js";
 import type { RetrievalResult } from "../src/features/ask/retrieve.js";
 import { KuzuWorkspaceLexicalStore } from "../src/adapters/graph-db/kuzu/KuzuWorkspaceLexicalStore.js";
 import { QUALITY_GATE_CORPUS } from "./retrieval/workspaceCorpus.js";
@@ -177,7 +178,13 @@ describe("real Kuzu retrieval benchmark", () => {
           .map(({ iteration }) => iteration)).toEqual(expectedIterations);
       }
       expect(report.diagnostics.measurements.every(({ providers }) => providers.semantic === "disabled")).toBe(true);
-      expect(report.diagnostics.measurements.every(({ providers }) => providers.lexical === "succeeded")).toBe(true);
+      const expectedLexicalStatus = new Map(QUALITY_GATE_CORPUS.map(({ id, question }) => [
+        id,
+        planQuestion(question).enabledRoutes.includes("lexical") ? "succeeded" : "disabled"
+      ]));
+      expect(report.diagnostics.measurements.every(({ queryId, providers }) =>
+        providers.lexical === expectedLexicalStatus.get(queryId)
+      )).toBe(true);
       expect(report.diagnostics.measurements.every(({ queries }) => queries.byRoute.lexical <= 1)).toBe(true);
       expect(lexicalSearch.mock.calls.length).toBeLessThanOrEqual(expectedExecutions);
       expect(report.endToEnd.summary.p95, details).toBeLessThanOrEqual(500);

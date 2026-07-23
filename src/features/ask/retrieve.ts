@@ -125,10 +125,13 @@ export async function retrieveForQuestion(db: GraphDB, question: string, options
 
   const planningStart = now();
   const planned: QueryPlan = (deps.plan ?? planQuestion)(question, options.planningContext);
+  const strictApiTarget = planned.contractTargets.length > 0 &&
+    planned.contractTargets.every(({ kind }) => kind === "api");
   const disabledRoutes = new Set<RetrievalRoute>([
     ...(!retrieval.lexical ? ["lexical" as const] : []),
     ...(!retrieval.semantic ? ["semantic" as const] : []),
     ...(retrieval.graphHops === 0 ? ["graph" as const] : []),
+    ...(strictApiTarget ? ["entity" as const, "lexical" as const, "semantic" as const] : []),
   ]);
   const plan: QueryPlan = {
     ...planned,
@@ -175,18 +178,20 @@ export async function retrieveForQuestion(db: GraphDB, question: string, options
   const lexicalDuration = duration(lexicalStart, now());
 
   const graphStart = now();
+  const resolvedApiTarget = !strictApiTarget || exact.contract.candidates.length > 0;
+  const graphSeeds = strictApiTarget
+    ? resolvedApiTarget ? [...exact.exact.candidates, ...exact.contract.candidates] : []
+    : [...exact.exact.candidates, ...exact.contract.candidates, ...exact.entity.candidates, ...lexical.candidates];
   const graph = retrieval.graphHops === 0
     ? emptyRouteResult<GraphLegacyRow>("graph", "disabled", "route-disabled")
     : await isolateOperational(
-      () => (deps.graph ?? retrieveBoundedGraph)(db, plan, [
-        ...exact.exact.candidates, ...exact.contract.candidates, ...exact.entity.candidates, ...lexical.candidates
-      ], { workspaceId, graphHops: retrieval.graphHops }),
+      () => (deps.graph ?? retrieveBoundedGraph)(db, plan, graphSeeds, { workspaceId, graphHops: retrieval.graphHops }),
       (error) => emptyRouteResult<GraphLegacyRow>("graph", "failed", error.reason, { executed: error.attemptedQueryCount > 0, queryCount: error.attemptedQueryCount })
     );
   const graphDuration = duration(graphStart, now());
 
   const semanticStart = now();
-  const semantic = retrieval.semantic
+  const semantic = retrieval.semantic && plan.enabledRoutes.includes("semantic")
     ? await isolateOperational(
       () => (deps.semantic ?? retrieveOptionalSemantic)(plan, question, options.config, { cwd }),
       (error) => emptyRouteResult<SemanticSearchResult>("semantic", "failed", error.reason, { executed: error.attemptedQueryCount > 0, queryCount: error.attemptedQueryCount })
@@ -195,10 +200,15 @@ export async function retrieveForQuestion(db: GraphDB, question: string, options
   const semanticDuration = duration(semanticStart, now());
 
   const fusionStart = now();
-  const fusedCandidates = Object.freeze((deps.fusion ?? reciprocalRankFusion)([
-    ...exact.exact.candidates, ...exact.contract.candidates, ...exact.entity.candidates,
-    ...lexical.candidates, ...graph.candidates, ...semantic.candidates
-  ]));
+  const candidatesForFusion = strictApiTarget
+    ? resolvedApiTarget
+      ? [...exact.exact.candidates, ...exact.contract.candidates, ...graph.candidates]
+      : []
+    : [
+      ...exact.exact.candidates, ...exact.contract.candidates, ...exact.entity.candidates,
+      ...lexical.candidates, ...graph.candidates, ...semantic.candidates
+    ];
+  const fusedCandidates = Object.freeze((deps.fusion ?? reciprocalRankFusion)(candidatesForFusion));
   const fusionTiming = completed(duration(fusionStart, now()));
 
   const selectionStart = now();

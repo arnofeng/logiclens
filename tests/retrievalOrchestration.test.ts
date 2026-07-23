@@ -222,6 +222,115 @@ describe("Ask retrieval orchestration", () => {
     expect(loadDocuments).toHaveBeenCalledTimes(1);
   });
 
+  it("anchors structured contract queries to exact and graph evidence only", async () => {
+    const workspaceId = deriveWorkspaceId("default-system");
+    const exactCandidate = candidate("exact", "code:repo:a:src/explicit.ts:function:CreateActivity:1");
+    const lexicalCandidate = candidate("lexical", "code:repo:a:src/unrelated.ts:function:createActivity:1");
+    const graphCandidate = candidate("graph", "code:repo:a:src/implementation.ts:function:createActivity:1");
+    const contractCandidate = candidatesFromContractRows([{
+      contractId: "contract:api:post-create-activity",
+      kind: "api",
+      key: "POST:/mall/mgr/groupon/activity/createActivity",
+      name: "POST /mall/mgr/groupon/activity/createActivity",
+      role: "consumer",
+      repoName: "a",
+      filePath: "src/api.ts",
+      line: 12,
+      evidenceId: "evidence:create-activity",
+      raw: "createActivity(payload)",
+      rule: "http-client",
+      confidence: 0.95,
+      resolution: "exact"
+    }], workspaceId)[0]!;
+    const strictPlan: QueryPlan = {
+      ...plan(),
+      kind: "general",
+      exactIdentifiers: ["CreateActivity"],
+      contractTargets: [{ kind: "api", value: "/mall/mgr/groupon/activity/createActivity" }]
+    };
+    const lexical = vi.fn(async () => successfulRouteResult("lexical", [lexicalCandidate], [], 1));
+    const semantic = vi.fn(async () => successfulRouteResult("semantic", [], [], 1));
+    const graph = vi.fn(async (_db, _plan, seeds) => {
+      expect(seeds).toEqual([exactCandidate, contractCandidate]);
+      return successfulRouteResult("graph", [graphCandidate], [], 1);
+    });
+    const sourceLoader = vi.fn(async ({ selectedCandidates }) => ({
+      evidence: selectedCandidates,
+      rejections: [],
+      status: "completed" as const,
+      queryCount: selectedCandidates.length > 0 ? 1 : 0
+    }));
+
+    const result = await retrieveForQuestion({} as GraphDB, "api:/mall/mgr/groupon/activity/createActivity", {
+      dependencies: {
+        plan: () => strictPlan,
+        exact: async (_db, exactPlan) => {
+          expect(exactPlan.enabledRoutes).toEqual(["exact", "contract", "graph"]);
+          return {
+            exact: successfulRouteResult("exact", [exactCandidate], [], 1),
+            contract: successfulRouteResult("contract", [contractCandidate], [], 1),
+            entity: emptyRouteResult("entity", "disabled", "route-disabled")
+          };
+        },
+        lexical,
+        graph: graph as never,
+        semantic,
+        sourceLoader: sourceLoader as never
+      }
+    });
+
+    expect(lexical).not.toHaveBeenCalled();
+    expect(semantic).not.toHaveBeenCalled();
+    expect(graph).toHaveBeenCalledOnce();
+    expect(new Set(result.fusedCandidates.map(({ canonicalId }) => canonicalId))).toEqual(new Set([
+      exactCandidate.canonicalId,
+      contractCandidate.canonicalId,
+      graphCandidate.canonicalId
+    ]));
+    expect(result.fusedCandidates.some(({ canonicalId }) => canonicalId === lexicalCandidate.canonicalId)).toBe(false);
+    expect(result.diagnostics.routes.lexical).toMatchObject({ status: "disabled", reason: "route-disabled" });
+    expect(result.diagnostics.routes.entity).toMatchObject({ status: "disabled", reason: "route-disabled" });
+    expect(result.diagnostics.routes.semantic).toMatchObject({ status: "disabled", reason: "route-disabled" });
+  });
+
+  it("returns no candidates when a structured contract target cannot be resolved", async () => {
+    const exactCandidate = candidate("exact", "code:repo:a:src/explicit.ts:function:CreateActivity:1");
+    const graph = vi.fn(async (_db, _plan, seeds) => {
+      expect(seeds).toEqual([]);
+      return emptyRouteResult("graph", "disabled", "no-eligible-seeds");
+    });
+    const sourceLoader = vi.fn(async ({ selectedCandidates }) => ({
+      evidence: selectedCandidates,
+      rejections: [],
+      status: "skipped" as const,
+      queryCount: 0
+    }));
+    const strictPlan: QueryPlan = {
+      ...plan(),
+      kind: "general",
+      contractTargets: [{ kind: "api", value: "/missing" }]
+    };
+
+    const result = await retrieveForQuestion({} as GraphDB, "api:/missing", {
+      dependencies: {
+        plan: () => strictPlan,
+        exact: async () => ({
+          exact: successfulRouteResult("exact", [exactCandidate], [], 1),
+          contract: successfulRouteResult("contract", [], [], 1),
+          entity: successfulRouteResult("entity", [], [], 0)
+        }),
+        graph: graph as never,
+        sourceLoader: sourceLoader as never
+      }
+    });
+
+    expect(graph).toHaveBeenCalledOnce();
+    expect(result.fusedCandidates).toEqual([]);
+    expect(result.selectedCandidates).toEqual([]);
+    expect(result.loadedEvidence).toEqual([]);
+    expect(result.outcome).toBe("no_results");
+  });
+
   it("keeps non-lexical routes and source loading available when the lexical gate is unhealthy", async () => {
     const workspaceId = deriveWorkspaceId("default-system");
     const canonicalId = "code:repo:alpha:src/Order.ts:class:Order:1";

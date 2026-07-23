@@ -136,7 +136,7 @@ const MATRIX: MatrixRow[] = [
     ]
   },
   { question: "api:GET:/orders", contracts: [{ kind: "api", value: "/orders", method: "GET" }] },
-  { question: "/custom/value" },
+  { question: "/custom/value", contracts: [{ kind: "api", value: "/custom/value" }] },
   { question: "Visit example.xyz/docs" },
   { question: "Visit tools.example.cloud/docs" },
   { question: "Check schema.graphql", paths: ["schema.graphql"] },
@@ -153,10 +153,9 @@ describe("query planner classification matrix", () => {
     const routes: RetrievalRoute[] = [
       ...(identifiers.length > 0 || paths.length > 0 ? ["exact" as const] : []),
       ...(contracts.length > 0 ? ["contract" as const] : []),
-      "entity",
-      "lexical",
-      "graph",
-      "semantic"
+      ...(contracts.length > 0 && contracts.every(({ kind }) => kind === "api")
+        ? ["graph" as const]
+        : ["entity" as const, "lexical" as const, "graph" as const, "semantic" as const])
     ];
     expect(plan.exactIdentifiers).toEqual(identifiers);
     expect(plan.paths).toEqual(paths);
@@ -168,7 +167,47 @@ describe("query planner classification matrix", () => {
     const plan = planQuestion("OrderService api:/orders OrderService api:/orders OtherService");
     expect(plan.exactIdentifiers).toEqual(["OrderService", "OtherService"]);
     expect(plan.contractTargets).toEqual([{ kind: "api", value: "/orders" }]);
-    expect(plan.enabledRoutes).toEqual(["exact", "contract", "entity", "lexical", "graph", "semantic"]);
+    expect(plan.enabledRoutes).toEqual(["exact", "contract", "graph"]);
+  });
+
+  it("does not infer workflow intent from structured targets or identifier substrings", () => {
+    const api = planQuestion("api:/mall/mgr/groupon/activity/createActivity");
+    expect(api.kind).toBe("general");
+    expect(api.contractTargets).toEqual([{
+      kind: "api",
+      value: "/mall/mgr/groupon/activity/createActivity"
+    }]);
+    expect(planQuestion("createActivity").kind).toBe("general");
+    expect(planQuestion("RecreateIndex").kind).toBe("general");
+    expect(planQuestion("😀 api:/activity/create").kind).toBe("general");
+  });
+
+  it("treats a lone slash target as an API while preserving explicit file context", () => {
+    expect(planQuestion("/mall/mgr/groupon/activity/createActivity")).toMatchObject({
+      kind: "general",
+      contractTargets: [{ kind: "api", value: "/mall/mgr/groupon/activity/createActivity" }],
+      enabledRoutes: ["contract", "graph"]
+    });
+    expect(planQuestion("Open /workspace/project")).toMatchObject({
+      paths: ["/workspace/project"],
+      contractTargets: []
+    });
+  });
+
+  it("recognizes Chinese API and workflow wording without explicit prefixes", () => {
+    expect(planQuestion("分析接口 /mall/mgr/groupon/activity/createActivity 的调用流程")).toMatchObject({
+      kind: "workflow",
+      contractTargets: [{ kind: "api", value: "/mall/mgr/groupon/activity/createActivity" }],
+      enabledRoutes: ["contract", "graph"]
+    });
+  });
+
+  it.each([
+    "how is the activity created",
+    "show the activity workflow",
+    "trace the activity call chain"
+  ])("keeps explicit natural-language workflow intent: %s", (question) => {
+    expect(planQuestion(question).kind).toBe("workflow");
   });
 
   it("resolves repo-scoped paths by configured name rather than directory basename", () => {
