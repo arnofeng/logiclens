@@ -105,20 +105,35 @@ describe("HTTP Resolver", () => {
     expect(edges[0]!.confidence).toBeGreaterThanOrEqual(0.9);
   });
 
-  it("matches static-to-template (static path fits template)", () => {
+  it("matches a static consumer path to a template producer path", () => {
     const producer = makeHttpSpec({
       id: "spec:p1", contractId: "c:p1", repoId: "repo-orders",
-      method: "GET", path: "/api/users/42", pathTemplate: "/api/users/42"
+      method: "GET", path: "/api/users/{id}", pathTemplate: "/api/users/{id}"
     });
     const consumer = makeHttpSpec({
       id: "spec:c1", contractId: "c:c1", repoId: "repo-web",
-      method: "GET", path: "/api/users/{id}", pathTemplate: "/api/users/{id}"
+      method: "GET", path: "/api/users/42", pathTemplate: "/api/users/42"
     });
     const roleMap = makeRoleMap([producer, consumer], { "spec:p1": "producer", "spec:c1": "consumer" });
 
     const edges = resolveHttpRelations([producer, consumer], roleMap);
     expect(edges).toHaveLength(1);
-    expect(edges[0]!.confidence).toBeGreaterThanOrEqual(0.9);
+    expect(edges[0]!.confidence).toBe(0.85);
+  });
+
+  it("does NOT match a template consumer path to a static producer path", () => {
+    const producer = makeHttpSpec({
+      id: "spec:p1", contractId: "c:p1", repoId: "repo-api",
+      method: "GET", path: "/api/pc/appraise/page", pathTemplate: "/api/pc/appraise/page"
+    });
+    const consumer = makeHttpSpec({
+      id: "spec:c1", contractId: "c:c1", repoId: "repo-web",
+      method: "GET", path: "/api/pc/appraise/{id}", pathTemplate: "/api/pc/appraise/{id}"
+    });
+    const roleMap = makeRoleMap([producer, consumer], { "spec:p1": "producer", "spec:c1": "consumer" });
+
+    const edges = resolveHttpRelations([producer, consumer], roleMap);
+    expect(edges).toHaveLength(0);
   });
 
   it("does NOT match different paths", () => {

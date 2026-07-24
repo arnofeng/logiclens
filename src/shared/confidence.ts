@@ -73,7 +73,7 @@ const CONFIDENCE_BY_RULE: Record<ConfidenceRule, number> = {
   "exact-method-path-match": 0.95,
   "path-only-match": 0.75,
   "template-compatible-match": 0.9,
-  "static-path-to-template-match": 0.9,
+  "static-path-to-template-match": 0.85,
   "wildcard-path-match": 0.8,
   "exact-grpc-match": 0.95,
   "exact-graphql-match": 0.95,

@@ -130,5 +130,10 @@ describe("semanticRelationResolution", () => {
       reason: "Dubbo method match with group/version unspecified",
       confidence: 0.9
     })).toBe("probable");
+    expect(semanticRelationResolution({
+      kind: "CALLS_HTTP",
+      reason: "Static path /api/orders/42 matches template /api/orders/{id} GET",
+      confidence: 0.9
+    })).toBe("probable");
   });
 });

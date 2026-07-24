@@ -148,7 +148,10 @@ export function semanticRelationResolution(edge: Pick<SemanticRelationEdge, "kin
   if (edge.kind === "INTERNAL_CALL") return "exact";
   if (edge.confidence < 0.8) return "heuristic";
   const reason = edge.reason.toLowerCase();
-  if (/\b(unspecified|mismatch|compatible|wildcard|path-only|fallback|probable)\b/.test(reason)) {
+  if (
+    /\b(unspecified|mismatch|compatible|wildcard|path-only|fallback|probable)\b/.test(reason) ||
+    /\bstatic path\b.*\bmatches template\b/.test(reason)
+  ) {
     return "probable";
   }
   if (/\bexact\b/.test(reason) || edge.confidence >= 0.95) return "exact";

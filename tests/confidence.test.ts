@@ -51,7 +51,7 @@ describe("confidence rules", () => {
   it("places resolver confidence rules in correct bands", () => {
     expect(confidenceBand(confidenceFor("exact-method-path-match"))).toBe("exact");
     expect(confidenceBand(confidenceFor("template-compatible-match"))).toBe("exact");
-    expect(confidenceBand(confidenceFor("static-path-to-template-match"))).toBe("exact");
+    expect(confidenceBand(confidenceFor("static-path-to-template-match"))).toBe("probable");
     expect(confidenceBand(confidenceFor("wildcard-path-match"))).toBe("probable");
     expect(confidenceBand(confidenceFor("path-only-match"))).toBe("heuristic");
   });
@@ -62,14 +62,16 @@ describe("confidence rules", () => {
     // wildcard → probable (≥ 0.8, < 0.9)
     expect(confidenceFor("wildcard-path-match")).toBeGreaterThanOrEqual(0.8);
     expect(confidenceFor("wildcard-path-match")).toBeLessThan(0.9);
-    // template/static-to-template → exact (≥ 0.9)
+    // Template-compatible stays exact; directional static-to-template is probable.
     expect(confidenceFor("template-compatible-match")).toBeGreaterThanOrEqual(0.9);
-    expect(confidenceFor("static-path-to-template-match")).toBeGreaterThanOrEqual(0.9);
+    expect(confidenceFor("static-path-to-template-match")).toBeGreaterThanOrEqual(0.8);
+    expect(confidenceFor("static-path-to-template-match")).toBeLessThan(0.9);
     // exact-method-path is the strongest
     expect(confidenceFor("exact-method-path-match")).toBeGreaterThanOrEqual(0.9);
     // ordinal ordering
     expect(confidenceFor("path-only-match")).toBeLessThan(confidenceFor("wildcard-path-match"));
-    expect(confidenceFor("wildcard-path-match")).toBeLessThan(confidenceFor("template-compatible-match"));
+    expect(confidenceFor("wildcard-path-match")).toBeLessThanOrEqual(confidenceFor("static-path-to-template-match"));
+    expect(confidenceFor("static-path-to-template-match")).toBeLessThan(confidenceFor("template-compatible-match"));
     expect(confidenceFor("template-compatible-match")).toBeLessThanOrEqual(confidenceFor("exact-method-path-match"));
   });
 

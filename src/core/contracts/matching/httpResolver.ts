@@ -118,8 +118,13 @@ function classifyHttpMatch(
   const fromHasTpl = hasTemplates(fromPath);
   const toHasTpl = hasTemplates(toPath);
   if (fromHasTpl !== toHasTpl) {
-    const staticPath = fromHasTpl ? toPath : fromPath;
-    const templatePath = fromHasTpl ? fromPath : toPath;
+    // Direction matters: a static consumer path can call a templated producer
+    // route, but a templated consumer path does not prove that its runtime
+    // value calls a particular static producer route. The latter requires
+    // value-flow evidence that this resolver does not have.
+    if (fromHasTpl) return null;
+    const staticPath = fromPath;
+    const templatePath = toPath;
     if (staticFitsTemplate(staticPath, templatePath)) {
       // Reject when both sides declare a method and they differ — a GET /list
       // consumer does not call a DELETE /{id} producer just because their paths
