@@ -1,4 +1,4 @@
-export const LOGICLENS_PLUGIN_API_VERSION = "0.1.0";
+export const LOGICLENS_PLUGIN_API_VERSION = "1.0.0";
 
 export type PluginCapability =
   | "language"

@@ -40,12 +40,11 @@ jobs:
         run: pnpm run build:prod
 
       - name: Package dry run
-        run: pnpm pack --dry-run
+        run: pnpm run release:check
 
   dependency-audit:
     name: Dependency audit
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4

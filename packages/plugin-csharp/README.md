@@ -21,53 +21,37 @@ logiclens index --repo <repo>
 
 The plugin parses `.cs` files. `.csproj`, `.sln`, `Directory.Build.props`, and `Directory.Packages.props` files are used to detect C# projects and extract project metadata.
 
-## Parser compatibility
+## Compatibility
 
-- Runtime: `tree-sitter ^0.21.1`
-- Grammar: `tree-sitter-c-sharp 0.23.1` (fixed because its peer dependency supports `tree-sitter ^0.21.1`; newer `0.23.5` requires the incompatible `tree-sitter ^0.25.0`)
-- Verified Node runtime: Node.js 24.14.1 on Windows
-- ESM import shape: both packages are loaded with dynamic `import()` and expose their CommonJS values through `default`
+- LogicLens 1.x
+- Node.js 22.12.0 or later
 
-The parser and native grammar binding are loaded only on the first call to `parse`. Concurrent first calls share one initialization promise. A rejected initialization is cleared so a later parse can retry.
-
-The parser emits namespace-qualified symbols, all C# `using` forms, invocation facts, attributes, and string/number/template literals. Record classes use the public `class` symbol kind, record structs use `struct`, constructors use `method`, and local functions use `function`. Properties are intentionally not emitted in this batch; if later schema extraction represents them as symbols, the closest public kind is the lossy `variable` mapping. Attribute owners cannot be linked to symbols because parsed symbols deliberately have no public/core ID; annotations therefore retain syntax, arguments, and line evidence without `ownerSymbolId`.
-
-Tree-sitter provides syntax parsing rather than Roslyn semantic compilation. Qualified names are syntactic, overload resolution is unavailable, and preprocessor configurations, source generators, MSBuild evaluation, and compiler-level type resolution are not supported. Malformed declarations are omitted while independently valid portions of a partial file continue to produce facts.
+The plugin performs syntax-based static analysis. It does not run the project or provide compiler-level C# analysis.
 
 ## ASP.NET Core HTTP facts
 
-The plugin extracts controller attribute routes, minimal API mappings and route groups, and stable `HttpClient` consumer calls. It resolves string literals, same-file simple `const string` values, and deterministic concatenations. Controller/action tokens and route constraints are normalized, while absolute action routes replace controller prefixes. Dynamic route expressions are deliberately omitted, and unsupported HTTP verbs are emitted without a guessed method.
-
-HTTP body types unwrap only semantically known single-payload task, action-result, typed-result, collection, and dictionary wrappers. `Results<...>` unions produce a body type only when all branches yield exactly one unique payload; status-only branches are ignored, while multiple payloads and unknown custom generic envelopes remain unresolved rather than selecting an arbitrary type argument.
-
-HTTP extraction reparses source with the plugin-private tree-sitter grammar because `PluginContext` intentionally exposes only public file, source, symbol, and call views. Tree-sitter nodes and trees are not part of the package API. The extractor does not perform Roslyn type resolution, dependency injection analysis, runtime route convention evaluation, or arbitrary constant execution.
+The plugin extracts ASP.NET Core controller routes, minimal API mappings, route groups, request and response types, and statically identifiable `HttpClient` calls. Dynamic routes or types that cannot be determined reliably are omitted.
 
 ## Schema facts
 
-The schema extractor supports records (including positional records), classes, and structs. It emits a declaration only when public HTTP request/response facts reference its simple or qualified name, the declaration has an explicit serialization attribute, or its name ends in `DTO`, `Dto`, `Request`, `Response`, `Payload`, `Contract`, or `Model`. Ordinary domain classes without one of those signals are intentionally omitted. Generic HTTP wrappers and collection wrappers are traversed when identifying referenced declarations.
-
-Public readable instance properties and positional record members are included. Static properties and fields are excluded. Public instance fields require explicit serialization meaning such as `JsonInclude`, `JsonPropertyName`, `JsonRequired`, or `DataMember`; unannotated public fields are excluded. `IgnoreDataMember` and unconditional or `Always` `JsonIgnore` exclude a member, while `JsonIgnoreCondition.Never`, `WhenWritingNull`, and `WhenWritingDefault` retain it in the structural schema. `JsonPropertyName`, `DataMember(Name = ...)`, `JsonRequired`, `Required`, and the C# `required` modifier are handled conservatively from syntax only.
-
-Field `nullable` describes whether the declared field value may be null (`T?` or `Nullable<T>`). Field `optional` describes whether serialized input may omit the member: it is true for nullable or default-initialized members unless `required`, `JsonRequired`, `Required`, or `DataMember(IsRequired = true)` supplies contrary evidence. A non-nullable property without required metadata remains non-optional because the plugin does not assume serializer settings, constructor flow analysis, or nullable-context defaults. Nullable element types remain visible inside normalized collection/dictionary/generic types but do not make their container field nullable. Primitive and `System.*` aliases, jagged/multidimensional arrays, common collections, dictionaries, nullable types, qualified/nested types, and other generics receive deterministic syntactic normalization. Qualified endpoint references retain their namespace/nesting; simple ambiguous references are left unresolved by the public relation resolver instead of selecting the wrong same-named schema. Partial declarations are merged deterministically by qualified identity.
+Schema extraction supports records, classes, structs, common collection and dictionary types, nullable types, serialization attributes, required members, and partial declarations. It focuses on DTOs and types referenced by public contracts; ordinary domain classes are not treated as schemas automatically.
 
 ## gRPC and messaging facts
 
-gRPC extraction supports implementations that inherit generated `Service.ServiceBase` types and override methods carrying `ServerCallContext`. Unary, client-streaming, server-streaming, and bidirectional-streaming modes are derived only from stable signatures. Generated and `obj/` source is never a contract owner. Typed `Service.ServiceClient` calls are consumers. Similar ordinary `Base` and `Client` classes are ignored; reflection, interceptor routing, generated-code recovery, and Roslyn-only resolution are unsupported.
-
-Messaging rules are isolated by framework. The first release recognizes typed Confluent Kafka producers/consumers, RabbitMQ channels, MassTransit publish endpoints and consumers, NServiceBus `Publish`, `Send`, `SendLocal`, and handlers, and Azure Service Bus sender/receiver creation. NServiceBus sends use the stable message type as the public event topic because destination routing is not statically available from that overload. Facts require a literal broker topic or stable message type. Dynamic topics are omitted instead of marked exact. The public broker enum has no Azure, MassTransit, or NServiceBus value, so those facts use `unknown` with a precise `framework`; no public kind or broker value is added.
+The plugin recognizes typed gRPC services and clients, including unary and streaming methods. It also detects statically identifiable producers and consumers for Confluent Kafka, RabbitMQ, MassTransit, NServiceBus, and Azure Service Bus. Dynamic destinations that cannot be determined reliably are omitted.
 
 ## Entity Framework decision
 
-EF entities are not database schemas in this release. `DbSet<T>`, `DbContext`, `[Key]`, table/column attributes, and navigation properties do not by themselves select a schema. An entity is emitted only if existing HTTP/DTO/serialization rules independently identify it. No database fact kind is added. Public semantic relations do not express a sufficiently precise EF mapping without inventing contract identities, so EF relations remain out of scope.
+Entity Framework entities are not treated as database schemas. They are included only when they independently qualify as an HTTP or serialized DTO contract.
 
 ## Installation scopes
 
-For the shared discovery rules, workspace/global scope, updates, removal, and troubleshooting, see the LogicLens [Plugin Guide](../../docs/plugins.md). Plugin authors should also read the [Plugin SDK Reference](../../docs/plugin-sdk.md).
+For the shared discovery rules, workspace/global scope, updates, removal, and troubleshooting, see the LogicLens [Plugin Guide](https://github.com/arnofeng/logiclens/blob/main/docs/plugins.md). Plugin authors should also read the [Plugin SDK Reference](https://github.com/arnofeng/logiclens/blob/main/docs/plugin-sdk.md).
 
 The default installation is scoped to the current LogicLens workspace. Use `--global` to make the plugin available to all workspaces indexed by the current user.
 
-Published package acceptance requires `plugin.json`, compiled `dist`, this README, `tree-sitter ^0.21.1`, `tree-sitter-c-sharp 0.23.1`, and an API-compatible `@logiclens/plugin-sdk`. The manifest and exported plugin target plugin API `0.1.0`.
+This release targets Plugin API `1.0.0`; Plugin API 0.x is not compatible with LogicLens 1.x.
 
-If native grammar installation fails, use a supported Node ABI, remove the failed installation directory, reinstall with build tools available, and verify `tree-sitter` remains on `0.21.x`; `tree-sitter-c-sharp 0.23.5+` targets the incompatible `0.25.x` line. Grammar loading is lazy and retries after failure. Non-C# repositories never invoke it.
+If native grammar installation fails, use a supported Node ABI, remove the failed installation directory, reinstall with build tools available, and verify `tree-sitter` remains on `0.21.x`; `tree-sitter-c-sharp 0.23.5+` targets the incompatible `0.25.x` line.
 
-Unsupported semantics include MSBuild evaluation, conditional compilation, source-generator output ownership, overload resolution, arbitrary dependency-injection flow, runtime route/topic construction, serializer option execution, EF database mapping, and compiler-level nullability/flow analysis.
+Known limitations include MSBuild evaluation, conditional compilation, source-generator output, overload resolution, arbitrary dependency-injection flow, runtime-generated routes or topics, serializer option execution, Entity Framework database mapping, and compiler-level nullability or flow analysis.

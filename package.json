@@ -1,6 +1,6 @@
 {
   "name": "logiclens",
-  "version": "0.1.1-beta.15",
+  "version": "1.0.0",
   "description": "Local-first semantic contract graph for AI coding agents to reason about cross-repository interfaces and change impact.",
   "type": "module",
   "packageManager": "pnpm@11.1.2",
@@ -36,7 +36,9 @@
     "test:retrieval-release": "tsx scripts/test.ts --suite retrieval-release",
     "test:neo4j-integration": "tsx scripts/test.ts --suite neo4j-integration",
     "typecheck": "tsc --noEmit && tsc -p packages/plugin-sdk/tsconfig.json --noEmit && pnpm --filter @logiclens/plugin-sdk build && tsc -p packages/plugin-runtime/tsconfig.json --noEmit && pnpm --filter @logiclens/plugin-csharp typecheck",
-    "audit:prod": "pnpm audit --prod --audit-level=high --registry=https://registry.npmjs.org"
+    "audit:prod": "pnpm audit --prod --audit-level=high --registry=https://registry.npmjs.org",
+    "release:check": "tsx scripts/release-check.ts",
+    "release:smoke:registry": "node scripts/registry-smoke.mjs"
   },
   "keywords": [
     "codegraph",
@@ -45,6 +47,12 @@
   ],
   "author": "LogicLens contributors",
   "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/arnofeng/logiclens.git"

@@ -101,6 +101,12 @@ plugins:
 
 Re-run `plugin install` with the desired source and `--force` to replace an installed plugin, then restart `watch` or the MCP process and run `logiclens index`. Keep `plugin.json`, the exported manifest, and compiled entry from the same release.
 
+```bash
+logiclens plugin install @logiclens/plugin-csharp --force
+```
+
+LogicLens 1.x accepts Plugin API 1.x. Plugins that still declare `logiclensPluginApiVersion: 0.x` must update their SDK dependency and manifest before they can be loaded.
+
 To remove a plugin, run `logiclens plugin remove <name>` with the same scope used for installation, stop or restart long-running LogicLens processes, and re-index. Existing graph records are reconciled by normal indexing; use a clean full index when changing a parser or extractor substantially.
 
 ## Troubleshooting

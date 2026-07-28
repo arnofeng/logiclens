@@ -12,7 +12,7 @@
 **English** · [中文](README-ZH.md)
 
 > [!IMPORTANT]
-> **LogicLens is currently in active Beta development.** While the core indexing engine, CLI, SDK, watcher, and MCP server are fully functional, language and framework coverage is incrementally expanding. Expect occasional changes as APIs and schema are refined.
+> **LogicLens 1.x is the stable release line.** The CLI, Node.js SDK, MCP tools, graph schema migration requirements, and Plugin API 1.x follow Semantic Versioning. Language and framework coverage will continue to expand without breaking these public contracts in a minor release.
 
 ---
 
@@ -24,7 +24,7 @@
 - [🔍 CLI Usage Examples](#-cli-usage-examples)
 - [🤖 MCP Integration (AI Coding Agents)](#-mcp-integration-ai-coding-agents)
 - [🧠 SDK (Programmatic Access)](#-sdk-programmatic-access)
-- [Plugin System](#plugin-system)
+- [🧩 Plugin System](#plugin-system)
 - [⚙️ Configuration](#️-configuration)
 - [👍 Current Language and Framework Support](#-current-language-and-framework-support)
 - [🧑‍💻 Contributing](#contributing)
@@ -41,6 +41,8 @@
 npm install -g logiclens
 logiclens --version
 ```
+
+LogicLens requires Node.js 22.12.0 or later.
 
 ### 2. Initialize Workspace
 
@@ -60,18 +62,26 @@ logiclens index # Index all repositories
 ### 3. Ask Questions Based on Graph Context
 
 ```bash
-logiclens ask "Which repositories are involved in the order creation flow?"
+logiclens trace "http POST /orders"
 ```
 
 Example expected output:
 
-```
-Based on the code graph, the following repositories are involved
-in the order creation flow:
+```text
+Semantic Trace: http POST /orders
 
-1. service-a — exposes POST /api/order (producer)
-2. service-b — consumes OrderCreatedEvent (consumer)
-3. gateway — routes /api/order to service-a (router)
+Target Specs:
+  [http-producer] order-service src/main/java/.../OrderController.java [spring-mvc]
+      POST /orders  request=CreateOrderRequest  response=CreateOrderResponse
+
+Discovered Specs:
+  [http-consumer] web-app src/api/order.ts
+      POST /orders  request=OrderInput  response=OrderResult
+
+Relation Paths:
+  [Target] POST /orders  request=CreateOrderRequest  response=CreateOrderResponse (order-service)
+    <- [CALLS_HTTP exact confidence=0.95]
+       POST /orders  request=OrderInput  response=OrderResult (web-app)
 ```
 
 ---
@@ -133,7 +143,7 @@ LogicLens automatically analyzes your multi-repository system and models the ent
 - **Trace and impact analysis**: Starting from contracts or symbols, follows graph paths to return producers, consumers, related code, calls, documentation, and recommended files to inspect.
 - **CLI / SDK / MCP**: Supports manual graph queries, Node.js integration, and AI coding assistant connectivity.
 - **Quality governance**: Audits low-confidence evidence, rejects false positives, registers alias overrides to ensure graph accuracy.
-- **Optional LLM / embedding layer**: When needed, integrates OpenAI-compatible chat and embedding providers to enhance graph semantics.
+- **Optional LLM layer**: When needed, integrates an OpenAI-compatible chat provider to generate answers from retrieved evidence.
 
 **Upgrade from "code search" to "graph traversal + reasoning".**
 
@@ -204,14 +214,14 @@ You can use the interactive installer to automatically register the LogicLens MC
 | Tool Name | Description |
 |---|---|
 | `logiclens_get_stats` | Get summary statistics of the graph database (repository count, file count, code node count, call count, etc.) |
-| `logiclens_get_watch_status` | Get graph/index freshness and a safely trimmed lexical-provider readiness summary; pass `refresh: true` to rerun the provider health check |
+| `logiclens_get_watch_status` | Check indexing and search status; pass `refresh: true` to refresh the search status |
 | `logiclens_list_dependencies` | List cross-repository dependencies with evidence (filterable by strength/type) |
 | `logiclens_list_contracts` | List identified contracts with producer/consumer/shared counts (filterable by kind, repo, direction) |
 | `logiclens_trace` | Multi-hop semantic trace — find the producers, consumers, and request/response/payload schemas connected to a contract |
 | `logiclens_impact_analysis` | Evaluate downstream impact scope when modifying code symbols or contracts |
-| `logiclens_ask_question` | Return structured workspace retrieval (`outcome`, `selectedEvidence`, and `diagnostics`); it does not generate LLM answer text |
+| `logiclens_ask_question` | Search the workspace and return matching source evidence |
 
-`logiclens_ask_question` accepts `question` plus the same retrieval controls as the SDK: `lexical` and `semantic` booleans, `topK` (`1..100`), `graphHops` (`0..5`), and `contextBudget` (`256..65536`). Its `selectedEvidence` exposes safe canonical/document identity, repository, path/line, confidence, match reasons, and render reference. Within ordinary Ask diagnostics, `providers.lexical` exposes only `status`; the response still includes routes, timings, queries, compatibility, source loading, and semantic provider diagnostics. Use `logiclens_get_watch_status` for the full safely trimmed lexical provider gate summary. Graph/index freshness and lexical provider readiness are independent states. LogicLens exposes neither a raw graph-query tool nor internal database query details.
+`logiclens_ask_question` accepts `question` plus the same retrieval controls as the SDK: `lexical`, `topK` (`1..100`), `graphHops` (`0..5`), and `contextBudget` (`256..65536`).
 
 ### MCP Configuration Example
 
@@ -230,7 +240,7 @@ You can use the interactive installer to automatically register the LogicLens MC
 
 ## 🧠 SDK (Programmatic Access)
 
-LogicLens provides a Node.js SDK for building automation systems and AI toolchains. `retrieve()` and `ask()` share the same retrieval pipeline.
+LogicLens provides a Node.js SDK for building automation systems and AI toolchains. Use `retrieve()` to obtain source evidence or `ask()` to generate an answer from it.
 
 ```ts
 import { createClient } from "logiclens";
@@ -249,20 +259,12 @@ try {
   const contractsForRepo = await client.contracts({ repo: "order-service", direction: "outgoing" });
   const trace = await client.trace("http GET /api/order/:id");
   const impact = await client.impact("OrderCreatedEvent");
-  const retrieval = await client.retrieve("Where is order validation implemented?", {
-    lexical: true,
-    semantic: false,
-    topK: 20,
-    graphHops: 1,
-    contextBudget: 16_000,
-  });
   const answer = await client.ask("Where is order validation implemented?", {
     lexical: true,
-    semantic: true,
   });
   const lexicalStatus = await client.getLexicalProviderStatus({ refresh: true });
 
-  console.log({ stats, dependencies, contracts, trace, impact, retrieval, answer, lexicalStatus });
+  console.log({ stats, dependencies, contracts, trace, impact, answer, lexicalStatus });
 } finally {
   await client.close();
 }
@@ -284,8 +286,8 @@ try {
 | `client.trace(target)` | Multi-hop semantic trace of a contract spec. |
 | `client.impact(target)` | Analyze downstream impact scope. |
 | `client.retrieve(question, options)` | Return a structured `RetrievalResult` without generating an answer. |
-| `client.ask(question, options)` | Generate an answer or deterministic citation fallback from the same retrieval pipeline. |
-| `client.getLexicalProviderStatus(options)` | Return a safely trimmed lexical provider gate summary; `{ refresh: true }` reruns health checks instead of using the cache. |
+| `client.ask(question, options)` | Generate an answer or deterministic citation fallback from workspace evidence. |
+| `client.getLexicalProviderStatus(options)` | Check whether workspace lexical search is available; `{ refresh: true }` refreshes the status. |
 | `client.watch(options)` | Enable automatic changed-file indexing. |
 | `client.unwatch()` | Stop the watcher. |
 | `client.getWatchStatus()` | Check watcher, catch-up, pending files, and queue status. |
@@ -296,42 +298,15 @@ try {
 | Option | Default | Range / meaning |
 |---|---:|---|
 | `lexical?: boolean` | `true` | Enable workspace lexical retrieval. |
-| `semantic?: boolean` | `true` | Enable configured semantic retrieval. |
 | `topK?: number` | `20` | Integer `1..100`. |
 | `graphHops?: number` | `1` | Integer `0..5`. |
 | `contextBudget?: number` | `16000` | Integer `256..65536` characters. |
 
-`RetrievalResult` contains `outcome`, fused and selected candidates, loaded evidence, selection and source-loading rejections, and diagnostics. `ask()` uses that same result: with an LLM key it generates a grounded answer; without a key it returns a deterministic `[C1]`-style citation fallback; without reliable evidence it returns `no_reliable_evidence`. The provider status API returns only a public gate summary. Do not depend on internal stores, Cypher, Kuzu SQL, `sourceHash`, `batchId`, or other storage details.
-
-### Retrieval diagnostics
-
-The `RetrievalDiagnostics` object contains the stable public layers `routes`, `timings`, `queries`, `providers`, `sourceLoading`, and `compatibility`. The retrieval response carries `outcome` as a separate top-level field. Every route reports `status`, `executed`, and `queryCount`. Timings cover planning, lexical provider search, fusion, selection, source loading, and total execution (alongside other route stages). A successful workspace lexical route performs one native lexical query per retrieval.
-
-`outcome` is `succeeded`, `degraded`, `no_results`, or `failed`. Unavailable and unhealthy routes are represented structurally and can coexist with evidence from other routes. Diagnostics are deliberately trimmed: they are not a container for full source text, secrets, raw database exceptions, or untrimmed provider metadata.
-
-### Retrieval performance measurement
-
-Run the repository's fixed quality corpus against a local Kuzu fixture with networking disabled:
-
-```bash
-pnpm exec tsx scripts/retrieval-benchmark.ts
-```
-
-The benchmark warms up once, measures three times, and writes one line of JSON. It reports provider search, fusion, selection, source loading, end-to-end retrieval, full-rebuild indexing, and changed-only indexing. P50/P95 use the nearest-rank method. The script reports measurements but does not itself run a Vitest threshold assertion. When publishing measurements, record the machine, operating system, Node version, provider, workspace/document size, and warm/cold cache conditions.
-
-The commands have distinct roles:
-
-```bash
-pnpm run test:retrieval-release # lexical contracts, quality, Kuzu lifecycle, and Kuzu E2E
-pnpm test                       # full suite; includes the fixed-fixture P95 assertion
-pnpm run test:neo4j-integration # optional; requires explicit test-environment configuration
-```
-
-`tests/retrievalBenchmark.test.ts`, collected by the full `pnpm test` command, enforces warmed end-to-end P95 of at most 500 ms for the fixed fixture. This is a regression gate, not a general promise for every machine or production workspace. The Neo4j gate is opt-in. Its CI test credential variables must not be reused as production database configuration.
+`ask()` generates a source-grounded answer when an LLM key is configured. Without a key, it returns a deterministic citation fallback when reliable evidence is available, or `no_reliable_evidence` otherwise.
 
 ---
 
-## Plugin System
+## 🧩 Plugin System
 
 LogicLens plugins add external languages, contract extractors, and framework detectors. Install from npm, a local directory, or a package tarball; plugins are validated before they become visible:
 
@@ -349,7 +324,7 @@ After installation, run `logiclens index` to detect and activate the plugin for 
 
 ## ⚙️ Configuration
 
-`logiclens init` creates `.logiclens/config.yaml`. This file is the source of truth for repository lists, indexing behavior, graph storage, semantic retrieval, LLM providers, MCP safety policies, and watcher behavior.
+`logiclens init` creates `.logiclens/config.yaml`. This file is the source of truth for repository lists, indexing behavior, graph storage, LLM providers, MCP safety policies, and watcher behavior.
 
 ### Configuration Template
 
@@ -367,15 +342,15 @@ repos:
 
 ### Advanced Configuration
 
-LogicLens supports various advanced configuration options for performance tuning, indexing settings, custom LLM retries, and semantic storage providers.
+LogicLens supports various advanced configuration options for performance tuning, indexing settings, and custom LLM retries.
 
 For the complete list of supported parameters and their default values, see the [Configuration Guide](docs/configuration.md).
 
 ### Cost and Privacy Notes
 
-For a fully offline run, use the local Kuzu graph and local JSON semantic storage, set `embedding.provider: off`, `embedding.level: off`, and `indexing.llmSummaryLevel: off`, omit `llm.apiKey`, ensure `OPENAI_API_KEY` is unset, and do not configure remote LLM or embedding endpoints. Without an LLM key, `ask` still returns a citation fallback when reliable evidence exists.
+For a fully offline run, use the local Kuzu graph, omit `llm.apiKey`, ensure `OPENAI_API_KEY` is unset, and do not configure a remote LLM endpoint. Without an LLM key, `ask` still returns a citation fallback when reliable evidence exists.
 
-Only explicitly configured remote Neo4j, LLM, embedding, or Chroma services produce the corresponding network access. LogicLens is local-first, but not every configuration is necessarily offline.
+Only explicitly configured remote Neo4j or LLM services produce the corresponding network access. LogicLens is local-first, but not every configuration is necessarily offline.
 
 ---
 
@@ -410,11 +385,11 @@ More languages, frameworks, and generated client patterns will be supported over
 
 ### Current Limitations
 
-- LogicLens is still in Beta — graph structure and extractor behavior may change.
+- LogicLens 1.x keeps its documented CLI, SDK, MCP, and Plugin API contracts stable. A future breaking contract or graph migration will be released under a new major version and documented in the changelog.
 - Static analysis is conservative. Dynamic API paths, reflection, runtime dependency injection, generated code, and framework magic may be incompletely extracted, or reported as unresolved evidence.
 - Built-in framework support is focused. Unsupported frameworks can still be parsed as source code, but contract extraction may be shallow until the corresponding detector or extractor is added.
 - Cross-repository dependency quality depends on repository names, package metadata, imports, aliases, and contract evidence.
-- Large workspaces may need `--changed-only`, `--batch-size`, `--max-files`, watcher tuning, or Chroma semantic storage.
+- Large workspaces may need `--changed-only`, `--batch-size`, `--max-files`, or watcher tuning.
 - LLM answers depend on retrieval context and provider behavior. For auditable evidence, prefer using `trace`, `deps`, `contracts`, and `impact`.
 - MCP Server has local workspace access capability. Only connect it to clients you trust.
 

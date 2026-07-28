@@ -1,0 +1,129 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      neo4j:
+        image: neo4j:5.26-community
+        env:
+          NEO4J_AUTH: neo4j/logiclens-release-test-only
+        ports:
+          - 7687:7687
+        options: >-
+          --health-cmd "neo4j status"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      LOGICLENS_RUN_NEO4J_INTEGRATION: "1"
+      LOGICLENS_TEST_NEO4J_URL: bolt://localhost:7687
+      LOGICLENS_TEST_NEO4J_USERNAME: neo4j
+      LOGICLENS_TEST_NEO4J_PASSWORD: logiclens-release-test-only
+      LOGICLENS_TEST_NEO4J_DATABASE: neo4j
+      LOGICLENS_TEST_NEO4J_EPHEMERAL: "1"
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require tag commit on main
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor HEAD origin/main
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Validate tag and npm
+        run: |
+          node -e "const p=require('./package.json'); if (process.env.GITHUB_REF_NAME !== 'v'+p.version) throw new Error('Tag does not match package version')"
+          node -e "const v=require('node:child_process').execFileSync('npm',['--version'],{encoding:'utf8'}).trim(); const [major,minor,patch]=v.split('.').map(Number); if (major<11 || (major===11 && (minor<5 || (minor===5 && patch<1)))) throw new Error('npm 11.5.1 or later is required, found '+v)"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm run typecheck
+
+      - name: Lexical retrieval release gate
+        run: pnpm run test:retrieval-release
+
+      - name: Full test suite
+        run: pnpm test
+
+      - name: Neo4j integration release gate
+        run: pnpm run test:neo4j-integration
+
+      - name: Production build
+        run: pnpm run build:prod
+
+      - name: Production dependency audit
+        run: pnpm run audit:prod
+
+      - name: Validate release packages
+        run: pnpm run release:check
+
+  publish:
+    name: Publish npm packages
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: npm-production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js for npm Trusted Publishing
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build release tarballs
+        shell: bash
+        run: |
+          mkdir release-artifacts
+          pnpm --dir packages/plugin-sdk pack --pack-destination "$GITHUB_WORKSPACE/release-artifacts" --silent
+          pnpm --dir packages/plugin-runtime pack --pack-destination "$GITHUB_WORKSPACE/release-artifacts" --silent
+          pnpm --dir packages/plugin-csharp pack --pack-destination "$GITHUB_WORKSPACE/release-artifacts" --silent
+          pnpm pack --pack-destination "$GITHUB_WORKSPACE/release-artifacts" --silent
+
+      - name: Publish in dependency order
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          npm publish "release-artifacts/logiclens-plugin-sdk-${VERSION}.tgz" --access public
+          npm publish "release-artifacts/logiclens-plugin-runtime-${VERSION}.tgz" --access public
+          npm publish "release-artifacts/logiclens-plugin-csharp-${VERSION}.tgz" --access public
+          npm publish "release-artifacts/logiclens-${VERSION}.tgz" --access public
+
+      - name: Registry installation smoke test
+        run: node scripts/registry-smoke.mjs "${GITHUB_REF_NAME#v}"
+        shell: bash

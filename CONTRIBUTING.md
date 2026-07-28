@@ -56,7 +56,7 @@ git checkout -b feature/my-new-feature
 ### Step 4: Local Development & Build
 
 #### Install Dependencies
-Make sure you have Node.js 22 installed and Corepack enabled, then run:
+Make sure you have Node.js 22.12.0 or later installed and Corepack enabled, then run:
 
 ```bash
 corepack enable

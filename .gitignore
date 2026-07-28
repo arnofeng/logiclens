@@ -1,5 +1,6 @@
 node_modules/
 dist/
+release-artifacts/
 packages/*/dist/
 packages/*/tsconfig.tsbuildinfo
 packages/*/src/*.js

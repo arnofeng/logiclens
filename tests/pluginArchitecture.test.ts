@@ -752,7 +752,7 @@ describe("plugin architecture foundation", () => {
       capabilities: ["fact-extractor"]
     }), "utf8");
     await fs.writeFile(path.join(dir, "package.json"), JSON.stringify({ exports: { ".": { import: "./index.js" } } }), "utf8");
-    await fs.writeFile(path.join(dir, "index.js"), "export default { manifest: { name: 'entry-test', version: '0.0.1', logiclensPluginApiVersion: '0.1.0', capabilities: ['fact-extractor'] }, factExtractors: [] };", "utf8");
+    await fs.writeFile(path.join(dir, "index.js"), `export default { manifest: { name: 'entry-test', version: '0.0.1', logiclensPluginApiVersion: '${LOGICLENS_PLUGIN_API_VERSION}', capabilities: ['fact-extractor'] }, factExtractors: [] };`, "utf8");
 
     const discovered = await discoverLogicLensPlugin(dir);
     expect(discovered.entryPath).toBe(path.join(dir, "index.js"));

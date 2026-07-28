@@ -72,7 +72,7 @@ logiclens init
 
 ### `logiclens uninit`
 
-Remove all contents of the LogicLens workspace, including configuration, graph database, cache, and semantic index, and stop any running MCP server.
+Remove all contents of the LogicLens workspace, including configuration, graph database, and cache, and stop any running MCP server.
 
 ```bash
 logiclens uninit
@@ -241,6 +241,32 @@ logiclens deps --repo order-service --target payment-service --direction outgoin
 
 ---
 
+### `logiclens explain-deps <sourceRepo> <targetRepo>`
+
+Explain the protocol-specific semantic relations from one repository to another.
+
+```bash
+logiclens explain-deps order-service payment-service
+logiclens explain-deps order-service payment-service --kind CALLS_HTTP
+```
+
+**Arguments**:
+
+| Argument | Description |
+|----------|-------------|
+| `sourceRepo` | Repository that owns the consuming or calling contract |
+| `targetRepo` | Repository that owns the producing or called contract |
+
+**Options**:
+
+| Option | Description |
+|--------|-------------|
+| `--kind <kind>` | Filter results by exact `SEMANTIC_REL` kind |
+
+The command prints the contract keys, reason, confidence, spec kinds, and spec IDs for each matching relation. A missing repository or an empty relation set returns a “No semantic relations found” message.
+
+---
+
 ### `logiclens contracts`
 
 List all contracts with their producer/consumer counts.
@@ -345,7 +371,9 @@ shown in text output when available.
 
 > Upgrading from a graph that contains `CALLS_ENDPOINT` requires a complete
 > `logiclens index`. Running only `rebuild-relations` is insufficient because
-> older consumer specs do not identify the containing caller method.
+> older consumer specs do not identify the containing caller method. Follow the
+> [1.0 migration guide](migration-1.0.md) to preserve configuration and recreate
+> an already-indexed beta workspace before running the complete index.
 
 **Options**:
 
@@ -564,7 +592,7 @@ logiclens watch --debounce-ms 1000
 
 Install the LogicLens MCP server into one or more AI agents.
 
-Supported agents: Claude Code, Cursor, Codex CLI, opencode, Hermes Agent, Gemini CLI, Antigravity IDE.
+Supported agents: Claude Code, Cursor, Codex CLI, opencode, Hermes Agent, Gemini CLI, Antigravity IDE, Kiro.
 
 ```bash
 # Interactive selection

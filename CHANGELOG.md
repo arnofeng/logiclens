@@ -5,17 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] - 2026-07-25
+
+### Added
+
+- Stable Plugin API 1.0 package `@logiclens/plugin-sdk` and the official `@logiclens/plugin-csharp` language plugin.
+- Workspace-wide code search that combines text matches with graph context.
+- Full-text search support for both Kuzu and Neo4j workspaces.
+- C# parsing and contract extraction for ASP.NET Core HTTP APIs, schemas, gRPC, Kafka, RabbitMQ, MassTransit, NServiceBus, Azure Service Bus, package metadata, and framework detection.
+- Plugin installation, replacement, listing, diagnosis, workspace/global discovery, manifest validation, and automatic language activation.
 
 ### Changed
 
+- **Stable 1.x contracts:** The documented CLI, Node.js SDK, MCP tools, graph migration policy, and Plugin API now follow Semantic Versioning.
+- **Breaking Plugin API:** Plugin API major version is now `1.0.0`. Plugins declaring `logiclensPluginApiVersion: 0.x` must update their SDK dependency and manifests before loading under LogicLens 1.x.
 - **Breaking semantic call relations:** Replaced `CALLS_ENDPOINT` with protocol-specific `CALLS_HTTP`, `CALLS_DUBBO`, `CALLS_GRPC`, and `CALLS_GRAPHQL` relations. Handler-to-local-consumer execution flow is now persisted as `INTERNAL_CALL` only when both specs share the parsed containing source symbol.
 - **Breaking trace JSON/SDK contract:** Trace edges now expose protocol-specific `kind`, `resolution` (`exact`, `probable`, or `heuristic`), `evidenceId`, and optional source evidence (`line`, `raw`, and `rule`). The former `materialization` and `sourceEdgeKind` fields were removed.
 - Dubbo and gRPC consumer specs now point at the containing caller method, preserving invocation evidence. Java extraction retains full generic request/response types and distinguishes Spring declared response types from wrapped body types.
+- Improved indexing and search performance for large workspaces.
+- `ask()` and `retrieve()` now use the same workspace search behavior.
+
+### Fixed
+
+- Improved workspace reliability, search fallback behavior, API-path parsing, impact analysis, graph updates, and incremental indexing.
 
 ### Migration
 
-- A complete `logiclens index` is required after upgrading. `rebuild-relations` alone cannot repair legacy consumer `sourceSymbolId` values, and trace rejects graphs that still contain `CALLS_ENDPOINT`.
+- Stop existing `logiclens watch` and MCP processes before upgrading.
+- Back up configuration and the installed-plugin list, recreate the beta workspace state, and reinstall plugins with Plugin API 1.x releases.
+- Run a complete `logiclens index` after recreating the workspace; `rebuild-relations` alone does not apply all 1.0 workspace changes.
+- See the [1.0 migration guide](docs/migration-1.0.md) for the complete upgrade sequence.
 
 ## [0.1.1-beta.15] - 2026-07-08
 
@@ -86,7 +105,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Documentation repositioning**: Repositioned as a cross-repo contract graph that reasons about change impact.
 - **Project restructure**: Reorganized source tree into `src/core/`, `src/features/`, `src/adapters/`, `src/interfaces/`, and `src/shared/` layers.
 - Extracted indexing engine out of commands into a dedicated `indexing/` module.
-- Moved graph DB and embedding providers into `src/adapters/`.
+- Moved graph DB providers into `src/adapters/`.
 
 ### Fixed
 
@@ -153,12 +172,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial tagged beta release.
 
-[Unreleased]: https://github.com/logiclens/logiclens/compare/v0.1.1-beta.15...HEAD
-[0.1.1-beta.15]: https://github.com/logiclens/logiclens/compare/v0.1.1-beta.14...v0.1.1-beta.15
-[0.1.1-beta.14]: https://github.com/logiclens/logiclens/compare/v0.1.1-beta.13...v0.1.1-beta.14
-[0.1.1-beta.13]: https://github.com/logiclens/logiclens/compare/v0.1.1-beta.12...v0.1.1-beta.13
-[0.1.1-beta.12]: https://github.com/logiclens/logiclens/compare/v0.1.1-beta.11...v0.1.1-beta.12
-[0.1.1-beta.11]: https://github.com/logiclens/logiclens/compare/v0.1.1-beta.10...v0.1.1-beta.11
-[0.1.1-beta.10]: https://github.com/logiclens/logiclens/compare/v0.1.1-beta.9...v0.1.1-beta.10
-[0.1.1-beta.9]: https://github.com/logiclens/logiclens/compare/v0.1.1-beta.8...v0.1.1-beta.9
-[0.1.1-beta.8]: https://github.com/logiclens/logiclens/releases/tag/v0.1.1-beta.8
+[Unreleased]: https://github.com/arnofeng/logiclens/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/arnofeng/logiclens/compare/v0.1.1-beta.15...v1.0.0
+[0.1.1-beta.15]: https://github.com/arnofeng/logiclens/compare/v0.1.1-beta.14...v0.1.1-beta.15
+[0.1.1-beta.14]: https://github.com/arnofeng/logiclens/compare/v0.1.1-beta.13...v0.1.1-beta.14
+[0.1.1-beta.13]: https://github.com/arnofeng/logiclens/compare/v0.1.1-beta.12...v0.1.1-beta.13
+[0.1.1-beta.12]: https://github.com/arnofeng/logiclens/compare/v0.1.1-beta.11...v0.1.1-beta.12
+[0.1.1-beta.11]: https://github.com/arnofeng/logiclens/compare/v0.1.1-beta.10...v0.1.1-beta.11
+[0.1.1-beta.10]: https://github.com/arnofeng/logiclens/compare/v0.1.1-beta.9...v0.1.1-beta.10
+[0.1.1-beta.9]: https://github.com/arnofeng/logiclens/compare/v0.1.1-beta.8...v0.1.1-beta.9
+[0.1.1-beta.8]: https://github.com/arnofeng/logiclens/releases/tag/v0.1.1-beta.8

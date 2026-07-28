@@ -1,6 +1,6 @@
 # Plugin SDK Reference
 
-`@logiclens/plugin-sdk` is the public TypeScript contract for LogicLens plugins. `@logiclens/plugin-runtime` discovers plugin directories, resolves their compiled entry points, imports their exports, and validates API compatibility.
+`@logiclens/plugin-sdk` is the public TypeScript contract for LogicLens plugins.
 
 Read the [Plugin Guide](plugins.md) first for installation, discovery, activation, and troubleshooting.
 
@@ -11,12 +11,12 @@ Plugins are ESM packages and must ship compiled JavaScript. Add the SDK as a dep
 ```json
 {
   "name": "@example/logiclens-plugin-example",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "dependencies": {
-    "@logiclens/plugin-sdk": "^0.1.0"
+    "@logiclens/plugin-sdk": "^1.0.0"
   },
   "files": ["dist", "plugin.json", "README.md"]
 }
@@ -27,8 +27,8 @@ Every installed plugin directory also needs `plugin.json`:
 ```json
 {
   "name": "@example/logiclens-plugin-example",
-  "version": "0.1.0",
-  "logiclensPluginApiVersion": "0.1.0",
+  "version": "1.0.0",
+  "logiclensPluginApiVersion": "1.0.0",
   "capabilities": ["language", "fact-extractor", "framework-detector"],
   "entry": "./dist/index.js",
   "languages": [
@@ -61,8 +61,8 @@ import {
 
 const manifest = {
   name: "@example/logiclens-plugin-example",
-  version: "0.1.0",
-  logiclensPluginApiVersion: "0.1.0",
+  version: "1.0.0",
+  logiclensPluginApiVersion: "1.0.0",
   capabilities: ["language", "fact-extractor"],
   languages: [{
     id: "example",

@@ -1,9 +1,11 @@
 {
   "name": "@logiclens/plugin-sdk",
-  "version": "0.1.0",
+  "version": "1.0.0",
+  "description": "Public TypeScript contracts and utilities for authoring LogicLens plugins.",
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "prepack": "pnpm run build"
   },
   "exports": {
     ".": {
@@ -15,5 +17,27 @@
       "default": "./dist/utils.js"
     }
   },
-  "types": "./dist/index.d.ts"
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "author": "LogicLens contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arnofeng/logiclens.git",
+    "directory": "packages/plugin-sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/arnofeng/logiclens/issues"
+  },
+  "homepage": "https://github.com/arnofeng/logiclens/tree/main/packages/plugin-sdk#readme",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }

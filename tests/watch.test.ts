@@ -12,6 +12,7 @@ import { buildFreshnessMetadata, buildFreshnessNotice, buildFreshnessWarning } f
 import { SingleProcessIndexQueue } from "../src/core/indexing/scheduler.js";
 import { BRAND, BRAND_PATHS } from "../src/shared/branding.js";
 import { parserRegistry } from "../src/core/registries/registry.js";
+import { LOGICLENS_PLUGIN_API_VERSION } from "@logiclens/plugin-sdk";
 
 const execFileAsync = promisify(execFile);
 
@@ -23,7 +24,7 @@ async function installWatchFixturePlugin(workspaceRoot: string): Promise<void> {
   const pluginDir = path.join(workspaceRoot, ".logiclens", "plugins", "fixture-csharp");
   await fs.mkdir(pluginDir, { recursive: true });
   const manifest = {
-    name: "watch-fixture-csharp", version: "0.0.1", logiclensPluginApiVersion: "0.1.0",
+    name: "watch-fixture-csharp", version: "0.0.1", logiclensPluginApiVersion: LOGICLENS_PLUGIN_API_VERSION,
     capabilities: ["language"], entry: "./index.js",
     languages: [{ id: "csharp", extensions: [".cs"], detect: { extensions: [".cs"], markers: ["fixture.csproj"] } }]
   };
