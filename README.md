@@ -11,9 +11,6 @@
 
 **English** · [中文](README-ZH.md)
 
-> [!IMPORTANT]
-> **LogicLens 1.x is the stable release line.** The CLI, Node.js SDK, MCP tools, graph schema migration requirements, and Plugin API 1.x follow Semantic Versioning. Language and framework coverage will continue to expand without breaking these public contracts in a minor release.
-
 ---
 
 ## Table of Contents
