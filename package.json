@@ -48,7 +48,7 @@
   "author": "LogicLens contributors",
   "license": "MIT",
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=20.19.0"
   },
   "publishConfig": {
     "access": "public"
@@ -67,9 +67,9 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@vue/compiler-sfc": "^3.5.38",
     "chromadb": "^3.4.3",
-    "commander": "^15.0.0",
+    "commander": "^14.0.2",
     "fast-glob": "^3.3.3",
-    "graphql": "^17.0.1",
+    "graphql": "^16.14.0",
     "ignore": "^7.0.5",
     "jsonc-parser": "^3.3.1",
     "kuzu": "^0.11.3",
@@ -88,7 +88,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/node": "^25.9.3",
+    "@types/node": "^20.19.0",
     "@types/protocol-buffers-schema": "^3.4.3",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",

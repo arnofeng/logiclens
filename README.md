@@ -39,7 +39,7 @@ npm install -g logiclens
 logiclens --version
 ```
 
-LogicLens requires Node.js 22.12.0 or later.
+LogicLens requires Node.js 20.19.0 or later.
 
 ### 2. Initialize Workspace
 

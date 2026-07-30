@@ -24,7 +24,7 @@ The plugin parses `.cs` files. `.csproj`, `.sln`, `Directory.Build.props`, and `
 ## Compatibility
 
 - LogicLens 1.x
-- Node.js 22.12.0 or later
+- Node.js 20.19.0 or later
 
 The plugin performs syntax-based static analysis. It does not run the project or provide compiler-level C# analysis.
 

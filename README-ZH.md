@@ -39,7 +39,7 @@ npm install -g logiclens
 logiclens --version
 ```
 
-LogicLens 要求 Node.js 22.12.0 或更高版本。
+LogicLens 要求 Node.js 20.19.0 或更高版本。
 
 ### 2. 初始化仓库
 
