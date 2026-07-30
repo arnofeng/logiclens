@@ -5,7 +5,7 @@ import {
   discoverLogicLensPlugin,
   loadDiscoveredLogicLensPlugins,
   validatePlugin
-} from "@logiclens/plugin-runtime";
+} from "../src/core/plugins/runtime.js";
 import type { PluginParseInput } from "@logiclens/plugin-sdk";
 import { createCSharpParser } from "../packages/plugin-csharp/src/parser.js";
 

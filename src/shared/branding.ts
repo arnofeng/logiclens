@@ -37,8 +37,7 @@ export const BRAND_DEFAULTS = {
 
 export const BRAND_PLUGIN_PACKAGES = {
   sdk: "@logiclens/plugin-sdk",
-  sdkUtils: "@logiclens/plugin-sdk/utils",
-  runtime: "@logiclens/plugin-runtime"
+  sdkUtils: "@logiclens/plugin-sdk/utils"
 } as const;
 
 export function brandedPath(cwd: string, relativePath: string): string {

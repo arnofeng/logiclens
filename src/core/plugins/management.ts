@@ -3,7 +3,7 @@ import { existsSync, statSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { discoverLogicLensPlugin, loadDiscoveredLogicLensPlugins } from "@logiclens/plugin-runtime";
+import { discoverLogicLensPlugin, loadDiscoveredLogicLensPlugins } from "./runtime.js";
 import { BRAND } from "../../shared/branding.js";
 
 export type PluginScope = { kind: "workspace" | "global"; root: string };

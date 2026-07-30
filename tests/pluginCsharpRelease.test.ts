@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { discoverLogicLensPlugin, loadDiscoveredLogicLensPlugins } from "@logiclens/plugin-runtime";
+import { discoverLogicLensPlugin, loadDiscoveredLogicLensPlugins } from "../src/core/plugins/runtime.js";
 import { autoDetectAndRegisterPlugins, clearRegisteredPluginCapabilities } from "../src/core/plugins/register.js";
 import { defaultConfig } from "../src/config/loadConfig.js";
 import { scanAndParseRepo } from "../src/core/indexing/scanParse.js";

@@ -8,8 +8,7 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: "@logiclens/plugin-sdk/utils", replacement: pathAlias("packages/plugin-sdk/src/utils.ts") },
-      { find: "@logiclens/plugin-sdk", replacement: pathAlias("packages/plugin-sdk/src/index.ts") },
-      { find: "@logiclens/plugin-runtime", replacement: pathAlias("packages/plugin-runtime/src/index.ts") }
+      { find: "@logiclens/plugin-sdk", replacement: pathAlias("packages/plugin-sdk/src/index.ts") }
     ]
   },
   test: {

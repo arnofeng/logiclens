@@ -12,7 +12,7 @@ import { registerCommonBuiltins, resetJavaBuiltinCapabilities } from "../src/cor
 import { ContractExtractorRegistry, FrameworkDetectorRegistry, ParserRegistry, contractExtractorRegistry, frameworkDetectorRegistry, parserRegistry } from "../src/core/registries/registry.js";
 import { parseSourceFile, registerBuiltinParsers } from "../src/core/parsing/parserRegistry.js";
 import { getLoadedLanguageGrammar, LANGUAGE_DEFINITIONS } from "../src/core/parsing/languages/registry.js";
-import { discoverLogicLensPlugin, loadDiscoveredLogicLensPlugins, validatePlugin } from "@logiclens/plugin-runtime";
+import { discoverLogicLensPlugin, loadDiscoveredLogicLensPlugins, validatePlugin } from "../src/core/plugins/runtime.js";
 import { LOGICLENS_PLUGIN_API_VERSION, definePlugin } from "@logiclens/plugin-sdk";
 import { joinHttpPaths, normalizeRouteTemplate } from "@logiclens/plugin-sdk/utils";
 import { defaultConfig } from "../src/config/loadConfig.js";
@@ -401,7 +401,7 @@ describe("plugin architecture foundation", () => {
     }
     expect((globalThis as any).__logiclensScopedDetections).toEqual({ WorkspaceParser: [repoA.id, repoB.id] });
   });
-  it("publishes plugin APIs as workspace packages only", async () => {
+  it("publishes only the plugin SDK as a host dependency", async () => {
     const packageJson = JSON.parse(await fs.readFile(path.resolve("package.json"), "utf8")) as {
       exports?: Record<string, { types?: string; default?: string }>;
       dependencies?: Record<string, string>;
@@ -411,7 +411,7 @@ describe("plugin architecture foundation", () => {
     expect(packageJson.exports?.["./plugin-sdk/utils"]).toBeUndefined();
     expect(packageJson.exports?.["./plugin-runtime"]).toBeUndefined();
     expect(packageJson.dependencies?.["@logiclens/plugin-sdk"]).toBe("workspace:*");
-    expect(packageJson.dependencies?.["@logiclens/plugin-runtime"]).toBe("workspace:*");
+    expect(packageJson.dependencies?.["@logiclens/plugin-runtime"]).toBeUndefined();
   });
 
   it("keeps plugin SDK free of core imports", async () => {

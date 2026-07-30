@@ -12,7 +12,6 @@ if (!version || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(version)) {
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const rootManifest = JSON.parse(await fs.readFile(path.join(repositoryRoot, "package.json"), "utf8"));
 const sdkManifest = JSON.parse(await fs.readFile(path.join(repositoryRoot, "packages/plugin-sdk/package.json"), "utf8"));
-const runtimeManifest = JSON.parse(await fs.readFile(path.join(repositoryRoot, "packages/plugin-runtime/package.json"), "utf8"));
 const csharpManifest = JSON.parse(await fs.readFile(path.join(repositoryRoot, "packages/plugin-csharp/package.json"), "utf8"));
 const pluginApiExport = "LOGIC" + "LENS_PLUGIN_API_VERSION";
 const pluginApiKey = "logic" + "lensPluginApiVersion";
@@ -22,7 +21,6 @@ const workspace = path.join(root, "workspace");
 const packageSpecs = [
   `${rootManifest.name}@${version}`,
   `${sdkManifest.name}@${version}`,
-  `${runtimeManifest.name}@${version}`,
   `${csharpManifest.name}@${version}`
 ];
 
@@ -43,11 +41,9 @@ try {
 
   const host = await importPackage(rootManifest.name);
   const sdk = await importPackage(sdkManifest.name);
-  const runtime = await importPackage(runtimeManifest.name);
   const csharp = await importPackage(csharpManifest.name);
   assert(typeof host.createClient === "function", `${rootManifest.name} does not export createClient`);
   assert(sdk[pluginApiExport] === "1.0.0", "Plugin API version is not 1.0.0");
-  assert(typeof runtime.loadLogicLensPlugins === "function", `${runtimeManifest.name} does not export loadLogicLensPlugins`);
   assert(csharp.default?.manifest?.version === version, "C# plugin version does not match registry version");
   assert(csharp.default?.manifest?.[pluginApiKey] === "1.0.0", "C# plugin API version is not 1.0.0");
 

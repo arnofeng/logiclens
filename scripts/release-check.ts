@@ -27,7 +27,6 @@ const pluginApiExport = "LOGIC" + "LENS_PLUGIN_API_VERSION";
 const packageDirectories = [
   ".",
   "packages/plugin-sdk",
-  "packages/plugin-runtime",
   "packages/plugin-csharp"
 ] as const;
 
@@ -45,13 +44,10 @@ async function main(): Promise<void> {
   }
 
   const sdk = targets.find((target) => target.directory === "packages/plugin-sdk");
-  const runtime = targets.find((target) => target.directory === "packages/plugin-runtime");
   const csharp = targets.find((target) => target.directory === "packages/plugin-csharp");
-  assert(sdk && runtime && csharp, "Release package set is incomplete");
+  assert(sdk && csharp, "Release package set is incomplete");
 
   assert(rootTarget.packageJson.dependencies?.[sdk.packageJson.name] === "workspace:*", "Root SDK dependency must use workspace:*");
-  assert(rootTarget.packageJson.dependencies?.[runtime.packageJson.name] === "workspace:*", "Root runtime dependency must use workspace:*");
-  assert(runtime.packageJson.dependencies?.[sdk.packageJson.name] === "workspace:*", "Runtime SDK dependency must use workspace:*");
   assert(csharp.packageJson.dependencies?.[sdk.packageJson.name] === "workspace:*", "C# SDK dependency must use workspace:*");
 
   const pluginManifest = JSON.parse(await fs.readFile(path.join(root, "packages/plugin-csharp/plugin.json"), "utf8")) as {

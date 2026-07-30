@@ -111,7 +111,6 @@ jobs:
         run: |
           mkdir release-artifacts
           pnpm --dir packages/plugin-sdk pack --pack-destination "$GITHUB_WORKSPACE/release-artifacts" --silent
-          pnpm --dir packages/plugin-runtime pack --pack-destination "$GITHUB_WORKSPACE/release-artifacts" --silent
           pnpm --dir packages/plugin-csharp pack --pack-destination "$GITHUB_WORKSPACE/release-artifacts" --silent
           pnpm pack --pack-destination "$GITHUB_WORKSPACE/release-artifacts" --silent
 
@@ -120,7 +119,6 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           npm publish "release-artifacts/logiclens-plugin-sdk-${VERSION}.tgz" --access public
-          npm publish "release-artifacts/logiclens-plugin-runtime-${VERSION}.tgz" --access public
           npm publish "release-artifacts/logiclens-plugin-csharp-${VERSION}.tgz" --access public
           npm publish "release-artifacts/logiclens-${VERSION}.tgz" --access public
 

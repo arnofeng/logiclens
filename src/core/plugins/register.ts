@@ -7,7 +7,7 @@ import {
   loadLogicLensPlugins,
   type DiscoveredLogicLensPlugin,
   type LoadedLogicLensPlugin
-} from "@logiclens/plugin-runtime";
+} from "./runtime.js";
 import type { PluginManifest } from "@logiclens/plugin-sdk";
 import type { AppConfig } from "../../config/schema.js";
 import { parserRegistry, contractExtractorRegistry, frameworkDetectorRegistry } from "../registries/registry.js";
