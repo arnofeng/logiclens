@@ -33,8 +33,8 @@ export interface WorkspaceLexicalConformanceReport {
   cases: ConformanceCaseResult[];
 }
 
-function failure(provider: string, caseId: string, dimension: string): Error {
-  return new Error(`Lexical conformance failed: provider=${provider} case=${caseId} dimension=${dimension}`);
+function failure(provider: string, caseId: string, dimension: string, detail?: string): Error {
+  return new Error(`Lexical conformance failed: provider=${provider} case=${caseId} dimension=${dimension}${detail ? ` detail=${detail}` : ""}`);
 }
 
 export async function runWorkspaceLexicalConformance(harness: LexicalProviderHarness, cases: WorkspaceCorpusCase[], workspaceId: string, topK = 5): Promise<WorkspaceLexicalConformanceReport> {
@@ -60,8 +60,9 @@ export async function runWorkspaceLexicalConformance(harness: LexicalProviderHar
       if (hits.some((hit) => !hit.repoId || !hit.renderRef)) throw failure(harness.provider, entry.id, "source");
       const hitIds = new Set(hits.map((hit) => hit.canonicalId));
       const expectedHits = entry.expectedCanonicalIds.filter((id) => hitIds.has(id));
-      if (entry.answerable && expectedHits.length === 0) throw failure(harness.provider, entry.id, "quality");
-      if (!entry.answerable && hits.length > 0) throw failure(harness.provider, entry.id, "refusal");
+      const qualityDetail = `expected=${JSON.stringify(entry.expectedCanonicalIds)} actual=${JSON.stringify(hits.map((hit) => hit.canonicalId))}`;
+      if (entry.answerable && expectedHits.length === 0) throw failure(harness.provider, entry.id, "quality", qualityDetail);
+      if (!entry.answerable && hits.length > 0) throw failure(harness.provider, entry.id, "refusal", qualityDetail);
       results.push({ caseId: entry.id, nativeSearchCalls, topK, repoIds: [...new Set(hits.map((hit) => hit.repoId))], latencyMs, expectedHits, hits });
     }
   } finally {

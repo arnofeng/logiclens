@@ -55,6 +55,11 @@ export const classifyNeo4jQueryError: GraphDatabaseErrorClassifier = (error) => 
   return undefined;
 };
 
+export function neo4jQueryAccessMode(cypher: string): "READ" | "WRITE" {
+  const normalized = cypher.trim().toUpperCase();
+  return /\b(CREATE|MERGE|SET|DELETE|REMOVE|DETACH|DROP)\b/.test(normalized) ? "WRITE" : "READ";
+}
+
 /**
  * Convert a GraphValue to a Neo4j-compatible value.
  * Neo4j driver handles most types natively, but bigint needs conversion.
@@ -677,14 +682,6 @@ export class Neo4jGraphDB implements GraphDB {
     );
   }
 
-  private isReadQuery(cypher: string): boolean {
-    const normalized = cypher.trim().toUpperCase();
-    if (/\b(CREATE|MERGE|SET|DELETE|REMOVE|DETACH)\b/.test(normalized)) {
-      return false;
-    }
-    return true;
-  }
-
   async query<T = Record<string, GraphValue>>(cypher: string, params?: Record<string, GraphValue>): Promise<T[]> {
     if (this.activeTx) {
       let result;
@@ -701,7 +698,7 @@ export class Neo4jGraphDB implements GraphDB {
     // correct access mode.  High-volume write paths use withTransaction
     // (activeTx) so the per-query session overhead only affects ad-hoc
     // reads like stats(), listRepos(), etc.
-    const mode = this.isReadQuery(cypher) ? "READ" : "WRITE";
+    const mode = neo4jQueryAccessMode(cypher);
     const session = this.getSession(mode);
     try {
       let result;

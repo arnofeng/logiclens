@@ -51,7 +51,7 @@ class Neo4jHarness implements LexicalProviderHarness {
     await this.driver.verifyConnectivity();
     const session = this.session();
     try {
-      await session.run(`CREATE FULLTEXT INDEX ${this.index} IF NOT EXISTS FOR (n:${this.label}) ON EACH [n.searchableText] OPTIONS { indexConfig: { \`fulltext.analyzer\`: 'standard-no-stop-words', \`fulltext.eventually_consistent\`: false } }`);
+      await session.run(`CREATE FULLTEXT INDEX ${this.index} IF NOT EXISTS FOR (n:${this.label}) ON EACH [n.ftsText] OPTIONS { indexConfig: { \`fulltext.analyzer\`: 'standard-no-stop-words', \`fulltext.eventually_consistent\`: false } }`);
       await session.run("CALL db.awaitIndexes(300)");
     } finally { await session.close(); }
   }
@@ -61,7 +61,7 @@ class Neo4jHarness implements LexicalProviderHarness {
     documents.push({ id: "document:foreign:payment-ledger", canonicalId: "foreign:payment-ledger", workspaceId: "workspace:foreign", repoId: "repo:foreign", kind: "file", title: "payment ledger", searchableText: "payment ledger foreignonlymarker", tokens: [], active: true, sourceHash: "foreign", batchId: "foreign", renderRef: "fixture:foreign:payment-ledger" });
     const session = this.session();
     try {
-      await session.executeWrite((transaction) => transaction.run(`UNWIND $documents AS document CREATE (n:${this.label}) SET n = document`, { documents: documents.map((document) => ({ id: document.id, canonicalId: document.canonicalId, workspaceId: document.workspaceId, repoId: document.repoId, kind: document.kind, searchableText: document.searchableText, active: document.active, renderRef: document.renderRef })) }));
+      await session.executeWrite((transaction) => transaction.run(`UNWIND $documents AS document CREATE (n:${this.label}) SET n = document`, { documents: documents.map((document) => ({ id: document.id, canonicalId: document.canonicalId, workspaceId: document.workspaceId, repoId: document.repoId, kind: document.kind, ftsText: [document.searchableText, ...document.tokens].filter(Boolean).join(" "), active: document.active, renderRef: document.renderRef })) }));
       await session.run("CALL db.awaitIndexes(300)");
     } finally { await session.close(); }
   }

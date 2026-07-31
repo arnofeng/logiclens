@@ -18,7 +18,14 @@ vi.mock("neo4j-driver", () => ({
   isInt: mockIsInt
 }));
 
-import { toNeo4jValue, toNeo4jParams, toNumber, decodeList, decodeJournalRow } from "../src/adapters/graph-db/neo4j/Neo4jGraphDB.js";
+import { decodeJournalRow, decodeList, neo4jQueryAccessMode, toNeo4jParams, toNeo4jValue, toNumber } from "../src/adapters/graph-db/neo4j/Neo4jGraphDB.js";
+
+describe("Neo4j query access mode", () => {
+  it("uses write sessions for schema removal and read sessions for inspection", () => {
+    expect(neo4jQueryAccessMode("DROP INDEX workspace_lexical IF EXISTS")).toBe("WRITE");
+    expect(neo4jQueryAccessMode("SHOW INDEXES YIELD name RETURN name")).toBe("READ");
+  });
+});
 
 describe("Neo4j toNeo4jValue", () => {
   it("converts bigint to neo4j integer", () => {

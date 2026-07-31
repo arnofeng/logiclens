@@ -16,6 +16,7 @@ import {
   type LexicalDocument,
 } from "../src/core/retrieval/types.js";
 import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
+import { planQuestion } from "../src/features/ask/planner.js";
 import { Neo4jGraphDB } from "../src/adapters/graph-db/neo4j/Neo4jGraphDB.js";
 import {
   NEO4J_LEXICAL_ANALYZER,
@@ -75,6 +76,7 @@ function transactionFixture(suffix: string, marker: string, variant: string): {
         startLine: 1,
         endLine: 1,
         signature: `class ${variant}Service`,
+        summary: marker,
         source,
         hash: hash(source),
       }],
@@ -325,10 +327,18 @@ describe("Neo4j workspace unified retrieval cloud release", () => {
         "哪个 worker 消费 orders.created event？",
       ];
       for (const question of questions) {
+        const plan = planQuestion(question);
+        const strictApiTarget = plan.contractTargets.length > 0 &&
+          plan.contractTargets.every(({ kind }) => kind === "api");
         callsBefore = nativeFullTextCalls(querySpy);
         const result = await client.retrieve(question, RETRIEVE_OPTIONS);
-        expect(nativeFullTextCalls(querySpy) - callsBefore, question).toBe(1);
-        expect(result.diagnostics.routes.lexical).toMatchObject({ status: "succeeded", queryCount: 1 });
+        expect(
+          nativeFullTextCalls(querySpy) - callsBefore,
+          `${question}: lexical=${JSON.stringify(result.diagnostics.routes.lexical)}`,
+        ).toBe(strictApiTarget ? 0 : 1);
+        expect(result.diagnostics.routes.lexical).toMatchObject(strictApiTarget
+          ? { status: "disabled", queryCount: 0 }
+          : { status: "succeeded", queryCount: 1 });
         expect(result.loadedEvidence.length).toBeGreaterThan(0);
         for (const { candidate, document } of result.loadedEvidence) {
           expect(document).toMatchObject({ workspaceId, repoId: expect.stringContaining(suffix), active: true });

@@ -16,7 +16,10 @@ describe("workspace unified retrieval fixture", () => {
   it("has a deterministic repository file manifest and content hashes", async () => {
     const files = await filesAt(root);
     expect(files).toEqual(expectedFiles);
-    const hashes = await Promise.all(files.map(async (file) => createHash("sha256").update(await readFile(path.join(root, file))).digest("hex")));
+    const hashes = await Promise.all(files.map(async (file) => {
+      const content = await readFile(path.join(root, file), "utf8");
+      return createHash("sha256").update(content.replace(/\r\n?/gu, "\n")).digest("hex");
+    }));
     expect(hashes).toEqual([
       "19bd2b947779f1ac7bbd587fba3db88ff17c7c8f0dc0e15d324c48bc49326e06",
       "e7faf5440bc55772cee7ed908dd0602a4a8501425fc0caa0c670feeb9dd63907",

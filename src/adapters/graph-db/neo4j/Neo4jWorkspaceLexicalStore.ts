@@ -46,6 +46,9 @@ const NEO4J_CJK_QUERY_STOP_CHARACTERS = new Set(Array.from(
   "什么哪个哪里如何谁服务接口稳定标识契约事件消费创建订单"
 ));
 const SAFE_LUCENE_TOKEN = /^[\p{L}\p{M}\p{N}_]+$/u;
+const LATIN_QUERY_TOKEN = /[\p{Script=Latin}\p{N}]/u;
+const QUERY_PATH_PATTERN = /[\p{L}\p{M}\p{N}._-]+(?:\/[\p{L}\p{M}\p{N}._-]+)+/u;
+const REPOSITORY_PATH_ROOTS = new Set(["app", "apps", "docs", "lib", "packages", "src", "test", "tests"]);
 
 export const NEO4J_WORKSPACE_LEXICAL_REQUIREMENTS = Object.freeze({
   versionPolicy: "runtime-capability-check",
@@ -714,11 +717,19 @@ export function normalizeNeo4jFullTextQuery(text: string): string {
   if (tokens.length === 0) return "";
 
   if (/[._/\\-]/u.test(text)) {
+    const repositoryRelativePath = repositoryRelativePathToken(text);
+    if (repositoryRelativePath) return repositoryRelativePath;
     const identifier = tokens
       .filter((token) => token.startsWith("ident_"))
       .sort((left, right) => right.length - left.length || compareText(left, right))[0];
     if (identifier) return identifier;
   }
+
+  const latinToken = tokens
+    .filter((token) => !token.startsWith("cjk_") && LATIN_QUERY_TOKEN.test(token)
+      && !NEO4J_QUERY_STOP_WORDS.has(token))
+    .sort((left, right) => right.length - left.length || compareText(left, right))[0];
+  if (latinToken) return latinToken;
 
   for (const run of text.normalize("NFKC").match(/[\p{Script=Han}]+/gu) ?? []) {
     const characters = Array.from(run);
@@ -730,11 +741,16 @@ export function normalizeNeo4jFullTextQuery(text: string): string {
     }
   }
 
-  return tokens
-    .filter((token) => !token.startsWith("cjk_") && !NEO4J_QUERY_STOP_WORDS.has(token))
-    .sort((left, right) => right.length - left.length || compareText(left, right))[0]
-    ?? tokens[0]
-    ?? "";
+  return tokens[0] ?? "";
+}
+
+function repositoryRelativePathToken(text: string): string | undefined {
+  const path = QUERY_PATH_PATTERN.exec(text.normalize("NFKC").replace(/\\/gu, "/"))?.[0];
+  if (!path) return undefined;
+  const segments = path.split("/").filter(Boolean);
+  const rootIndex = segments.findIndex((segment) => REPOSITORY_PATH_ROOTS.has(segment.toLowerCase()));
+  if (rootIndex <= 0) return undefined;
+  return `ident_${segments.slice(rootIndex).join("_").replace(/[^\p{L}\p{M}\p{N}]+/gu, "_").toLowerCase()}`;
 }
 
 function wrap(

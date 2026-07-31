@@ -348,10 +348,12 @@ describe("Neo4j workspace lexical lifecycle", () => {
 
   it.each([
     ["src\\orders\\OrderService.ts", "ident_src_orders_orderservice_ts"],
+    ["Find api/src/contracts/orders.ts", "ident_src_contracts_orders_ts"],
     ["GET /orders/{orderId}", "ident_orderid"],
     ["order-created", "ident_order_created"],
     ["谁消费库存同步事件？", "cjk_库存"],
     ["哪个 worker consumes OrderCreatedEvent 订单事件", "ordercreatedevent"],
+    ["CatalogItemSchema 的稳定字段是什么？", "catalogitemschema"],
     ["+ - && || ! ( ) { } [ ] ^ \" ~ * ? : \\ /", ""]
   ])("normalizes Neo4j Lucene query text %j safely", (text, expected) => {
     const normalized = normalizeNeo4jFullTextQuery(text);
