@@ -118,9 +118,9 @@ jobs:
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          npm publish "release-artifacts/logiclens-plugin-sdk-${VERSION}.tgz" --access public
-          npm publish "release-artifacts/logiclens-plugin-csharp-${VERSION}.tgz" --access public
-          npm publish "release-artifacts/logiclens-${VERSION}.tgz" --access public
+          npm publish "./release-artifacts/logiclens-plugin-sdk-${VERSION}.tgz" --access public
+          npm publish "./release-artifacts/logiclens-plugin-csharp-${VERSION}.tgz" --access public
+          npm publish "./release-artifacts/logiclens-${VERSION}.tgz" --access public
 
       - name: Registry installation smoke test
         run: node scripts/registry-smoke.mjs "${GITHUB_REF_NAME#v}"
