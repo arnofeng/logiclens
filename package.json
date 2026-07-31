@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Local-first semantic contract graph for AI coding agents to reason about cross-repository interfaces and change impact.",
   "type": "module",
-  "packageManager": "pnpm@11.1.2",
+  "packageManager": "pnpm@10.34.5",
   "workspaces": [
     "packages/*"
   ],
