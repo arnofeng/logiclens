@@ -672,7 +672,7 @@ export class Neo4jGraphDB implements GraphDB {
          COUNT { MATCH (:Repo)-[u:CONSUMES]->(c) WHERE u.active IS NULL OR u.active = true } AS consumers,
          COUNT { MATCH (:Repo)-[s:SHARES_CONTRACT]->(c) WHERE s.active IS NULL OR s.active = true } AS shared
        ORDER BY c.kind, c.key
-       LIMIT $limit;`,
+       LIMIT toInteger($limit);`,
       params
     );
   }

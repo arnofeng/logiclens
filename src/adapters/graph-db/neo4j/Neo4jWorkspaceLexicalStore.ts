@@ -340,7 +340,7 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
         "WHERE node.workspaceId = $workspaceId AND node.active = true " +
         "RETURN node.canonicalId AS canonicalId, node.id AS documentId, node.repoId AS repoId, " +
         "node.kind AS kind, node.renderRef AS renderRef, score " +
-        "ORDER BY score DESC, documentId ASC LIMIT $topK",
+        "ORDER BY score DESC, documentId ASC LIMIT toInteger($topK)",
         { indexName: this.indexName, text: normalizedQuery, workspaceId: query.workspaceId, topK: options.topK }
       );
       return rows.map((row, index) => ({

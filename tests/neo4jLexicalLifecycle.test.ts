@@ -337,7 +337,7 @@ describe("Neo4j workspace lexical lifecycle", () => {
     expect(db.calls.filter((call) => call.cypher.includes("db.index.fulltext.queryNodes"))).toHaveLength(1);
     const query = db.calls.find((call) => call.cypher.includes("db.index.fulltext.queryNodes"))!;
     expect(query.cypher).toContain("node.workspaceId = $workspaceId AND node.active = true");
-    expect(query.cypher).toContain("ORDER BY score DESC, documentId ASC LIMIT $topK");
+    expect(query.cypher).toContain("ORDER BY score DESC, documentId ASC LIMIT toInteger($topK)");
     expect(query.params).toMatchObject({ indexName: NEO4J_WORKSPACE_FTS_INDEX, text: "order", workspaceId: WORKSPACE, topK: 2 });
     expect(hits.map((hit) => [hit.documentId, hit.rank])).toEqual([["lexical:a", 1], ["lexical:b", 2]]);
     db.calls.length = 0;
