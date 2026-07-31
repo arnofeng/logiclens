@@ -15,6 +15,8 @@ const sdkManifest = JSON.parse(await fs.readFile(path.join(repositoryRoot, "pack
 const csharpManifest = JSON.parse(await fs.readFile(path.join(repositoryRoot, "packages/plugin-csharp/package.json"), "utf8"));
 const pluginApiExport = "LOGIC" + "LENS_PLUGIN_API_VERSION";
 const pluginApiKey = "logic" + "lensPluginApiVersion";
+const REGISTRY_PROPAGATION_TIMEOUT_MS = 5 * 60_000;
+const REGISTRY_RETRY_DELAY_MS = 15_000;
 const root = await fs.mkdtemp(path.join(os.tmpdir(), `${rootManifest.name}-registry-smoke-`));
 const installRoot = path.join(root, "install");
 const workspace = path.join(root, "workspace");
@@ -54,8 +56,19 @@ try {
 
 async function installWithRetry(specs) {
   let lastStatus = 1;
-  for (let attempt = 1; attempt <= 5; attempt += 1) {
-    const result = spawnSync(npmExecutable(), ["install", "--prefix", installRoot, "--no-package-lock", ...specs], {
+  let attempts = 0;
+  const deadline = Date.now() + REGISTRY_PROPAGATION_TIMEOUT_MS;
+  while (true) {
+    attempts += 1;
+    const result = spawnSync(npmExecutable(), [
+      "install",
+      "--prefix",
+      installRoot,
+      "--no-package-lock",
+      "--prefer-online",
+      "--registry=https://registry.npmjs.org",
+      ...specs,
+    ], {
       cwd: installRoot,
       stdio: "inherit",
       shell: false
@@ -63,9 +76,13 @@ async function installWithRetry(specs) {
     if (!result.error && result.status === 0) return;
     if (result.error) console.error(result.error.message);
     lastStatus = result.status ?? 1;
-    if (attempt < 5) await new Promise((resolve) => setTimeout(resolve, attempt * 10_000));
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    const delay = Math.min(REGISTRY_RETRY_DELAY_MS, remaining);
+    console.warn(`Registry packages are not available yet; retrying in ${Math.ceil(delay / 1_000)} seconds.`);
+    await new Promise((resolve) => setTimeout(resolve, delay));
   }
-  throw new Error(`npm install failed after registry propagation retries (status ${lastStatus})`);
+  throw new Error(`npm install failed after ${attempts} registry propagation attempts (status ${lastStatus})`);
 }
 
 async function importPackage(name) {

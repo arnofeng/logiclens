@@ -122,6 +122,21 @@ jobs:
           npm publish "./release-artifacts/logiclens-plugin-csharp-${VERSION}.tgz" --access public
           npm publish "./release-artifacts/logiclens-${VERSION}.tgz" --access public
 
+  smoke:
+    name: Registry installation smoke test
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
       - name: Registry installation smoke test
         run: node scripts/registry-smoke.mjs "${GITHUB_REF_NAME#v}"
         shell: bash
