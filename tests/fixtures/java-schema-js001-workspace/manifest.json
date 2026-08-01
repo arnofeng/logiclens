@@ -1,0 +1,11 @@
+{
+  "fixtureVersion": 1,
+  "repositories": ["repo-a", "repo-b", "repo-c", "repo-d", "repo-e", "repo-f", "repo-g", "repo-h", "repo-i", "repo-j", "repo-k"],
+  "resolutionScopeDependencies": [{
+    "from": { "languageId": "java", "repoId": "repo:repo-a", "resolutionScopeId": "main" },
+    "to": { "languageId": "java", "repoId": "repo:repo-b", "resolutionScopeId": "main" },
+    "kind": "repository",
+    "order": 0
+  }],
+  "sameSimpleNameWithoutDependency": { "consumer": "repo-a", "dependency": "repo-b", "unrelated": "repo-c", "simpleName": "SharedOrderDTO" }
+}

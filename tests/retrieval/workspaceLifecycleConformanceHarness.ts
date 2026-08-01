@@ -7,6 +7,7 @@ import { buildGraphFactsBatch } from "../../src/core/graph-model/facts.js";
 import type { ParsedFile, RepoNode } from "../../src/core/parsing/types.js";
 import type { WorkspaceLexicalStore } from "../../src/core/retrieval/provider.js";
 import { projectLexicalDocuments } from "../../src/core/retrieval/projection.js";
+import { runSchemaSnapshotConformance } from "../helpers/schemaBaselineSnapshot.js";
 
 export interface WorkspaceLifecycleFixture {
   readonly db: GraphDB;
@@ -153,6 +154,7 @@ export async function runWorkspaceLifecycleConformance(fixture: WorkspaceLifecyc
   await projectAndWrite({ fixture, repos: [renamedRepo, two], files: [updatedAlpha, beta], batchId: `batch:rebuild:${fixture.suffix}` });
   assert.deepEqual(await activeSnapshot(fixture), beforeRebuild);
   assert.deepEqual(await ranking(fixture), orderBeforeRebuild);
+  await runSchemaSnapshotConformance(fixture.db, fixture.workspaceId);
 
   const renamedAlpha = sourceFile(one.id, "src/RenamedAlpha.ts", "AlphaService", "alphaupdatedmarker");
   await projectAndWrite({ fixture, repos: [renamedRepo], files: [renamedAlpha], batchId: `batch:file-rename:${fixture.suffix}` });
@@ -172,6 +174,10 @@ export async function runWorkspaceLifecycleConformance(fixture: WorkspaceLifecyc
   await fixture.store.reconcileRepoFileDocuments({ workspaceId: fixture.workspaceId, repoId: one.id, batchId: `batch:file-delete:${fixture.suffix}`, activeFileIds: [] });
   assert.equal((await fixture.store.search({ workspaceId: fixture.workspaceId, text: "AlphaService" }, { topK: 50 })).length, 0);
   assert.equal((await fixture.store.search({ workspaceId: fixture.workspaceId, text: "BetaService" }, { topK: 50 }))[0]?.repoId, two.id);
+  const afterEmptyReconciliation = await runSchemaSnapshotConformance(fixture.db, fixture.workspaceId);
+  assert.equal(afterEmptyReconciliation.lexical
+    .filter((document) => document.repoId === one.id)
+    .every((document) => document.kind === "repo"), true);
 
   await fixture.store.reconcileRepoDocuments({ workspaceId: fixture.workspaceId, repoId: one.id, batchId: `batch:repo-delete:${fixture.suffix}`, activeDocumentIds: [] });
   await fixture.db.clearRepoIndexedArtifacts(one.id);

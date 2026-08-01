@@ -1,0 +1,18 @@
+{
+  "fixtureVersion": 1,
+  "impactTarget": "ActivityGoodsQueryVO.activityId",
+  "currentCharacterization": {
+    "missingSchemaNames": ["ActivityGoodsQueryVO", "GoodsFilter", "GoodsPriceVO"],
+    "missingRelationKinds": ["REQUEST_SCHEMA", "RESPONSE_SCHEMA", "USES_SCHEMA"],
+    "impactTargetMatches": 0,
+    "pendingRefsBeforeWriteMinimum": 1,
+    "pendingRefsAfterWrite": 0
+  },
+  "targetGroundTruth": {
+    "schemaNames": ["ActivityGoodsQueryVO", "GoodsFilter", "GoodsPriceVO"],
+    "relationKinds": ["REQUEST_SCHEMA", "RESPONSE_SCHEMA", "USES_SCHEMA"],
+    "impactTargetMatchesMinimum": 2,
+    "pendingRefsBeforeWrite": 0,
+    "pendingRefsAfterWrite": 0
+  }
+}

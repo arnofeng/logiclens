@@ -1,0 +1,15 @@
+{
+  "package-explicit-import": ["activity-api/src/main/java/com/example/activity/api/ActivityGoodsController.java"],
+  "wildcard-import": ["activity-api/src/main/java/com/example/activity/model/ActivityGoodsQueryVO.java"],
+  "no-suffix-request-response": ["activity-api/src/main/java/com/example/activity/model/GoodsFilter.java", "activity-api/src/main/java/com/example/activity/model/ActivityGoodsQueryVO.java"],
+  "spring-request-body-direct-return": ["activity-api/src/main/java/com/example/activity/api/ActivityGoodsController.java"],
+  "nested-wrapper-multiple-type-arguments": ["activity-api/src/main/java/com/example/activity/wrapper/Resp.java", "activity-api/src/main/java/com/example/activity/wrapper/TransportEnvelope.java"],
+  "same-name-different-package": ["activity-api/src/main/java/com/example/activity/types/SharedNameDTO.java", "activity-api/src/main/java/com/example/other/SharedNameDTO.java"],
+  "same-name-different-module-source-set": ["activity-api/src/main/java/com/example/activity/types/SharedNameDTO.java", "shadow-module/src/test/java/com/example/activity/types/SharedNameDTO.java"],
+  "nested-member-type": ["activity-api/src/main/java/com/example/activity/model/MemberTypesDTO.java"],
+  "record-enum-interface-abstract": ["activity-api/src/main/java/com/example/activity/model/GoodsPriceVO.java", "activity-api/src/main/java/com/example/activity/model/CurrencyCode.java", "activity-api/src/main/java/com/example/activity/model/ActivityView.java", "activity-api/src/main/java/com/example/activity/model/AbstractActivity.java"],
+  "generic-parent-inheritance": ["activity-api/src/main/java/com/example/activity/model/PageEnvelopeDTO.java", "activity-api/src/main/java/com/example/activity/model/ActivityPageDTO.java"],
+  "cycle-self-reference": ["activity-api/src/main/java/com/example/activity/model/CycleADTO.java", "activity-api/src/main/java/com/example/activity/model/CycleBDTO.java", "activity-api/src/main/java/com/example/activity/model/SelfDTO.java"],
+  "external-type-invisible-parent": ["activity-api/src/main/java/com/example/activity/model/ExternalChildDTO.java"],
+  "field-impact-activity-id": ["activity-api/src/main/java/com/example/activity/model/ActivityGoodsQueryVO.java"]
+}
