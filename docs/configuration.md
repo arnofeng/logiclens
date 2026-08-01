@@ -1,6 +1,6 @@
 # Configuration Guide
 
-LogicLens reads `.logiclens/config.yaml`. One LogicLens workspace corresponds to one configuration and its `repos` collection. `systemName` identifies the logical workspace; all configured repositories share one graph provider and one workspace-wide lexical search scope.
+RepoHelix reads `.repohelix/config.yaml`. One RepoHelix workspace corresponds to one configuration and its `repos` collection. `systemName` identifies the logical workspace; all configured repositories share one graph provider and one workspace-wide lexical search scope.
 
 Configuration loading replaces `${ENV_VAR}` placeholders with environment-variable values before validation. Use placeholders for credentials instead of committing secrets.
 
@@ -19,7 +19,7 @@ repos:
 
 graph:
   provider: kuzu
-  path: .logiclens/graph
+  path: .repohelix/graph
 ```
 
 ## Neo4j cloud profile
@@ -43,7 +43,7 @@ graph:
   database: ${NEO4J_DATABASE}
 ```
 
-The `LOGICLENS_TEST_NEO4J_*` names used by repository tests are CI/test controls, not production credential conventions.
+The `REPOHELIX_TEST_NEO4J_*` names used by repository tests are CI/test controls, not production credential conventions.
 
 ## Full reference configuration
 
@@ -56,7 +56,7 @@ repos: []
 
 graph:
   provider: kuzu
-  path: .logiclens/graph
+  path: .repohelix/graph
 
 llm:
   provider: openai
@@ -85,7 +85,7 @@ indexing:
 ### Graph database (`graph`)
 
 - `graph.provider`: Registered graph provider ID. Built-in profiles are `kuzu` and `neo4j`; the default is `kuzu`.
-- `graph.path`: Kuzu database directory; defaults to `.logiclens/graph`.
+- `graph.path`: Kuzu database directory; defaults to `.repohelix/graph`.
 - `graph.url`, `graph.username`, `graph.password`, `graph.database`: Neo4j connection and database settings.
 
 ### LLM
@@ -97,12 +97,12 @@ For a fully offline run, use the local Kuzu graph and do not configure an LLM ke
 ```yaml
 graph:
   provider: kuzu
-  path: .logiclens/graph
+  path: .repohelix/graph
 ```
 
 Also omit `llm.apiKey`, ensure `OPENAI_API_KEY` is unset in the process environment, and do not configure a remote LLM endpoint. `ask` reads either `llm.apiKey` or `OPENAI_API_KEY`; if either is present, it can send selected evidence to that LLM endpoint. Without an LLM key, `ask` can still produce a deterministic citation fallback when reliable evidence exists. If no reliable evidence is available, it returns `no_reliable_evidence`.
 
-Only explicitly configured remote Neo4j or LLM services cause the corresponding network access. Therefore LogicLens is local-first, but not every possible configuration is offline.
+Only explicitly configured remote Neo4j or LLM services cause the corresponding network access. Therefore RepoHelix is local-first, but not every possible configuration is offline.
 
 ### MCP, plugins, and indexing
 

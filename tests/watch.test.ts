@@ -12,7 +12,7 @@ import { buildFreshnessMetadata, buildFreshnessNotice, buildFreshnessWarning } f
 import { SingleProcessIndexQueue } from "../src/core/indexing/scheduler.js";
 import { BRAND, BRAND_PATHS } from "../src/shared/branding.js";
 import { parserRegistry } from "../src/core/registries/registry.js";
-import { LOGICLENS_PLUGIN_API_VERSION } from "@logiclens/plugin-sdk";
+import { PLUGIN_API_VERSION } from "@repohelix/plugin-sdk";
 
 const execFileAsync = promisify(execFile);
 
@@ -21,10 +21,10 @@ async function makeTempWorkspace(): Promise<string> {
 }
 
 async function installWatchFixturePlugin(workspaceRoot: string): Promise<void> {
-  const pluginDir = path.join(workspaceRoot, ".logiclens", "plugins", "fixture-csharp");
+  const pluginDir = path.join(workspaceRoot, ".repohelix", "plugins", "fixture-csharp");
   await fs.mkdir(pluginDir, { recursive: true });
   const manifest = {
-    name: "watch-fixture-csharp", version: "0.0.1", logiclensPluginApiVersion: LOGICLENS_PLUGIN_API_VERSION,
+    name: "watch-fixture-csharp", version: "0.0.1", pluginApiVersion: PLUGIN_API_VERSION,
     capabilities: ["language"], entry: "./index.js",
     languages: [{ id: "csharp", extensions: [".cs"], detect: { extensions: [".cs"], markers: ["fixture.csproj"] } }]
   };
@@ -205,7 +205,7 @@ describe(`${BRAND.displayName} File Watcher Subsystem`, () => {
           cwd
         ], {
           cwd: path.resolve("."),
-          env: { ...process.env, LOGICLENS_KUZU_CLOSE_MODE: "managed" },
+          env: { ...process.env, REPOHELIX_KUZU_CLOSE_MODE: "managed" },
           timeout: 60000
         });
         expect(stdout).toContain("watch lexical scenario passed");
@@ -603,7 +603,7 @@ describe(`${BRAND.displayName} File Watcher Subsystem`, () => {
 
       const notice = buildFreshnessNotice(metadata);
       expect(notice).toContain("Freshness: stale");
-      expect(notice).toContain("logiclens_get_watch_status");
+      expect(notice).toContain("repohelix_get_watch_status");
       expect(notice).not.toContain("pendingFiles");
       expect(notice).not.toContain("indexQueue");
       expect(notice).not.toContain("src/OrderService.ts");

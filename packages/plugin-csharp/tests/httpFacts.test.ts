@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { PluginHttpEndpointFact, PluginSymbolView } from "@logiclens/plugin-sdk";
+import type { PluginHttpEndpointFact, PluginSymbolView } from "@repohelix/plugin-sdk";
 import { parseCSharp } from "../src/parser.js";
 import { csharpHttpExtractor } from "../src/httpFacts.js";
 

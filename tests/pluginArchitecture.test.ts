@@ -12,9 +12,9 @@ import { registerCommonBuiltins, resetJavaBuiltinCapabilities } from "../src/cor
 import { ContractExtractorRegistry, FrameworkDetectorRegistry, ParserRegistry, contractExtractorRegistry, frameworkDetectorRegistry, parserRegistry } from "../src/core/registries/registry.js";
 import { parseSourceFile, registerBuiltinParsers } from "../src/core/parsing/parserRegistry.js";
 import { getLoadedLanguageGrammar, LANGUAGE_DEFINITIONS } from "../src/core/parsing/languages/registry.js";
-import { discoverLogicLensPlugin, loadDiscoveredLogicLensPlugins, validatePlugin } from "../src/core/plugins/runtime.js";
-import { LOGICLENS_PLUGIN_API_VERSION, definePlugin } from "@logiclens/plugin-sdk";
-import { joinHttpPaths, normalizeRouteTemplate } from "@logiclens/plugin-sdk/utils";
+import { discoverPlugin, loadDiscoveredPlugins, validatePlugin } from "../src/core/plugins/runtime.js";
+import { PLUGIN_API_VERSION, definePlugin } from "@repohelix/plugin-sdk";
+import { joinHttpPaths, normalizeRouteTemplate } from "@repohelix/plugin-sdk/utils";
 import { defaultConfig } from "../src/config/loadConfig.js";
 import { scanAndParseRepo } from "../src/core/indexing/scanParse.js";
 import { repoId } from "../src/shared/path.js";
@@ -24,12 +24,12 @@ import { AppClient } from "../src/interfaces/sdk/client.js";
 import type { QueryPlanningContext } from "../src/features/ask/planningContext.js";
 
 async function installFixtureLanguagePlugin(repo: string): Promise<void> {
-  const pluginDir = path.join(repo, ".logiclens", "plugins", "fixture-csharp");
+  const pluginDir = path.join(repo, ".repohelix", "plugins", "fixture-csharp");
   await fs.mkdir(pluginDir, { recursive: true });
   const manifest = {
     name: "fixture-csharp",
     version: "0.0.1",
-    logiclensPluginApiVersion: LOGICLENS_PLUGIN_API_VERSION,
+    pluginApiVersion: PLUGIN_API_VERSION,
     capabilities: ["language"],
     entry: "./index.js",
     languages: [{
@@ -40,7 +40,7 @@ async function installFixtureLanguagePlugin(repo: string): Promise<void> {
   };
   await fs.writeFile(path.join(pluginDir, "plugin.json"), JSON.stringify(manifest), "utf8");
   await fs.writeFile(path.join(pluginDir, "index.js"), `
-    globalThis.__logiclensFixtureCsharpLoads = (globalThis.__logiclensFixtureCsharpLoads ?? 0) + 1;
+    globalThis.__repohelixFixtureCsharpLoads = (globalThis.__repohelixFixtureCsharpLoads ?? 0) + 1;
     export default {
       manifest: ${JSON.stringify(manifest)},
       languages: [{ id: "csharp", extensions: [".cs"], parse(input) {
@@ -51,12 +51,12 @@ async function installFixtureLanguagePlugin(repo: string): Promise<void> {
 }
 
 async function installScopedFixturePlugin(repo: string, label: string): Promise<void> {
-  const pluginDir = path.join(repo, ".logiclens", "plugins", `fixture-${label}`);
+  const pluginDir = path.join(repo, ".repohelix", "plugins", `fixture-${label}`);
   await fs.mkdir(pluginDir, { recursive: true });
   const manifest = {
     name: `fixture-${label}`,
     version: "0.0.1",
-    logiclensPluginApiVersion: LOGICLENS_PLUGIN_API_VERSION,
+    pluginApiVersion: PLUGIN_API_VERSION,
     capabilities: ["language", "fact-extractor", "framework-detector"],
     entry: "./index.js",
     languages: [{ id: "csharp", extensions: [".cs"], detect: { extensions: [".cs"] } }]
@@ -69,26 +69,26 @@ async function installScopedFixturePlugin(repo: string, label: string): Promise<
         return { symbols: [{ kind: "class", name: "${label}", startLine: 1, endLine: 1 }] };
       }}],
       factExtractors: [{ name: "fixture:extractor", extract(ctx) {
-        globalThis.__logiclensScopedExtracts ??= {};
-        globalThis.__logiclensScopedExtracts["${label}"] = {
+        globalThis.__repohelixScopedExtracts ??= {};
+        globalThis.__repohelixScopedExtracts["${label}"] = {
           repos: ctx.repos.map((repo) => repo.id), files: ctx.files.all().map((file) => file.repoId)
         };
       }}],
       frameworkDetectors: [{ name: "fixture:detector", detect(ctx) {
-        globalThis.__logiclensScopedDetections ??= {};
-        globalThis.__logiclensScopedDetections["${label}"] = (globalThis.__logiclensScopedDetections["${label}"] ?? []).concat(ctx.repos.map((repo) => repo.id));
+        globalThis.__repohelixScopedDetections ??= {};
+        globalThis.__repohelixScopedDetections["${label}"] = (globalThis.__repohelixScopedDetections["${label}"] ?? []).concat(ctx.repos.map((repo) => repo.id));
       }}]
     };
   `, "utf8");
 }
 
 async function installPlanningLanguagePlugin(cwd: string, name: string, language: string, extension: string): Promise<void> {
-  const pluginDir = path.join(cwd, ".logiclens", "plugins", name);
+  const pluginDir = path.join(cwd, ".repohelix", "plugins", name);
   await fs.mkdir(pluginDir, { recursive: true });
   const manifest = {
     name,
     version: "0.0.1",
-    logiclensPluginApiVersion: LOGICLENS_PLUGIN_API_VERSION,
+    pluginApiVersion: PLUGIN_API_VERSION,
     capabilities: ["language"],
     entry: "./index.js",
     languages: [{ id: language, extensions: [extension], detect: { extensions: [extension] } }]
@@ -236,7 +236,7 @@ describe("plugin architecture foundation", () => {
   });
 
   it("activates, scans, parses, scopes, and removes a manifest-defined source language", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-plugin-source-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-plugin-source-"));
     const activeRepo = path.join(cwd, "active");
     const inactiveRepo = path.join(cwd, "inactive");
     await fs.mkdir(activeRepo);
@@ -251,9 +251,9 @@ describe("plugin architecture foundation", () => {
     };
     expect(config.include).not.toContain("**/*.cs");
 
-    const beforeLoads = Number((globalThis as Record<string, unknown>).__logiclensFixtureCsharpLoads ?? 0);
+    const beforeLoads = Number((globalThis as Record<string, unknown>).__repohelixFixtureCsharpLoads ?? 0);
     const bootstrap = await autoDetectAndRegisterPlugins({ config, cwd, repoConfigs: config.repos });
-    expect(Number((globalThis as Record<string, unknown>).__logiclensFixtureCsharpLoads ?? 0)).toBe(beforeLoads + 1);
+    expect(Number((globalThis as Record<string, unknown>).__repohelixFixtureCsharpLoads ?? 0)).toBe(beforeLoads + 1);
     expect(bootstrap.activePluginSourceGlobsByRepo.get(activeRepo)).toEqual(["**/*.cs"]);
     expect(bootstrap.activePluginSourceGlobsByRepo.get(inactiveRepo)).toBeUndefined();
     const planningContext = createQueryPlanningContext({
@@ -341,7 +341,7 @@ describe("plugin architecture foundation", () => {
   });
 
   it("makes a workspace plugin available to every matching repository", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-workspace-plugin-scope-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-workspace-plugin-scope-"));
     const ownerRepo = path.join(cwd, "owner");
     const otherRepo = path.join(cwd, "other");
     await fs.mkdir(ownerRepo);
@@ -352,11 +352,11 @@ describe("plugin architecture foundation", () => {
       ...defaultConfig(),
       repos: [{ name: "owner", path: ownerRepo }, { name: "other", path: otherRepo }]
     };
-    const beforeLoads = Number((globalThis as Record<string, unknown>).__logiclensFixtureCsharpLoads ?? 0);
+    const beforeLoads = Number((globalThis as Record<string, unknown>).__repohelixFixtureCsharpLoads ?? 0);
 
     const bootstrap = await autoDetectAndRegisterPlugins({ config, cwd, repoConfigs: config.repos });
 
-    expect(Number((globalThis as Record<string, unknown>).__logiclensFixtureCsharpLoads ?? 0)).toBe(beforeLoads + 1);
+    expect(Number((globalThis as Record<string, unknown>).__repohelixFixtureCsharpLoads ?? 0)).toBe(beforeLoads + 1);
     expect(bootstrap.activePluginSourceGlobsByRepo.get(ownerRepo)).toBeUndefined();
     expect(bootstrap.activePluginSourceGlobsByRepo.get(otherRepo)).toEqual(["**/*.cs"]);
     expect(bootstrap.availablePluginSourceGlobsByRepo.get(ownerRepo)).toEqual(["**/*.cs"]);
@@ -365,7 +365,7 @@ describe("plugin architecture foundation", () => {
   });
 
   it("registers workspace plugin capabilities without repository ownership", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-workspace-capability-scope-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-workspace-capability-scope-"));
     const repoAPath = path.join(cwd, "repo-a");
     const repoBPath = path.join(cwd, "repo-b");
     await fs.mkdir(repoAPath);
@@ -382,24 +382,24 @@ describe("plugin architecture foundation", () => {
     expect("symbols" in parsedA ? parsedA.symbols[0]?.name : undefined).toBe("WorkspaceParser");
     expect("symbols" in parsedB ? parsedB.symbols[0]?.name : undefined).toBe("WorkspaceParser");
 
-    (globalThis as Record<string, unknown>).__logiclensScopedExtracts = {};
+    (globalThis as Record<string, unknown>).__repohelixScopedExtracts = {};
     const pluginExtractors = contractExtractorRegistry.extractors().filter((extractor) => extractor.name === "fixture:extractor");
     expect(pluginExtractors).toHaveLength(1);
     for (const extractor of pluginExtractors) {
       await extractor.extract({ repos: [repoA, repoB], parsedFiles: [parsedA, parsedB] }, new ExtractionBuilder());
     }
-    expect((globalThis as any).__logiclensScopedExtracts).toEqual({
+    expect((globalThis as any).__repohelixScopedExtracts).toEqual({
       WorkspaceParser: { repos: [repoA.id, repoB.id], files: [repoA.id, repoB.id] }
     });
 
-    (globalThis as Record<string, unknown>).__logiclensScopedDetections = {};
+    (globalThis as Record<string, unknown>).__repohelixScopedDetections = {};
     const pluginDetectors = frameworkDetectorRegistry.detectors().filter((detector) => detector.name === "fixture:detector");
     expect(pluginDetectors).toHaveLength(1);
     for (const detector of pluginDetectors) {
       await detector.detect(repoA, [parsedA]);
       await detector.detect(repoB, [parsedB]);
     }
-    expect((globalThis as any).__logiclensScopedDetections).toEqual({ WorkspaceParser: [repoA.id, repoB.id] });
+    expect((globalThis as any).__repohelixScopedDetections).toEqual({ WorkspaceParser: [repoA.id, repoB.id] });
   });
   it("publishes only the plugin SDK as a host dependency", async () => {
     const packageJson = JSON.parse(await fs.readFile(path.resolve("package.json"), "utf8")) as {
@@ -410,8 +410,8 @@ describe("plugin architecture foundation", () => {
     expect(packageJson.exports?.["./plugin-sdk"]).toBeUndefined();
     expect(packageJson.exports?.["./plugin-sdk/utils"]).toBeUndefined();
     expect(packageJson.exports?.["./plugin-runtime"]).toBeUndefined();
-    expect(packageJson.dependencies?.["@logiclens/plugin-sdk"]).toBe("workspace:*");
-    expect(packageJson.dependencies?.["@logiclens/plugin-runtime"]).toBeUndefined();
+    expect(packageJson.dependencies?.["@repohelix/plugin-sdk"]).toBe("workspace:*");
+    expect(packageJson.dependencies?.["@repohelix/plugin-runtime"]).toBeUndefined();
   });
 
   it("keeps plugin SDK free of core imports", async () => {
@@ -663,7 +663,7 @@ describe("plugin architecture foundation", () => {
       manifest: {
         name: "test-plugin",
         version: "0.0.1",
-        logiclensPluginApiVersion: LOGICLENS_PLUGIN_API_VERSION,
+        pluginApiVersion: PLUGIN_API_VERSION,
         capabilities: ["fact-extractor"]
       },
       factExtractors: []
@@ -674,7 +674,7 @@ describe("plugin architecture foundation", () => {
       manifest: {
         name: "bad-plugin",
         version: "0.0.1",
-        logiclensPluginApiVersion: "999.0.0",
+        pluginApiVersion: "999.0.0",
         capabilities: ["fact-extractor"]
       }
     }, "bad-plugin")).toThrow(/requires plugin API/);
@@ -685,7 +685,7 @@ describe("plugin architecture foundation", () => {
       manifest: {
         name: "csharp-plugin",
         version: "0.0.1",
-        logiclensPluginApiVersion: LOGICLENS_PLUGIN_API_VERSION,
+        pluginApiVersion: PLUGIN_API_VERSION,
         capabilities: ["language", "fact-extractor"]
       },
       languages: [{
@@ -725,7 +725,7 @@ describe("plugin architecture foundation", () => {
     const manifest = {
       name: "bad-language-plugin",
       version: "0.0.1",
-      logiclensPluginApiVersion: LOGICLENS_PLUGIN_API_VERSION,
+      pluginApiVersion: PLUGIN_API_VERSION,
       capabilities: ["language" as const],
       languages: [{ id: "go", extensions: [".go"] }]
     };
@@ -744,23 +744,23 @@ describe("plugin architecture foundation", () => {
   });
 
   it("resolves plugin entry from package.json when plugin.json omits entry", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-plugin-entry-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-plugin-entry-"));
     await fs.writeFile(path.join(dir, "plugin.json"), JSON.stringify({
       name: "entry-test",
       version: "0.0.1",
-      logiclensPluginApiVersion: LOGICLENS_PLUGIN_API_VERSION,
+      pluginApiVersion: PLUGIN_API_VERSION,
       capabilities: ["fact-extractor"]
     }), "utf8");
     await fs.writeFile(path.join(dir, "package.json"), JSON.stringify({ exports: { ".": { import: "./index.js" } } }), "utf8");
-    await fs.writeFile(path.join(dir, "index.js"), `export default { manifest: { name: 'entry-test', version: '0.0.1', logiclensPluginApiVersion: '${LOGICLENS_PLUGIN_API_VERSION}', capabilities: ['fact-extractor'] }, factExtractors: [] };`, "utf8");
+    await fs.writeFile(path.join(dir, "index.js"), `export default { manifest: { name: 'entry-test', version: '0.0.1', pluginApiVersion: '${PLUGIN_API_VERSION}', capabilities: ['fact-extractor'] }, factExtractors: [] };`, "utf8");
 
-    const discovered = await discoverLogicLensPlugin(dir);
+    const discovered = await discoverPlugin(dir);
     expect(discovered.entryPath).toBe(path.join(dir, "index.js"));
-    await expect(loadDiscoveredLogicLensPlugins([discovered], { failFast: true })).resolves.toHaveLength(1);
+    await expect(loadDiscoveredPlugins([discovered], { failFast: true })).resolves.toHaveLength(1);
   });
 
   it("detects Vue and cascades to JS/TS delegate languages", async () => {
-    const repo = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-vue-detect-"));
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-vue-detect-"));
     await fs.writeFile(path.join(repo, "App.vue"), "<script setup lang=\"ts\">const x = 1</script>", "utf8");
     const config = { ...defaultConfig(), include: ["**/*.vue"], repos: [{ name: "vue", path: repo }] };
     const snapshot = await scanRepoPathSnapshot(repo, config);
@@ -774,7 +774,7 @@ describe("plugin architecture foundation", () => {
   });
 
   it("matches markers up to three repo levels after ignore filtering", async () => {
-    const repo = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-marker-depth-"));
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-marker-depth-"));
     await fs.mkdir(path.join(repo, "packages", "apps", "orders"), { recursive: true });
     await fs.mkdir(path.join(repo, "dist", "nested"), { recursive: true });
     await fs.writeFile(path.join(repo, "packages", "apps", "orders", "pom.xml"), "<project />", "utf8");
@@ -811,7 +811,7 @@ describe("plugin architecture foundation", () => {
 
   it("activates Java build markers without registering the Java parser or source extractors", async () => {
     resetJavaBuiltinCapabilities();
-    const repo = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-java-marker-only-"));
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-java-marker-only-"));
     await fs.writeFile(path.join(repo, "pom.xml"), "<project />", "utf8");
     const config = { ...defaultConfig(), repos: [{ name: "marker", path: repo }] };
 
@@ -825,7 +825,7 @@ describe("plugin architecture foundation", () => {
 
   it("activates Dubbo XML without registering the Java parser", async () => {
     resetJavaBuiltinCapabilities();
-    const repo = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-dubbo-xml-only-"));
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-dubbo-xml-only-"));
     await fs.writeFile(path.join(repo, "dubbo.xml"), "<beans xmlns:dubbo=\"http://dubbo.apache.org/schema/dubbo\"><dubbo:service interface=\"com.example.Api\" /></beans>", "utf8");
     const config = { ...defaultConfig(), repos: [{ name: "dubbo", path: repo }] };
 
@@ -840,7 +840,7 @@ describe("plugin architecture foundation", () => {
 
   it("registers Java parser and source extractors only when Java source files are present", async () => {
     resetJavaBuiltinCapabilities();
-    const repo = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-java-source-"));
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-java-source-"));
     await fs.mkdir(path.join(repo, "src", "main", "java"), { recursive: true });
     await fs.writeFile(path.join(repo, "src", "main", "java", "OrderController.java"), "class OrderController {}", "utf8");
     const config = { ...defaultConfig(), include: ["**/*"], repos: [{ name: "java", path: repo }] };
@@ -861,7 +861,7 @@ describe("plugin architecture foundation", () => {
   });
 
   it("loads legacy configured generic plugins without matching a language", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-legacy-generic-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-legacy-generic-"));
     const pluginDir = path.join(cwd, "generic-plugin");
     const repoDir = path.join(cwd, "repo");
     await fs.mkdir(pluginDir, { recursive: true });
@@ -869,7 +869,7 @@ describe("plugin architecture foundation", () => {
     await fs.writeFile(path.join(repoDir, "README.md"), "# test", "utf8");
     await fs.writeFile(path.join(pluginDir, "plugin.js"), `
       export default {
-        manifest: { name: "generic-plugin", version: "0.0.1", logiclensPluginApiVersion: "${LOGICLENS_PLUGIN_API_VERSION}", capabilities: ["fact-extractor"] },
+        manifest: { name: "generic-plugin", version: "0.0.1", pluginApiVersion: "${PLUGIN_API_VERSION}", capabilities: ["fact-extractor"] },
         factExtractors: [{ name: "generic:test", extract() {} }]
       };
     `, "utf8");
@@ -892,7 +892,7 @@ describe("plugin architecture foundation", () => {
         manifest: {
           name: "memory-test-plugin",
           version: "0.0.1",
-          logiclensPluginApiVersion: LOGICLENS_PLUGIN_API_VERSION,
+          pluginApiVersion: PLUGIN_API_VERSION,
           capabilities: ["language", "fact-extractor", "framework-detector"]
         },
         languages: [{
@@ -936,7 +936,7 @@ describe("plugin architecture foundation", () => {
         manifest: {
           name: "memory-builtin-override",
           version: "0.0.1",
-          logiclensPluginApiVersion: LOGICLENS_PLUGIN_API_VERSION,
+          pluginApiVersion: PLUGIN_API_VERSION,
           capabilities: ["fact-extractor", "framework-detector"]
         },
         factExtractors: [{ name: "builtin:package-json", extract() {} }],
@@ -966,7 +966,7 @@ describe("plugin architecture foundation", () => {
         manifest: {
           name: "memory-ts-override",
           version: "0.0.1",
-          logiclensPluginApiVersion: LOGICLENS_PLUGIN_API_VERSION,
+          pluginApiVersion: PLUGIN_API_VERSION,
           capabilities: ["language"]
         },
         languages: [{

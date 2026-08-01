@@ -17,7 +17,7 @@ jobs:
       neo4j:
         image: neo4j:5.26-community
         env:
-          NEO4J_AUTH: neo4j/logiclens-release-test-only
+          NEO4J_AUTH: neo4j/repohelix-release-test-only
         ports:
           - 7687:7687
         options: >-
@@ -26,12 +26,12 @@ jobs:
           --health-timeout 5s
           --health-retries 12
     env:
-      LOGICLENS_RUN_NEO4J_INTEGRATION: "1"
-      LOGICLENS_TEST_NEO4J_URL: bolt://localhost:7687
-      LOGICLENS_TEST_NEO4J_USERNAME: neo4j
-      LOGICLENS_TEST_NEO4J_PASSWORD: logiclens-release-test-only
-      LOGICLENS_TEST_NEO4J_DATABASE: neo4j
-      LOGICLENS_TEST_NEO4J_EPHEMERAL: "1"
+      REPOHELIX_RUN_NEO4J_INTEGRATION: "1"
+      REPOHELIX_TEST_NEO4J_URL: bolt://localhost:7687
+      REPOHELIX_TEST_NEO4J_USERNAME: neo4j
+      REPOHELIX_TEST_NEO4J_PASSWORD: repohelix-release-test-only
+      REPOHELIX_TEST_NEO4J_DATABASE: neo4j
+      REPOHELIX_TEST_NEO4J_EPHEMERAL: "1"
     steps:
       - name: Checkout tag
         uses: actions/checkout@v6
@@ -118,9 +118,9 @@ jobs:
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          npm publish "./release-artifacts/logiclens-plugin-sdk-${VERSION}.tgz" --access public
-          npm publish "./release-artifacts/logiclens-plugin-csharp-${VERSION}.tgz" --access public
-          npm publish "./release-artifacts/logiclens-${VERSION}.tgz" --access public
+          npm publish "./release-artifacts/repohelix-plugin-sdk-${VERSION}.tgz" --access public
+          npm publish "./release-artifacts/repohelix-plugin-csharp-${VERSION}.tgz" --access public
+          npm publish "./release-artifacts/repohelix-${VERSION}.tgz" --access public
 
   smoke:
     name: Registry installation smoke test

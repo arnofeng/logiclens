@@ -54,7 +54,7 @@ describe("query target classifier", () => {
   });
 
   it("produces exactly one classification per non-empty span", () => {
-    const spans = lexQuery("Open /workspace/logiclens and call api:GET:/orders");
+    const spans = lexQuery("Open /workspace/repohelix and call api:GET:/orders");
     const targets = classifyQueryTargets(spans);
     expect(targets).toHaveLength(spans.length);
     expect(targets.every((target) => target.span.value.length > 0)).toBe(true);

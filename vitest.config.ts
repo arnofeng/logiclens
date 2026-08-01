@@ -7,8 +7,8 @@ export default defineConfig({
   root,
   resolve: {
     alias: [
-      { find: "@logiclens/plugin-sdk/utils", replacement: pathAlias("packages/plugin-sdk/src/utils.ts") },
-      { find: "@logiclens/plugin-sdk", replacement: pathAlias("packages/plugin-sdk/src/index.ts") }
+      { find: "@repohelix/plugin-sdk/utils", replacement: pathAlias("packages/plugin-sdk/src/utils.ts") },
+      { find: "@repohelix/plugin-sdk", replacement: pathAlias("packages/plugin-sdk/src/index.ts") }
     ]
   },
   test: {

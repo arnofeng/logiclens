@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-LogicLens is a TypeScript, ESM-based CLI and library. Core implementation lives in `src/`: `core/` contains parsing, indexing, graph, contract, semantic, and framework logic; `interfaces/` contains CLI, MCP, installer, and SDK entry points; `adapters/` contains graph database and embedding integrations; `shared/` contains reusable utilities. Public plugin contracts live in the `packages/plugin-sdk` workspace package, while plugin discovery and loading remain internal to `src/core/plugins`. Tests are in `tests/**/*.test.ts`, with reusable samples under `tests/fixtures/` and contract-focused suites under `tests/contracts/`. Documentation lives in `docs/`, and generated build output goes to `dist/`.
+RepoHelix is a TypeScript, ESM-based CLI and library. Core implementation lives in `src/`: `core/` contains parsing, indexing, graph, contract, semantic, and framework logic; `interfaces/` contains CLI, MCP, installer, and SDK entry points; `adapters/` contains graph database and embedding integrations; `shared/` contains reusable utilities. Public plugin contracts live in the `packages/plugin-sdk` workspace package, while plugin discovery and loading remain internal to `src/core/plugins`. Tests are in `tests/**/*.test.ts`, with reusable samples under `tests/fixtures/` and contract-focused suites under `tests/contracts/`. Documentation lives in `docs/`, and generated build output goes to `dist/`.
 
 ## Build, Test, and Development Commands
 
@@ -28,4 +28,4 @@ Recent history follows Conventional Commits, for example `feat: per-query Kuzu c
 
 ## Security & Configuration Tips
 
-LogicLens is local-first. Do not add unauthorized network calls or external API dependencies in core indexing, graph, or analysis paths. Keep secrets out of source files and follow `SECURITY.md` for vulnerability reports.
+RepoHelix is local-first. Do not add unauthorized network calls or external API dependencies in core indexing, graph, or analysis paths. Keep secrets out of source files and follow `SECURITY.md` for vulnerability reports.

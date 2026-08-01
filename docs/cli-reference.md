@@ -1,29 +1,29 @@
 # CLI Command Reference
 
-LogicLens provides a complete command-line tool for managing the construction, querying, and analysis of cross-repository semantic dependency graphs. This document covers all built-in commands and their parameter descriptions.
+RepoHelix provides a complete command-line tool for managing the construction, querying, and analysis of cross-repository semantic dependency graphs. This document covers all built-in commands and their parameter descriptions.
 
 ## Basic Usage
 
 ```bash
-logiclens <command> [arguments] [options]
+repohelix <command> [arguments] [options]
 ```
 
 View version:
 
 ```bash
-logiclens --version
+repohelix --version
 ```
 
 View global help:
 
 ```bash
-logiclens --help
+repohelix --help
 ```
 
 View help for a specific command:
 
 ```bash
-logiclens <command> --help
+repohelix <command> --help
 ```
 
 ---
@@ -32,50 +32,50 @@ logiclens <command> --help
 
 | Command | Description |
 |---------|-------------|
-| [`init`](#logiclens-init) | Initialize LogicLens workspace |
-| [`uninit`](#logiclens-uninit) | Remove LogicLens workspace |
-| [`add-repo`](#logiclens-add-repo-path) | Add a single repository |
-| [`add-repos`](#logiclens-add-repos-directory) | Batch-add Git repositories from a directory |
-| [`index`](#logiclens-index) | Index configured repositories |
-| [`stats`](#logiclens-stats) | Print graph statistics |
-| [`deps`](#logiclens-deps) | List cross-repository dependencies |
-| [`contracts`](#logiclens-contracts) | List contracts with producer/consumer counts |
-| [`trace`](#logiclens-trace-target) | Multi-hop semantic trace of a contract spec |
-| [`ask`](#logiclens-ask-question) | Natural language Q&A |
-| [`impact`](#logiclens-impact-symbolorentity) | Change impact analysis |
-| [`quality`](#logiclens-quality-action) | Audit and govern relation/contract quality |
-| [`rebuild-relations`](#logiclens-rebuild-relations) | Rebuild cross-repository dependency edges |
-| [`frameworks`](#logiclens-frameworks) | List detected frameworks |
-| [`plugin`](#logiclens-plugin) | Install, list, diagnose, and remove plugins |
-| [`mcp`](#logiclens-mcp) | Start MCP server |
-| [`watch`](#logiclens-watch) | Start file watcher for auto-indexing |
-| [`install`](#logiclens-install) | Install MCP into AI agents |
-| [`uninstall`](#logiclens-uninstall) | Remove MCP from AI agents |
+| [`init`](#repohelix-init) | Initialize RepoHelix workspace |
+| [`uninit`](#repohelix-uninit) | Remove RepoHelix workspace |
+| [`add-repo`](#repohelix-add-repo-path) | Add a single repository |
+| [`add-repos`](#repohelix-add-repos-directory) | Batch-add Git repositories from a directory |
+| [`index`](#repohelix-index) | Index configured repositories |
+| [`stats`](#repohelix-stats) | Print graph statistics |
+| [`deps`](#repohelix-deps) | List cross-repository dependencies |
+| [`contracts`](#repohelix-contracts) | List contracts with producer/consumer counts |
+| [`trace`](#repohelix-trace-target) | Multi-hop semantic trace of a contract spec |
+| [`ask`](#repohelix-ask-question) | Natural language Q&A |
+| [`impact`](#repohelix-impact-symbolorentity) | Change impact analysis |
+| [`quality`](#repohelix-quality-action) | Audit and govern relation/contract quality |
+| [`rebuild-relations`](#repohelix-rebuild-relations) | Rebuild cross-repository dependency edges |
+| [`frameworks`](#repohelix-frameworks) | List detected frameworks |
+| [`plugin`](#repohelix-plugin) | Install, list, diagnose, and remove plugins |
+| [`mcp`](#repohelix-mcp) | Start MCP server |
+| [`watch`](#repohelix-watch) | Start file watcher for auto-indexing |
+| [`install`](#repohelix-install) | Install MCP into AI agents |
+| [`uninstall`](#repohelix-uninstall) | Remove MCP from AI agents |
 
 ---
 
 ## Project Initialization
 
-### `logiclens init`
+### `repohelix init`
 
-Create a `.logiclens/` workspace in the current directory, including default configuration file and graph database directory.
+Create a `.repohelix/` workspace in the current directory, including default configuration file and graph database directory.
 
 ```bash
-logiclens init
+repohelix init
 ```
 
 **Parameters**: None
 
-**Behavior**: Generates `.logiclens/config.yaml` with a default system name and empty repository list.
+**Behavior**: Generates `.repohelix/config.yaml` with a default system name and empty repository list.
 
 ---
 
-### `logiclens uninit`
+### `repohelix uninit`
 
-Remove all contents of the LogicLens workspace, including configuration, graph database, and cache, and stop any running MCP server.
+Remove all contents of the RepoHelix workspace, including configuration, graph database, and cache, and stop any running MCP server.
 
 ```bash
-logiclens uninit
+repohelix uninit
 ```
 
 **Parameters**: None
@@ -87,13 +87,13 @@ logiclens uninit
 
 ## Repository Management
 
-### `logiclens add-repo <path>`
+### `repohelix add-repo <path>`
 
-Add a single repository to `.logiclens/config.yaml`.
+Add a single repository to `.repohelix/config.yaml`.
 
 ```bash
-logiclens add-repo ../my-service
-logiclens add-repo ../my-service --name my-service
+repohelix add-repo ../my-service
+repohelix add-repo ../my-service --name my-service
 ```
 
 **Parameters**:
@@ -110,14 +110,14 @@ logiclens add-repo ../my-service --name my-service
 
 ---
 
-### `logiclens add-repos <directory>`
+### `repohelix add-repos <directory>`
 
 Scan all top-level Git repositories in the specified directory and batch-add them to the configuration.
 
 ```bash
-logiclens add-repos ../all-services
-logiclens add-repos ../all-services --index
-logiclens add-repos ../all-services --index --changed-only
+repohelix add-repos ../all-services
+repohelix add-repos ../all-services --index
+repohelix add-repos ../all-services --index --changed-only
 ```
 
 **Parameters**:
@@ -139,18 +139,18 @@ logiclens add-repos ../all-services --index --changed-only
 
 ## Indexing & Building
 
-### `logiclens index`
+### `repohelix index`
 
 Index configured repositories, parse source code, and build the semantic dependency graph.
 
 Before parsing, this command detects and activates installed plugins that match each repository. See the [Plugin Guide](plugins.md).
 
 ```bash
-logiclens index
-logiclens index --repo service-a
-logiclens index --changed-only
-logiclens index --max-files 1000
-logiclens index --batch-size 3
+repohelix index
+repohelix index --repo service-a
+repohelix index --changed-only
+repohelix index --max-files 1000
+repohelix index --batch-size 3
 ```
 
 **Options**:
@@ -164,14 +164,14 @@ logiclens index --batch-size 3
 
 ---
 
-### `logiclens rebuild-relations`
+### `repohelix rebuild-relations`
 
 Rebuild cross-repository dependency edges based on indexed contract evidence.
 
 ```bash
-logiclens rebuild-relations
-logiclens rebuild-relations --repo service-a # Recommended
-logiclens rebuild-relations --full # Not recommended
+repohelix rebuild-relations
+repohelix rebuild-relations --repo service-a # Recommended
+repohelix rebuild-relations --full # Not recommended
 ```
 
 **Options**:
@@ -185,12 +185,12 @@ logiclens rebuild-relations --full # Not recommended
 
 ## Query & Analysis
 
-### `logiclens stats`
+### `repohelix stats`
 
 Print basic statistics about the graph.
 
 ```bash
-logiclens stats
+repohelix stats
 ```
 
 **Parameters**: None
@@ -199,29 +199,29 @@ logiclens stats
 
 ---
 
-### `logiclens deps`
+### `repohelix deps`
 
 List structured cross-repository dependencies.
 
 ```bash
-logiclens deps
-logiclens deps --strength strong
-logiclens deps --type api --limit 20
+repohelix deps
+repohelix deps --strength strong
+repohelix deps --type api --limit 20
 
 # All dependencies involving order-service (outgoing + incoming)
-logiclens deps --repo order-service
+repohelix deps --repo order-service
 
 # What does order-service depend on?
-logiclens deps --repo order-service --direction outgoing
+repohelix deps --repo order-service --direction outgoing
 
 # What depends on order-service?
-logiclens deps --repo order-service --direction incoming
+repohelix deps --repo order-service --direction incoming
 
 # Does order-service directly depend on payment-service?
-logiclens deps --repo order-service --target payment-service --direction outgoing
+repohelix deps --repo order-service --target payment-service --direction outgoing
 
 # Combine with existing filters
-logiclens deps --repo order-service --target payment-service --direction outgoing --strength strong --type api
+repohelix deps --repo order-service --target payment-service --direction outgoing --strength strong --type api
 ```
 
 **Options**:
@@ -241,13 +241,13 @@ logiclens deps --repo order-service --target payment-service --direction outgoin
 
 ---
 
-### `logiclens explain-deps <sourceRepo> <targetRepo>`
+### `repohelix explain-deps <sourceRepo> <targetRepo>`
 
 Explain the protocol-specific semantic relations from one repository to another.
 
 ```bash
-logiclens explain-deps order-service payment-service
-logiclens explain-deps order-service payment-service --kind CALLS_HTTP
+repohelix explain-deps order-service payment-service
+repohelix explain-deps order-service payment-service --kind CALLS_HTTP
 ```
 
 **Arguments**:
@@ -267,29 +267,29 @@ The command prints the contract keys, reason, confidence, spec kinds, and spec I
 
 ---
 
-### `logiclens contracts`
+### `repohelix contracts`
 
 List all contracts with their producer/consumer counts.
 
 ```bash
 # All contracts
-logiclens contracts
+repohelix contracts
 
 # Filter by contract kind
-logiclens contracts --kind api
-logiclens contracts --kind event --limit 10
+repohelix contracts --kind api
+repohelix contracts --kind event --limit 10
 
 # What contracts does order-service participate in?
-logiclens contracts --repo order-service
+repohelix contracts --repo order-service
 
 # What does order-service produce?
-logiclens contracts --repo order-service --direction outgoing
+repohelix contracts --repo order-service --direction outgoing
 
 # What does order-service consume?
-logiclens contracts --repo order-service --direction incoming
+repohelix contracts --repo order-service --direction incoming
 
 # Combine filters
-logiclens contracts --repo order-service --kind api --direction incoming
+repohelix contracts --repo order-service --kind api --direction incoming
 ```
 
 **Options**:
@@ -306,27 +306,27 @@ logiclens contracts --repo order-service --kind api --direction incoming
 
 ---
 
-### `logiclens trace <target>`
+### `repohelix trace <target>`
 
 Resolve a natural contract identifier to its `ContractSpec` and walk `SEMANTIC_REL`
 edges **multi-hop in both directions**, returning the connected sub-graph: downstream
 request/response/payload schemas and upstream consumers. No internal spec IDs required.
 
 ```bash
-logiclens trace "http POST /orders"
-logiclens trace "api GET /users/:id"
-logiclens trace "event OrderCreated"
-logiclens trace "schema CreateOrderRequest"
-logiclens trace "grpc OrderService/CreateOrder"
-logiclens trace "grpc acme.order.v1.OrderService/CreateOrder"
-logiclens trace "dubbo com.acme.OrderService#createOrder"
-logiclens trace "graphql Query.user"
-logiclens trace "graphql Mutation.createOrder"
-logiclens trace "graphql Subscription.orderCreated"
-logiclens trace http "POST /orders"            # extra tokens are joined too
-logiclens trace "http POST /orders" --json     # structured output
-logiclens trace "http POST /orders" --max-hops 5
-logiclens trace "http POST /orders" --direction incoming   # consumers only
+repohelix trace "http POST /orders"
+repohelix trace "api GET /users/:id"
+repohelix trace "event OrderCreated"
+repohelix trace "schema CreateOrderRequest"
+repohelix trace "grpc OrderService/CreateOrder"
+repohelix trace "grpc acme.order.v1.OrderService/CreateOrder"
+repohelix trace "dubbo com.acme.OrderService#createOrder"
+repohelix trace "graphql Query.user"
+repohelix trace "graphql Mutation.createOrder"
+repohelix trace "graphql Subscription.orderCreated"
+repohelix trace http "POST /orders"            # extra tokens are joined too
+repohelix trace "http POST /orders" --json     # structured output
+repohelix trace "http POST /orders" --max-hops 5
+repohelix trace "http POST /orders" --direction incoming   # consumers only
 ```
 
 Example output:
@@ -370,7 +370,7 @@ its source line, raw expression, and extraction rule are included in JSON and
 shown in text output when available.
 
 > Upgrading from a graph that contains `CALLS_ENDPOINT` requires a complete
-> `logiclens index`. Running only `rebuild-relations` is insufficient because
+> `repohelix index`. Running only `rebuild-relations` is insufficient because
 > older consumer specs do not identify the containing caller method. Follow the
 > [1.0 migration guide](migration-1.0.md) to preserve configuration and recreate
 > an already-indexed beta workspace before running the complete index.
@@ -383,22 +383,22 @@ shown in text output when available.
 | `--direction <direction>` | `outgoing`, `incoming`, or `both` (default) |
 | `--json` | Emit the structured trace graph as JSON |
 
-> The same capability is exposed to agents via the MCP tool `logiclens_trace`
+> The same capability is exposed to agents via the MCP tool `repohelix_trace`
 > using its `target` parameter (e.g. `{ "target": "http POST /orders" }` or `{ "target": "grpc OrderService/CreateOrder" }`).
 
 ---
 
-### `logiclens impact <symbolOrEntity>`
+### `repohelix impact <symbolOrEntity>`
 
 Perform change impact analysis on a specified symbol or entity.
 
 ```bash
-logiclens impact UserService
-logiclens impact /api/order/:id
-logiclens impact "schema CreateOrderRequest"
-logiclens impact "http POST /orders" --max-hops 5
-logiclens impact "schema CreateOrderRequest" --change field-removed:couponCode
-logiclens impact Order --legacy
+repohelix impact UserService
+repohelix impact /api/order/:id
+repohelix impact "schema CreateOrderRequest"
+repohelix impact "http POST /orders" --max-hops 5
+repohelix impact "schema CreateOrderRequest" --change field-removed:couponCode
+repohelix impact Order --legacy
 ```
 
 **Parameters**:
@@ -425,16 +425,16 @@ impact output. Explicit contract targets such as `schema Order` or
 
 ---
 
-### `logiclens ask <question>`
+### `repohelix ask <question>`
 
 Ask a natural-language question about the indexed workspace.
 
 ```bash
-logiclens ask "Which services depend on OrderService?"
-logiclens ask "What modules would be affected by modifying PaymentEvent?"
-logiclens ask "/mall/mgr/groupon/activity/createActivity"
-logiclens ask "Analyze the workflow for /mall/mgr/groupon/activity/createActivity"
-logiclens ask "Analyze the workflow for POST /mall/mgr/groupon/activity/createActivity"
+repohelix ask "Which services depend on OrderService?"
+repohelix ask "What modules would be affected by modifying PaymentEvent?"
+repohelix ask "/mall/mgr/groupon/activity/createActivity"
+repohelix ask "Analyze the workflow for /mall/mgr/groupon/activity/createActivity"
+repohelix ask "Analyze the workflow for POST /mall/mgr/groupon/activity/createActivity"
 ```
 
 | Parameter | Required | Description |
@@ -447,25 +447,25 @@ If no reliable evidence is found, the command returns `no_reliable_evidence`.
 
 ## Quality Governance
 
-### `logiclens quality [action]`
+### `repohelix quality [action]`
 
 Audit and govern relation quality and contract quality.
 
 ```bash
 # Audit low-confidence relations and conflicting producers
-logiclens quality
+repohelix quality
 
 # Audit contract quality rules
-logiclens quality contracts
+repohelix quality contracts
 
 # Filter by confidence
-logiclens quality --min-confidence 0.8 --limit 50
+repohelix quality --min-confidence 0.8 --limit 50
 
 # Mark false positives
-logiclens quality --reject-evidence ev-123 --reason "false positive"
+repohelix quality --reject-evidence ev-123 --reason "false positive"
 
 # Set manual alias
-logiclens quality --alias my-service --target-repo service-a
+repohelix quality --alias my-service --target-repo service-a
 ```
 
 **Parameters**:
@@ -489,14 +489,14 @@ logiclens quality --alias my-service --target-repo service-a
 
 ## Frameworks
 
-### `logiclens frameworks`
+### `repohelix frameworks`
 
 List detected frameworks for each repository.
 
-Plugin framework detectors run as part of indexing. Run `logiclens index` after installing or updating a plugin, then use this command to view the detected frameworks.
+Plugin framework detectors run as part of indexing. Run `repohelix index` after installing or updating a plugin, then use this command to view the detected frameworks.
 
 ```bash
-logiclens frameworks
+repohelix frameworks
 ```
 
 **Output**: Detected frameworks per repository (language, confidence, evidence).
@@ -505,29 +505,29 @@ logiclens frameworks
 
 ## Plugin Management
 
-### `logiclens plugin`
+### `repohelix plugin`
 
-Install, inspect, diagnose, and remove external LogicLens plugins. Run `logiclens index` after installation to activate matching language plugins.
+Install, inspect, diagnose, and remove external RepoHelix plugins. Run `repohelix index` after installation to activate matching language plugins.
 
 ```bash
 # npm package, local directory, or npm package tarball
-logiclens plugin install @logiclens/plugin-csharp
-logiclens plugin install ../my-plugin --global
-logiclens plugin install ./my-plugin.tgz
+repohelix plugin install @repohelix/plugin-csharp
+repohelix plugin install ../my-plugin --global
+repohelix plugin install ./my-plugin.tgz
 
-logiclens plugin list --all
-logiclens plugin doctor --all
-logiclens plugin remove @logiclens/plugin-csharp --yes
+repohelix plugin list --all
+repohelix plugin doctor --all
+repohelix plugin remove @repohelix/plugin-csharp --yes
 ```
 
 #### `plugin install <source>`
 
 | Option | Description |
 |---|---|
-| `--global` | Install under the current user's `~/.logiclens/plugins/`. |
+| `--global` | Install under the current user's `~/.repohelix/plugins/`. |
 | `--force` | Atomically replace a plugin with the same manifest name. |
 
-Without an explicit scope, LogicLens installs under the current workspace's `.logiclens/plugins/`. Language detection determines which configured repositories activate the plugin. npm lifecycle scripts may run while production dependencies are installed; install only trusted plugins.
+Without an explicit scope, RepoHelix installs under the current workspace's `.repohelix/plugins/`. Language detection determines which configured repositories activate the plugin. npm lifecycle scripts may run while production dependencies are installed; install only trusted plugins.
 
 #### `plugin list` and `plugin doctor`
 
@@ -543,13 +543,13 @@ See the [Plugin Guide](plugins.md) for package requirements and security details
 
 ## MCP Server
 
-### `logiclens mcp`
+### `repohelix mcp`
 
 Start the Model Context Protocol (MCP) server via stdio for AI agent integration.
 
 ```bash
-logiclens mcp
-logiclens mcp --path /path/to/workspace
+repohelix mcp
+repohelix mcp --path /path/to/workspace
 ```
 
 **Options**:
@@ -563,16 +563,16 @@ logiclens mcp --path /path/to/workspace
 
 ---
 
-### `logiclens watch`
+### `repohelix watch`
 
 Start a file watcher that automatically indexes repository changes.
 
 Restart the watcher after installing, replacing, or removing a plugin. The watcher automatically includes active plugin source extensions while respecting `exclude` and `.gitignore` rules.
 
 ```bash
-logiclens watch
-logiclens watch --repo service-a
-logiclens watch --debounce-ms 1000
+repohelix watch
+repohelix watch --repo service-a
+repohelix watch --debounce-ms 1000
 ```
 
 **Options**:
@@ -588,27 +588,27 @@ logiclens watch --debounce-ms 1000
 
 ## Agent Integration
 
-### `logiclens install`
+### `repohelix install`
 
-Install the LogicLens MCP server into one or more AI agents.
+Install the RepoHelix MCP server into one or more AI agents.
 
 Supported agents: Claude Code, Cursor, Codex CLI, opencode, Hermes Agent, Gemini CLI, Antigravity IDE, Kiro.
 
 ```bash
 # Interactive selection
-logiclens install
+repohelix install
 
 # Non-interactive: auto-detect and install globally
-logiclens install -y
+repohelix install -y
 
 # Specify target agents
-logiclens install -t claude-code,cursor
+repohelix install -t claude-code,cursor
 
 # Specify install location
-logiclens install -t claude-code --location local
+repohelix install -t claude-code --location local
 
 # Print config snippet only, do not write to file
-logiclens install --print-config claude-code
+repohelix install --print-config claude-code
 ```
 
 **Options**:
@@ -623,19 +623,19 @@ logiclens install --print-config claude-code
 
 ---
 
-### `logiclens uninstall`
+### `repohelix uninstall`
 
-Remove the LogicLens MCP server from AI agents.
+Remove the RepoHelix MCP server from AI agents.
 
 ```bash
 # Remove from all agents
-logiclens uninstall
+repohelix uninstall
 
 # Non-interactive
-logiclens uninstall -y
+repohelix uninstall -y
 
 # Specify target
-logiclens uninstall -t claude-code
+repohelix uninstall -t claude-code
 ```
 
 **Options**:

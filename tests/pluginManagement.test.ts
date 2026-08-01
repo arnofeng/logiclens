@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { LOGICLENS_PLUGIN_API_VERSION } from "@logiclens/plugin-sdk";
+import { PLUGIN_API_VERSION } from "@repohelix/plugin-sdk";
 import {
   classifyPluginSource,
   globalPluginScope,
@@ -19,14 +19,14 @@ const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true }))); });
 
 async function temporaryRoot(): Promise<string> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-plugin-management-"));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-plugin-management-"));
   roots.push(root);
   return root;
 }
 
 async function fixturePlugin(directory: string, name = "@fixture/plugin", version = "1.2.3"): Promise<void> {
   const manifest = {
-    name, version, logiclensPluginApiVersion: LOGICLENS_PLUGIN_API_VERSION,
+    name, version, pluginApiVersion: PLUGIN_API_VERSION,
     capabilities: ["language"], entry: "./index.js",
     languages: [{ id: "fixture", extensions: [".fixture"], detect: { extensions: [".fixture"] } }]
   };
@@ -50,8 +50,8 @@ describe("plugin management", () => {
 
   it("resolves workspace and global scopes deterministically", async () => {
     const root = await temporaryRoot();
-    expect(workspacePluginScope(root)).toEqual({ kind: "workspace", root: path.join(root, ".logiclens", "plugins") });
-    expect(globalPluginScope(root).root).toBe(path.join(root, ".logiclens", "plugins"));
+    expect(workspacePluginScope(root)).toEqual({ kind: "workspace", root: path.join(root, ".repohelix", "plugins") });
+    expect(globalPluginScope(root).root).toBe(path.join(root, ".repohelix", "plugins"));
   });
 
   it("accepts in-root names beginning with two dots and rejects unsafe npm shell input", async () => {
@@ -77,7 +77,7 @@ describe("plugin management", () => {
     const scope = { kind: "global" as const, root: path.join(root, "installed") };
     const installed = await installPlugin(source, scope, {}, { now: () => new Date("2026-01-02T03:04:05.000Z") });
     expect(installed.path).toBe(path.join(scope.root, "fixture+plugin"));
-    expect(JSON.parse(await fs.readFile(path.join(installed.path, ".logiclens-install.json"), "utf8"))).toMatchObject({ source, resolvedVersion: "1.2.3", scope: "global" });
+    expect(JSON.parse(await fs.readFile(path.join(installed.path, ".repohelix-install.json"), "utf8"))).toMatchObject({ source, resolvedVersion: "1.2.3", scope: "global" });
     await expect(installPlugin(source, scope)).rejects.toThrow(/already installed/);
     await installPlugin(source, scope, { force: true });
     expect((await inspectInstalledPlugins([scope]))[0]).toMatchObject({ name: "@fixture/plugin", status: "valid" });
@@ -125,12 +125,12 @@ describe("plugin management", () => {
     const scope = { kind: "global" as const, root: path.join(root, "installed") };
     const pluginDir = path.join(scope.root, "side-effect");
     await fixturePlugin(pluginDir, "side-effect");
-    await fs.appendFile(path.join(pluginDir, "index.js"), "\nglobalThis.__logiclensPluginInspectionExecuted = true;\n", "utf8");
-    delete (globalThis as any).__logiclensPluginInspectionExecuted;
+    await fs.appendFile(path.join(pluginDir, "index.js"), "\nglobalThis.__repohelixPluginInspectionExecuted = true;\n", "utf8");
+    delete (globalThis as any).__repohelixPluginInspectionExecuted;
     expect((await inspectInstalledPlugins([scope]))[0]?.status).toBe("valid");
-    expect((globalThis as any).__logiclensPluginInspectionExecuted).toBeUndefined();
+    expect((globalThis as any).__repohelixPluginInspectionExecuted).toBeUndefined();
     expect((await inspectInstalledPlugins([scope], { loadEntry: true }))[0]?.status).toBe("valid");
-    expect((globalThis as any).__logiclensPluginInspectionExecuted).toBe(true);
+    expect((globalThis as any).__repohelixPluginInspectionExecuted).toBe(true);
 
     const brokenDir = path.join(scope.root, "broken");
     await fixturePlugin(brokenDir, "broken");

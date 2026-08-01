@@ -1,8 +1,8 @@
-# LogicLens
+# RepoHelix
 
 <center>
 
-[![npm version](https://img.shields.io/npm/v/logiclens.svg)](https://www.npmjs.com/package/logiclens)
+[![npm version](https://img.shields.io/npm/v/repohelix.svg)](https://www.npmjs.com/package/repohelix)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 </center>
@@ -16,7 +16,7 @@
 ## Table of Contents
 
 - [⚡ Quick Start](#-quick-start)
-- [🧠 Why LogicLens](#-why-logiclens)
+- [🧠 Why RepoHelix](#-why-repohelix)
 - [🧬 Core Concept: Code Graph](#-core-concept-code-graph)
 - [🔍 CLI Usage Examples](#-cli-usage-examples)
 - [🤖 MCP Integration (AI Coding Agents)](#-mcp-integration-ai-coding-agents)
@@ -32,34 +32,34 @@
 
 ## ⚡ Quick Start
 
-### 1. Install LogicLens
+### 1. Install RepoHelix
 
 ```bash
-npm install -g logiclens
-logiclens --version
+npm install -g repohelix
+repohelix --version
 ```
 
-LogicLens requires Node.js 20.19.0 or later.
+RepoHelix requires Node.js 20.19.0 or later.
 
 ### 2. Initialize Workspace
 
 Initialize the workspace. This workspace can be a parent directory containing multiple repositories, or a standalone directory that references other repository paths.
 
 ```bash
-logiclens init
+repohelix init
 
 # Add first-level Git repositories under a directory
-logiclens add-repos ../services
+repohelix add-repos ../services
 # Add a single repository
-logiclens add-repo ../service-a --name service-a
+repohelix add-repo ../service-a --name service-a
 
-logiclens index # Index all repositories
+repohelix index # Index all repositories
 ```
 
 ### 3. Ask Questions Based on Graph Context
 
 ```bash
-logiclens trace "http POST /orders"
+repohelix trace "http POST /orders"
 ```
 
 Example expected output:
@@ -83,7 +83,7 @@ Relation Paths:
 
 ---
 
-## 🧠 Why LogicLens
+## 🧠 Why RepoHelix
 
 Modern software systems are no longer monolithic repositories — they consist of multiple parts:
 
@@ -99,9 +99,9 @@ But most tools still operate at file-level understanding and single-repository p
 - Change an event without knowing the impact scope
 - AI Agents cannot understand the overall system structure
 
-### LogicLens vs Traditional Tools
+### RepoHelix vs Traditional Tools
 
-| | Traditional Tools | LogicLens |
+| | Traditional Tools | RepoHelix |
 |---|---|---|
 | Scope | Single repository | Cross-repository workspace |
 | Granularity | File-level | Symbol / Contract-level |
@@ -113,7 +113,7 @@ But most tools still operate at file-level understanding and single-repository p
 
 ## 🧬 Core Concept: Code Graph
 
-LogicLens automatically analyzes your multi-repository system and models the entire code system as a **graph structure**:
+RepoHelix automatically analyzes your multi-repository system and models the entire code system as a **graph structure**:
 
 ### 📦 Nodes
 
@@ -132,7 +132,7 @@ LogicLens automatically analyzes your multi-repository system and models the ent
 
 ### 🚀 Capabilities
 
-- **Local-first**: Builds code knowledge graph on Kuzu graph database, stored locally in `.logiclens/graph` by default — data stays entirely on your machine.
+- **Local-first**: Builds code knowledge graph on Kuzu graph database, stored locally in `.repohelix/graph` by default — data stays entirely on your machine.
 - **Cross-repository workspace**: One workspace can point to multiple repositories, building a unified graph covering the entire code system.
 - **Static code intelligence**: Extracts symbols, imports, calls, documentation, language facts, and framework signals as graph nodes and edges.
 - **Contract model**: Normalizes cross-repository evidence into contract types like `api`, `event`, `package`, `dto`, `schema`, `grpc-method`, `dubbo-method`, `graphql-operation`, `enum`, `config`, enriching graph semantics.
@@ -172,61 +172,61 @@ Local Graph Database (Kuzu)
 > For the full list of CLI commands and their options, see the [CLI Command Reference](docs/cli-reference.md).
 
 ```bash
-logiclens stats
-logiclens deps --limit 20
-logiclens contracts --kind api
-logiclens contracts --repo order-service --direction outgoing
+repohelix stats
+repohelix deps --limit 20
+repohelix contracts --kind api
+repohelix contracts --repo order-service --direction outgoing
 ```
 
 ### 💥 Semantic Contract Trace
 
 ```bash
-logiclens trace "http GET /api/order/:id"
-logiclens trace "event OrderCreatedEvent"
+repohelix trace "http GET /api/order/:id"
+repohelix trace "event OrderCreatedEvent"
 ```
 
 ### 🔎 Impact Analysis
 
 ```bash
-logiclens impact OrderCreatedEvent
-logiclens impact api:/api/order/:id
+repohelix impact OrderCreatedEvent
+repohelix impact api:/api/order/:id
 ```
 
 ---
 
 ## 🤖 MCP Integration (AI Coding Agents)
 
-LogicLens exposes the code graph to AI Agents through **Model Context Protocol (MCP)**.
+RepoHelix exposes the code graph to AI Agents through **Model Context Protocol (MCP)**.
 
 ### One-Click Installation
 
 ```bash
-logiclens install
+repohelix install
 ```
 
-You can use the interactive installer to automatically register the LogicLens MCP server in multiple AI agents (Claude Code, Cursor, Codex CLI, opencode, Hermes Agent, Gemini CLI, Antigravity IDE, Kiro).
+You can use the interactive installer to automatically register the RepoHelix MCP server in multiple AI agents (Claude Code, Cursor, Codex CLI, opencode, Hermes Agent, Gemini CLI, Antigravity IDE, Kiro).
 
 ### MCP Tools
 
 | Tool Name | Description |
 |---|---|
-| `logiclens_get_stats` | Get summary statistics of the graph database (repository count, file count, code node count, call count, etc.) |
-| `logiclens_get_watch_status` | Check indexing and search status; pass `refresh: true` to refresh the search status |
-| `logiclens_list_dependencies` | List cross-repository dependencies with evidence (filterable by strength/type) |
-| `logiclens_list_contracts` | List identified contracts with producer/consumer/shared counts (filterable by kind, repo, direction) |
-| `logiclens_trace` | Multi-hop semantic trace — find the producers, consumers, and request/response/payload schemas connected to a contract |
-| `logiclens_impact_analysis` | Evaluate downstream impact scope when modifying code symbols or contracts |
-| `logiclens_ask_question` | Search the workspace and return matching source evidence |
+| `repohelix_get_stats` | Get summary statistics of the graph database (repository count, file count, code node count, call count, etc.) |
+| `repohelix_get_watch_status` | Check indexing and search status; pass `refresh: true` to refresh the search status |
+| `repohelix_list_dependencies` | List cross-repository dependencies with evidence (filterable by strength/type) |
+| `repohelix_list_contracts` | List identified contracts with producer/consumer/shared counts (filterable by kind, repo, direction) |
+| `repohelix_trace` | Multi-hop semantic trace — find the producers, consumers, and request/response/payload schemas connected to a contract |
+| `repohelix_impact_analysis` | Evaluate downstream impact scope when modifying code symbols or contracts |
+| `repohelix_ask_question` | Search the workspace and return matching source evidence |
 
-`logiclens_ask_question` accepts `question` plus the same retrieval controls as the SDK: `lexical`, `topK` (`1..100`), `graphHops` (`0..5`), and `contextBudget` (`256..65536`).
+`repohelix_ask_question` accepts `question` plus the same retrieval controls as the SDK: `lexical`, `topK` (`1..100`), `graphHops` (`0..5`), and `contextBudget` (`256..65536`).
 
 ### MCP Configuration Example
 
 ```json
 {
   "mcpServers": {
-    "logiclens": {
-      "command": "logiclens",
+    "repohelix": {
+      "command": "repohelix",
       "args": ["mcp"]
     }
   }
@@ -237,16 +237,16 @@ You can use the interactive installer to automatically register the LogicLens MC
 
 ## 🧠 SDK (Programmatic Access)
 
-LogicLens provides a Node.js SDK for building automation systems and AI toolchains. Use `retrieve()` to obtain source evidence or `ask()` to generate an answer from it.
+RepoHelix provides a Node.js SDK for building automation systems and AI toolchains. Use `retrieve()` to obtain source evidence or `ask()` to generate an answer from it.
 
 ```ts
-import { createClient } from "logiclens";
+import { createClient } from "repohelix";
 
 const client = await createClient({ cwd: process.cwd() });
 
 try {
   // addRepo updates this client's in-memory config only (not persisted to disk).
-  // To persist workspace config, use the CLI: `logiclens init` / `logiclens add-repo`.
+  // To persist workspace config, use the CLI: `repohelix init` / `repohelix add-repo`.
   await client.addRepo("../service-a", { name: "service-a" });
   await client.index({ changedOnly: false, writeMode: "auto" });
 
@@ -305,27 +305,27 @@ try {
 
 ## 🧩 Plugin System
 
-LogicLens plugins add external languages, contract extractors, and framework detectors. Install from npm, a local directory, or a package tarball; plugins are validated before they become visible:
+RepoHelix plugins add external languages, contract extractors, and framework detectors. Install from npm, a local directory, or a package tarball; plugins are validated before they become visible:
 
 ```bash
-logiclens plugin install @logiclens/plugin-csharp --repo service-a
-logiclens plugin list --all
-logiclens plugin doctor --all
+repohelix plugin install @repohelix/plugin-csharp --repo service-a
+repohelix plugin list --all
+repohelix plugin doctor --all
 ```
 
-Use `--global` instead of `--repo` for a user-level installation. `logiclens index`, `watch`, SDK indexing, and MCP indexing discover installed plugins and activate them automatically when their manifest's language rules match the repository.
+Use `--global` instead of `--repo` for a user-level installation. `repohelix index`, `watch`, SDK indexing, and MCP indexing discover installed plugins and activate them automatically when their manifest's language rules match the repository.
 
-After installation, run `logiclens index` to detect and activate the plugin for matching repositories. See the [Plugin Guide](docs/plugins.md) for installation, activation, removal, and troubleshooting, and the [Plugin SDK Reference](docs/plugin-sdk.md) to build a plugin. The external [C# plugin](packages/plugin-csharp/README.md) is the reference implementation.
+After installation, run `repohelix index` to detect and activate the plugin for matching repositories. See the [Plugin Guide](docs/plugins.md) for installation, activation, removal, and troubleshooting, and the [Plugin SDK Reference](docs/plugin-sdk.md) to build a plugin. The external [C# plugin](packages/plugin-csharp/README.md) is the reference implementation.
 
 ---
 
 ## ⚙️ Configuration
 
-`logiclens init` creates `.logiclens/config.yaml`. This file is the source of truth for repository lists, indexing behavior, graph storage, LLM providers, MCP safety policies, and watcher behavior.
+`repohelix init` creates `.repohelix/config.yaml`. This file is the source of truth for repository lists, indexing behavior, graph storage, LLM providers, MCP safety policies, and watcher behavior.
 
 ### Configuration Template
 
-By default, `logiclens init` generates a minimal, clean configuration file:
+By default, `repohelix init` generates a minimal, clean configuration file:
 
 ```yaml
 systemName: default-system
@@ -339,7 +339,7 @@ repos:
 
 ### Advanced Configuration
 
-LogicLens supports various advanced configuration options for performance tuning, indexing settings, and custom LLM retries.
+RepoHelix supports various advanced configuration options for performance tuning, indexing settings, and custom LLM retries.
 
 For the complete list of supported parameters and their default values, see the [Configuration Guide](docs/configuration.md).
 
@@ -347,13 +347,13 @@ For the complete list of supported parameters and their default values, see the 
 
 For a fully offline run, use the local Kuzu graph, omit `llm.apiKey`, ensure `OPENAI_API_KEY` is unset, and do not configure a remote LLM endpoint. Without an LLM key, `ask` still returns a citation fallback when reliable evidence exists.
 
-Only explicitly configured remote Neo4j or LLM services produce the corresponding network access. LogicLens is local-first, but not every configuration is necessarily offline.
+Only explicitly configured remote Neo4j or LLM services produce the corresponding network access. RepoHelix is local-first, but not every configuration is necessarily offline.
 
 ---
 
 ## 👍 Current Language and Framework Support
 
-LogicLens currently scans and parses:
+RepoHelix currently scans and parses:
 
 | Type | Extensions |
 |---|---|
@@ -376,13 +376,13 @@ Built-in framework and contract extraction currently mainly covers:
 | Go | Go modules, generic Go parsing, Gin detection. |
 | Documentation | Markdown/MDX sections that can be linked to code and impact output. |
 | Config | YAML, TOML, properties, and environment/config-style contract evidence. |
-| C# plugin | External `@logiclens/plugin-csharp`: C# parsing plus ASP.NET HTTP, schema, event, gRPC, package, and framework facts. See the [plugin guide](docs/plugins.md). |
+| C# plugin | External `@repohelix/plugin-csharp`: C# parsing plus ASP.NET HTTP, schema, event, gRPC, package, and framework facts. See the [plugin guide](docs/plugins.md). |
 
 More languages, frameworks, and generated client patterns will be supported over time.
 
 ### Current Limitations
 
-- LogicLens 1.x keeps its documented CLI, SDK, MCP, and Plugin API contracts stable. A future breaking contract or graph migration will be released under a new major version and documented in the changelog.
+- RepoHelix 1.x keeps its documented CLI, SDK, MCP, and Plugin API contracts stable. A future breaking contract or graph migration will be released under a new major version and documented in the changelog.
 - Static analysis is conservative. Dynamic API paths, reflection, runtime dependency injection, generated code, and framework magic may be incompletely extracted, or reported as unresolved evidence.
 - Built-in framework support is focused. Unsupported frameworks can still be parsed as source code, but contract extraction may be shallow until the corresponding detector or extractor is added.
 - Cross-repository dependency quality depends on repository names, package metadata, imports, aliases, and contract evidence.
@@ -408,7 +408,7 @@ For more detailed steps, see the [Contributing Guide](CONTRIBUTING.md).
 
 ## Security
 
-LogicLens indexes local source code and exposes graph context through structured CLI, SDK, and MCP interfaces. Raw graph-query entry points are not exposed through these public interfaces; be especially cautious when connecting the MCP Server to third-party tools.
+RepoHelix indexes local source code and exposes graph context through structured CLI, SDK, and MCP interfaces. Raw graph-query entry points are not exposed through these public interfaces; be especially cautious when connecting the MCP Server to third-party tools.
 
 Security issue reporting instructions can be found in [SECURITY.md](SECURITY.md).
 

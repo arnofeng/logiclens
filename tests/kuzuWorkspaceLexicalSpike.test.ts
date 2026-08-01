@@ -22,9 +22,9 @@ class KuzuHarness implements LexicalProviderHarness {
   private previousCloseMode?: string;
 
   async prepare(): Promise<void> {
-    this.previousCloseMode = process.env.LOGICLENS_KUZU_CLOSE_MODE;
-    process.env.LOGICLENS_KUZU_CLOSE_MODE = "explicit";
-    this.directory = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-kuzu-fts-"));
+    this.previousCloseMode = process.env.REPOHELIX_KUZU_CLOSE_MODE;
+    process.env.REPOHELIX_KUZU_CLOSE_MODE = "explicit";
+    this.directory = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-kuzu-fts-"));
     this.db = await KuzuGraphDB.open(path.join(this.directory, "spike.kuzu"));
     this.store = new KuzuWorkspaceLexicalStore(this.db);
     await this.store.ensureSchema();
@@ -80,8 +80,8 @@ class KuzuHarness implements LexicalProviderHarness {
     this.store = undefined;
     if (db) await db.close();
     if (this.directory) await fs.rm(this.directory, { recursive: true, force: true });
-    if (this.previousCloseMode === undefined) delete process.env.LOGICLENS_KUZU_CLOSE_MODE;
-    else process.env.LOGICLENS_KUZU_CLOSE_MODE = this.previousCloseMode;
+    if (this.previousCloseMode === undefined) delete process.env.REPOHELIX_KUZU_CLOSE_MODE;
+    else process.env.REPOHELIX_KUZU_CLOSE_MODE = this.previousCloseMode;
   }
 }
 

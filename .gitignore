@@ -6,7 +6,7 @@ packages/*/tsconfig.tsbuildinfo
 packages/*/src/*.js
 packages/*/src/*.d.ts
 packages/*/src/*.map
-.logiclens/
+.repohelix/
 tmp-kuzu-close-test*
 .env
 .vscode

@@ -1,6 +1,6 @@
-# Contributing to LogicLens
+# Contributing to RepoHelix
 
-Thank you for your interest in LogicLens! We welcome and appreciate contributions from the community, whether it's reporting bugs, improving documentation, or submitting new features.
+Thank you for your interest in RepoHelix! We welcome and appreciate contributions from the community, whether it's reporting bugs, improving documentation, or submitting new features.
 
 To ensure a smooth collaboration, please read this guide before contributing.
 
@@ -14,11 +14,11 @@ We are committed to providing a friendly, safe, and welcoming environment for al
 
 ## 2. Standard GitHub Contribution Workflow
 
-LogicLens uses the classic GitHub Fork & Pull Request workflow. Below are the specific steps:
+RepoHelix uses the classic GitHub Fork & Pull Request workflow. Below are the specific steps:
 
 ### Step 1: Fork the Repository
 
-1. Visit the official LogicLens repository: `https://github.com/arnofeng/logiclens`.
+1. Visit the official RepoHelix repository: `https://github.com/arnofeng/repohelix`.
 2. Click the **Fork** button in the upper right corner to duplicate the repository to your own GitHub account.
 
 ### Step 2: Clone Locally
@@ -26,14 +26,14 @@ LogicLens uses the classic GitHub Fork & Pull Request workflow. Below are the sp
 Clone your forked repository onto your local machine:
 
 ```bash
-git clone https://github.com/<your-github-username>/logiclens.git
-cd logiclens
+git clone https://github.com/<your-github-username>/repohelix.git
+cd repohelix
 ```
 
 To keep your fork in sync with the official repository, we recommend adding the official repository as a remote named `upstream`:
 
 ```bash
-git remote add upstream https://github.com/arnofeng/logiclens.git
+git remote add upstream https://github.com/arnofeng/repohelix.git
 ```
 
 ### Step 3: Create a Development Branch
@@ -129,7 +129,7 @@ git commit -m "feat: brief description of your feature"
 
 ## 3. Code & Design Guidelines
 
-1. **Type Safety**: LogicLens is a TypeScript project. Avoid using `any` and define strict interfaces or Zod schemas for input validation.
+1. **Type Safety**: RepoHelix is a TypeScript project. Avoid using `any` and define strict interfaces or Zod schemas for input validation.
 2. **Local-First & Privacy**: Core indexing, graph writes, and analysis must run locally. Do not introduce external API dependencies or unauthorized network calls.
 3. **Maintain Documentation Integrity**: Preserve all existing comments and docstrings that are unrelated to your code changes. Include JSDoc comments for new public APIs.
 4. **Performance Concerns**: When designing extractors or parsers, pay attention to memory consumption and file reading concurrency to avoid Out Of Memory (OOM) errors on large codebases.
@@ -139,7 +139,7 @@ git commit -m "feat: brief description of your feature"
 ## 4. Getting Help & Communication
 
 If you have questions during development, you can reach out through the following channels:
-- Submit [Issues](https://github.com/arnofeng/logiclens/issues) on GitHub.
+- Submit [Issues](https://github.com/arnofeng/repohelix/issues) on GitHub.
 - For security vulnerabilities, do not open public issues. Please report them privately according to the instructions in `SECURITY.md`.
 
-Thank you for contributing to LogicLens!
+Thank you for contributing to RepoHelix!

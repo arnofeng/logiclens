@@ -46,7 +46,7 @@ export function projectEvaluationResult(result: RetrievalResult): EvaluationExec
 export async function createWorkspaceEvaluationFixture(
   options: Readonly<{ copyWorkspace?: boolean }> = {},
 ): Promise<WorkspaceEvaluationFixture> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-retrieval-eval-"));
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-retrieval-eval-"));
   const reposDirectory = options.copyWorkspace ? path.join(directory, "fixture") : fixtureRoot;
   const base = defaultConfig();
   const config = {

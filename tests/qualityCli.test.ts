@@ -36,22 +36,22 @@ describe("quality command graph profile", () => {
       systemName: "quality-system",
       graph: {
         provider: "neo4j",
-        path: ".logiclens/graph",
+        path: ".repohelix/graph",
         url: "neo4j+s://example.invalid",
         username: "test-user",
         password: "test-password",
-        database: "logiclens-test",
+        database: "repohelix-test",
       },
     });
 
     await qualityCommand(undefined, undefined, cwd);
 
     expect(mocks.createGraphDB).toHaveBeenCalledWith("neo4j", {
-      path: path.resolve(cwd, ".logiclens/graph"),
+      path: path.resolve(cwd, ".repohelix/graph"),
       url: "neo4j+s://example.invalid",
       username: "test-user",
       password: "test-password",
-      database: "logiclens-test",
+      database: "repohelix-test",
     });
     expect(db.initSchema).toHaveBeenCalledWith("quality-system");
     expect(db.close).toHaveBeenCalledOnce();

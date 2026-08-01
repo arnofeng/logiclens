@@ -120,7 +120,7 @@ describe("Neo4j workspace unified retrieval cloud release", () => {
   it.skipIf(!integration.enabled)(integration.testName, async () => {
     const configuration = integration.requireConfiguration();
     const suffix = randomUUID().replace(/-/gu, "");
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-neo4j-e2e-"));
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-neo4j-e2e-"));
     const reposDirectory = path.join(directory, "repos");
     await fs.cp(sourceFixture, reposDirectory, { recursive: true });
 

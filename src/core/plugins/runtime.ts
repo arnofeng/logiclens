@@ -2,12 +2,12 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import {
-  LOGICLENS_PLUGIN_API_VERSION,
-  type LogicLensPlugin,
+  PLUGIN_API_VERSION,
+  type PluginDefinition,
   type PluginCapability,
   type PluginManifest,
   type PluginManifestLanguage
-} from "@logiclens/plugin-sdk";
+} from "@repohelix/plugin-sdk";
 
 export type PluginRuntimeOptions = {
   cwd?: string;
@@ -15,32 +15,32 @@ export type PluginRuntimeOptions = {
   onWarning?: (message: string) => void;
 };
 
-export type LoadedLogicLensPlugin = {
-  plugin: LogicLensPlugin;
+export type LoadedPlugin = {
+  plugin: PluginDefinition;
   source: string;
 };
 
-export type DiscoveredLogicLensPlugin = {
+export type DiscoveredPlugin = {
   manifest: PluginManifest;
   source: string;
   baseDir: string;
   entryPath: string;
 };
 
-const SUPPORTED_API_MAJOR = majorOf(LOGICLENS_PLUGIN_API_VERSION);
+const SUPPORTED_API_MAJOR = majorOf(PLUGIN_API_VERSION);
 
-export async function loadLogicLensPlugins(
+export async function loadPlugins(
   pluginSpecifiers: readonly string[],
   options: PluginRuntimeOptions = {}
-): Promise<LoadedLogicLensPlugin[]> {
-  const loaded: LoadedLogicLensPlugin[] = [];
+): Promise<LoadedPlugin[]> {
+  const loaded: LoadedPlugin[] = [];
   for (const specifier of pluginSpecifiers) {
     try {
       const plugin = await importPlugin(specifier, options.cwd ?? process.cwd());
       validatePlugin(plugin, specifier);
       loaded.push({ plugin, source: specifier });
     } catch (error) {
-      const message = `Failed to load LogicLens plugin "${specifier}": ${error instanceof Error ? error.message : String(error)}`;
+      const message = `Failed to load plugin "${specifier}": ${error instanceof Error ? error.message : String(error)}`;
       if (options.failFast) throw new Error(message);
       options.onWarning?.(message);
     }
@@ -48,10 +48,10 @@ export async function loadLogicLensPlugins(
   return loaded;
 }
 
-export async function discoverLogicLensPlugin(
+export async function discoverPlugin(
   pluginDir: string,
   source = pluginDir
-): Promise<DiscoveredLogicLensPlugin> {
+): Promise<DiscoveredPlugin> {
   const baseDir = path.resolve(pluginDir);
   const manifestPath = path.join(baseDir, "plugin.json");
   const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8")) as PluginManifest;
@@ -60,16 +60,16 @@ export async function discoverLogicLensPlugin(
   return { manifest, source, baseDir, entryPath };
 }
 
-export async function discoverLogicLensPlugins(
+export async function discoverPlugins(
   pluginDirs: readonly string[],
   options: PluginRuntimeOptions = {}
-): Promise<DiscoveredLogicLensPlugin[]> {
-  const discovered: DiscoveredLogicLensPlugin[] = [];
+): Promise<DiscoveredPlugin[]> {
+  const discovered: DiscoveredPlugin[] = [];
   for (const pluginDir of pluginDirs) {
     try {
-      discovered.push(await discoverLogicLensPlugin(path.resolve(options.cwd ?? process.cwd(), pluginDir), pluginDir));
+      discovered.push(await discoverPlugin(path.resolve(options.cwd ?? process.cwd(), pluginDir), pluginDir));
     } catch (error) {
-      const message = `Failed to discover LogicLens plugin "${pluginDir}": ${error instanceof Error ? error.message : String(error)}`;
+      const message = `Failed to discover plugin "${pluginDir}": ${error instanceof Error ? error.message : String(error)}`;
       if (options.failFast) throw new Error(message);
       options.onWarning?.(message);
     }
@@ -77,18 +77,18 @@ export async function discoverLogicLensPlugins(
   return discovered;
 }
 
-export async function loadDiscoveredLogicLensPlugins(
-  plugins: readonly DiscoveredLogicLensPlugin[],
+export async function loadDiscoveredPlugins(
+  plugins: readonly DiscoveredPlugin[],
   options: PluginRuntimeOptions = {}
-): Promise<LoadedLogicLensPlugin[]> {
-  const loaded: LoadedLogicLensPlugin[] = [];
+): Promise<LoadedPlugin[]> {
+  const loaded: LoadedPlugin[] = [];
   for (const discovered of plugins) {
     try {
       const plugin = await importPlugin(discovered.entryPath, options.cwd ?? process.cwd());
       validatePlugin(plugin, discovered.source, discovered.manifest);
       loaded.push({ plugin, source: discovered.source });
     } catch (error) {
-      const message = `Failed to load LogicLens plugin "${discovered.source}": ${error instanceof Error ? error.message : String(error)}`;
+      const message = `Failed to load plugin "${discovered.source}": ${error instanceof Error ? error.message : String(error)}`;
       if (options.failFast) throw new Error(message);
       options.onWarning?.(message);
     }
@@ -96,11 +96,11 @@ export async function loadDiscoveredLogicLensPlugins(
   return loaded;
 }
 
-export function validatePlugin(plugin: unknown, source = "<plugin>", expectedManifest?: PluginManifest): asserts plugin is LogicLensPlugin {
+export function validatePlugin(plugin: unknown, source = "<plugin>", expectedManifest?: PluginManifest): asserts plugin is PluginDefinition {
   if (!plugin || typeof plugin !== "object") {
     throw new Error(`${source} did not export a plugin object.`);
   }
-  const candidate = plugin as Partial<LogicLensPlugin>;
+  const candidate = plugin as Partial<PluginDefinition>;
   const manifest = candidate.manifest;
   validateManifest(manifest, source);
   if (expectedManifest) validateManifestConsistency(manifest, expectedManifest, source);
@@ -111,12 +111,12 @@ export function validatePlugin(plugin: unknown, source = "<plugin>", expectedMan
   validateExportedLanguages(candidate, manifest, source);
 }
 
-async function importPlugin(specifier: string, cwd: string): Promise<LogicLensPlugin> {
+async function importPlugin(specifier: string, cwd: string): Promise<PluginDefinition> {
   const moduleSpecifier = isPathSpecifier(specifier)
     ? pathToFileURL(path.resolve(cwd, specifier)).href
     : specifier;
   const moduleValue = await import(moduleSpecifier) as { default?: unknown; plugin?: unknown };
-  return (moduleValue.default ?? moduleValue.plugin ?? moduleValue) as LogicLensPlugin;
+  return (moduleValue.default ?? moduleValue.plugin ?? moduleValue) as PluginDefinition;
 }
 
 function validateManifest(manifest: unknown, source: string): asserts manifest is PluginManifest {
@@ -124,8 +124,8 @@ function validateManifest(manifest: unknown, source: string): asserts manifest i
     throw new Error(`${source} is missing manifest.`);
   }
   const candidate = manifest as Partial<PluginManifest>;
-  if (!candidate.name || !candidate.version || !candidate.logiclensPluginApiVersion) {
-    throw new Error(`${source} manifest must include name, version, and logiclensPluginApiVersion.`);
+  if (!candidate.name || !candidate.version || !candidate.pluginApiVersion) {
+    throw new Error(`${source} manifest must include name, version, and pluginApiVersion.`);
   }
   if (!Array.isArray(candidate.capabilities)) {
     throw new Error(`${source} manifest capabilities must be an array.`);
@@ -135,10 +135,10 @@ function validateManifest(manifest: unknown, source: string): asserts manifest i
       throw new Error(`${source} declares unknown capability "${String(capability)}".`);
     }
   }
-  if (majorOf(candidate.logiclensPluginApiVersion) !== SUPPORTED_API_MAJOR) {
+  if (majorOf(candidate.pluginApiVersion) !== SUPPORTED_API_MAJOR) {
     throw new Error(
-      `${source} requires plugin API ${candidate.logiclensPluginApiVersion}, ` +
-      `but this runtime supports ${LOGICLENS_PLUGIN_API_VERSION}.`
+      `${source} requires plugin API ${candidate.pluginApiVersion}, ` +
+      `but this runtime supports ${PLUGIN_API_VERSION}.`
     );
   }
   if (candidate.capabilities.includes("language")) {
@@ -223,7 +223,7 @@ function isKnownCapability(value: unknown): value is PluginCapability {
 }
 
 function requireCapabilityPayload(
-  plugin: Partial<LogicLensPlugin>,
+  plugin: Partial<PluginDefinition>,
   capability: PluginCapability,
   value: unknown,
   source: string
@@ -249,7 +249,7 @@ function validateManifestConsistency(actual: PluginManifest, expected: PluginMan
   compareManifestLanguages(actual.languages ?? [], expected.languages ?? [], source, "exported manifest");
 }
 
-function validateExportedLanguages(plugin: Partial<LogicLensPlugin>, manifest: PluginManifest, source: string): void {
+function validateExportedLanguages(plugin: Partial<PluginDefinition>, manifest: PluginManifest, source: string): void {
   if (!manifest.capabilities.includes("language")) return;
   compareManifestLanguages(plugin.languages ?? [], manifest.languages ?? [], source, "exported plugin.languages");
 }

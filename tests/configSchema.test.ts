@@ -67,9 +67,9 @@ describe("config schema - graph provider", () => {
 
   it("accepts a trimmed dedicated Neo4j database and rejects an empty name", () => {
     const result = configSchema.parse({
-      graph: { provider: "neo4j", database: "  logiclens-test  " }
+      graph: { provider: "neo4j", database: "  repohelix-test  " }
     });
-    expect(result.graph.database).toBe("logiclens-test");
+    expect(result.graph.database).toBe("repohelix-test");
     expect(() => configSchema.parse({ graph: { provider: "neo4j", database: "   " } })).toThrow();
   });
 
@@ -136,7 +136,7 @@ describe("config schema - lexical retrieval", () => {
   });
 
   it("round-trips a custom lexical provider through a temporary config", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-config-schema-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-config-schema-"));
     const config = {
       ...defaultConfig(),
       retrieval: {

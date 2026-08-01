@@ -667,7 +667,7 @@ describe("optional semantic retriever", () => {
   });
 
   it("returns fallback hits with degraded primary-provider metadata", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-semantic-fallback-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-semantic-fallback-"));
     const secret = "secret-chroma-host";
     const primary = {
       search: vi.fn(async () => { throw new SemanticProviderOperationalError({ cause: new Error(secret) }); }),
@@ -741,7 +741,7 @@ describe("optional semantic retriever", () => {
   });
 
   it("preserves two attempted searches when primary and fallback both fail operationally", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-semantic-double-failure-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-semantic-double-failure-"));
     const primary = {
       search: vi.fn(async () => { throw new SemanticProviderOperationalError(); }), records: vi.fn(), upsert: vi.fn()
     } as unknown as SemanticIndex;

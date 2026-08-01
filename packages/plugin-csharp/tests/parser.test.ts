@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { PluginParseInput } from "@logiclens/plugin-sdk";
+import type { PluginParseInput } from "@repohelix/plugin-sdk";
 import { createCSharpParser } from "../src/parser.js";
 
 describe("C# parser facts", () => {

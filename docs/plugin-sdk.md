@@ -1,6 +1,6 @@
 # Plugin SDK Reference
 
-`@logiclens/plugin-sdk` is the public TypeScript contract for LogicLens plugins.
+`@repohelix/plugin-sdk` is the public TypeScript contract for RepoHelix plugins.
 
 Read the [Plugin Guide](plugins.md) first for installation, discovery, activation, and troubleshooting.
 
@@ -10,13 +10,13 @@ Plugins are ESM packages and must ship compiled JavaScript. Add the SDK as a dep
 
 ```json
 {
-  "name": "@example/logiclens-plugin-example",
+  "name": "@example/repohelix-plugin-example",
   "version": "1.0.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "dependencies": {
-    "@logiclens/plugin-sdk": "^1.0.0"
+    "@repohelix/plugin-sdk": "^1.0.0"
   },
   "files": ["dist", "plugin.json", "README.md"]
 }
@@ -26,9 +26,9 @@ Every installed plugin directory also needs `plugin.json`:
 
 ```json
 {
-  "name": "@example/logiclens-plugin-example",
+  "name": "@example/repohelix-plugin-example",
   "version": "1.0.0",
-  "logiclensPluginApiVersion": "1.0.0",
+  "pluginApiVersion": "1.0.0",
   "capabilities": ["language", "fact-extractor", "framework-detector"],
   "entry": "./dist/index.js",
   "languages": [
@@ -57,12 +57,12 @@ import {
   defineLanguage,
   definePlugin,
   type PluginManifest
-} from "@logiclens/plugin-sdk";
+} from "@repohelix/plugin-sdk";
 
 const manifest = {
-  name: "@example/logiclens-plugin-example",
+  name: "@example/repohelix-plugin-example",
   version: "1.0.0",
-  logiclensPluginApiVersion: "1.0.0",
+  pluginApiVersion: "1.0.0",
   capabilities: ["language", "fact-extractor"],
   languages: [{
     id: "example",
@@ -165,7 +165,7 @@ Every emitted fact must belong to the current context and include evidence with 
 
 ## Utilities
 
-Import helpers from `@logiclens/plugin-sdk/utils`:
+Import helpers from `@repohelix/plugin-sdk/utils`:
 
 ```ts
 import {
@@ -176,7 +176,7 @@ import {
   normalizeRouteTemplate,
   safeJsonParse,
   sourceLine
-} from "@logiclens/plugin-sdk/utils";
+} from "@repohelix/plugin-sdk/utils";
 ```
 
 These helpers keep line calculation, route normalization, and defensive JSON parsing consistent across plugins.
@@ -188,8 +188,8 @@ Before installing or publishing a plugin:
 1. Compile the ESM entry and declarations.
 2. Ensure the published directory contains `plugin.json`, compiled output, runtime dependencies, and README.
 3. Keep `plugin.json` and the exported manifest synchronized.
-4. Install the packed artifact with `logiclens plugin install ./plugin.tgz`.
-5. Run `logiclens index` with `plugins.failFast: true`, then inspect `logiclens frameworks`, `logiclens contracts`, and `logiclens quality` as applicable.
+4. Install the packed artifact with `repohelix plugin install ./plugin.tgz`.
+5. Run `repohelix index` with `plugins.failFast: true`, then inspect `repohelix frameworks`, `repohelix contracts`, and `repohelix quality` as applicable.
 6. Test absent markers, excluded files, malformed source, and multiple repositories as well as the happy path.
 
-The repository's [`@logiclens/plugin-csharp`](../packages/plugin-csharp/README.md) package is the canonical implementation example.
+The repository's [`@repohelix/plugin-csharp`](../packages/plugin-csharp/README.md) package is the canonical implementation example.

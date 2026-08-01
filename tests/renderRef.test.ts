@@ -12,7 +12,7 @@ function expectCode(action: () => unknown, code: RenderRefError["code"]): void {
 }
 
 function rawRenderRef(payload: Record<string, unknown>): string {
-  return `logiclens-render-ref:v1:${Buffer.from(JSON.stringify(payload), "utf8").toString("base64url")}`;
+  return `repohelix-render-ref:v1:${Buffer.from(JSON.stringify(payload), "utf8").toString("base64url")}`;
 }
 
 describe("render references", () => {
@@ -34,8 +34,8 @@ describe("render references", () => {
 
   it("rejects corrupt payloads, unknown versions and invalid fields", () => {
     expectCode(() => parseRenderRef("garbage", "workspace:a"), "format_invalid");
-    expectCode(() => parseRenderRef("logiclens-render-ref:v1:not+base64", "workspace:a"), "format_invalid");
-    expectCode(() => parseRenderRef("logiclens-render-ref:v2:e30", "workspace:a"), "version_unsupported");
+    expectCode(() => parseRenderRef("repohelix-render-ref:v1:not+base64", "workspace:a"), "format_invalid");
+    expectCode(() => parseRenderRef("repohelix-render-ref:v2:e30", "workspace:a"), "version_unsupported");
     expectCode(() => createRenderRef({ workspaceId: "", repoId: "repo:a", kind: "repo", canonicalId: "repo:a" }), "field_invalid");
     expectCode(() => createRenderRef({ workspaceId: "workspace:a", repoId: "", kind: "repo", canonicalId: "repo:a" }), "field_invalid");
     expectCode(() => createRenderRef({ workspaceId: "workspace:a", repoId: "repo:a", kind: "file", canonicalId: "file:a" }), "field_invalid");
@@ -63,7 +63,7 @@ describe("render references", () => {
     }
     expectCode(() => createRenderRef({ workspaceId: `workspace:${"a".repeat(513)}`, repoId: "repo:a", kind: "repo", canonicalId: "repo:a" }), "field_invalid");
     expectCode(() => createRenderRef({ workspaceId: "workspace:a", repoId: "repo:a", kind: "file", canonicalId: "file:a", fileId: "file:a", path: `src/${"a".repeat(4096)}` }), "field_invalid");
-    expectCode(() => parseRenderRef(`logiclens-render-ref:v1:${"a".repeat(10_001)}`, "workspace:a"), "format_invalid");
+    expectCode(() => parseRenderRef(`repohelix-render-ref:v1:${"a".repeat(10_001)}`, "workspace:a"), "format_invalid");
 
     const controlledPayload = { workspaceId: "workspace:a", repoId: "repo:a", kind: "file", canonicalId: "file:a", fileId: "file:a", path: "src/\u0000.ts" };
     expectCode(() => parseRenderRef(rawRenderRef(controlledPayload), "workspace:a"), "field_invalid");

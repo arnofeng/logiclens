@@ -290,13 +290,13 @@ describe("resolveReferences", () => {
 
   it("reuses declaration lookups and keeps same-basename compiler targets isolated by absolute path", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "test-ts-compiler-cache-"));
-    const previousTrace = process.env.LOGICLENS_REFERENCE_TRACE;
+    const previousTrace = process.env.REPOHELIX_REFERENCE_TRACE;
     const trace: string[] = [];
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(((chunk: string | Uint8Array) => {
       trace.push(String(chunk));
       return true;
     }) as typeof process.stderr.write);
-    process.env.LOGICLENS_REFERENCE_TRACE = "1";
+    process.env.REPOHELIX_REFERENCE_TRACE = "1";
     try {
       const repo = repoId("service-cache");
       const modernDir = path.join(tmpDir, "src", "modern");
@@ -323,8 +323,8 @@ describe("resolveReferences", () => {
       expect(edges.every((edge) => edge.toCodeId === modernCharge?.id && edge.resolution === "exact")).toBe(true);
       expect(trace.join("")).toMatch(/declarationCacheHits=[1-9]\d*/);
     } finally {
-      if (previousTrace === undefined) delete process.env.LOGICLENS_REFERENCE_TRACE;
-      else process.env.LOGICLENS_REFERENCE_TRACE = previousTrace;
+      if (previousTrace === undefined) delete process.env.REPOHELIX_REFERENCE_TRACE;
+      else process.env.REPOHELIX_REFERENCE_TRACE = previousTrace;
       stderr.mockRestore();
       await fs.rm(tmpDir, { recursive: true, force: true });
     }

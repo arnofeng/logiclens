@@ -1,4 +1,4 @@
-import type { FactExtractorPlugin, PluginFileView, PluginGrpcMethodFact, PluginSymbolView } from "@logiclens/plugin-sdk";
+import type { FactExtractorPlugin, PluginFileView, PluginGrpcMethodFact, PluginSymbolView } from "@repohelix/plugin-sdk";
 import { lexicalType } from "./events/types.js";
 
 type Candidate = Omit<PluginGrpcMethodFact, "kind" | "repoId" | "filePath" | "sourceSymbolId"> & {

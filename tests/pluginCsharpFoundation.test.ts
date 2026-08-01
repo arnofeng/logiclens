@@ -2,11 +2,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
-  discoverLogicLensPlugin,
-  loadDiscoveredLogicLensPlugins,
+  discoverPlugin,
+  loadDiscoveredPlugins,
   validatePlugin
 } from "../src/core/plugins/runtime.js";
-import type { PluginParseInput } from "@logiclens/plugin-sdk";
+import type { PluginParseInput } from "@repohelix/plugin-sdk";
 import { createCSharpParser } from "../packages/plugin-csharp/src/parser.js";
 
 const pluginDir = path.resolve("packages/plugin-csharp");
@@ -20,14 +20,14 @@ const parseInput = (source = "class Sample {}"): PluginParseInput => ({
 
 describe("C# plugin foundation", () => {
   it("is discovered and validated with capability payloads matching its manifest", async () => {
-    const discovered = await discoverLogicLensPlugin(pluginDir);
+    const discovered = await discoverPlugin(pluginDir);
     expect(discovered.manifest.languages).toEqual([expect.objectContaining({
       id: "csharp",
       extensions: [".cs"]
     })]);
     expect(discovered.entryPath).toBe(path.join(pluginDir, "dist", "index.js"));
 
-    const loaded = await loadDiscoveredLogicLensPlugins([discovered], { failFast: true });
+    const loaded = await loadDiscoveredPlugins([discovered], { failFast: true });
     expect(loaded).toHaveLength(1);
     const plugin = loaded[0]!.plugin;
     expect(() => validatePlugin(plugin, "csharp-test", discovered.manifest)).not.toThrow();
@@ -39,7 +39,7 @@ describe("C# plugin foundation", () => {
   });
 
   it("separates source extensions from project detection globs", async () => {
-    const { manifest } = await discoverLogicLensPlugin(pluginDir);
+    const { manifest } = await discoverPlugin(pluginDir);
     const language = manifest.languages?.[0];
     expect(language?.extensions).toEqual([".cs"]);
     expect(language?.detect?.globs).toEqual([
@@ -108,7 +108,7 @@ describe("C# plugin foundation", () => {
     const source = await fs.readFile(path.resolve("tests/fixtures/plugin-csharp/ModernApi.cs"), "utf8");
     const parse = createCSharpParser();
     const result = await parse(parseInput(source));
-    expect(result.symbols?.map((symbol) => symbol.qualifiedName)).toContain("LogicLens.Fixtures.Helpers.Convert");
+    expect(result.symbols?.map((symbol) => symbol.qualifiedName)).toContain("RepoHelix.Fixtures.Helpers.Convert");
     expect(result.imports?.[0]?.module).toBe("Microsoft.AspNetCore.Mvc");
     expect(result.calls?.map((call) => call.calleeName)).toContain("MapGet");
     expect(result.facts?.annotations?.map((annotation) => annotation.name)).toContain("Marker");

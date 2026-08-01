@@ -1,4 +1,4 @@
-import { defineLanguage, definePlugin } from "@logiclens/plugin-sdk";
+import { defineLanguage, definePlugin } from "@repohelix/plugin-sdk";
 import { manifest } from "./manifest.js";
 import { parseCSharp } from "./parser.js";
 import { csharpFrameworkDetector, csharpPackageExtractor } from "./projectFacts.js";

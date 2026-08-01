@@ -1,4 +1,4 @@
-import type { PluginEventFact, PluginFileView } from "@logiclens/plugin-sdk";
+import type { PluginEventFact, PluginFileView } from "@repohelix/plugin-sdk";
 
 export type EventCandidate = Omit<PluginEventFact, "kind" | "repoId" | "filePath" | "sourceSymbolId" | "evidence"> & {
   index: number;

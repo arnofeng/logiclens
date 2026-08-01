@@ -9,7 +9,7 @@ const execFileAsync = promisify(execFile);
 
 describe("Kuzu workspace lifecycle conformance", () => {
   it("runs the shared graph-facts lifecycle in an isolated native process", async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-lifecycle-"));
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-lifecycle-"));
     try {
       const { stdout } = await execFileAsync(process.execPath, [
         path.resolve("node_modules/tsx/dist/cli.mjs"),
@@ -17,7 +17,7 @@ describe("Kuzu workspace lifecycle conformance", () => {
         directory
       ], {
         cwd: path.resolve("."),
-        env: { ...process.env, LOGICLENS_KUZU_CLOSE_MODE: "managed" },
+        env: { ...process.env, REPOHELIX_KUZU_CLOSE_MODE: "managed" },
         timeout: 120000
       });
       expect(stdout).toContain("kuzu workspace lifecycle scenario passed");

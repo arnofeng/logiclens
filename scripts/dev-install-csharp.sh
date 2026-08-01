@@ -20,7 +20,7 @@ if [ ! -d "$PLUGIN_DIR" ]; then
   exit 1
 fi
 
-TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/logiclens-csharp-dev.XXXXXX")
+TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/repohelix-csharp-dev.XXXXXX")
 STAGING_DIR="$TEMP_DIR/plugin-csharp"
 
 cleanup() {
@@ -31,8 +31,8 @@ trap cleanup EXIT HUP INT TERM
 cd "$WORKSPACE_ROOT"
 
 echo "Building the plugin SDK and C# plugin..."
-pnpm --filter '@logiclens/plugin-sdk' build
-pnpm --filter '@logiclens/plugin-csharp' build
+pnpm --filter '@repohelix/plugin-sdk' build
+pnpm --filter '@repohelix/plugin-csharp' build
 
 echo "Preparing a local development package..."
 mkdir -p "$STAGING_DIR"
@@ -48,11 +48,11 @@ import fs from "node:fs";
 const packageJsonPath = process.argv[2];
 const sdkDirectory = process.argv[3].replace(/\\/g, "/");
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
-packageJson.dependencies["@logiclens/plugin-sdk"] = `file:${sdkDirectory}`;
+packageJson.dependencies["@repohelix/plugin-sdk"] = `file:${sdkDirectory}`;
 fs.writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`, "utf8");
 NODE
 
-echo "Installing the local development package into the current LogicLens workspace..."
+echo "Installing the local development package into the current RepoHelix workspace..."
 npm run dev -- plugin install "$STAGING_DIR" --force
 
 if [ "$RUN_INDEX" = true ]; then

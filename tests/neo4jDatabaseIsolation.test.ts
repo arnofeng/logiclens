@@ -44,7 +44,7 @@ describe("Neo4j database isolation", () => {
     const db = await Neo4jGraphDB.open("bolt://example", {
       username: "test",
       password: "secret",
-      database: "  logiclens_conformance  "
+      database: "  repohelix_conformance  "
     });
 
     await db.query("RETURN 1;");
@@ -55,7 +55,7 @@ describe("Neo4j database isolation", () => {
 
     expect(mocks.driver.session).toHaveBeenCalledTimes(2);
     expect(mocks.driver.session.mock.calls.every(([options]) =>
-      options?.database === "logiclens_conformance"
+      options?.database === "repohelix_conformance"
     )).toBe(true);
     expect(mocks.session.beginTransaction).toHaveBeenCalledTimes(1);
     expect(mocks.tx.commit).toHaveBeenCalledTimes(1);

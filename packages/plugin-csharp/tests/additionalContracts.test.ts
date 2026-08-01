@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { PluginCallView, PluginEventFact, PluginGrpcMethodFact, PluginSchemaFact, PluginSymbolView } from "@logiclens/plugin-sdk";
+import type { PluginCallView, PluginEventFact, PluginGrpcMethodFact, PluginSchemaFact, PluginSymbolView } from "@repohelix/plugin-sdk";
 import { parseCSharp } from "../src/parser.js";
 import { csharpGrpcExtractor } from "../src/grpcFacts.js";
 import { csharpEventExtractor } from "../src/eventFacts.js";

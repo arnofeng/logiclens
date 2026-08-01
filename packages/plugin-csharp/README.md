@@ -1,29 +1,29 @@
-# @logiclens/plugin-csharp
+# @repohelix/plugin-csharp
 
-`@logiclens/plugin-csharp` is the official C# language plugin for [LogicLens](https://github.com/arnofeng/logiclens). It extends the LogicLens host with C# parsing, ASP.NET Core HTTP contract extraction, schema extraction, gRPC and messaging facts, package metadata, and framework detection.
+`@repohelix/plugin-csharp` is the official C# language plugin for [RepoHelix](https://github.com/arnofeng/repohelix). It extends the RepoHelix host with C# parsing, ASP.NET Core HTTP contract extraction, schema extraction, gRPC and messaging facts, package metadata, and framework detection.
 
 > [!IMPORTANT]
-> This package runs as a LogicLens plugin and requires a compatible LogicLens host environment. LogicLens discovers the plugin, supplies repository context, runs its parser and extractors, and writes the resulting facts to the code graph.
+> This package runs as a RepoHelix plugin and requires a compatible RepoHelix host environment. RepoHelix discovers the plugin, supplies repository context, runs its parser and extractors, and writes the resulting facts to the code graph.
 
 ## Recommended installation
 
-Make sure the LogicLens CLI is installed and the target repository has been added to a LogicLens workspace. Then install the plugin for that repository:
+Make sure the RepoHelix CLI is installed and the target repository has been added to a RepoHelix workspace. Then install the plugin for that repository:
 
 ```bash
-logiclens plugin install @logiclens/plugin-csharp
+repohelix plugin install @repohelix/plugin-csharp
 ```
 
 Then index the repository to activate its C# capabilities:
 
 ```bash
-logiclens index --repo <repo>
+repohelix index --repo <repo>
 ```
 
 The plugin parses `.cs` files. `.csproj`, `.sln`, `Directory.Build.props`, and `Directory.Packages.props` files are used to detect C# projects and extract project metadata.
 
 ## Compatibility
 
-- LogicLens 1.x
+- RepoHelix 1.x
 - Node.js 20.19.0 or later
 
 The plugin performs syntax-based static analysis. It does not run the project or provide compiler-level C# analysis.
@@ -46,11 +46,11 @@ Entity Framework entities are not treated as database schemas. They are included
 
 ## Installation scopes
 
-For the shared discovery rules, workspace/global scope, updates, removal, and troubleshooting, see the LogicLens [Plugin Guide](https://github.com/arnofeng/logiclens/blob/main/docs/plugins.md). Plugin authors should also read the [Plugin SDK Reference](https://github.com/arnofeng/logiclens/blob/main/docs/plugin-sdk.md).
+For the shared discovery rules, workspace/global scope, updates, removal, and troubleshooting, see the RepoHelix [Plugin Guide](https://github.com/arnofeng/repohelix/blob/main/docs/plugins.md). Plugin authors should also read the [Plugin SDK Reference](https://github.com/arnofeng/repohelix/blob/main/docs/plugin-sdk.md).
 
-The default installation is scoped to the current LogicLens workspace. Use `--global` to make the plugin available to all workspaces indexed by the current user.
+The default installation is scoped to the current RepoHelix workspace. Use `--global` to make the plugin available to all workspaces indexed by the current user.
 
-This release targets Plugin API `1.0.0`; Plugin API 0.x is not compatible with LogicLens 1.x.
+This release targets Plugin API `1.0.0`; Plugin API 0.x is not compatible with RepoHelix 1.x.
 
 If native grammar installation fails, use a supported Node ABI, remove the failed installation directory, reinstall with build tools available, and verify `tree-sitter` remains on `0.21.x`; `tree-sitter-c-sharp 0.23.5+` targets the incompatible `0.25.x` line.
 

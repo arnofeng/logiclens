@@ -1,4 +1,4 @@
-import type { FactExtractorPlugin, PluginSymbolView } from "@logiclens/plugin-sdk";
+import type { FactExtractorPlugin, PluginSymbolView } from "@repohelix/plugin-sdk";
 import { azureMessagingEvents } from "./events/azureMessaging.js";
 import { kafkaEvents } from "./events/kafka.js";
 import { massTransitEvents } from "./events/massTransit.js";

@@ -1,4 +1,4 @@
-export const LOGICLENS_PLUGIN_API_VERSION = "1.0.0";
+export const PLUGIN_API_VERSION = "1.0.0";
 
 export type PluginCapability =
   | "language"
@@ -11,7 +11,7 @@ export type ConfidenceInput = "exact" | "probable" | "heuristic" | number;
 export type PluginManifest = {
   name: string;
   version: string;
-  logiclensPluginApiVersion: string;
+  pluginApiVersion: string;
   capabilities: PluginCapability[];
   entry?: string;
   languages?: PluginManifestLanguage[];
@@ -362,7 +362,7 @@ export type ResolverPlugin = {
   resolve(context: PluginContext): Promise<PluginResolvedReference[]> | PluginResolvedReference[];
 };
 
-export type LogicLensPlugin = {
+export type PluginDefinition = {
   manifest: PluginManifest;
   languages?: LanguagePlugin[];
   factExtractors?: FactExtractorPlugin[];
@@ -370,7 +370,7 @@ export type LogicLensPlugin = {
   resolvers?: ResolverPlugin[];
 };
 
-export function definePlugin(plugin: LogicLensPlugin): LogicLensPlugin {
+export function definePlugin(plugin: PluginDefinition): PluginDefinition {
   return plugin;
 }
 

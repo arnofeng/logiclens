@@ -21,7 +21,7 @@ describe("lazy tree-sitter parsers", () => {
     const originalLoadGrammar = definition.loadGrammar;
     const loadGrammar = vi.fn(originalLoadGrammar);
     definition.loadGrammar = loadGrammar;
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-lazy-go-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-lazy-go-"));
     const firstPath = path.join(dir, "first.go");
     const secondPath = path.join(dir, "second.go");
     await fs.writeFile(firstPath, "package main\nfunc first() {}\n", "utf8");
@@ -52,7 +52,7 @@ describe("lazy tree-sitter parsers", () => {
       .mockRejectedValueOnce(new Error("temporary grammar load failure"))
       .mockImplementation(originalLoadGrammar);
     definition.loadGrammar = loadGrammar;
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-lazy-python-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-lazy-python-"));
     const absolutePath = path.join(dir, "app.py");
     await fs.writeFile(absolutePath, "def run():\n    return 1\n", "utf8");
     const input = {
@@ -79,7 +79,7 @@ describe("lazy tree-sitter parsers", () => {
   });
 
   it("loads a TypeScript grammar only when the registered parser first parses", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-lazy-typescript-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-lazy-typescript-"));
     const absolutePath = path.join(dir, "app.ts");
     await fs.writeFile(absolutePath, "export const value = 1;\n", "utf8");
 

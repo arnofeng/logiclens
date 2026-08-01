@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { discoverLogicLensPlugin, loadDiscoveredLogicLensPlugins } from "../src/core/plugins/runtime.js";
+import { discoverPlugin, loadDiscoveredPlugins } from "../src/core/plugins/runtime.js";
 import { autoDetectAndRegisterPlugins, clearRegisteredPluginCapabilities } from "../src/core/plugins/register.js";
 import { defaultConfig } from "../src/config/loadConfig.js";
 import { scanAndParseRepo } from "../src/core/indexing/scanParse.js";
@@ -22,22 +22,22 @@ afterEach(() => clearRegisteredPluginCapabilities());
 
 describe("C# plugin release acceptance", () => {
   it("discovers and loads workspace and user-level directory layouts", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-csharp-install-"));
-    const workspace = path.join(root, "workspace", ".logiclens", "plugins", "csharp");
-    const user = path.join(root, "home", ".logiclens", "plugins", "csharp");
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-csharp-install-"));
+    const workspace = path.join(root, "workspace", ".repohelix", "plugins", "csharp");
+    const user = path.join(root, "home", ".repohelix", "plugins", "csharp");
     await installLayout(workspace);
     await installLayout(user);
     for (const directory of [workspace, user]) {
-      const discovered = await discoverLogicLensPlugin(directory);
-      await expect(loadDiscoveredLogicLensPlugins([discovered], { failFast: true })).resolves.toHaveLength(1);
+      const discovered = await discoverPlugin(directory);
+      await expect(loadDiscoveredPlugins([discovered], { failFast: true })).resolves.toHaveLength(1);
     }
   });
 
   it("indexes controller, minimal API, DTO and record source without a root include override", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-csharp-e2e-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-csharp-e2e-"));
     const repoPath = path.join(root, "web-api");
     await fs.cp(path.resolve("tests/fixtures/plugin-csharp/e2e/web-api"), repoPath, { recursive: true });
-    await installLayout(path.join(root, ".logiclens", "plugins", "csharp"));
+    await installLayout(path.join(root, ".repohelix", "plugins", "csharp"));
     const config = { ...defaultConfig(), repos: [{ name: "web-api", path: repoPath }] };
     expect(config.include).not.toContain("**/*.cs");
     const bootstrap = await autoDetectAndRegisterPlugins({ config, cwd: root, repoConfigs: config.repos });
@@ -50,12 +50,12 @@ describe("C# plugin release acceptance", () => {
   });
 
   it("activates marker-only repositories without parsing markers and does not load for non-C# repositories", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-csharp-negative-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-csharp-negative-"));
     const marker = path.join(root, "marker");
     const negative = path.join(root, "negative");
     await fs.cp(path.resolve("tests/fixtures/plugin-csharp/e2e/marker-only"), marker, { recursive: true });
     await fs.cp(path.resolve("tests/fixtures/plugin-csharp/e2e/non-csharp"), negative, { recursive: true });
-    await installLayout(path.join(root, ".logiclens", "plugins", "csharp"));
+    await installLayout(path.join(root, ".repohelix", "plugins", "csharp"));
     const config = { ...defaultConfig(), repos: [{ name: "marker", path: marker }, { name: "negative", path: negative }] };
     const first = await autoDetectAndRegisterPlugins({ config, cwd: root, repoConfigs: config.repos });
     expect(first.activePluginSourceGlobsByRepo.get(marker)).toEqual(["**/*.cs"]);

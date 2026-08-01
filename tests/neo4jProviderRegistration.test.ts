@@ -55,13 +55,13 @@ describe("Neo4j lexical provider registration", () => {
     await factory.open({});
     expect(adapterState.open).toHaveBeenLastCalledWith("bolt://localhost:7687", undefined);
 
-    await factory.open({ url: "bolt://graph.example:7687", username: "logiclens", password: "secret" });
+    await factory.open({ url: "bolt://graph.example:7687", username: "repohelix", password: "secret" });
     expect(adapterState.open).toHaveBeenLastCalledWith(
       "bolt://graph.example:7687",
-      { username: "logiclens", password: "secret" }
+      { username: "repohelix", password: "secret" }
     );
 
-    await expect(factory.open({ username: "logiclens" })).rejects.toThrow(/both username and password/);
+    await expect(factory.open({ username: "repohelix" })).rejects.toThrow(/both username and password/);
     await expect(factory.open({ password: "secret" })).rejects.toThrow(/both username and password/);
   });
 

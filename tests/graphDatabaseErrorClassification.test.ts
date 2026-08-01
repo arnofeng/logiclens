@@ -8,7 +8,7 @@ import { GraphDatabaseClosedError, GraphDatabaseOperationalError } from "../src/
 
 describe("graph database operational error contract", () => {
   it("keeps Kuzu syntax and schema errors non-operational", async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-kuzu-error-classification-"));
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-kuzu-error-classification-"));
     const db = await KuzuGraphDB.open(path.join(directory, "graph"));
     try {
       await db.initSchema("error-classification");

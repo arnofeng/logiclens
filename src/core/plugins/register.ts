@@ -2,13 +2,13 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
-  discoverLogicLensPlugin,
-  loadDiscoveredLogicLensPlugins,
-  loadLogicLensPlugins,
-  type DiscoveredLogicLensPlugin,
-  type LoadedLogicLensPlugin
+  discoverPlugin,
+  loadDiscoveredPlugins,
+  loadPlugins,
+  type DiscoveredPlugin,
+  type LoadedPlugin
 } from "./runtime.js";
-import type { PluginManifest } from "@logiclens/plugin-sdk";
+import type { PluginManifest } from "@repohelix/plugin-sdk";
 import type { AppConfig } from "../../config/schema.js";
 import { parserRegistry, contractExtractorRegistry, frameworkDetectorRegistry } from "../registries/registry.js";
 import { toRepoNode } from "../workspace/repoRegistry.js";
@@ -35,7 +35,7 @@ import { BRAND } from "../../shared/branding.js";
 import type { LanguageParser } from "../registries/types.js";
 
 export type PluginBootstrapResult = {
-  loadedPlugins: LoadedLogicLensPlugin[];
+  loadedPlugins: LoadedPlugin[];
   activePluginManifests: readonly PluginManifest[];
   activeLanguageParsers: readonly LanguageParser[];
   additionalIndexFilesByRepo: ReadonlyMap<string, readonly string[]>;
@@ -58,11 +58,11 @@ export async function loadAndRegisterConfiguredPlugins(input: {
   config: AppConfig;
   cwd: string;
   warn?: (message: string) => void;
-}): Promise<LoadedLogicLensPlugin[]> {
+}): Promise<LoadedPlugin[]> {
   const configured = input.config.plugins?.enabled ?? [];
   clearRegisteredPluginCapabilities();
   if (configured.length === 0) return [];
-  const loaded = await loadLogicLensPlugins(configured, {
+  const loaded = await loadPlugins(configured, {
     cwd: input.cwd,
     failFast: input.config.plugins?.failFast,
     onWarning: input.warn
@@ -114,17 +114,17 @@ export async function autoDetectAndRegisterPlugins(input: {
   const loadable = [...new Set(repoPluginStates.flatMap((state) =>
     pluginsForActiveLanguages(state.plugins, state.activeLanguages)
   ))].filter((plugin) => plugin.entryPath);
-  const loaded = await loadDiscoveredLogicLensPlugins(loadable.map(toDiscovered), {
+  const loaded = await loadDiscoveredPlugins(loadable.map(toDiscovered), {
     cwd: input.cwd,
     failFast: input.config.plugins?.failFast,
     onWarning: input.warn
   });
-  const genericLegacy = await loadLegacyGenericPlugins(input);
-  const allLoaded = [...loaded, ...genericLegacy];
+  const configuredGeneric = await loadConfiguredGenericPlugins(input);
+  const allLoaded = [...loaded, ...configuredGeneric];
   for (const loadedPlugin of loaded) {
     registerLoadedPlugins([loadedPlugin], { clearFirst: false });
   }
-  registerLoadedPlugins(genericLegacy, { clearFirst: false });
+  registerLoadedPlugins(configuredGeneric, { clearFirst: false });
 
   if (activeLanguages.size > 0) {
     input.log?.(`Detected language plugins: ${[...activeLanguages].sort().join(", ")}`);
@@ -186,7 +186,7 @@ export async function loadWorkspacePluginPlanningSnapshot(input: {
       .filter((plugin) => plugin.entryPath)
       .map((plugin) => [plugin.source, plugin] as const)
   )).values()];
-  const loaded = await loadDiscoveredLogicLensPlugins(loadable.map(toDiscovered), {
+  const loaded = await loadDiscoveredPlugins(loadable.map(toDiscovered), {
     cwd: input.cwd,
     failFast: input.config.plugins?.failFast,
     onWarning: input.warn
@@ -213,7 +213,7 @@ export async function loadWorkspacePluginPlanningSnapshot(input: {
 }
 
 export function registerLoadedPlugins(
-  loaded: readonly LoadedLogicLensPlugin[],
+  loaded: readonly LoadedPlugin[],
   options: { clearFirst?: boolean; scopeRepoId?: string } = {}
 ): void {
   if (options.clearFirst ?? true) clearRegisteredPluginCapabilities();
@@ -258,11 +258,11 @@ async function discoverAvailablePlugins(input: {
     input.warn
   );
   const globalDirs = await childPluginDirs(path.join(os.homedir(), BRAND.configDirName, "plugins"));
-  const legacyDirs = input.config.plugins?.enabled.filter(isPathLikeDirectorySpecifier) ?? [];
+  const configuredDirs = input.config.plugins?.enabled.filter(isPathLikeDirectorySpecifier) ?? [];
   const discovered: AvailablePlugin[] = [
     ...workspacePlugins,
     ...(await discoverDirs(globalDirs, "global", input.warn)),
-    ...(await discoverDirs(legacyDirs.map((specifier) => path.resolve(input.cwd, specifier)), "legacy", input.warn)),
+    ...(await discoverDirs(configuredDirs.map((specifier) => path.resolve(input.cwd, specifier)), "configured", input.warn)),
     ...builtinLanguagePluginManifests
   ];
   return dedupeByManifestName(discovered);
@@ -283,7 +283,7 @@ async function discoverDirs(
   const plugins: AvailablePlugin[] = [];
   for (const dir of dirs) {
     try {
-      const discovered = await discoverLogicLensPlugin(dir, `${sourceKind}:${dir}`);
+      const discovered = await discoverPlugin(dir, `${sourceKind}:${dir}`);
       plugins.push({
         manifest: discovered.manifest,
         source: discovered.source,
@@ -292,7 +292,7 @@ async function discoverDirs(
         entryPath: discovered.entryPath
       });
     } catch (error) {
-      warn?.(`Failed to discover LogicLens plugin "${dir}": ${error instanceof Error ? error.message : String(error)}`);
+      warn?.(`Failed to discover plugin "${dir}": ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   return plugins;
@@ -307,7 +307,7 @@ function dedupeByManifestName(plugins: readonly AvailablePlugin[]): AvailablePlu
   return [...byName.values()];
 }
 
-function toDiscovered(plugin: AvailablePlugin): DiscoveredLogicLensPlugin {
+function toDiscovered(plugin: AvailablePlugin): DiscoveredPlugin {
   return {
     manifest: plugin.manifest as PluginManifest,
     source: plugin.source,
@@ -316,14 +316,14 @@ function toDiscovered(plugin: AvailablePlugin): DiscoveredLogicLensPlugin {
   };
 }
 
-async function loadLegacyGenericPlugins(input: {
+async function loadConfiguredGenericPlugins(input: {
   config: AppConfig;
   cwd: string;
   warn?: (message: string) => void;
-}): Promise<LoadedLogicLensPlugin[]> {
-  const legacyImportSpecifiers = input.config.plugins?.enabled.filter((specifier) => !isPathLikeDirectorySpecifier(specifier)) ?? [];
-  if (legacyImportSpecifiers.length === 0) return [];
-  const loaded = await loadLogicLensPlugins(legacyImportSpecifiers, {
+}): Promise<LoadedPlugin[]> {
+  const importSpecifiers = input.config.plugins?.enabled.filter((specifier) => !isPathLikeDirectorySpecifier(specifier)) ?? [];
+  if (importSpecifiers.length === 0) return [];
+  const loaded = await loadPlugins(importSpecifiers, {
     cwd: input.cwd,
     failFast: input.config.plugins?.failFast,
     onWarning: input.warn
@@ -331,7 +331,7 @@ async function loadLegacyGenericPlugins(input: {
   return loaded.filter(({ plugin, source }) => {
     const isGeneric = !plugin.manifest.languages || plugin.manifest.languages.length === 0;
     if (!isGeneric) {
-      input.warn?.(`Legacy configured language plugin "${source}" was loaded for compatibility but not registered; language plugins are activated by project detection.`);
+      input.warn?.(`Configured language plugin "${source}" was loaded but not registered; language plugins are activated by project detection.`);
     }
     return isGeneric;
   });

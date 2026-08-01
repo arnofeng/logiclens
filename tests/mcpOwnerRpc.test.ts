@@ -39,7 +39,7 @@ function status(): WatchStatus {
 }
 
 async function makeWorkspace(): Promise<string> {
-  return fs.mkdtemp(path.join(os.tmpdir(), "logiclens-owner-rpc-"));
+  return fs.mkdtemp(path.join(os.tmpdir(), "repohelix-owner-rpc-"));
 }
 
 describe("MCP owner RPC", () => {

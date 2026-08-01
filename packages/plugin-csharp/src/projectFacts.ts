@@ -1,5 +1,5 @@
-import { defineFactExtractor, defineFrameworkDetector } from "@logiclens/plugin-sdk";
-import type { PluginEvidenceInput, PluginFrameworkFact, PluginPackageUsageFact, PluginRepoView } from "@logiclens/plugin-sdk";
+import { defineFactExtractor, defineFrameworkDetector } from "@repohelix/plugin-sdk";
+import type { PluginEvidenceInput, PluginFrameworkFact, PluginPackageUsageFact, PluginRepoView } from "@repohelix/plugin-sdk";
 import { collectProjectMetadata, type ProjectDeclaration } from "./projectMetadata.js";
 
 type Candidate = { name: string; declaration: ProjectDeclaration; rule: string };

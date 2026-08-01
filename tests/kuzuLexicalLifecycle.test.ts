@@ -55,11 +55,11 @@ describe("Kuzu workspace lexical lifecycle", () => {
   let schemaInitialized = false;
 
   beforeAll(async () => {
-    previousCloseMode = process.env.LOGICLENS_KUZU_CLOSE_MODE;
+    previousCloseMode = process.env.REPOHELIX_KUZU_CLOSE_MODE;
     // Reuse one physical database and close it exactly once. This avoids the
     // native repeated FTS shutdown issue without leaking seven temp folders.
-    process.env.LOGICLENS_KUZU_CLOSE_MODE = "explicit";
-    directory = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-kuzu-lexical-"));
+    process.env.REPOHELIX_KUZU_CLOSE_MODE = "explicit";
+    directory = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-kuzu-lexical-"));
     db = await KuzuGraphDB.open(path.join(directory, "graph.kuzu"));
   });
 
@@ -79,8 +79,8 @@ describe("Kuzu workspace lexical lifecycle", () => {
   afterAll(async () => {
     await db?.close();
     if (directory) await fs.rm(directory, { recursive: true, force: true });
-    if (previousCloseMode === undefined) delete process.env.LOGICLENS_KUZU_CLOSE_MODE;
-    else process.env.LOGICLENS_KUZU_CLOSE_MODE = previousCloseMode;
+    if (previousCloseMode === undefined) delete process.env.REPOHELIX_KUZU_CLOSE_MODE;
+    else process.env.REPOHELIX_KUZU_CLOSE_MODE = previousCloseMode;
   });
 
   it("retries interrupted stats migration and keeps schema and the workspace FTS index idempotent", async () => {
@@ -420,7 +420,7 @@ describe("Kuzu workspace lexical lifecycle", () => {
     await store.ensureSchema();
     const existing = document({ id: "lexical:append-load-existing", canonicalId: "code:append-load-existing" });
     await store.upsertDocuments([existing]);
-    const prefix = "logiclens-lexical-append-load-";
+    const prefix = "repohelix-lexical-append-load-";
     const before = new Set((await fs.readdir(os.tmpdir())).filter((name) => name.startsWith(prefix)));
     const originalQuery = db.query.bind(db);
     const query = vi.spyOn(db, "query").mockImplementation(async (cypher, params) => {
@@ -463,7 +463,7 @@ describe("Kuzu workspace lexical lifecycle", () => {
 
   it("rolls back a failed COPY and removes its temporary staging directory", async () => {
     await store.ensureSchema();
-    const prefix = "logiclens-lexical-copy-";
+    const prefix = "repohelix-lexical-copy-";
     const before = new Set((await fs.readdir(os.tmpdir())).filter((name) => name.startsWith(prefix)));
     const originalQuery = db.query.bind(db);
     const query = vi.spyOn(db, "query").mockImplementation(async (cypher, params) => {

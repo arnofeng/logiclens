@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Stable Plugin API 1.0 package `@logiclens/plugin-sdk` and the official `@logiclens/plugin-csharp` language plugin.
+- Stable Plugin API 1.0 package `@repohelix/plugin-sdk` and the official `@repohelix/plugin-csharp` language plugin.
 - Workspace-wide code search that combines text matches with graph context.
 - Full-text search support for both Kuzu and Neo4j workspaces.
 - C# parsing and contract extraction for ASP.NET Core HTTP APIs, schemas, gRPC, Kafka, RabbitMQ, MassTransit, NServiceBus, Azure Service Bus, package metadata, and framework detection.
@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Stable 1.x contracts:** The documented CLI, Node.js SDK, MCP tools, graph migration policy, and Plugin API now follow Semantic Versioning.
-- **Breaking Plugin API:** Plugin API major version is now `1.0.0`. Plugins declaring `logiclensPluginApiVersion: 0.x` must update their SDK dependency and manifests before loading under LogicLens 1.x.
+- **Breaking Plugin API:** Plugin API major version is now `1.0.0`. Plugins declaring `pluginApiVersion: 0.x` must update their SDK dependency and manifests before loading under RepoHelix 1.x.
 - **Breaking semantic call relations:** Replaced `CALLS_ENDPOINT` with protocol-specific `CALLS_HTTP`, `CALLS_DUBBO`, `CALLS_GRPC`, and `CALLS_GRAPHQL` relations. Handler-to-local-consumer execution flow is now persisted as `INTERNAL_CALL` only when both specs share the parsed containing source symbol.
 - **Breaking trace JSON/SDK contract:** Trace edges now expose protocol-specific `kind`, `resolution` (`exact`, `probable`, or `heuristic`), `evidenceId`, and optional source evidence (`line`, `raw`, and `rule`). The former `materialization` and `sourceEdgeKind` fields were removed.
 - Dubbo and gRPC consumer specs now point at the containing caller method, preserving invocation evidence. Java extraction retains full generic request/response types and distinguishes Spring declared response types from wrapped body types.
@@ -31,9 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Migration
 
-- Stop existing `logiclens watch` and MCP processes before upgrading.
+- Stop existing `repohelix watch` and MCP processes before upgrading.
 - Back up configuration and the installed-plugin list, recreate the beta workspace state, and reinstall plugins with Plugin API 1.x releases.
-- Run a complete `logiclens index` after recreating the workspace; `rebuild-relations` alone does not apply all 1.0 workspace changes.
+- Run a complete `repohelix index` after recreating the workspace; `rebuild-relations` alone does not apply all 1.0 workspace changes.
 - See the [1.0 migration guide](docs/migration-1.0.md) for the complete upgrade sequence.
 
 ## [0.1.1-beta.15] - 2026-07-08
@@ -47,9 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Merged `trace` and `spec-trace` into a single `trace` command**: The old single-hop reference-level `trace` command (L4, `kind:value` input) has been removed. The multi-hop semantic `spec-trace` command (L7, natural-language input, SEMANTIC_REL traversal) is now the new `trace`. The MCP tool `logiclens_semantic_trace` has been merged into `logiclens_trace`.
+- **Merged `trace` and `spec-trace` into a single `trace` command**: The old single-hop reference-level `trace` command (L4, `kind:value` input) has been removed. The multi-hop semantic `spec-trace` command (L7, natural-language input, SEMANTIC_REL traversal) is now the new `trace`. The MCP tool `repohelix_semantic_trace` has been merged into `repohelix_trace`.
 - **Removed `TraceResult` type** from the SDK public API. Use the new `SemanticTraceGraph` return type from `client.trace()`.
-- Renamed SDK exports toward app-neutral terminology: `LogicLensClient`/`createLogicLens` are replaced by `AppClient`/`createClient`, with `GraphClient` exported as an alias.
+- Consolidated SDK exports around app-neutral terminology: use `AppClient`/`createClient`, with `GraphClient` exported as an alias.
 - Improved dependency query ordering by prioritizing package, import, and API dependency types, with a default result limit of 20.
 - Decoupled runtime branding literals and configuration naming across the CLI, SDK, installer, and MCP server.
 
@@ -172,13 +172,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial tagged beta release.
 
-[Unreleased]: https://github.com/arnofeng/logiclens/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/arnofeng/logiclens/compare/v0.1.1-beta.15...v1.0.0
-[0.1.1-beta.15]: https://github.com/arnofeng/logiclens/compare/v0.1.1-beta.14...v0.1.1-beta.15
-[0.1.1-beta.14]: https://github.com/arnofeng/logiclens/compare/v0.1.1-beta.13...v0.1.1-beta.14
-[0.1.1-beta.13]: https://github.com/arnofeng/logiclens/compare/v0.1.1-beta.12...v0.1.1-beta.13
-[0.1.1-beta.12]: https://github.com/arnofeng/logiclens/compare/v0.1.1-beta.11...v0.1.1-beta.12
-[0.1.1-beta.11]: https://github.com/arnofeng/logiclens/compare/v0.1.1-beta.10...v0.1.1-beta.11
-[0.1.1-beta.10]: https://github.com/arnofeng/logiclens/compare/v0.1.1-beta.9...v0.1.1-beta.10
-[0.1.1-beta.9]: https://github.com/arnofeng/logiclens/compare/v0.1.1-beta.8...v0.1.1-beta.9
-[0.1.1-beta.8]: https://github.com/arnofeng/logiclens/releases/tag/v0.1.1-beta.8
+[Unreleased]: https://github.com/arnofeng/repohelix/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/arnofeng/repohelix/compare/v0.1.1-beta.15...v1.0.0
+[0.1.1-beta.15]: https://github.com/arnofeng/repohelix/compare/v0.1.1-beta.14...v0.1.1-beta.15
+[0.1.1-beta.14]: https://github.com/arnofeng/repohelix/compare/v0.1.1-beta.13...v0.1.1-beta.14
+[0.1.1-beta.13]: https://github.com/arnofeng/repohelix/compare/v0.1.1-beta.12...v0.1.1-beta.13
+[0.1.1-beta.12]: https://github.com/arnofeng/repohelix/compare/v0.1.1-beta.11...v0.1.1-beta.12
+[0.1.1-beta.11]: https://github.com/arnofeng/repohelix/compare/v0.1.1-beta.10...v0.1.1-beta.11
+[0.1.1-beta.10]: https://github.com/arnofeng/repohelix/compare/v0.1.1-beta.9...v0.1.1-beta.10
+[0.1.1-beta.9]: https://github.com/arnofeng/repohelix/compare/v0.1.1-beta.8...v0.1.1-beta.9
+[0.1.1-beta.8]: https://github.com/arnofeng/repohelix/releases/tag/v0.1.1-beta.8

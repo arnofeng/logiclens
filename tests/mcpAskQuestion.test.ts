@@ -156,7 +156,7 @@ describe("MCP lexical health boundary", () => {
     const notice = buildFreshnessNotice(buildFreshnessMetadata({
       pending: [], watcherActive: false, indexQueue: queue, lexical: unhealthy
     }));
-    expect(notice).toBe("Lexical search: unavailable (index_unhealthy). Call logiclens_get_watch_status for full details.");
+    expect(notice).toBe("Lexical search: unavailable (index_unhealthy). Call repohelix_get_watch_status for full details.");
     expect(notice).not.toMatch(/providerVersion|projectionSchemaVersion|tokenizerVersion|indexStatus|bolt:|password/u);
   });
 

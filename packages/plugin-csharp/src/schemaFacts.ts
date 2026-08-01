@@ -6,7 +6,7 @@ import type {
   PluginSchemaFact,
   PluginSchemaField,
   PluginSymbolView
-} from "@logiclens/plugin-sdk";
+} from "@repohelix/plugin-sdk";
 import { csharpParseBufferSize } from "./parseBuffer.js";
 
 type Point = { row: number; column: number };

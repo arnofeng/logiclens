@@ -44,7 +44,7 @@ describe("Kuzu lexical append stats rollback", () => {
   let store: KuzuWorkspaceLexicalStore;
 
   beforeAll(async () => {
-    directory = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-kuzu-append-stats-"));
+    directory = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-kuzu-append-stats-"));
     db = await KuzuGraphDB.open(path.join(directory, "graph.kuzu"));
     store = new KuzuWorkspaceLexicalStore(db);
     await store.ensureSchema();
@@ -58,7 +58,7 @@ describe("Kuzu lexical append stats rollback", () => {
   it("rolls back append-loaded documents when the stats update fails", async () => {
     const existing = document({});
     await store.upsertDocuments([existing]);
-    const prefix = "logiclens-lexical-append-load-";
+    const prefix = "repohelix-lexical-append-load-";
     const before = new Set((await fs.readdir(os.tmpdir())).filter((name) => name.startsWith(prefix)));
     const originalQuery = db.query.bind(db);
     const query = vi.spyOn(db, "query").mockImplementation(async (cypher, params) => {

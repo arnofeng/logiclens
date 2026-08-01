@@ -22,8 +22,8 @@ type PackageTarget = {
 
 const root = process.cwd();
 const expectedNodeEngine = ">=20.19.0";
-const pluginApiKey = "logic" + "lensPluginApiVersion";
-const pluginApiExport = "LOGIC" + "LENS_PLUGIN_API_VERSION";
+const pluginApiKey = "pluginApiVersion";
+const pluginApiExport = "PLUGIN_API_VERSION";
 const packageDirectories = [
   ".",
   "packages/plugin-sdk",

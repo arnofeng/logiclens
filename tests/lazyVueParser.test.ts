@@ -12,7 +12,7 @@ import { repoId } from "../src/shared/path.js";
 
 describe("lazy Vue parser delegates", () => {
   it("loads only the actual JSX or TSX grammar through parsing and extraction", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-lazy-vue-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-lazy-vue-"));
     const jsPath = path.join(dir, "App.vue");
     const tsPath = path.join(dir, "Counter.vue");
     await fs.writeFile(jsPath, `<script>\nexport function publish() { eventBus.publish("app.ready"); }\n</script>\n`, "utf8");

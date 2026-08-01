@@ -99,15 +99,7 @@ export type {
 
 export {
   createClient,
-  /**
-   * @deprecated Use createClient instead.
-   */
-  createClient as createLogicLens,
   GraphClient,
-  /**
-   * @deprecated Use AppClient instead.
-   */
-  AppClient as LogicLensClient,
   AppClient,
   canonicalContractKey,
   createContractId,
@@ -118,15 +110,7 @@ export {
 export type {
   ClientOptions,
   AppConfig,
-  /**
-   * @deprecated Use AppConfig instead.
-   */
-  AppConfig as LogicLensConfig,
   AppClientOptions,
-  /**
-   * @deprecated Use AppClientOptions instead.
-   */
-  AppClientOptions as LogicLensClientOptions,
   LanguageParser,
   ParseInput,
   ExtractContext,

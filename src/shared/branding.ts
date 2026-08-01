@@ -1,25 +1,17 @@
 import path from "node:path";
 
 export const BRAND = {
-  displayName: "LogicLens",
-  cliName: "logiclens",
-  packageName: "logiclens",
-  docsCommandName: "logiclens",
-  tempDirPrefix: "logiclens",
-  configDirName: ".logiclens",
+  displayName: "RepoHelix",
+  cliName: "repohelix",
+  packageName: "repohelix",
+  docsCommandName: "repohelix",
+  tempDirPrefix: "repohelix",
+  configDirName: ".repohelix",
   configFileName: "config.yaml",
-  envPrefix: "LOGICLENS_",
-  mcpServerName: "logiclens",
-  mcpToolPrefix: "logiclens",
-  installerSectionName: "LOGICLENS",
-  legacy: {
-    configDirNames: [".logiclens"],
-    envPrefixes: ["LOGICLENS_"],
-    cliNames: ["logiclens"],
-    mcpServerNames: ["logiclens"],
-    mcpToolPrefixes: ["logiclens"],
-    installerSectionNames: ["LOGICLENS"]
-  }
+  envPrefix: "REPOHELIX_",
+  mcpServerName: "repohelix",
+  mcpToolPrefix: "repohelix",
+  installerSectionName: "REPOHELIX"
 } as const;
 
 export const BRAND_PATHS = {
@@ -36,8 +28,8 @@ export const BRAND_DEFAULTS = {
 } as const;
 
 export const BRAND_PLUGIN_PACKAGES = {
-  sdk: "@logiclens/plugin-sdk",
-  sdkUtils: "@logiclens/plugin-sdk/utils"
+  sdk: "@repohelix/plugin-sdk",
+  sdkUtils: "@repohelix/plugin-sdk/utils"
 } as const;
 
 export function brandedPath(cwd: string, relativePath: string): string {
@@ -48,19 +40,12 @@ export function configFilePath(cwd: string): string {
   return path.join(cwd, BRAND.configDirName, BRAND.configFileName);
 }
 
-export function legacyConfigFilePaths(cwd: string): string[] {
-  return BRAND.legacy.configDirNames
-    .filter((dir) => dir !== BRAND.configDirName)
-    .map((dir) => path.join(cwd, dir, BRAND.configFileName));
-}
-
 export function configFileCandidates(cwd: string): string[] {
-  return [configFilePath(cwd), ...legacyConfigFilePaths(cwd)];
+  return [configFilePath(cwd)];
 }
 
 export function brandedConfigDirPaths(cwd: string): string[] {
-  return [...new Set([BRAND.configDirName, ...BRAND.legacy.configDirNames])]
-    .map((dir) => path.join(cwd, dir));
+  return [path.join(cwd, BRAND.configDirName)];
 }
 
 export function brandedTempDirPrefix(name: string): string {
@@ -68,17 +53,7 @@ export function brandedTempDirPrefix(name: string): string {
 }
 
 export function getBrandedEnv(key: string): string | undefined {
-  const brandedKey = `${BRAND.envPrefix}${key}`;
-  const value = process.env[brandedKey];
-  if (value !== undefined) return value;
-
-  for (const prefix of BRAND.legacy.envPrefixes) {
-    if (prefix === BRAND.envPrefix) continue;
-    const legacyValue = process.env[`${prefix}${key}`];
-    if (legacyValue !== undefined) return legacyValue;
-  }
-
-  return undefined;
+  return process.env[`${BRAND.envPrefix}${key}`];
 }
 
 export function brandedMcpToolName(name: string): string {
@@ -96,19 +71,10 @@ export function brandedInstallerSectionMarkers(sectionName = BRAND.installerSect
   };
 }
 
-export function legacyInstallerSectionMarkers(): Array<{ start: string; end: string }> {
-  return BRAND.legacy.installerSectionNames
-    .filter((sectionName) => sectionName !== BRAND.installerSectionName)
-    .map((sectionName) => brandedInstallerSectionMarkers(sectionName));
-}
-
 export function allInstallerSectionMarkers(): Array<{ start: string; end: string }> {
-  return [
-    brandedInstallerSectionMarkers(),
-    ...legacyInstallerSectionMarkers()
-  ];
+  return [brandedInstallerSectionMarkers()];
 }
 
 export function brandedWorkspaceDirNames(): string[] {
-  return [...new Set([BRAND.configDirName, ...BRAND.legacy.configDirNames])];
+  return [BRAND.configDirName];
 }

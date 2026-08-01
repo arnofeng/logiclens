@@ -22,7 +22,7 @@ import {
 import { BRAND } from '../../../shared/branding.js';
 
 const MCP_SERVER_KEY = BRAND.mcpServerName;
-const MCP_SERVER_KEYS = [...new Set([BRAND.mcpServerName, ...BRAND.legacy.mcpServerNames])];
+const MCP_SERVER_KEYS = [MCP_SERVER_KEY];
 
 export interface JsonTargetOptions {
   id: TargetId;

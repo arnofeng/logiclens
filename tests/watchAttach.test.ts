@@ -53,7 +53,7 @@ describe("watch command MCP owner attach", () => {
   });
 
   it("attaches to a live MCP owner instead of opening a standalone graph client", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-watch-attach-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-watch-attach-"));
     const client = {
       isWatching: () => true,
       watch: vi.fn(),

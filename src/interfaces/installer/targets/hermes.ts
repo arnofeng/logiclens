@@ -13,7 +13,7 @@ import { BRAND } from '../../../shared/branding.js';
 
 const MCP_SERVER_KEY = BRAND.mcpServerName;
 const MCP_TOOLSET_NAME = `mcp-${BRAND.mcpServerName}`;
-const MCP_SERVER_KEYS = [...new Set([BRAND.mcpServerName, ...BRAND.legacy.mcpServerNames])];
+const MCP_SERVER_KEYS = [MCP_SERVER_KEY];
 const MCP_TOOLSET_NAMES = [...new Set(MCP_SERVER_KEYS.map((name) => `mcp-${name}`))];
 
 type LineRange = { start: number; end: number };

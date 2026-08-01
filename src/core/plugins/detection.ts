@@ -27,7 +27,7 @@ export type DetectPluginManifest = {
   [key: string]: unknown;
 };
 
-export type PluginSourceKind = "workspace" | "global" | "bundled" | "legacy";
+export type PluginSourceKind = "workspace" | "global" | "bundled" | "configured";
 
 export type AvailablePlugin = {
   manifest: DetectPluginManifest;
@@ -74,7 +74,7 @@ function languageManifest(id: string, extensions: string[], markers: string[], r
     manifest: {
       name: id,
       version: "0.0.0-bundled",
-      ["logic" + "lensPluginApiVersion"]: "1.0.0",
+      pluginApiVersion: "1.0.0",
       capabilities: ["language"],
       languages: [language]
     } as DetectPluginManifest,

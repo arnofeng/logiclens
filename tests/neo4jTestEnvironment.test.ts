@@ -12,7 +12,7 @@ function configured(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     [NEO4J_INTEGRATION_ENV.url]: "neo4j+s://example.invalid",
     [NEO4J_INTEGRATION_ENV.username]: "test-user",
     [NEO4J_INTEGRATION_ENV.password]: "secret-value",
-    [NEO4J_INTEGRATION_ENV.database]: "logiclens-test",
+    [NEO4J_INTEGRATION_ENV.database]: "repohelix-test",
     ...overrides,
   };
 }
@@ -63,7 +63,7 @@ describe("Neo4j integration test environment", () => {
     const environment = resolveNeo4jTestEnvironment(configured());
     expect(environment.runnable).toBe(true);
     expect(environment.testName).not.toContain("secret-value");
-    expect(environment.requireConfiguration().database).toBe("logiclens-test");
+    expect(environment.requireConfiguration().database).toBe("repohelix-test");
   });
 
   it("runs every cleanup step and aggregates failures after close", async () => {

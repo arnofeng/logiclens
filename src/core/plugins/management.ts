@@ -3,7 +3,7 @@ import { existsSync, statSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { discoverLogicLensPlugin, loadDiscoveredLogicLensPlugins } from "./runtime.js";
+import { discoverPlugin, loadDiscoveredPlugins } from "./runtime.js";
 import { BRAND } from "../../shared/branding.js";
 
 export type PluginScope = { kind: "workspace" | "global"; root: string };
@@ -74,8 +74,8 @@ export async function installPlugin(
     if (packageJson?.dependencies && Object.keys(packageJson.dependencies).length > 0) {
       await runNpm(run, ["install", "--omit=dev", "--no-package-lock"], packageDir);
     }
-    const discovered = await discoverLogicLensPlugin(packageDir);
-    await loadDiscoveredLogicLensPlugins([discovered], { cwd: packageDir, failFast: true });
+    const discovered = await discoverPlugin(packageDir);
+    await loadDiscoveredPlugins([discovered], { cwd: packageDir, failFast: true });
     const destination = path.join(scope.root, safePluginDirectoryName(discovered.manifest.name));
     const destinationExists = await exists(destination);
     if (destinationExists) {
@@ -113,9 +113,9 @@ export async function inspectInstalledPlugins(
       try {
         if (entry.isSymbolicLink()) throw new Error("Plugin installation directory must not be a symbolic link.");
         await validatePluginDirectoryBoundary(pluginPath);
-        const discovered = await discoverLogicLensPlugin(pluginPath);
+        const discovered = await discoverPlugin(pluginPath);
         name = discovered.manifest.name; version = discovered.manifest.version;
-        if (options.loadEntry) await loadDiscoveredLogicLensPlugins([discovered], { cwd: pluginPath, failFast: true });
+        if (options.loadEntry) await loadDiscoveredPlugins([discovered], { cwd: pluginPath, failFast: true });
         const metadata = await readJson(path.join(pluginPath, INSTALL_METADATA), true) as PluginInstallMetadata | undefined;
         source = metadata?.source;
       } catch (caught) { error = caught instanceof Error ? caught.message : String(caught); }

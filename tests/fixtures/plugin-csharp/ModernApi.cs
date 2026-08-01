@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 
-namespace LogicLens.Fixtures;
+namespace RepoHelix.Fixtures;
 
 [AttributeUsage(AttributeTargets.Class)]
 public sealed class MarkerAttribute : Attribute { }

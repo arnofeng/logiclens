@@ -49,7 +49,7 @@ async function createIsolatedWorkspace(): Promise<{
   directory: string;
   reposDirectory: string;
 }> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-workspace-e2e-"));
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-workspace-e2e-"));
   const reposDirectory = path.join(directory, "repos");
   await fs.cp(sourceFixture, reposDirectory, { recursive: true });
   return { directory, reposDirectory };

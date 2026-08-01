@@ -19,15 +19,15 @@ describe("workspace Ask retrieval", () => {
   });
 
   it("uses one real global Kuzu lexical query per multilingual workspace question with stable results", async () => {
-    const previousCloseMode = process.env.LOGICLENS_KUZU_CLOSE_MODE;
-    process.env.LOGICLENS_KUZU_CLOSE_MODE = "explicit";
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-workspace-ask-"));
+    const previousCloseMode = process.env.REPOHELIX_KUZU_CLOSE_MODE;
+    process.env.REPOHELIX_KUZU_CLOSE_MODE = "explicit";
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-workspace-ask-"));
     const db = await KuzuGraphDB.open(path.join(directory, "ask.kuzu"));
     cleanup.push(async () => {
       await db.close();
       await fs.rm(directory, { recursive: true, force: true });
-      if (previousCloseMode === undefined) delete process.env.LOGICLENS_KUZU_CLOSE_MODE;
-      else process.env.LOGICLENS_KUZU_CLOSE_MODE = previousCloseMode;
+      if (previousCloseMode === undefined) delete process.env.REPOHELIX_KUZU_CLOSE_MODE;
+      else process.env.REPOHELIX_KUZU_CLOSE_MODE = previousCloseMode;
     });
 
     const systemName = "workspace-ask-integration";

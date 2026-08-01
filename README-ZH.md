@@ -1,8 +1,8 @@
-# LogicLens
+# RepoHelix
 
 <center>
 
-[![npm version](https://img.shields.io/npm/v/logiclens.svg)](https://www.npmjs.com/package/logiclens)
+[![npm version](https://img.shields.io/npm/v/repohelix.svg)](https://www.npmjs.com/package/repohelix)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 </center>
@@ -16,7 +16,7 @@
 ## 目录
 
 - [⚡ 快速开始](#-快速开始)
-- [🧠 为什么需要 LogicLens](#-为什么需要-logiclens)
+- [🧠 为什么需要 RepoHelix](#-为什么需要-repohelix)
 - [🧬 核心理念：代码图谱](#-核心理念代码图谱code-graph)
 - [🔍 CLI 使用示例](#-cli-使用示例)
 - [🤖 MCP 集成（AI Coding Agents）](#-mcp-集成ai-coding-agents)
@@ -32,34 +32,34 @@
 
 ## ⚡ 快速开始
 
-### 1. 安装 LogicLens
+### 1. 安装 RepoHelix
 
 ```bash
-npm install -g logiclens
-logiclens --version
+npm install -g repohelix
+repohelix --version
 ```
 
-LogicLens 要求 Node.js 20.19.0 或更高版本。
+RepoHelix 要求 Node.js 20.19.0 或更高版本。
 
 ### 2. 初始化仓库
 
 初始化工作区。这个工作区可以是多个仓库的父目录，也可以只是一个引用其他仓库路径的独立目录。
 
 ```bash
-logiclens init
+repohelix init
 
 # 添加某个目录下第一层 Git 仓库
-logiclens add-repos ../services
+repohelix add-repos ../services
 # 添加单个仓库
-logiclens add-repo ../service-a --name service-a
+repohelix add-repo ../service-a --name service-a
 
-logiclens index # 索引所有仓库
+repohelix index # 索引所有仓库
 ```
 
 ### 3. 基于图上下文提问
 
 ```bash
-logiclens trace "http POST /orders"
+repohelix trace "http POST /orders"
 ```
 
 预期输出示例：
@@ -83,7 +83,7 @@ Relation Paths:
 
 ---
 
-## 🧠 为什么需要 LogicLens
+## 🧠 为什么需要 RepoHelix
 
 现代软件系统已经不再是单一仓库，而是由多个部分组成：
 
@@ -99,9 +99,9 @@ Relation Paths:
 - 改一个事件，不知道影响范围
 - AI Agent 无法理解整个系统结构
 
-### LogicLens vs 传统工具
+### RepoHelix vs 传统工具
 
-| | 传统工具 | LogicLens |
+| | 传统工具 | RepoHelix |
 |---|---|---|
 | 视野 | 单仓库 | 跨仓库工作区 |
 | 粒度 | 文件级 | 符号 / 契约级 |
@@ -113,7 +113,7 @@ Relation Paths:
 
 ## 🧬 核心理念：代码图谱（Code Graph）
 
-LogicLens 会自动分析你的多仓库系统，将整个代码系统建模为一个 **图结构（Graph）**：
+RepoHelix 会自动分析你的多仓库系统，将整个代码系统建模为一个 **图结构（Graph）**：
 
 ### 📦 节点（Nodes）
 
@@ -132,7 +132,7 @@ LogicLens 会自动分析你的多仓库系统，将整个代码系统建模为�
 
 ### 🚀 能力
 
-- **本地优先**：基于 Kuzu 图数据库构建代码知识图谱，默认存储在 `.logiclens/graph`，数据完全留在本地。
+- **本地优先**：基于 Kuzu 图数据库构建代码知识图谱，默认存储在 `.repohelix/graph`，数据完全留在本地。
 - **跨仓库工作区**：一个工作区可以指向多个仓库，统一构建覆盖整个代码系统的图谱。
 - **静态代码智能**：提取符号、import、调用、文档、语言事实和框架信号，作为图谱的节点和边。
 - **契约模型**：将跨仓库证据归一为 `api`、`event`、`package`、`dto`、`schema`、`grpc-method`、`dubbo-method`、`graphql-operation`、`enum`、`config` 等契约类型，丰富图谱语义。
@@ -172,61 +172,61 @@ LogicLens 会自动分析你的多仓库系统，将整个代码系统建模为�
 > 完整的 CLI 命令和参数说明，请参阅 [CLI 命令参考](docs/cli-reference.md)。
 
 ```bash
-logiclens stats
-logiclens deps --limit 20
-logiclens contracts --kind api
-logiclens contracts --repo order-service --direction outgoing
+repohelix stats
+repohelix deps --limit 20
+repohelix contracts --kind api
+repohelix contracts --repo order-service --direction outgoing
 ```
 
 ### 💥 契约语义追踪
 
 ```bash
-logiclens trace "http GET /api/order/:id"
-logiclens trace "event OrderCreatedEvent"
+repohelix trace "http GET /api/order/:id"
+repohelix trace "event OrderCreatedEvent"
 ```
 
 ### 🔎 影响分析
 
 ```bash
-logiclens impact OrderCreatedEvent
-logiclens impact api:/api/order/:id
+repohelix impact OrderCreatedEvent
+repohelix impact api:/api/order/:id
 ```
 
 ---
 
 ## 🤖 MCP 集成（AI Coding Agents）
 
-LogicLens 通过 **Model Context Protocol（MCP）** 将代码图谱暴露给 AI Agent。
+RepoHelix 通过 **Model Context Protocol（MCP）** 将代码图谱暴露给 AI Agent。
 
 ### 一键安装
 
 ```bash
-logiclens install
+repohelix install
 ```
 
-你可以使用交互式安装程序，在多个 AI 代理（Claude Code、Cursor、Codex CLI、opencode、Hermes Agent、Gemini CLI、Antigravity IDE、Kiro）中自动注册 LogicLens MCP 服务。
+你可以使用交互式安装程序，在多个 AI 代理（Claude Code、Cursor、Codex CLI、opencode、Hermes Agent、Gemini CLI、Antigravity IDE、Kiro）中自动注册 RepoHelix MCP 服务。
 
 ### MCP 工具
 
 | 工具名称 | 功能说明 |
 |---|---|
-| `logiclens_get_stats` | 获取图数据库的汇总统计（仓库数、文件数、代码节点数、调用数等） |
-| `logiclens_get_watch_status` | 查看索引与搜索状态；传入 `refresh: true` 可刷新搜索状态 |
-| `logiclens_list_dependencies` | 列出跨仓库依赖及其证据（支持按 strength/type 过滤） |
-| `logiclens_list_contracts` | 列出已识别的契约及其生产者/消费者/共享计数（支持按 kind、repo、direction 过滤） |
-| `logiclens_trace` | 多跳语义追踪 — 查找契约关联的生产者、消费者和请求/响应/负载 schema |
-| `logiclens_impact_analysis` | 评估修改代码符号或契约的下游影响范围 |
-| `logiclens_ask_question` | 搜索工作区并返回匹配的源码证据 |
+| `repohelix_get_stats` | 获取图数据库的汇总统计（仓库数、文件数、代码节点数、调用数等） |
+| `repohelix_get_watch_status` | 查看索引与搜索状态；传入 `refresh: true` 可刷新搜索状态 |
+| `repohelix_list_dependencies` | 列出跨仓库依赖及其证据（支持按 strength/type 过滤） |
+| `repohelix_list_contracts` | 列出已识别的契约及其生产者/消费者/共享计数（支持按 kind、repo、direction 过滤） |
+| `repohelix_trace` | 多跳语义追踪 — 查找契约关联的生产者、消费者和请求/响应/负载 schema |
+| `repohelix_impact_analysis` | 评估修改代码符号或契约的下游影响范围 |
+| `repohelix_ask_question` | 搜索工作区并返回匹配的源码证据 |
 
-`logiclens_ask_question` 接受 `question`，以及与 SDK 相同的检索控制项：`lexical`、`topK`（`1..100`）、`graphHops`（`0..5`）和 `contextBudget`（`256..65536`）。
+`repohelix_ask_question` 接受 `question`，以及与 SDK 相同的检索控制项：`lexical`、`topK`（`1..100`）、`graphHops`（`0..5`）和 `contextBudget`（`256..65536`）。
 
 ### MCP 配置示例
 
 ```json
 {
   "mcpServers": {
-    "logiclens": {
-      "command": "logiclens",
+    "repohelix": {
+      "command": "repohelix",
       "args": ["mcp"]
     }
   }
@@ -237,16 +237,16 @@ logiclens install
 
 ## 🧠 SDK（编程方式访问）
 
-LogicLens 提供 Node.js SDK，用于构建自动化系统与 AI 工具链。使用 `retrieve()` 获取源码证据，或使用 `ask()` 基于证据生成回答。
+RepoHelix 提供 Node.js SDK，用于构建自动化系统与 AI 工具链。使用 `retrieve()` 获取源码证据，或使用 `ask()` 基于证据生成回答。
 
 ```ts
-import { createClient } from "logiclens";
+import { createClient } from "repohelix";
 
 const client = await createClient({ cwd: process.cwd() });
 
 try {
   // addRepo 只更新该 client 的内存态配置(不落盘)。
-  // 如需持久化工作区配置,请用 CLI:`logiclens init` / `logiclens add-repo`。
+  // 如需持久化工作区配置,请用 CLI:`repohelix init` / `repohelix add-repo`。
   await client.addRepo("../service-a", { name: "service-a" });
   await client.index({ changedOnly: false, writeMode: "auto" });
 
@@ -305,27 +305,27 @@ try {
 
 ## 🧩 插件系统
 
-LogicLens 可以通过外部插件增加语言解析、契约提取和框架检测能力。可以从 npm、本地目录或 `.tgz` 安装，插件通过验证后才会生效：
+RepoHelix 可以通过外部插件增加语言解析、契约提取和框架检测能力。可以从 npm、本地目录或 `.tgz` 安装，插件通过验证后才会生效：
 
 ```bash
-logiclens plugin install @logiclens/plugin-csharp --repo service-a
-logiclens plugin list --all
-logiclens plugin doctor --all
+repohelix plugin install @repohelix/plugin-csharp --repo service-a
+repohelix plugin list --all
+repohelix plugin doctor --all
 ```
 
-用户级安装使用 `--global` 替代 `--repo`。`logiclens index`、`watch`、SDK 索引和 MCP 索引会自动发现插件，并在 manifest 的语言检测规则命中仓库时自动激活。
+用户级安装使用 `--global` 替代 `--repo`。`repohelix index`、`watch`、SDK 索引和 MCP 索引会自动发现插件，并在 manifest 的语言检测规则命中仓库时自动激活。
 
-安装后运行 `logiclens index`，LogicLens 会为匹配的仓库检测并激活插件。安装、激活、更新、卸载和故障排查请参阅[插件使用指南](docs/plugins.md)；开发插件请参阅[插件 SDK 参考](docs/plugin-sdk.md)。外部 [C# 插件](packages/plugin-csharp/README.md)是参考实现。
+安装后运行 `repohelix index`，RepoHelix 会为匹配的仓库检测并激活插件。安装、激活、更新、卸载和故障排查请参阅[插件使用指南](docs/plugins.md)；开发插件请参阅[插件 SDK 参考](docs/plugin-sdk.md)。外部 [C# 插件](packages/plugin-csharp/README.md)是参考实现。
 
 ---
 
 ## ⚙️ 配置
 
-`logiclens init` 会创建 `.logiclens/config.yaml`。这个文件是仓库列表、索引行为、图存储、LLM provider、MCP 安全策略和 watcher 行为的事实来源。
+`repohelix init` 会创建 `.repohelix/config.yaml`。这个文件是仓库列表、索引行为、图存储、LLM provider、MCP 安全策略和 watcher 行为的事实来源。
 
 ### 配置模板
 
-默认情况下，`logiclens init` 会生成一个极简且干净的配置文件：
+默认情况下，`repohelix init` 会生成一个极简且干净的配置文件：
 
 ```yaml
 systemName: default-system
@@ -339,7 +339,7 @@ repos:
 
 ### 高级配置
 
-LogicLens 支持针对性能调优、索引设置和自定义 LLM 重试等多种高级配置项。
+RepoHelix 支持针对性能调优、索引设置和自定义 LLM 重试等多种高级配置项。
 
 完整支持的参数列表及其默认值，请参阅 [Configuration Guide](docs/configuration.md)。
 
@@ -347,13 +347,13 @@ LogicLens 支持针对性能调优、索引设置和自定义 LLM 重试等多�
 
 若要完全离线运行，请使用本地 Kuzu graph，省略 `llm.apiKey`、确保进程环境中未设置 `OPENAI_API_KEY`，并且不要配置远程 LLM endpoint。没有 LLM key 时，只要存在可靠证据，`ask` 仍会返回 citation fallback。
 
-只有显式配置的远程 Neo4j 或 LLM 服务才会产生对应网络访问。LogicLens 是 local-first，但并非所有配置组合都必然离线。
+只有显式配置的远程 Neo4j 或 LLM 服务才会产生对应网络访问。RepoHelix 是 local-first，但并非所有配置组合都必然离线。
 
 ---
 
 ## 👍 当前语言和框架支持
 
-当前 LogicLens 会扫描和解析：
+当前 RepoHelix 会扫描和解析：
 
 | 类型 | 扩展名 |
 |---|---|
@@ -376,13 +376,13 @@ LogicLens 支持针对性能调优、索引设置和自定义 LLM 重试等多�
 | Go | Go module、通用 Go 解析、Gin 探测。 |
 | 文档 | 可关联到代码和影响面输出的 Markdown / MDX 章节。 |
 | 配置 | YAML、TOML、properties，以及环境/配置类契约证据。 |
-| C# 插件 | 外部 `@logiclens/plugin-csharp`：C# 解析，以及 ASP.NET HTTP、Schema、事件、gRPC、包和框架事实。参阅[插件指南](docs/plugins.md)。 |
+| C# 插件 | 外部 `@repohelix/plugin-csharp`：C# 解析，以及 ASP.NET HTTP、Schema、事件、gRPC、包和框架事实。参阅[插件指南](docs/plugins.md)。 |
 
 后续会逐步支持更多语言、框架和生成客户端模式。
 
 ### 当前局限
 
-- LogicLens 1.x 会保持已记录的 CLI、SDK、MCP 和 Plugin API 契约稳定。未来如有破坏性契约或图迁移，将通过新的 major 版本发布，并在 changelog 中说明。
+- RepoHelix 1.x 会保持已记录的 CLI、SDK、MCP 和 Plugin API 契约稳定。未来如有破坏性契约或图迁移，将通过新的 major 版本发布，并在 changelog 中说明。
 - 静态分析偏保守。动态 API path、反射、运行时依赖注入、生成代码和框架魔法可能提取不完整，或被报告为 unresolved evidence。
 - 内置框架支持是聚焦的。未支持框架仍可作为源码解析，但契约提取可能较浅，直到添加对应 detector 或 extractor。
 - 跨仓库依赖质量依赖仓库名、包元数据、import、alias 和契约证据。
@@ -408,7 +408,7 @@ LogicLens 支持针对性能调优、索引设置和自定义 LLM 重试等多�
 
 ## 安全
 
-LogicLens 会索引本地源码，并通过结构化的 CLI、SDK 和 MCP 接口暴露图上下文；这些公开接口不再暴露原始图查询能力。连接 MCP Server 到第三方工具时，请特别谨慎。
+RepoHelix 会索引本地源码，并通过结构化的 CLI、SDK 和 MCP 接口暴露图上下文；这些公开接口不再暴露原始图查询能力。连接 MCP Server 到第三方工具时，请特别谨慎。
 
 安全问题报告方式见 [SECURITY.md](SECURITY.md)。
 

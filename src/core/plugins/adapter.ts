@@ -14,7 +14,7 @@ import type {
   PluginRepoView,
   PluginSchemaField,
   PluginSymbolView
-} from "@logiclens/plugin-sdk";
+} from "@repohelix/plugin-sdk";
 import type { ContractExtractor, ExtractContext, FrameworkDetector, LanguageParser, PostExtractContext } from "../registries/types.js";
 import type { DetectedFramework } from "../frameworks/types.js";
 import type { ExtractedFacts } from "../contracts/extraction/contracts.js";

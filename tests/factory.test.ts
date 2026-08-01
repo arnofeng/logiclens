@@ -189,11 +189,11 @@ describe("Neo4j registration", () => {
       url: "bolt://graph.example:7687",
       username: "neo4j",
       password: "secret",
-      database: "logiclens-test"
+      database: "repohelix-test"
     });
     expect(adapterState.neo4jOpen).toHaveBeenCalledWith(
       "bolt://graph.example:7687",
-      { username: "neo4j", password: "secret", database: "logiclens-test" }
+      { username: "neo4j", password: "secret", database: "repohelix-test" }
     );
   });
 });

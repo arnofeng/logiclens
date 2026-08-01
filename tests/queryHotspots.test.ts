@@ -98,7 +98,7 @@ describe("query hotspots", () => {
     });
     const db = { query } as unknown as GraphDB;
 
-    await expect(loadActiveSemanticGraph(db)).rejects.toThrow(/full `logiclens index`.*rebuild-relations/);
+    await expect(loadActiveSemanticGraph(db)).rejects.toThrow(/full `repohelix index`.*rebuild-relations/);
   });
 
   it("centralizes low-confidence relation queries", async () => {

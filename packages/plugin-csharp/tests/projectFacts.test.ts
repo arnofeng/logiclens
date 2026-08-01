@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { PluginFrameworkFact, PluginPackageUsageFact } from "@logiclens/plugin-sdk";
+import type { PluginFrameworkFact, PluginPackageUsageFact } from "@repohelix/plugin-sdk";
 import { collectProjectMetadata, parseProjectMetadata, PROJECT_SCAN_LIMITS } from "../src/projectMetadata.js";
 import { csharpFrameworkDetector, csharpPackageExtractor } from "../src/projectFacts.js";
 
@@ -54,7 +54,7 @@ describe("C# project metadata and facts", () => {
     expect(direct?.declarations).toEqual([expect.objectContaining({ kind: "packageReference", name: "Direct.Package" })]);
     expect(direct?.declarations[0]).not.toHaveProperty("version");
 
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-csharp-unresolved-version-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-csharp-unresolved-version-"));
     try {
       await fs.writeFile(path.join(root, "Directory.Packages.props"), `<Project><ItemGroup><PackageVersion Include="Central.Package" Version="$(SharedVersion)" /></ItemGroup></Project>`);
       await fs.writeFile(path.join(root, "App.csproj"), `<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><PackageReference Include="Central.Package" /></ItemGroup></Project>`);
@@ -83,7 +83,7 @@ describe("C# project metadata and facts", () => {
   });
 
   it("uses only the nearest automatically imported central package file", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-csharp-central-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-csharp-central-"));
     try {
       await fs.mkdir(path.join(root, "src", "Nested"), { recursive: true });
       await fs.writeFile(path.join(root, "Directory.Packages.props"), `<Project><ItemGroup><PackageVersion Include="ParentOnly" Version="1.0.0" /></ItemGroup></Project>`);
@@ -103,7 +103,7 @@ describe("C# project metadata and facts", () => {
   });
 
   it("avoids broad Worker and gRPC inference while recognizing versioned SDK and MSTest evidence", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-csharp-frameworks-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-csharp-frameworks-"));
     try {
       await fs.writeFile(path.join(root, "App.csproj"), `<Project Sdk="Microsoft.NET.Sdk.Web/9.0.100"><ItemGroup>
   <PackageReference Include="Microsoft.Extensions.Hosting" />
@@ -133,7 +133,7 @@ describe("C# project metadata and facts", () => {
   });
 
   it("bounds reads and skips excluded directories, oversized files, and symbolic links", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-csharp-bounds-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-csharp-bounds-"));
     try {
       await fs.mkdir(path.join(root, "obj"));
       await fs.writeFile(path.join(root, "obj", "Ignored.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk.Web\" />");
@@ -146,7 +146,7 @@ describe("C# project metadata and facts", () => {
   });
 
   it("stops metadata discovery at the deterministic file-count boundary", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-csharp-count-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-csharp-count-"));
     try {
       const writes: Promise<void>[] = [];
       for (let index = 0; index < PROJECT_SCAN_LIMITS.maxFiles + 2; index += 1) {

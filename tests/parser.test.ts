@@ -10,7 +10,7 @@ describe("parser", () => {
   it("lazily registers a parser outside the test runtime", async () => {
     const previousNodeEnv = process.env.NODE_ENV;
     const previousVitest = process.env.VITEST;
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "logiclens-parser-bootstrap-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-parser-bootstrap-"));
     const absolutePath = path.join(dir, "Bootstrap.java");
     await fs.writeFile(absolutePath, "class Bootstrap {}", "utf8");
     parserRegistry.unregisterLanguage("java");

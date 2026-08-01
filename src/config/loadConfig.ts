@@ -15,7 +15,7 @@ export async function resolveConfigPath(cwd = process.cwd()): Promise<string> {
       await fs.access(file);
       return file;
     } catch {
-      // Try the next branded or legacy location.
+      // The workspace has not been initialized at this location.
     }
   }
   return configPath(cwd);
