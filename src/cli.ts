@@ -21,6 +21,7 @@ import { watchCommand } from "./interfaces/cli/watch.js";
 import { installCommand } from "./interfaces/cli/install.js";
 import { uninstallCommand } from "./interfaces/cli/uninstall.js";
 import { pluginDoctorCommand, pluginInstallCommand, pluginListCommand, pluginRemoveCommand } from "./interfaces/cli/plugin.js";
+import { formatCliError } from "./interfaces/cli/errors.js";
 import { appVersion } from "./shared/version.js";
 import { BRAND } from "./shared/branding.js";
 
@@ -151,7 +152,7 @@ async function main(): Promise<void> {
 }
 
 main().catch(async (error: unknown) => {
-  console.error(error instanceof Error ? error.message : String(error));
+  console.error(await formatCliError(error, process.cwd()));
   await writeErrorLog("cli-uncaught", error);
   process.exitCode = 1;
 });
