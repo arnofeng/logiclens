@@ -4,7 +4,7 @@ import { createClient, GraphClient } from "../sdk/client.js";
 import { schemaStatements } from "../../core/graph-model/schema.js";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { PendingFile, WatchStatus } from "../../features/watch/watcher.js";
+import type { WatchStatus } from "../../features/watch/watcher.js";
 import { appVersion } from "../../shared/version.js";
 import { BRAND, BRAND_DEFAULTS, BRAND_PATHS, brandedMcpToolName, configFilePath } from "../../shared/branding.js";
 import { startMcpOwnerRpcServer } from "./ownerRpc.js";
@@ -116,22 +116,6 @@ export async function handleAskQuestion(
   return projectAskQuestionResponse(retrieval);
 }
 
-export type FreshnessMetadata = {
-  /** Graph/index freshness is independent from lexical provider readiness. */
-  stale: boolean;
-  generatedAt: string;
-  reasons: string[];
-  pendingFiles: PendingFile[];
-  watcher: {
-    active: boolean;
-    degraded: boolean;
-    degradedReason: string | null;
-  };
-  catchUp?: CatchUpState;
-  indexQueue: WatchStatus["indexQueue"];
-  lexical?: LexicalProviderGateSummary;
-};
-
 export type McpWorkspaceHealthStatus = WatchStatus & Readonly<{
   lexical: LexicalProviderGateSummary;
 }>;
@@ -150,95 +134,6 @@ export async function loadWorkspaceHealthStatus(
 ): Promise<McpWorkspaceHealthStatus> {
   const lexical = await client.getLexicalProviderStatus({ refresh: options.refresh });
   return buildWorkspaceHealthStatus(client.getWatchStatus(catchUp), lexical);
-}
-
-export function buildFreshnessWarning(input: {
-  content: Array<{ type: string; text?: string }>;
-  pending: PendingFile[];
-  degradedReason?: string | null;
-  catchUpError?: unknown;
-  catchUp?: CatchUpState;
-}): string {
-  let prefix = "";
-
-  if (input.catchUp?.running) {
-    prefix += `[WARNING] ${BRAND.displayName} startup catch-up indexing is still running for ${input.catchUp.pendingRepos.length} repo(s). The graph may be stale for repos not yet completed.\n\n`;
-  }
-
-  if (input.catchUpError) {
-    const message = input.catchUpError instanceof Error ? input.catchUpError.message : String(input.catchUpError);
-    prefix += `[WARNING] ${BRAND.displayName} startup catch-up indexing failed: ${message}. The graph may be stale; run '${BRAND.cliName} index --changed-only' manually.\n\n`;
-  }
-
-  if (input.degradedReason !== undefined) {
-    prefix += `[WARNING] ${BRAND.displayName} file watcher has degraded: ${input.degradedReason || "unknown error"}. Automatic index synchronization is stopped. Please run '${BRAND.cliName} index --changed-only' manually.\n\n`;
-  }
-
-  if (input.pending.length > 0) {
-    const referenced: string[] = [];
-    for (const item of input.content) {
-      if (item.type === "text" && item.text) {
-        for (const file of input.pending) {
-          const relPath = file.path.replace(/\\/g, "/");
-          const fullPath = `${file.repoName}/${relPath}`;
-          if (item.text.includes(relPath) || item.text.includes(fullPath)) {
-            referenced.push(fullPath);
-          }
-        }
-      }
-    }
-
-    if (referenced.length > 0) {
-      const uniqueReferenced = [...new Set(referenced)];
-      prefix += `[WARNING] The index for the following files might be lagging behind: ${uniqueReferenced.join(", ")}. Please check the actual source code on disk for the most up-to-date content.\n\n`;
-    }
-  }
-
-  return prefix;
-}
-
-export function buildFreshnessMetadata(input: {
-  pending: PendingFile[];
-  watcherActive: boolean;
-  degradedReason?: string | null;
-  catchUp?: CatchUpState;
-  indexQueue: WatchStatus["indexQueue"];
-  lexical?: LexicalProviderGateSummary;
-}): FreshnessMetadata {
-  const reasons: string[] = [];
-  if (input.catchUp?.running) reasons.push("catch-up-running");
-  if (input.catchUp?.failed) reasons.push("catch-up-failed");
-  if (input.degradedReason !== undefined) reasons.push("watcher-degraded");
-  if (input.pending.length > 0) reasons.push("pending-file-changes");
-  if (input.indexQueue.running) reasons.push("index-queue-running");
-  if (input.indexQueue.pendingJobs.length > 0) reasons.push("index-queue-pending");
-
-  return {
-    stale: reasons.length > 0,
-    generatedAt: new Date().toISOString(),
-    reasons,
-    pendingFiles: input.pending,
-    watcher: {
-      active: input.watcherActive,
-      degraded: input.degradedReason !== undefined,
-      degradedReason: input.degradedReason ?? null
-    },
-    catchUp: input.catchUp,
-    indexQueue: input.indexQueue,
-    ...(input.lexical ? { lexical: input.lexical } : {})
-  };
-}
-
-export function buildFreshnessNotice(metadata: FreshnessMetadata): string {
-  const notices: string[] = [];
-  if (metadata.stale) {
-    notices.push(`Freshness: stale (${metadata.reasons.join(", ")}).`);
-  }
-  if (metadata.lexical?.status === "unavailable") {
-    notices.push(`Lexical search: unavailable (${metadata.lexical.reasonCodes.join(", ") || "provider-unavailable"}).`);
-  }
-  if (notices.length === 0) return "";
-  return `${notices.join(" ")} Call ${MCP_TOOLS.getWatchStatus} for full details.`;
 }
 
 function createCatchUpState(mode: CatchUpState["mode"], repos: string[]): CatchUpState {
@@ -411,52 +306,15 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
     }
   };
 
-  // Helper to append freshness warning to tool responses
-  const wrapWithFreshness = async (
+  // Log calls and normalize tool failures without modifying successful results.
+  const wrapToolCall = async (
     name: string,
     args: any,
     action: () => Promise<{ content: Array<{ type: "text"; text: string }> }>
   ) => {
     await logMcpCall("tool", name, args);
     try {
-      const response = await action();
-      if (name !== MCP_TOOLS.getWatchStatus && response && Array.isArray(response.content)) {
-        const pending = client.getPendingFiles();
-        const degradedReason = client.isWatcherDegraded() ? client.getWatcherDegradedReason() : undefined;
-        const prefix = buildFreshnessWarning({
-          content: response.content,
-          pending,
-          degradedReason,
-          catchUpError: catchUpState.failed ? catchUpState.error : undefined,
-          catchUp: catchUpState,
-        });
-
-        if (prefix) {
-          for (const item of response.content) {
-            if (item.type === "text" && item.text) {
-              item.text = prefix + item.text;
-            }
-          }
-        }
-        const lexical = await client.getLexicalProviderStatus();
-        const metadata = buildFreshnessMetadata({
-          pending,
-          watcherActive: client.isWatching(),
-          degradedReason,
-          catchUp: catchUpState,
-          indexQueue: client.getIndexQueueStatus(),
-          lexical
-        });
-
-        const notice = buildFreshnessNotice(metadata);
-        if (notice && !response.content.some((item) => item.type === "text" && item.text === notice)) {
-          response.content.push({
-            type: "text",
-            text: notice
-          });
-        }
-      }
-      return response;
+      return await action();
     } catch (error) {
       return {
         isError: true,
@@ -477,7 +335,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
       description: "Use for a quick health/coverage overview only. Returns graph database summary counts such as repositories, files, code nodes, calls, contracts, and dependencies. Do not use for dependency analysis, impact analysis, or contract tracing.",
     },
     async () => {
-      return wrapWithFreshness(MCP_TOOLS.getStats, {}, async () => {
+      return wrapToolCall(MCP_TOOLS.getStats, {}, async () => {
         const stats = await client.stats();
         return {
           content: [{ type: "text" as const, text: JSON.stringify(stats, null, 2) }],
@@ -495,7 +353,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
       }
     },
     async ({ refresh }) => {
-      return wrapWithFreshness(MCP_TOOLS.getWatchStatus, { refresh }, async () => {
+      return wrapToolCall(MCP_TOOLS.getWatchStatus, { refresh }, async () => {
         const status = await loadWorkspaceHealthStatus(client, catchUpState, { refresh });
         return {
           content: [{ type: "text" as const, text: JSON.stringify(status, null, 2) }],
@@ -518,7 +376,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
       },
     },
     async ({ strength, type, limit, repo, target, direction }) => {
-      return wrapWithFreshness(MCP_TOOLS.listDependencies, { strength, type, limit, repo, target, direction }, async () => {
+      return wrapToolCall(MCP_TOOLS.listDependencies, { strength, type, limit, repo, target, direction }, async () => {
         if (target && !repo) {
           throw new Error("`target` requires `repo`. Example: { \"repo\": \"frontend\", \"target\": \"orders-service\" }.");
         }
@@ -545,7 +403,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
       },
     },
     async ({ kind, limit, repo, direction }) => {
-      return wrapWithFreshness(MCP_TOOLS.listContracts, { kind, limit, repo, direction }, async () => {
+      return wrapToolCall(MCP_TOOLS.listContracts, { kind, limit, repo, direction }, async () => {
         if (direction && !repo) {
           throw new Error("`direction` requires `repo`. Use repo plus direction=outgoing for contracts produced by that repo, or direction=incoming for contracts consumed by that repo.");
         }
@@ -567,7 +425,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
       },
     },
     async ({ target, change }) => {
-      return wrapWithFreshness(MCP_TOOLS.impactAnalysis, { target, change }, async () => {
+      return wrapToolCall(MCP_TOOLS.impactAnalysis, { target, change }, async () => {
         // Phase 5: Use change-based impact analysis when --change is provided
         if (change) {
           const VALID_CHANGE_TYPES = new Set([
@@ -610,7 +468,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
       inputSchema: ASK_QUESTION_INPUT_SCHEMA,
     },
     async (input) => {
-      return wrapWithFreshness(MCP_TOOLS.askQuestion, input, async () => {
+      return wrapToolCall(MCP_TOOLS.askQuestion, input, async () => {
         const response = await handleAskQuestion(client, input);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(response, null, 2) }],
@@ -651,7 +509,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
       },
     },
     async ({ target, specId, maxHops, direction }) => {
-      return wrapWithFreshness(
+      return wrapToolCall(
         MCP_TOOLS.trace,
         { target, specId, maxHops, direction },
         async () => {

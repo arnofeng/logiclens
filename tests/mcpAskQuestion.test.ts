@@ -1,8 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   ASK_QUESTION_INPUT_SCHEMA,
-  buildFreshnessMetadata,
-  buildFreshnessNotice,
   buildWorkspaceHealthStatus,
   handleAskQuestion,
   loadWorkspaceHealthStatus,
@@ -83,7 +81,7 @@ describe("MCP ask_question", () => {
     expect(serialized).not.toMatch(/providerVersion|projectionSchemaVersion|tokenizerVersion|indexStatus/u);
   });
 
-  it("projects disabled provider query counts and remains compatible with freshness notices", () => {
+  it("projects disabled provider query counts", () => {
     const value = retrieval();
     const disabled = {
       ...value,
@@ -97,11 +95,6 @@ describe("MCP ask_question", () => {
       },
     } as RetrievalResult;
     expect(projectAskQuestionResponse(disabled).diagnostics.routes.lexical.queryCount).toBe(0);
-    const metadata = buildFreshnessMetadata({
-      pending: [], watcherActive: false, degradedReason: "watch failed",
-      indexQueue: { running: false, pendingJobs: [] } as never,
-    });
-    expect(buildFreshnessNotice(metadata)).toContain("Freshness: stale");
   });
 });
 
@@ -118,27 +111,7 @@ describe("MCP lexical health boundary", () => {
     projectionSchemaVersion: "1", tokenizerVersion: "1", indexStatus: "unhealthy" as const
   };
 
-  it.each([
-    [false, healthy, ""],
-    [true, healthy, "Freshness: stale"],
-    [false, unhealthy, "Lexical search: unavailable"],
-    [true, unhealthy, "Freshness: stale"]
-  ] as const)("diagnoses graph stale=%s independently from lexical health", (stale, lexical, expected) => {
-    const metadata = buildFreshnessMetadata({
-      pending: stale ? [{ repoName: "api", path: "src/a.ts", firstSeenMs: 1, lastSeenMs: 2, indexing: false }] : [],
-      watcherActive: true,
-      indexQueue: queue,
-      lexical
-    });
-    const notice = buildFreshnessNotice(metadata);
-    expect(metadata.stale).toBe(stale);
-    expect(metadata.lexical).toEqual(lexical);
-    if (expected) expect(notice).toContain(expected);
-    else expect(notice).toBe("");
-    if (lexical.status === "unavailable") expect(notice).toContain("Lexical search: unavailable");
-  });
-
-  it("returns a complete safe status while ordinary notices remain compact", () => {
+  it("returns complete lexical health through the status boundary", () => {
     const watchStatus = {
       active: false, degraded: false, degradedReason: null, partial: false, partialReasons: [],
       mode: "off", installedWatchers: 0, coveredRepos: [], uncoveredRepos: [], uncoveredPaths: [],
@@ -152,12 +125,6 @@ describe("MCP lexical health boundary", () => {
       projectionSchemaVersion: "1", tokenizerVersion: "1", indexStatus: "unhealthy",
       reasonCodes: ["index_unhealthy"]
     });
-
-    const notice = buildFreshnessNotice(buildFreshnessMetadata({
-      pending: [], watcherActive: false, indexQueue: queue, lexical: unhealthy
-    }));
-    expect(notice).toBe("Lexical search: unavailable (index_unhealthy). Call repohelix_get_watch_status for full details.");
-    expect(notice).not.toMatch(/providerVersion|projectionSchemaVersion|tokenizerVersion|indexStatus|bolt:|password/u);
   });
 
   it("passes explicit refresh through and exposes changed lexical health", async () => {
