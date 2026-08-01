@@ -28,6 +28,29 @@ const MCP_TOOLS = {
   impactAnalysis: brandedMcpToolName("impact_analysis"),
   askQuestion: brandedMcpToolName("ask_question"),
 } as const;
+
+export const MCP_IMPACT_ANALYSIS_DESCRIPTION =
+  `Use before changing an indexed HTTP endpoint, event, schema/DTO field, gRPC method, Dubbo method, or GraphQL operation. ` +
+  `This tool has two distinct modes. When \`change\` is provided, \`target\` must resolve to an indexed ContractSpec; ` +
+  `the tool evaluates downstream change risk as breaking/risky/compatible with file:line evidence. This structured ` +
+  `change mode does not analyze arbitrary code symbols, classes, methods, fields, enums, packages, or config entries. ` +
+  `Call ${MCP_TOOLS.listContracts} first unless the target is already known to be an indexed contract. When \`change\` ` +
+  `is omitted, the tool performs a legacy broad symbol/entity impact survey and does not assess a specific proposed ` +
+  `change. Do not use ${MCP_TOOLS.askQuestion} for change risk.`;
+
+export const MCP_IMPACT_TARGET_DESCRIPTION =
+  `Required impact target. With \`change\`, use an exact indexed contract identifier from ${MCP_TOOLS.listContracts}, ` +
+  `for example 'http POST /orders', 'event OrderCreated', 'schema CreateOrderRequest', ` +
+  `'grpc OrderService/CreateOrder', 'dubbo com.acme.OrderService#createOrder', or ` +
+  `'graphql Mutation.createOrder'. A bare class name is treated as a schema name, but succeeds only if that class was ` +
+  `indexed as a schema ContractSpec. Without \`change\`, a code symbol or entity name is accepted for the legacy survey.`;
+
+export const MCP_IMPACT_CHANGE_DESCRIPTION =
+  "Optional proposed contract change in '<changeType>:<detail>' format. When present, the target must be an indexed ContractSpec. " +
+  "Supported combinations: schema with field-added/field-removed/field-type-changed; HTTP endpoint with endpoint-removed/" +
+  "endpoint-renamed/endpoint-schema-change; event with topic-removed/topic-renamed/event-payload-change; and gRPC, " +
+  "Dubbo, or GraphQL operation with rpc-removed/rpc-renamed/rpc-signature-change. Examples: 'field-removed:couponCode', " +
+  "'endpoint-schema-change:request body changed'. Omit for the legacy broad symbol/entity impact survey.";
 const MCP_RESOURCE_URIS = {
   config: `${BRAND.mcpServerName}://config`,
   schema: `${BRAND.mcpServerName}://schema`,
@@ -260,8 +283,9 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
         "evidence (file:line), so treat it as ground truth instead of guessing cross-repo relationships.\n\n" +
         `Reach for ${BRAND.displayName} whenever you are about to change code that other repositories may depend on. ` +
         "Prefer precise graph tools over broad retrieval:\n" +
-        `  - ${MCP_TOOLS.impactAnalysis}: FIRST choice before editing an API endpoint, event, DTO/schema, RPC, ` +
-        "GraphQL field, or widely-used symbol. Pass `change` when the proposed change is known.\n" +
+        `  - ${MCP_TOOLS.impactAnalysis}: FIRST choice before editing an indexed API endpoint, event, DTO/schema, ` +
+        "gRPC method, Dubbo method, or GraphQL operation. Pass `change` for structured ContractSpec change risk; " +
+        "omit it only for the legacy broad symbol/entity survey.\n" +
         `  - ${MCP_TOOLS.trace}: FIRST choice for a known contract identifier such as "http POST /orders", ` +
         "\"event OrderCreated\", \"schema CreateOrderRequest\", \"grpc OrderService/CreateOrder\", " +
         "or \"graphql Mutation.createOrder\".\n" +
@@ -418,10 +442,10 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   server.registerTool(
     MCP_TOOLS.impactAnalysis,
     {
-      description: `Use FIRST before editing or proposing changes to an API endpoint, event, schema/DTO field, enum, RPC, GraphQL field, package contract, or widely-used symbol. Evaluates downstream blast radius and rates impacts as breaking/risky/compatible with file:line evidence. If the exact contract name is unknown, call ${MCP_TOOLS.listContracts} first. Do not use ${MCP_TOOLS.askQuestion} for change risk.`,
+      description: MCP_IMPACT_ANALYSIS_DESCRIPTION,
       inputSchema: {
-        target: z.string().min(1).max(512).describe(`Required target symbol, entity, or contract. Prefer exact contract identifiers from ${MCP_TOOLS.listContracts}, for example 'http POST /orders', 'event OrderCreated', 'schema CreateOrderRequest', 'grpc OrderService/CreateOrder', or 'graphql Mutation.createOrder'.`),
-        change: z.string().min(1).max(512).optional().describe("Optional proposed change in '<changeType>:<detail>' format. Valid change types: field-added, field-removed, field-type-changed, endpoint-removed, endpoint-renamed, endpoint-schema-change, topic-removed, topic-renamed, event-payload-change, rpc-removed, rpc-renamed, rpc-signature-change. Examples: 'field-removed:couponCode', 'endpoint-schema-change:request body changed'. Omit only for a broad impact survey."),
+        target: z.string().min(1).max(512).describe(MCP_IMPACT_TARGET_DESCRIPTION),
+        change: z.string().min(1).max(512).optional().describe(MCP_IMPACT_CHANGE_DESCRIPTION),
       },
     },
     async ({ target, change }) => {
