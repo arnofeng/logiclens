@@ -27,7 +27,6 @@ import { graphqlSdlExtractor } from "./graphqlSdlExtractor.js";
 import { graphqlClientExtractor } from "./graphqlClientExtractor.js";
 import { contractExtractorRegistry } from "../../../registries/registry.js";
 
-/** Each extractor already self-wraps via compatExtractor at its export site. */
 export const commonBuiltinContractExtractors: ContractExtractor[] = [
   packageJsonExtractor,
   importPackageExtractor,

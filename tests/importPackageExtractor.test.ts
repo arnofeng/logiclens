@@ -1,3 +1,4 @@
+import { extractFacts } from "./helpers/extractFacts.js";
 import { describe, expect, it } from "vitest";
 import { importPackageExtractor } from "../src/core/contracts/extraction/builtin/importPackageExtractor.js";
 
@@ -12,7 +13,7 @@ describe("importPackageExtractor", () => {
   });
 
   it("skips markdown files (not parsed code files)", async () => {
-    const result = await importPackageExtractor.extract({
+    const result = await extractFacts(importPackageExtractor, {
       repos: [],
       parsedFiles: [
         {
@@ -36,7 +37,7 @@ describe("importPackageExtractor", () => {
   });
 
   it("skips relative imports starting with dot", async () => {
-    const result = await importPackageExtractor.extract({
+    const result = await extractFacts(importPackageExtractor, {
       repos: [],
       parsedFiles: [
         {
@@ -62,7 +63,7 @@ describe("importPackageExtractor", () => {
   });
 
   it("extracts consumer contract from TypeScript imports", async () => {
-    const result = await importPackageExtractor.extract({
+    const result = await extractFacts(importPackageExtractor, {
       repos: [],
       parsedFiles: [
         {
@@ -95,7 +96,7 @@ describe("importPackageExtractor", () => {
   });
 
   it("extracts consumer contract from Python imports", async () => {
-    const result = await importPackageExtractor.extract({
+    const result = await extractFacts(importPackageExtractor, {
       repos: [],
       parsedFiles: [
         {
@@ -123,7 +124,7 @@ describe("importPackageExtractor", () => {
   });
 
   it("extracts consumer contract from Go imports", async () => {
-    const result = await importPackageExtractor.extract({
+    const result = await extractFacts(importPackageExtractor, {
       repos: [],
       parsedFiles: [
         {
@@ -149,7 +150,7 @@ describe("importPackageExtractor", () => {
   });
 
   it("uses raw module specifier as contract key for non-Java files", async () => {
-    const result = await importPackageExtractor.extract({
+    const result = await extractFacts(importPackageExtractor, {
       repos: [],
       parsedFiles: [
         {
@@ -175,7 +176,7 @@ describe("importPackageExtractor", () => {
   });
 
   it("uses packageContractKeyForImport for Java imports (strips class suffix)", async () => {
-    const result = await importPackageExtractor.extract({
+    const result = await extractFacts(importPackageExtractor, {
       repos: [],
       parsedFiles: [
         {
@@ -201,7 +202,7 @@ describe("importPackageExtractor", () => {
   });
 
   it("does NOT call pushResolvedPackageOwner for Java imports", async () => {
-    const result = await importPackageExtractor.extract({
+    const result = await extractFacts(importPackageExtractor, {
       repos: [],
       parsedFiles: [
         {
@@ -229,7 +230,7 @@ describe("importPackageExtractor", () => {
   });
 
   it("pushes packageUsages entries for each import", async () => {
-    const result = await importPackageExtractor.extract({
+    const result = await extractFacts(importPackageExtractor, {
       repos: [],
       parsedFiles: [
         {
@@ -257,7 +258,7 @@ describe("importPackageExtractor", () => {
   });
 
   it("handles empty imports array", async () => {
-    const result = await importPackageExtractor.extract({
+    const result = await extractFacts(importPackageExtractor, {
       repos: [],
       parsedFiles: [
         {
@@ -281,7 +282,7 @@ describe("importPackageExtractor", () => {
   });
 
   it("handles empty parsedFiles array", async () => {
-    const result = await importPackageExtractor.extract({
+    const result = await extractFacts(importPackageExtractor, {
       repos: [],
       parsedFiles: [],
       repoResolver: () => undefined,
@@ -293,7 +294,7 @@ describe("importPackageExtractor", () => {
   });
 
   it("processes imports from multiple files across different repos and languages", async () => {
-    const result = await importPackageExtractor.extract({
+    const result = await extractFacts(importPackageExtractor, {
       repos: [],
       parsedFiles: [
         {
@@ -346,7 +347,7 @@ describe("importPackageExtractor", () => {
   });
 
   it("does not produce evidence for markdown files mixed with code files", async () => {
-    const result = await importPackageExtractor.extract({
+    const result = await extractFacts(importPackageExtractor, {
       repos: [],
       parsedFiles: [
         {

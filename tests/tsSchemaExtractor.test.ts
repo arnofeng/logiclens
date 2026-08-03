@@ -1,3 +1,4 @@
+import { extractFacts } from "./helpers/extractFacts.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,12 +7,12 @@ import { objectSchemaFields } from "./helpers/schemaModel.js";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { tsSchemaExtractor } from "../src/core/contracts/extraction/builtin/tsSchemaExtractor.js";
 import { repoId } from "../src/shared/path.js";
-import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
+import type { ExtractedFacts } from "../src/core/contracts/extraction/contracts.js";
 import { reconcileNonJavaSchemaFacts } from "../src/core/contracts/extraction/nonJavaSchemaReconciler.js";
 import type { SchemaSpec } from "../src/core/contracts/spec.js";
 import { createSchemaSpec } from "../src/core/schema/model.js";
 
-async function extract(source: string): Promise<ExtractorFactBundle> {
+async function extract(source: string): Promise<ExtractedFacts> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-ts-schema-"));
   const rel = "src/types.ts";
   const abs = path.join(dir, rel);
@@ -19,14 +20,14 @@ async function extract(source: string): Promise<ExtractorFactBundle> {
   await fs.writeFile(abs, source, "utf8");
   const repo = { id: repoId("ts-schema"), name: "ts-schema", path: dir, remoteUrl: "", branch: "", commitSha: "", language: "typescript", indexedAt: "now" } as any;
   const parsed = await parseSourceFile({ repoId: repo.id, absolutePath: abs, relativePath: rel, language: "typescript" });
-  const extracted = await tsSchemaExtractor.extract({ repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
+  const extracted = await extractFacts(tsSchemaExtractor, { repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
   const reconciled = reconcileNonJavaSchemaFacts(extracted.contractSpecs, extracted.semanticRelations, extracted.schemaDeclarations);
   const bundle = { ...extracted, contractSpecs: reconciled.contractSpecs, semanticRelations: reconciled.semanticRelations };
   await fs.rm(dir, { recursive: true, force: true });
   return bundle;
 }
 
-function schemaSpecFromBundle(bundle: ExtractorFactBundle, contractKey: string): SchemaSpec | undefined {
+function schemaSpecFromBundle(bundle: ExtractedFacts, contractKey: string): SchemaSpec | undefined {
   const spec = bundle.contractSpecs.find((s) => {
     const contract = bundle.contracts.find((c) => c.id === s.contractId);
     return contract?.key === contractKey;
@@ -191,7 +192,7 @@ export type UpdateOrderDTO = Partial<BaseOrderDTO> & {
     expect(versionField).toBeDefined();
   });
 
-  it("unwraps Pick<T,K> 鈥?records base type reference via USES_SCHEMA", async () => {
+  it("unwraps Pick<T,K> → records base type reference via USES_SCHEMA", async () => {
     const bundle = await extract(`
 export interface FullOrderDTO {
   id: string;
@@ -213,7 +214,7 @@ export type OrderSummaryDTO = Pick<FullOrderDTO, 'id' | 'sku' | 'price'>;`);
     expect(bundle.semanticRelations.filter((r) => r.kind === "USES_SCHEMA")).toHaveLength(0);
   });
 
-  it("unwraps Omit<T,K> 鈥?records base type reference", async () => {
+  it("unwraps Omit<T,K> → records base type reference", async () => {
     const bundle = await extract(`
 export interface UserDTO {
   id: string;
@@ -228,7 +229,7 @@ export type PublicUserDTO = Omit<UserDTO, 'password'>;`);
     expect(bundle.semanticRelations.filter((r) => r.kind === "USES_SCHEMA")).toHaveLength(0);
   });
 
-  it("unwraps Readonly<T> 鈥?records base type reference", async () => {
+  it("unwraps Readonly<T> → records base type reference", async () => {
     const bundle = await extract(`
 export interface ConfigDTO { theme: string; }
 export type ReadonlyConfigDTO = Readonly<ConfigDTO>;`);
@@ -238,7 +239,7 @@ export type ReadonlyConfigDTO = Readonly<ConfigDTO>;`);
     });
   });
 
-  it("unwraps Required<T> 鈥?records base type reference", async () => {
+  it("unwraps Required<T> → records base type reference", async () => {
     const bundle = await extract(`
 export interface PartialUserDTO { name?: string; email?: string; }
 export type FullUserDTO = Required<PartialUserDTO>;`);

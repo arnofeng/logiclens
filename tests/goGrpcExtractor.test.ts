@@ -1,3 +1,4 @@
+import { extractFacts } from "./helpers/extractFacts.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -5,10 +6,10 @@ import { describe, expect, it } from "vitest";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { goGrpcExtractor } from "../src/core/contracts/extraction/builtin/goGrpcExtractor.js";
 import { repoId } from "../src/shared/path.js";
-import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
+import type { ExtractedFacts } from "../src/core/contracts/extraction/contracts.js";
 import type { GrpcMethodSpec } from "../src/core/contracts/spec.js";
 
-async function extract(serverSource: string, clientSource: string): Promise<ExtractorFactBundle> {
+async function extract(serverSource: string, clientSource: string): Promise<ExtractedFacts> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-go-grpc-extractor-"));
   
   const serverRel = "server/order_server.go";
@@ -46,7 +47,7 @@ async function extract(serverSource: string, clientSource: string): Promise<Extr
     language: "go"
   });
 
-  const bundle = await goGrpcExtractor.extract({
+  const bundle = await extractFacts(goGrpcExtractor, {
     repos: [repo],
     parsedFiles: [parsedServer, parsedClient],
     repoResolver: () => repo

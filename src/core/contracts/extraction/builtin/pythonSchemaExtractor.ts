@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import type Parser from "tree-sitter";
 import type { FactCollector } from "../factCollector.js";
 import type { ParsedFile } from "../../../parsing/types.js";
@@ -37,7 +37,7 @@ const SCHEMA_DECORATORS = new Set(["dataclass", "dataclasses.dataclass"]);
 /** Base-class names that mark a class as a schema. */
 const SCHEMA_BASES = new Set(["TypedDict", "NamedTuple"]);
 
-export const pythonSchemaExtractor = compatExtractor({
+export const pythonSchemaExtractor = defineBuiltinExtractor({
   name: "builtin:python-schema",
   languages: ["python"],
   extract(context, collector: FactCollector) {

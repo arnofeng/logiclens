@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import { joinApiPaths } from "../../apiPath.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import type { AnnotationFact } from "../../../parsing/facts.js";
@@ -322,7 +322,7 @@ function escapeRegExp(value: string): string {
 // Extractor
 // ---------------------------------------------------------------------------
 
-export const springMvcExtractor = compatExtractor({
+export const springMvcExtractor = defineBuiltinExtractor({
   name: "builtin:spring-mvc",
   languages: ["java"],
   frameworks: ["java:spring-mvc"],

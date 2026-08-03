@@ -1,3 +1,4 @@
+import { extractFacts } from "./helpers/extractFacts.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -13,7 +14,7 @@ async function extractFromSource(source: string, language: "typescript" | "javas
   await fs.writeFile(sourcePath, source, "utf8");
   const repo = { id: repoId("jshttp-test"), name: "jshttp-test", path: dir, remoteUrl: "", branch: "", commitSha: "", language, indexedAt: "now" } as any;
   const parsed = await parseSourceFile({ repoId: repo.id, absolutePath: sourcePath, relativePath: `client.${ext}`, language });
-  return await jsHttpClientExtractor.extract({
+  return await extractFacts(jsHttpClientExtractor, {
     repos: [repo], parsedFiles: [parsed], repoResolver: () => repo
   });
 }

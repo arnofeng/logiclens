@@ -1,3 +1,4 @@
+import { extractFacts } from "./helpers/extractFacts.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -108,7 +109,7 @@ function increment() {
       module: "./Counter.vue"
     })]);
 
-    const eventFacts = await eventExtractor.extract({
+    const eventFacts = await extractFacts(eventExtractor, {
       repos: [{ id: repoId("vue-repo"), name: "vue-repo", path: dir } as any],
       parsedFiles: [parsedTs],
       repoResolver: () => null as any

@@ -1,3 +1,4 @@
+import { extractFacts } from "./helpers/extractFacts.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -229,7 +230,7 @@ describe("non-Java schema reconciliation", () => {
       parsed.push(await parseSourceFile({ repoId: id, absolutePath, relativePath, language: "go" }));
     }
     const repo = { id, name: "schema-go-package", path: directory, remoteUrl: "", branch: "", commitSha: "", language: "go", indexedAt: "now" };
-    const extracted = await goSchemaExtractor.extract({ repos: [repo], parsedFiles: parsed, repoResolver: () => repo });
+    const extracted = await extractFacts(goSchemaExtractor, { repos: [repo], parsedFiles: parsed, repoResolver: () => repo });
     const publisher = parsed.find((file) => file.path.endsWith("publisher.go"))!;
     const event = {
       id: "spec:event:go-package",
@@ -273,7 +274,7 @@ describe("non-Java schema reconciliation", () => {
       parsed.push(await parseSourceFile({ repoId: id, absolutePath, relativePath, language: "go" }));
     }
     const repo = { id, name: "schema-go-import", path: directory, remoteUrl: "", branch: "", commitSha: "", language: "go", indexedAt: "now" };
-    const extracted = await goSchemaExtractor.extract({ repos: [repo], parsedFiles: parsed, repoResolver: () => repo });
+    const extracted = await extractFacts(goSchemaExtractor, { repos: [repo], parsedFiles: parsed, repoResolver: () => repo });
     const validFile = parsed.find((file) => file.path === "cmd/valid.go")!;
     const invalidFile = parsed.find((file) => file.path === "cmd/invalid.go")!;
     const validEvent = {
@@ -331,7 +332,7 @@ describe("non-Java schema reconciliation", () => {
       parsed.push(await parseSourceFile({ repoId: id, absolutePath, relativePath, language: "go" }));
     }
     const repo = { id, name: "schema-go-versioned-import", path: directory, remoteUrl: "", branch: "", commitSha: "", language: "go", indexedAt: "now" };
-    const extracted = await goSchemaExtractor.extract({ repos: [repo], parsedFiles: parsed, repoResolver: () => repo });
+    const extracted = await extractFacts(goSchemaExtractor, { repos: [repo], parsedFiles: parsed, repoResolver: () => repo });
     const publisher = parsed.find((file) => file.path === "cmd/publisher.go")!;
     const event = (suffix: string, payloadType: string) => ({
       id: `spec:event:${suffix}`,

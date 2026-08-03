@@ -1,6 +1,6 @@
 {
   "name": "repohelix",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Local-first semantic contract graph for AI coding agents to reason about cross-repository interfaces and change impact.",
   "type": "module",
   "packageManager": "pnpm@10.34.5",
@@ -33,11 +33,16 @@
     "prepack": "pnpm run build:prod",
     "pretest": "pnpm run build:packages",
     "test": "tsx scripts/test.ts",
+    "test:contract-schema-release": "tsx scripts/test.ts --suite contract-schema-release",
     "test:retrieval-release": "tsx scripts/test.ts --suite retrieval-release",
     "test:neo4j-integration": "tsx scripts/test.ts --suite neo4j-integration",
     "typecheck": "tsc --noEmit && tsc -p packages/plugin-sdk/tsconfig.json --noEmit && pnpm --filter @repohelix/plugin-sdk build && pnpm --filter @repohelix/plugin-csharp typecheck",
     "audit:prod": "pnpm audit --prod --audit-level=high --registry=https://registry.npmjs.org",
-    "release:check": "tsx scripts/release-check.ts",
+    "release:check": "tsx scripts/release-check.ts && tsx scripts/legacy-schema-scan.ts --artifacts",
+    "benchmark:java-schema": "tsx benchmarks/java-schema/runner.ts",
+    "benchmark:java-schema:smoke": "tsx benchmarks/java-schema/runner.ts --fixture tests/fixtures/contract-schema-release/repos/release-java --smoke",
+    "scan:legacy-schema": "tsx scripts/legacy-schema-scan.ts",
+    "scan:legacy-schema:artifacts": "tsx scripts/legacy-schema-scan.ts --artifacts",
     "release:smoke:registry": "node scripts/registry-smoke.mjs"
   },
   "keywords": [

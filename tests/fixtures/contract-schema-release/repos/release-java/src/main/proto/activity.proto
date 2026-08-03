@@ -1,0 +1,9 @@
+syntax = "proto3";
+package release.rpc;
+option java_package = "release.generated";
+option java_outer_classname = "Wire";
+message CreateRequest { string activity_id = 1; }
+message CreateResponse { string activity_id = 1; }
+service ActivityService {
+  rpc Create(stream CreateRequest) returns (stream CreateResponse);
+}

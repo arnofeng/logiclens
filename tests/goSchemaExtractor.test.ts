@@ -1,3 +1,4 @@
+import { extractFacts } from "./helpers/extractFacts.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,12 +7,12 @@ import { objectSchemaFields } from "./helpers/schemaModel.js";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { goSchemaExtractor } from "../src/core/contracts/extraction/builtin/goSchemaExtractor.js";
 import { repoId } from "../src/shared/path.js";
-import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
+import type { ExtractedFacts } from "../src/core/contracts/extraction/contracts.js";
 import { reconcileNonJavaSchemaFacts } from "../src/core/contracts/extraction/nonJavaSchemaReconciler.js";
 import type { SchemaSpec } from "../src/core/contracts/spec.js";
 import { createSchemaSpec } from "../src/core/schema/model.js";
 
-async function extract(source: string): Promise<ExtractorFactBundle> {
+async function extract(source: string): Promise<ExtractedFacts> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-go-schema-"));
   const rel = "src/models.go";
   const abs = path.join(dir, rel);
@@ -19,14 +20,14 @@ async function extract(source: string): Promise<ExtractorFactBundle> {
   await fs.writeFile(abs, source, "utf8");
   const repo = { id: repoId("go-schema"), name: "go-schema", path: dir, remoteUrl: "", branch: "", commitSha: "", language: "go", indexedAt: "now" } as any;
   const parsed = await parseSourceFile({ repoId: repo.id, absolutePath: abs, relativePath: rel, language: "go" });
-  const extracted = await goSchemaExtractor.extract({ repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
+  const extracted = await extractFacts(goSchemaExtractor, { repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
   const reconciled = reconcileNonJavaSchemaFacts(extracted.contractSpecs, extracted.semanticRelations, extracted.schemaDeclarations);
   const bundle = { ...extracted, contractSpecs: reconciled.contractSpecs, semanticRelations: reconciled.semanticRelations };
   await fs.rm(dir, { recursive: true, force: true });
   return bundle;
 }
 
-function schemaSpecFromBundle(bundle: ExtractorFactBundle, contractKey: string): SchemaSpec | undefined {
+function schemaSpecFromBundle(bundle: ExtractedFacts, contractKey: string): SchemaSpec | undefined {
   const spec = bundle.contractSpecs.find((s) => {
     const contract = bundle.contracts.find((c) => c.id === s.contractId);
     return contract?.key === contractKey;

@@ -757,7 +757,7 @@ describe("Neo4j workspace lexical lifecycle", () => {
     ]));
   });
 
-  it("keeps interrupted metadata/stat initialization retryable and wraps provider errors with context", async () => {
+  it("keeps interrupted metadata initialization retryable, performs no row backfill, and wraps provider errors with context", async () => {
     const metadataDb = new MockNeo4jGraphDB();
     let metadataFailure = true;
     metadataDb.handler = (cypher, params) => {
@@ -775,21 +775,17 @@ describe("Neo4j workspace lexical lifecycle", () => {
     expect(metadataDb.rollbackTransaction).toHaveBeenCalledTimes(1);
 
     const db = new MockNeo4jGraphDB();
-    let fail = true;
     db.handler = (cypher) => {
       if (cypher.startsWith("SHOW INDEXES")) return [onlineIndex()];
       if (cypher.includes("MATCH (m:LexicalMetadata {key: $key}) RETURN")) return [];
-      if (cypher.includes("MATCH (s:LexicalWorkspaceStats) DELETE") && fail) {
-        fail = false;
-        throw new Error("stats rebuild interrupted");
-      }
       return [];
     };
     const store = storeWith(db);
-    await expect(store.ensureSchema()).rejects.toMatchObject({ code: "schema_failed", context: { operation: "ensureSchema" } });
     await expect(store.ensureSchema()).resolves.toBeUndefined();
     expect(db.calls.filter((call) => call.params?.key === "lexicalStatsSchemaVersion"
       && call.params?.value === NEO4J_LEXICAL_STATS_SCHEMA_VERSION)).toHaveLength(1);
+    expect(db.calls.some((call) => call.cypher.includes("LexicalDocument")
+      && (call.cypher.includes("REMOVE") || call.cypher.includes("coalesce")))).toBe(false);
 
     const broken = new MockNeo4jGraphDB();
     broken.handler = () => { throw new Error("neo4j unavailable"); };

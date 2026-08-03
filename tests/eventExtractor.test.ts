@@ -1,3 +1,4 @@
+import { extractFacts } from "./helpers/extractFacts.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -9,7 +10,7 @@ import { buildGraphFactsBatch } from "../src/core/graph-model/facts.js";
 import { KuzuGraphDB } from "../src/core/graph-model/db.js";
 import { writeGraphFactsWithMerge } from "../src/core/graph-model/upsert.js";
 import { repoId } from "../src/shared/path.js";
-import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
+import type { ExtractedFacts } from "../src/core/contracts/extraction/contracts.js";
 
 const generationMetadata = {
   workspaceId: "workspace:event-extractor",
@@ -17,13 +18,13 @@ const generationMetadata = {
   systemName: "event-extractor"
 } as const;
 
-async function extractEvents(source: string): Promise<ExtractorFactBundle> {
+async function extractEvents(source: string): Promise<ExtractedFacts> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-event-unit-"));
   const sourcePath = path.join(dir, "main.ts");
   await fs.writeFile(sourcePath, source, "utf8");
   const repo = { id: repoId("event-unit"), name: "event-unit", path: dir, remoteUrl: "", branch: "", commitSha: "", language: "typescript", indexedAt: "now" } as any;
   const parsed = await parseSourceFile({ repoId: repo.id, absolutePath: sourcePath, relativePath: "main.ts", language: "typescript" });
-  const bundle = await eventExtractor.extract({ repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
+  const bundle = await extractFacts(eventExtractor, { repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
   await fs.rm(dir, { recursive: true, force: true });
   return bundle;
 }
@@ -66,7 +67,7 @@ describe("Event Extractor", () => {
       repoResolver: () => null as any
     };
 
-    const extracted = await eventExtractor.extract(context);
+    const extracted = await extractFacts(eventExtractor, context);
 
     // 1. Verify Contracts
     const contractKeys = extracted.contracts.map((c) => c.key);

@@ -1,3 +1,4 @@
+import { extractFacts } from "./helpers/extractFacts.js";
 import { describe, expect, it } from "vitest";
 import { javaPackageExtractor } from "../src/core/contracts/extraction/builtin/javaPackageExtractor.js";
 
@@ -11,7 +12,7 @@ describe("javaPackageExtractor", () => {
   });
 
   it("skips non-java files and returns empty bundle", async () => {
-    const result = await javaPackageExtractor.extract({
+    const result = await extractFacts(javaPackageExtractor, {
       repos: [],
       parsedFiles: [
         {
@@ -47,7 +48,7 @@ describe("javaPackageExtractor", () => {
   });
 
   it("extracts package contract from java file with facts.packageName", async () => {
-    const result = await javaPackageExtractor.extract({
+    const result = await extractFacts(javaPackageExtractor, {
       repos: [],
       parsedFiles: [
         {
@@ -76,7 +77,7 @@ describe("javaPackageExtractor", () => {
   });
 
   it("extracts package contract from java file path when facts.packageName is missing", async () => {
-    const result = await javaPackageExtractor.extract({
+    const result = await extractFacts(javaPackageExtractor, {
       repos: [],
       parsedFiles: [
         {
@@ -104,7 +105,7 @@ describe("javaPackageExtractor", () => {
   });
 
   it("skips java files with no package name in facts or path", async () => {
-    const result = await javaPackageExtractor.extract({
+    const result = await extractFacts(javaPackageExtractor, {
       repos: [],
       parsedFiles: [
         {
@@ -129,7 +130,7 @@ describe("javaPackageExtractor", () => {
   });
 
   it("does NOT extract import contracts (handled by importPackageExtractor)", async () => {
-    const result = await javaPackageExtractor.extract({
+    const result = await extractFacts(javaPackageExtractor, {
       repos: [],
       parsedFiles: [
         {
@@ -160,7 +161,7 @@ describe("javaPackageExtractor", () => {
   });
 
   it("produces owner evidence for the java package", async () => {
-    const result = await javaPackageExtractor.extract({
+    const result = await extractFacts(javaPackageExtractor, {
       repos: [],
       parsedFiles: [
         {
@@ -192,7 +193,7 @@ describe("javaPackageExtractor", () => {
   });
 
   it("handles multiple java files from different repos", async () => {
-    const result = await javaPackageExtractor.extract({
+    const result = await extractFacts(javaPackageExtractor, {
       repos: [],
       parsedFiles: [
         {

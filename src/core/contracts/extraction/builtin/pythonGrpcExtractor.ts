@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import type Parser from "tree-sitter";
 import type { CodeSymbol, ParsedFile } from "../../../parsing/types.js";
 import type { FactCollector } from "../factCollector.js";
@@ -90,7 +90,7 @@ function pythonServicerStreaming(functionNode: Parser.SyntaxNode): GrpcStreaming
   return "unary";
 }
 
-export const pythonGrpcExtractor = compatExtractor({
+export const pythonGrpcExtractor = defineBuiltinExtractor({
   name: "builtin:python-grpc",
   languages: ["python"],
   extract(context, collector: FactCollector) {

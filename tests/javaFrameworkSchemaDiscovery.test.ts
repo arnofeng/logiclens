@@ -1,3 +1,4 @@
+import { extractFacts } from "./helpers/extractFacts.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -129,7 +130,7 @@ describe("JS-010..JS-012 deterministic Java framework schema discovery", () => {
         }
       `]
     ]));
-    const protoFacts = await protoExtractor.extract({ repos: [repo], parsedFiles, repoResolver: () => repo });
+    const protoFacts = await extractFacts(protoExtractor, { repos: [repo], parsedFiles, repoResolver: () => repo });
     const debugBridge = buildProtoJavaIdentityBridge(parsedFiles, protoFacts.contractSpecs);
     const javaFile = parsedFiles.find((file) => file.language === "java")!;
     expect(debugBridge.mappings).toEqual(expect.arrayContaining([
@@ -188,7 +189,7 @@ describe("JS-010..JS-012 deterministic Java framework schema discovery", () => {
     ]);
     const parsed = await parseSources(directory, id, sources);
     const repo = repoNode(id, directory);
-    const protoFacts = await protoExtractor.extract({ repos: [repo], parsedFiles: parsed, repoResolver: () => repo });
+    const protoFacts = await extractFacts(protoExtractor, { repos: [repo], parsedFiles: parsed, repoResolver: () => repo });
     const bridge = buildProtoJavaIdentityBridge(parsed, protoFacts.contractSpecs);
     const javaFile = parsed.find((file) => file.language === "java")!;
     expect(bridge.mappings).toEqual(expect.arrayContaining([

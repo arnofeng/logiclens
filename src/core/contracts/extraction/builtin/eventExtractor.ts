@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import type { ContractRole } from "../../../parsing/types.js";
 import type { FactCollector } from "../factCollector.js";
@@ -29,7 +29,7 @@ function eventFramework(broker: EventBroker): string | undefined {
   return broker !== "unknown" ? broker : undefined;
 }
 
-export const eventExtractor = compatExtractor({
+export const eventExtractor = defineBuiltinExtractor({
   name: "builtin:event",
   extract(context, collector: FactCollector) {
     for (const file of parsedCodeFiles(context.parsedFiles)) {

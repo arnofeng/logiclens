@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import type Parser from "tree-sitter";
 import type { CodeSymbol, ContractRole, ParsedFile } from "../../../parsing/types.js";
 import type { FactCollector } from "../factCollector.js";
@@ -237,7 +237,7 @@ function isInsideDynamicSubscriptCall(node: Parser.SyntaxNode): boolean {
   return false;
 }
 
-export const jsHttpClientExtractor = compatExtractor({
+export const jsHttpClientExtractor = defineBuiltinExtractor({
   name: "builtin:js-http-client",
   languages: ["javascript", "typescript"],
   frameworks: ["js:axios", "js:generic-fetch"],

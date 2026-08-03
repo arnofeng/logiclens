@@ -1,3 +1,4 @@
+import { extractFacts } from "./helpers/extractFacts.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -83,7 +84,7 @@ func main() {
       parsedFiles: [parsed],
       repoResolver: () => null as any
     };
-    const extracted = await goExtractor.extract(context);
+    const extracted = await extractFacts(goExtractor, context);
     
     // Check producer API contracts
     const producers = extracted.repoContracts.filter((r) => r.role === "producer");

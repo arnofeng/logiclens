@@ -1,3 +1,4 @@
+import { extractFacts } from "./helpers/extractFacts.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -21,7 +22,7 @@ async function extractFromSources(sources: Record<string, string>) {
     await fs.writeFile(absolutePath, source, "utf8");
     parsedFiles.push(await parseSourceFile({ repoId: repo.id, absolutePath, relativePath, language: "java" }));
   }
-  const bundle = await springMvcExtractor.extract({
+  const bundle = await extractFacts(springMvcExtractor, {
     repos: [repo], parsedFiles, repoResolver: () => repo
   });
   return { bundle, repo, parsed: parsedFiles[0]!, parsedFiles };

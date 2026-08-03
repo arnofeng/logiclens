@@ -81,9 +81,6 @@ describe("batched indexing", () => {
 
     const batched = await withDb(async (db, cwd) => {
       const logs: string[] = [];
-      const seedStore = new KuzuWorkspaceLexicalStore(db);
-      await seedStore.ensureSchema();
-      await db.query("MATCH (m:LexicalMetadata) SET m.value = 'legacy';");
       const commitVersions = vi.spyOn(KuzuWorkspaceLexicalStore.prototype, "commitVersions");
       const ensureSchema = vi.spyOn(KuzuWorkspaceLexicalStore.prototype, "ensureSchema");
       const config = configFor(repos, 2);

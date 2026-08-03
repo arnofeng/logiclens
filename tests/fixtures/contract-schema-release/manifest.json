@@ -1,0 +1,13 @@
+{
+  "fixtureVersion": "1",
+  "repositories": [
+    { "name": "release-java", "path": "repos/release-java" },
+    { "name": "release-typescript", "path": "repos/release-typescript" }
+  ],
+  "mutations": {
+    "renameFrom": "repos/release-typescript/src/contracts.ts",
+    "renameTo": "repos/release-typescript/src/domain/contracts.ts",
+    "deleteSharedRoot": "repos/release-typescript/src/secondaryPublisher.ts",
+    "deleteLastRoot": "repos/release-typescript/src/publisher.ts"
+  }
+}

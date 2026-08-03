@@ -1,0 +1,17 @@
+{
+  "fixtureVersion": "1",
+  "manifestVersion": "1",
+  "repositoryUrl": "https://github.com/spring-projects/spring-petclinic.git",
+  "archiveUrl": "https://github.com/spring-projects/spring-petclinic/archive/88e37c15cf6fc8490b01bc3e8e2c800cec1ac272.tar.gz",
+  "commitSha": "88e37c15cf6fc8490b01bc3e8e2c800cec1ac272",
+  "archiveSha256": "7b4d1920361d7e9c5d7f73ac9122f8387031a8799910000c36ba3ae873a4cb6a",
+  "approvedBaselineVersion": "1",
+  "runnerProfile": "java-schema-release-v1",
+  "maxDepth": 12,
+  "maxTypesPerRoot": 256,
+  "scenarios": [
+    "clean-full-index",
+    "public-graph-internal-facts-lexical-size",
+    "root-relation-recall-and-unexpected-diagnostics"
+  ]
+}

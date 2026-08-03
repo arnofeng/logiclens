@@ -3,7 +3,7 @@ import { confidenceFor } from "../../../../shared/confidence.js";
 import { stableFactId, type SchemaDeclarationCandidate, type SchemaFieldSpec, type TypeExpression } from "../../../schema/model.js";
 import type { ParsedFile } from "../../../parsing/types.js";
 import type { FactCollector } from "../factCollector.js";
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import { parsedCodeFiles } from "./shared.js";
 import { indexedSourceAstNodes, parseSourceAst } from "./sourceAstUtils.js";
 
@@ -19,7 +19,7 @@ const DECLARATION_TYPES = new Set([
  * SchemaSpecs are created later by contract-root reachability; declaration
  * names never decide whether a type is a schema.
  */
-export const javaSchemaExtractor = compatExtractor({
+export const javaSchemaExtractor = defineBuiltinExtractor({
   name: "builtin:java-type-declarations",
   languages: ["java"],
   extract(context, collector: FactCollector) {

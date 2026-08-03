@@ -1,3 +1,4 @@
+import { extractFacts } from "./helpers/extractFacts.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,11 +7,11 @@ import { objectSchemaFields } from "./helpers/schemaModel.js";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { protoExtractor } from "../src/core/contracts/extraction/builtin/protoExtractor.js";
 import { repoId } from "../src/shared/path.js";
-import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
+import type { ExtractedFacts } from "../src/core/contracts/extraction/contracts.js";
 import { reconcileNonJavaSchemaFacts } from "../src/core/contracts/extraction/nonJavaSchemaReconciler.js";
 import type { GrpcMethodSpec, SchemaSpec } from "../src/core/contracts/spec.js";
 
-async function extract(source: string): Promise<ExtractorFactBundle> {
+async function extract(source: string): Promise<ExtractedFacts> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-proto-extractor-"));
   const rel = "protos/order.proto";
   const abs = path.join(dir, rel);
@@ -35,7 +36,7 @@ async function extract(source: string): Promise<ExtractorFactBundle> {
     language: "proto"
   });
 
-  const extracted = await protoExtractor.extract({
+  const extracted = await extractFacts(protoExtractor, {
     repos: [repo],
     parsedFiles: [parsed],
     repoResolver: () => repo
@@ -197,7 +198,7 @@ describe("Protobuf Extractor", () => {
         parsed.push(await parseSourceFile({ repoId: id, absolutePath, relativePath, language: "proto" }));
       }
       const repo = { id, name: "proto-cross-file", path: directory, remoteUrl: "", branch: "", commitSha: "", language: "proto", indexedAt: "now" };
-      const extracted = await protoExtractor.extract({ repos: [repo], parsedFiles: parsed, repoResolver: () => repo });
+      const extracted = await extractFacts(protoExtractor, { repos: [repo], parsedFiles: parsed, repoResolver: () => repo });
       const serviceFile = parsed.find((file) => file.path === "protos/service.proto");
       expect(serviceFile && "imports" in serviceFile ? serviceFile.imports : []).toEqual([
         expect.objectContaining({ module: "models.proto", importKind: "module" })
@@ -249,7 +250,7 @@ describe("Protobuf Extractor", () => {
         parsed.push(await parseSourceFile({ repoId: id, absolutePath, relativePath, language: "proto" }));
       }
       const repo = { id, name: "proto-import-package", path: directory, remoteUrl: "", branch: "", commitSha: "", language: "proto", indexedAt: "now" };
-      const extracted = await protoExtractor.extract({ repos: [repo], parsedFiles: parsed, repoResolver: () => repo });
+      const extracted = await extractFacts(protoExtractor, { repos: [repo], parsedFiles: parsed, repoResolver: () => repo });
       const reconciled = reconcileNonJavaSchemaFacts(extracted.contractSpecs, extracted.semanticRelations, [], { sourceFiles: parsed });
       const grpcNode = reconciled.contractSpecs.find((node) => node.specKind === "grpc-method")!;
       const grpc = JSON.parse(grpcNode.specJson) as GrpcMethodSpec;

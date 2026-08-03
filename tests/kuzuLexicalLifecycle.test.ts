@@ -131,84 +131,26 @@ describe("Kuzu workspace lexical lifecycle", () => {
     else process.env.REPOHELIX_KUZU_CLOSE_MODE = previousCloseMode;
   });
 
-  it("retries interrupted stats migration and keeps schema and the workspace FTS index idempotent", async () => {
-    store.generation = "legacy";
-    const legacyRenderRef = createRenderRef({
-      workspaceId: WORKSPACE,
-      repoId: "repo:legacy",
-      kind: "code",
-      canonicalId: "code:legacy",
-      fileId: "file:legacy",
-      path: "src/legacy.ts"
-    });
-    await db.query(
-      "CREATE NODE TABLE LexicalDocument(" +
-      "id STRING, canonicalId STRING, workspaceId STRING, repoId STRING, kind STRING, renderRef STRING, searchableText STRING, active BOOL, ftsText STRING, PRIMARY KEY(id));"
-    );
-    await db.query(
-      "CREATE (:LexicalDocument {id: 'legacy:one', canonicalId: 'code:legacy', workspaceId: $workspaceId, repoId: 'repo:legacy', kind: 'code', renderRef: $renderRef, " +
-      "searchableText: 'legacy text', active: true, ftsText: 'legacy text'});",
-      { workspaceId: WORKSPACE, renderRef: legacyRenderRef }
-    );
-    await db.query(
-      "CREATE NODE TABLE LexicalMetadata(key STRING, value STRING, PRIMARY KEY(key));"
-    );
-    await db.query(
-      "CREATE (:LexicalMetadata {key: 'lexicalStatsSchemaVersion', value: '1'});"
-    );
-    const originalQuery = db.query.bind(db);
-    const interrupted = vi.spyOn(db, "query").mockImplementation(async (cypher, params) => {
-      if (cypher === "MATCH (n:LexicalDocument {storageId: $storageId}) SET n.ftsSizeBytes = $ftsSizeBytes;") {
-        throw new Error("injected fts size backfill failure");
-      }
-      return originalQuery(cypher, params) as ReturnType<typeof db.query>;
-    });
-    await expect(store.ensureSchema()).rejects.toMatchObject({
-      code: "schema_failed",
-      context: { operation: "ensureSchema" }
-    });
-    interrupted.mockRestore();
-
-    const interruptedHealth = await store.health(WORKSPACE);
-    expect(interruptedHealth).toMatchObject({
-      status: "unhealthy",
-      reasons: expect.arrayContaining(["lexical_stats_version_mismatch"]),
-      metrics: { documentCount: 0, indexSizeBytes: 0 }
-    });
-    expect(interruptedHealth.reasons).not.toContain("lexical_stats_table_missing");
-    expect((await db.query<{ name: string }>("CALL table_info('LexicalDocument') RETURN name;"))
-      .map((column) => column.name)).toContain("ftsSizeBytes");
-    expect(await db.query<{ ftsSizeBytes: number | null }>(
-      "MATCH (n:LexicalDocument {storageId: 'legacy:one'}) RETURN n.ftsSizeBytes AS ftsSizeBytes;"
-    )).toEqual([{ ftsSizeBytes: null }]);
+  it("rejects old lexical tables and keeps a fresh clean-cut schema idempotent", async () => {
+    const legacyDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-kuzu-lexical-old-"));
+    const legacyDb = await KuzuGraphDB.open(path.join(legacyDirectory, "graph.kuzu"));
+    try {
+      await legacyDb.query(
+        "CREATE NODE TABLE LexicalDocument(" +
+        "id STRING, canonicalId STRING, workspaceId STRING, repoId STRING, kind STRING, renderRef STRING, searchableText STRING, active BOOL, ftsText STRING, PRIMARY KEY(id));"
+      );
+      const legacyStore = new KuzuWorkspaceLexicalStore(legacyDb);
+      await expect(legacyStore.ensureSchema()).rejects.toMatchObject({
+        code: "schema_failed",
+        context: { operation: "ensureSchema" }
+      });
+    } finally {
+      await legacyDb.close();
+      await fs.rm(legacyDirectory, { recursive: true, force: true });
+    }
 
     await store.ensureSchema();
     await store.ensureSchema();
-    expect(await store.health(WORKSPACE)).toMatchObject({
-      status: "healthy",
-      reasons: [],
-      metrics: { documentCount: 1, indexSizeBytes: Buffer.byteLength("legacy text", "utf8") }
-    });
-
-    await db.query(
-      "MATCH (m:LexicalMetadata {key: 'lexicalStatsSchemaVersion'}) SET m.value = 'incomplete';"
-    );
-    const rebuildInterrupted = vi.spyOn(db, "query").mockImplementation(async (cypher, params) => {
-      if (cypher === "MATCH (s:LexicalWorkspaceStats) DELETE s;") {
-        throw new Error("injected stats rebuild failure");
-      }
-      return originalQuery(cypher, params) as ReturnType<typeof db.query>;
-    });
-    await expect(store.ensureSchema()).rejects.toMatchObject({ code: "schema_failed" });
-    rebuildInterrupted.mockRestore();
-    expect((await store.health(WORKSPACE)).reasons).toContain("lexical_stats_version_mismatch");
-    await store.ensureSchema();
-    expect(await store.health(WORKSPACE)).toMatchObject({
-      status: "healthy",
-      metrics: { documentCount: 1, indexSizeBytes: Buffer.byteLength("legacy text", "utf8") }
-    });
-    await store.ensureSchema();
-
     const columns = await db.query<{ name: string }>("CALL table_info('LexicalDocument') RETURN name;");
     expect(columns.map((column) => column.name)).toEqual(expect.arrayContaining([
       "storageId", "documentId", "generation", "canonicalId", "workspaceId", "repoId", "kind", "title", "qualifiedName", "path",
@@ -220,29 +162,12 @@ describe("Kuzu workspace lexical lifecycle", () => {
       index_type: string;
       property_names: string[];
     }>("CALL SHOW_INDEXES() RETURN table_name, index_name, index_type, property_names;");
-    const lexicalIndexes = indexes.filter((index) => index.table_name === "LexicalDocument");
-    expect(lexicalIndexes).toEqual([{
+    expect(indexes.filter((index) => index.table_name === "LexicalDocument")).toEqual([{
       table_name: "LexicalDocument",
       index_name: KUZU_WORKSPACE_FTS_INDEX,
       index_type: "FTS",
       property_names: ["ftsText"]
     }]);
-    expect(lexicalIndexes.some((index) => /repo/i.test(index.index_name))).toBe(false);
-
-    await db.query("MATCH (n:LexicalDocument {storageId: 'legacy:one'}) SET n.fileId = NULL, n.renderRef = 'corrupted-render-ref';");
-    // Once the clean-cut schema marker is current, ordinary startup is O(1)
-    // and deliberately does not scan/backfill document rows again.
-    await expect(store.ensureSchema()).resolves.toBeUndefined();
-    expect(await db.query<{ fileId: string | null }>(
-      "MATCH (n:LexicalDocument {storageId: 'legacy:one'}) RETURN n.fileId AS fileId;"
-    )).toEqual([{ fileId: null }]);
-    await db.query("MATCH (n:LexicalDocument {storageId: 'legacy:one'}) SET n.renderRef = $renderRef;", { renderRef: legacyRenderRef });
-    await db.query("MATCH (n:LexicalDocument {storageId: 'legacy:one'}) SET n.fileId = 'file:legacy';");
-    expect(await db.query<{ fileId: string }>("MATCH (n:LexicalDocument {storageId: 'legacy:one'}) RETURN n.fileId AS fileId;"))
-      .toEqual([{ fileId: "file:legacy" }]);
-    await store.reconcileRepoFileDocuments({ workspaceId: WORKSPACE, repoId: "repo:legacy", batchId: "batch:legacy-delete", activeFileIds: [] });
-    expect(await db.query<{ active: boolean }>("MATCH (n:LexicalDocument {storageId: 'legacy:one'}) RETURN n.active AS active;"))
-      .toEqual([{ active: false }]);
   });
 
   it("uses the current-schema fast path and applies rollback-safe exact lexical deltas", async () => {
@@ -806,7 +731,7 @@ describe("Kuzu workspace lexical lifecycle", () => {
     await store.upsertDocuments([document()]);
     await db.query("MATCH (m:LexicalMetadata {key: 'projectionSchemaVersion'}) SET m.value = 'old';");
     await db.query("MATCH (m:LexicalMetadata {key: 'tokenizerVersion'}) SET m.value = 'old';");
-    await store.ensureSchema();
+    await expect(store.ensureSchema()).rejects.toMatchObject({ code: "schema_failed" });
     const beforeCommit = await store.health(WORKSPACE);
     expect(beforeCommit.status).toBe("unhealthy");
     expect(beforeCommit.reasons).toEqual(expect.arrayContaining([
@@ -825,6 +750,8 @@ describe("Kuzu workspace lexical lifecycle", () => {
     const abnormal = await store.health(WORKSPACE);
     expect(abnormal.status).toBe("unhealthy");
     expect(abnormal.reasons).toContain("fts_index_definition_mismatch");
+    await db.query("CALL DROP_FTS_INDEX('LexicalDocument', 'workspace_lexical');");
+    await db.query("CALL CREATE_FTS_INDEX('LexicalDocument', 'workspace_lexical', ['ftsText']);");
   });
 
   it("wraps genuine adapter failures in the provider-neutral health boundary", async () => {

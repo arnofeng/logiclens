@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import type Parser from "tree-sitter";
 import type { FactCollector } from "../factCollector.js";
 import type { ParsedFile } from "../../../parsing/types.js";
@@ -20,14 +20,14 @@ import { canonicalResolutionScopeIdForFile } from "../../../schema/sourceScopes.
  *
  * Struct field extraction handles:
  *  - Basic types: `string`, `int`, `float64`, `bool`, etc.
- *  - Pointer types: `*string` 鈫?nullable
+ *  - Pointer types: `*string` → nullable
  *  - Slice types: `[]string`, `[]OrderItem`
  *  - Map types: `map[string]interface{}`
  *  - Embedded structs (field_identifier omitted): recorded by their type name
  *  - Struct tags (`` `json:"name"` ``) are ignored for now
  */
 
-export const goSchemaExtractor = compatExtractor({
+export const goSchemaExtractor = defineBuiltinExtractor({
   name: "builtin:go-schema",
   languages: ["go"],
   async extract(context, collector: FactCollector) {
@@ -110,9 +110,9 @@ function extractStructFields(
 /**
  * Parses a single Go `field_declaration` into one or more `SchemaFieldSpec`s.
  * A single Go field line can declare multiple names sharing the same type:
- *   `X, Y int` 鈫?two fields
- *   `Name string` 鈫?one field
- *   `ID string \`json:"id"\`` 鈫?one field (tag ignored)
+ *   `X, Y int` → two fields
+ *   `Name string` → one field
+ *   `ID string \`json:"id"\`` → one field (tag ignored)
  */
 function parseGoField(node: Parser.SyntaxNode, file: ParsedFile): SchemaFieldSpec[] | undefined {
   // Collect field_identifiers (Go allows `a, b int` syntax)
@@ -127,7 +127,7 @@ function parseGoField(node: Parser.SyntaxNode, file: ParsedFile): SchemaFieldSpe
     } else if (isGoTypeNode(child.type)) {
       // Embedded struct or the type of the preceding identifiers
       if (identifiers.length === 0) {
-        // Embedded field 鈥?use the type name as the field name
+        // Embedded field — use the type name as the field name
         identifiers.push(child.text);
       }
       typeNode = child;
@@ -164,7 +164,7 @@ function parseGoField(node: Parser.SyntaxNode, file: ParsedFile): SchemaFieldSpe
 }
 
 /**
- * Returns the type names of a struct's embedded fields 鈥?`field_declaration`s
+ * Returns the type names of a struct's embedded fields — `field_declaration`s
  * that carry a type but no `field_identifier`. Pointer (`*Base`), qualified
  * (`pkg.Base`) and generic (`Base[T]`) embeds are reduced to the bare type
  * name so they match the simple schema names indexed by the resolver.

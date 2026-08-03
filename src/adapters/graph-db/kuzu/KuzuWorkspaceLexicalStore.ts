@@ -49,7 +49,6 @@ export const KUZU_LEXICAL_STATS_SCHEMA_VERSION = "3";
 const PROJECTION_METADATA_KEY = "projectionSchemaVersion";
 const TOKENIZER_METADATA_KEY = "tokenizerVersion";
 const STATS_METADATA_KEY = "lexicalStatsSchemaVersion";
-const INCOMPLETE_STATS_METADATA_VALUE = "incomplete";
 const EXPECTED_FTS_PROPERTIES = ["ftsText"] as const;
 const KUZU_LEXICAL_WRITE_CHUNK_SIZE = 500;
 const COPY_SAFE_TOKEN = /^[\p{L}\p{M}\p{N}._/-]+$/u;
@@ -163,58 +162,24 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
       await this.db.query("LOAD EXTENSION FTS;");
       if (await this.hasCurrentSchema()) return;
       const tables = await this.tableNames();
-      if (!tables.has(KUZU_LEXICAL_DOCUMENT_TABLE)) {
-        await this.db.query(
-          "CREATE NODE TABLE LexicalDocument(" +
-          "storageId STRING, documentId STRING, generation STRING, canonicalId STRING, workspaceId STRING, repoId STRING, kind STRING, " +
-          "title STRING, qualifiedName STRING, path STRING, searchableText STRING, tokens STRING[], " +
-          "active BOOL, sourceHash STRING, batchId STRING, renderRef STRING, fileId STRING, ftsText STRING, " +
-          "ftsSizeBytes INT64, PRIMARY KEY(storageId));"
-        );
-      } else {
-        await this.migrateDocumentPrimaryKey();
-        await this.ensureDocumentColumns();
-        await this.db.query(
-          "MATCH (n:LexicalDocument) WHERE n.ftsText IS NULL SET n.ftsText = n.searchableText;"
-        );
-        await this.db.query(
-          "MATCH (n:LexicalDocument) WHERE n.documentId IS NULL SET n.documentId = n.storageId;"
-        );
-        await this.db.query(
-          "MATCH (n:LexicalDocument) WHERE n.generation IS NULL SET n.generation = $generation;",
-          { generation: "legacy" }
-        );
+      if ([KUZU_LEXICAL_DOCUMENT_TABLE, KUZU_LEXICAL_METADATA_TABLE, KUZU_LEXICAL_STATS_TABLE, "LexicalGenerationBatch"]
+        .some((table) => tables.has(table))) {
+        throw new Error("Lexical projection schema is incompatible; remove generated graph/internal/lexical artifacts and run a clean full reindex.");
       }
-
-      if (!tables.has(KUZU_LEXICAL_METADATA_TABLE)) {
-        await this.db.query(
-          "CREATE NODE TABLE LexicalMetadata(key STRING, value STRING, PRIMARY KEY(key));"
-        );
-      }
-      if (!tables.has(KUZU_LEXICAL_STATS_TABLE)) {
-        // DDL is not atomic with the data rebuild. Invalidate a surviving
-        // marker first so a crash after table creation remains retryable.
-        await this.markStatsIncomplete();
-        // Kuzu 0.11.x exposes index definitions but no physical FTS size.
-        // Persist the exact UTF-8 byte size of indexed payloads so health is
-        // O(1), deterministic, and does not mislabel total database storage.
-        await this.db.query(
-          "CREATE NODE TABLE LexicalWorkspaceStats(" +
-          "id STRING, workspaceId STRING, generation STRING, revision STRING, " +
-          "documentCount INT64, indexSizeBytes INT64, PRIMARY KEY(id));"
-        );
-      } else {
-        await this.migrateStatsPrimaryKey();
-      }
-      if (!tables.has("LexicalGenerationBatch")) {
-        await this.db.query("CREATE NODE TABLE LexicalGenerationBatch(id STRING, workspaceId STRING, generation STRING, batchId STRING, PRIMARY KEY(id));");
-      }
-
-      // This is deliberately checked on every initialization. ALTER TABLE can
-      // commit before an interrupted backfill transaction, so column presence
-      // alone is not evidence that every legacy document has been migrated.
-      await this.migrateFtsSizes();
-      await this.migrateFileIds();
+      await this.db.query(
+        "CREATE NODE TABLE LexicalDocument(" +
+        "storageId STRING, documentId STRING, generation STRING, canonicalId STRING, workspaceId STRING, repoId STRING, kind STRING, " +
+        "title STRING, qualifiedName STRING, path STRING, searchableText STRING, tokens STRING[], " +
+        "active BOOL, sourceHash STRING, batchId STRING, renderRef STRING, fileId STRING, ftsText STRING, " +
+        "ftsSizeBytes INT64, PRIMARY KEY(storageId));"
+      );
+      await this.db.query("CREATE NODE TABLE LexicalMetadata(key STRING, value STRING, PRIMARY KEY(key));");
+      await this.db.query(
+        "CREATE NODE TABLE LexicalWorkspaceStats(" +
+        "id STRING, workspaceId STRING, generation STRING, revision STRING, " +
+        "documentCount INT64, indexSizeBytes INT64, PRIMARY KEY(id));"
+      );
+      await this.db.query("CREATE NODE TABLE LexicalGenerationBatch(id STRING, workspaceId STRING, generation STRING, batchId STRING, PRIMARY KEY(id));");
       await this.ensureSingleWorkspaceIndex();
       await this.db.transaction(async () => {
         await this.db.query(
@@ -225,11 +190,11 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
           "MERGE (m:LexicalMetadata {key: $key}) ON CREATE SET m.value = $value;",
           { key: TOKENIZER_METADATA_KEY, value: TOKENIZER_VERSION }
         );
+        await this.db.query(
+          "MERGE (m:LexicalMetadata {key: $key}) ON CREATE SET m.value = $value;",
+          { key: STATS_METADATA_KEY, value: KUZU_LEXICAL_STATS_SCHEMA_VERSION }
+        );
       });
-      const statsVersion = await this.metadataValue(STATS_METADATA_KEY);
-      if (statsVersion !== KUZU_LEXICAL_STATS_SCHEMA_VERSION) {
-        await this.rebuildAllWorkspaceStats();
-      }
     } catch (error) {
       throw wrap("schema_failed", context, error);
     }
@@ -593,19 +558,6 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
     } catch (error) { throw wrap("reconcile_failed", context, error); }
   }
 
-  private async migrateFileIds(): Promise<void> {
-    const rows = await this.db.query<Pick<DocumentRow, "storageId" | "workspaceId" | "repoId" | "kind" | "canonicalId" | "renderRef" | "fileId">>(
-      "MATCH (n:LexicalDocument) WHERE n.fileId IS NULL RETURN n.storageId AS storageId, n.workspaceId AS workspaceId, n.repoId AS repoId, n.kind AS kind, n.canonicalId AS canonicalId, n.renderRef AS renderRef, n.fileId AS fileId;"
-    );
-    const migrated = rows.map((row) => ({ storageId: row.storageId, fileId: fileIdFromIdentity(row) }))
-      .filter((row): row is { storageId: string; fileId: string } => row.fileId !== null);
-    await this.db.transaction(async () => {
-      for (const row of migrated) {
-        await this.db.query("MATCH (n:LexicalDocument {storageId: $storageId}) SET n.fileId = $fileId;", row);
-      }
-    });
-  }
-
   async cleanupBatch(request: Readonly<CleanupBatchRequest>): Promise<void> {
     const context = {
       operation: "cleanupBatch",
@@ -846,14 +798,6 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
       && sameStrings(lexicalIndexes[0].property_names, EXPECTED_FTS_PROPERTIES);
   }
 
-  private async migrateDocumentPrimaryKey(): Promise<void> {
-    const columns = await this.db.query<ColumnRow>("CALL table_info('LexicalDocument') RETURN name;");
-    const existing = new Set(columns.map((column) => column.name));
-    if (!existing.has("storageId") && existing.has("id")) {
-      await this.db.query("ALTER TABLE LexicalDocument RENAME id TO storageId;");
-    }
-  }
-
   private async resolveStatsRevision(
     request: Readonly<LexicalGenerationRequest>,
     operation: "health" | "pendingHealth"
@@ -875,84 +819,6 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
       && row.activeRevision.length > 0
       ? row.activeRevision
       : request.generation;
-  }
-
-  private async migrateStatsPrimaryKey(): Promise<void> {
-    const columns = await this.db.query<ColumnRow>("CALL table_info('LexicalWorkspaceStats') RETURN name;");
-    const existing = new Set(columns.map((column) => column.name));
-    if (!existing.has("id") && existing.has("workspaceId")) {
-      await this.db.query("ALTER TABLE LexicalWorkspaceStats RENAME workspaceId TO id;");
-      existing.delete("workspaceId");
-      existing.add("id");
-    }
-    if (!existing.has("workspaceId")) await this.db.query("ALTER TABLE LexicalWorkspaceStats ADD workspaceId STRING;");
-    if (!existing.has("generation")) await this.db.query("ALTER TABLE LexicalWorkspaceStats ADD generation STRING;");
-    if (!existing.has("revision")) await this.db.query("ALTER TABLE LexicalWorkspaceStats ADD revision STRING;");
-    await this.db.query("MATCH (s:LexicalWorkspaceStats) WHERE s.workspaceId IS NULL SET s.workspaceId = s.id;");
-    await this.db.query("MATCH (s:LexicalWorkspaceStats) WHERE s.generation IS NULL SET s.generation = $generation;", { generation: "legacy" });
-    await this.db.query("MATCH (s:LexicalWorkspaceStats) WHERE s.revision IS NULL SET s.revision = s.generation;");
-  }
-
-  private async ensureDocumentColumns(): Promise<void> {
-    const columns = await this.db.query<ColumnRow>("CALL table_info('LexicalDocument') RETURN name;");
-    const existing = new Set(columns.map((column) => column.name));
-    for (const [column, type] of DOCUMENT_COLUMNS) {
-      if (!existing.has(column)) {
-        await this.db.query(`ALTER TABLE LexicalDocument ADD ${column} ${type};`);
-      }
-    }
-  }
-
-  private async migrateFtsSizes(): Promise<void> {
-    const rows = await this.db.query<{ storageId: string; ftsText: string | null }>(
-      "MATCH (n:LexicalDocument) WHERE n.ftsSizeBytes IS NULL RETURN n.storageId AS storageId, n.ftsText AS ftsText ORDER BY n.storageId;"
-    );
-    if (rows.length === 0) return;
-    await this.markStatsIncomplete();
-    await this.db.transaction(async () => {
-      for (const row of rows) {
-        await this.db.query(
-          "MATCH (n:LexicalDocument {storageId: $storageId}) SET n.ftsSizeBytes = $ftsSizeBytes;",
-          { storageId: row.storageId, ftsSizeBytes: Buffer.byteLength(row.ftsText ?? "", "utf8") }
-        );
-      }
-    });
-  }
-
-  private async markStatsIncomplete(): Promise<void> {
-    await this.db.query(
-      "MERGE (m:LexicalMetadata {key: $key}) SET m.value = $value;",
-      { key: STATS_METADATA_KEY, value: INCOMPLETE_STATS_METADATA_VALUE }
-    );
-  }
-
-  private async rebuildAllWorkspaceStats(): Promise<void> {
-    await this.db.transaction(async () => {
-      await this.db.query("MATCH (s:LexicalWorkspaceStats) DELETE s;");
-      const rows = await this.db.query<WorkspaceStatsRow>(
-        "MATCH (n:LexicalDocument) WHERE n.active = true " +
-        "RETURN n.workspaceId AS workspaceId, n.generation AS generation, count(*) AS documentCount, " +
-        "sum(n.ftsSizeBytes) AS indexSizeBytes ORDER BY workspaceId, generation;"
-      );
-      for (const row of rows) {
-        await this.db.query(
-          "CREATE (:LexicalWorkspaceStats {id: $id, workspaceId: $workspaceId, generation: $generation, revision: $revision, " +
-          "documentCount: $documentCount, indexSizeBytes: $indexSizeBytes});",
-          {
-            id: generationStatsId(row.workspaceId, row.generation, row.generation),
-            workspaceId: row.workspaceId,
-            generation: row.generation,
-            revision: row.generation,
-            documentCount: numeric(row.documentCount),
-            indexSizeBytes: numeric(row.indexSizeBytes)
-          }
-        );
-      }
-      await this.db.query(
-        "MERGE (m:LexicalMetadata {key: $key}) SET m.value = $value;",
-        { key: STATS_METADATA_KEY, value: KUZU_LEXICAL_STATS_SCHEMA_VERSION }
-      );
-    });
   }
 
   private async adjustGenerationStats(

@@ -56,7 +56,7 @@ async function main(): Promise<void> {
   } & Record<string, unknown>;
   assert(pluginManifest.name === csharp.packageJson.name, "C# plugin manifest name does not match package.json");
   assert(pluginManifest.version === expectedVersion, "C# plugin manifest version does not match package.json");
-  assert(pluginManifest[pluginApiKey] === "1.0.0", "C# plugin must target Plugin API 1.0.0");
+  assert(pluginManifest[pluginApiKey] === "2.0.0", "C# plugin must target Plugin API 2.0.0");
 
   const outputRoot = await fs.mkdtemp(path.join(os.tmpdir(), `${rootTarget.packageJson.name}-release-check-`));
   try {
@@ -65,11 +65,11 @@ async function main(): Promise<void> {
     }
 
     const sdkModule = await import(pathToFileURL(path.join(root, "packages/plugin-sdk/dist/index.js")).href);
-    assert(sdkModule[pluginApiExport] === "1.0.0", "Built SDK Plugin API version must be 1.0.0");
+    assert(sdkModule[pluginApiExport] === "2.0.0", "Built SDK Plugin API version must be 2.0.0");
 
     const csharpModule = await import(pathToFileURL(path.join(root, "packages/plugin-csharp/dist/index.js")).href);
     assert(csharpModule.default?.manifest?.version === expectedVersion, "Built C# plugin version does not match package.json");
-    assert(csharpModule.default?.manifest?.[pluginApiKey] === "1.0.0", "Built C# plugin API version must be 1.0.0");
+    assert(csharpModule.default?.manifest?.[pluginApiKey] === "2.0.0", "Built C# plugin API version must be 2.0.0");
   } finally {
     await fs.rm(outputRoot, { recursive: true, force: true });
   }

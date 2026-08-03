@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import type Parser from "tree-sitter";
 import type { CodeSymbol, ParsedFile } from "../../../parsing/types.js";
 import type { FactCollector } from "../factCollector.js";
@@ -87,7 +87,7 @@ function pushDynamicUnresolvedEvidence(input: {
   }));
 }
 
-export const pythonExtractor = compatExtractor({
+export const pythonExtractor = defineBuiltinExtractor({
   name: "builtin:python-extractor",
   languages: ["python"],
   frameworks: ["python:generic", "python:fastapi"],

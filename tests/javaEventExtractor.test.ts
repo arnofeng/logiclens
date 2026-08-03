@@ -1,3 +1,4 @@
+import { extractFacts } from "./helpers/extractFacts.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -5,9 +6,9 @@ import { describe, expect, it } from "vitest";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { javaEventExtractor } from "../src/core/contracts/extraction/builtin/javaEventExtractor.js";
 import { repoId } from "../src/shared/path.js";
-import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
+import type { ExtractedFacts } from "../src/core/contracts/extraction/contracts.js";
 
-async function extract(source: string): Promise<ExtractorFactBundle> {
+async function extract(source: string): Promise<ExtractedFacts> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-java-event-"));
   const rel = "src/main/java/com/example/Events.java";
   const abs = path.join(dir, rel);
@@ -15,7 +16,7 @@ async function extract(source: string): Promise<ExtractorFactBundle> {
   await fs.writeFile(abs, source, "utf8");
   const repo = { id: repoId("java-event"), name: "java-event", path: dir, remoteUrl: "", branch: "", commitSha: "", language: "java", indexedAt: "now" } as any;
   const parsed = await parseSourceFile({ repoId: repo.id, absolutePath: abs, relativePath: rel, language: "java" });
-  const bundle = await javaEventExtractor.extract({ repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
+  const bundle = await extractFacts(javaEventExtractor, { repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
   await fs.rm(dir, { recursive: true, force: true });
   return bundle;
 }

@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import type { CodeSymbol, ParsedFile } from "../../../parsing/types.js";
 import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
@@ -138,7 +138,7 @@ function pushResolvedXmlProducer(
   });
 }
 
-export const dubboXmlExtractor = compatExtractor({
+export const dubboXmlExtractor = defineBuiltinExtractor({
   name: "builtin:dubbo-xml",
   languages: ["xml"],
   frameworks: ["java:dubbo-xml"],

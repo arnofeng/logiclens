@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import type Parser from "tree-sitter";
 import type { CodeSymbol, ParsedFile } from "../../../parsing/types.js";
 import type { FactCollector } from "../factCollector.js";
@@ -175,7 +175,7 @@ function sdkCallBridge(
     : undefined;
 }
 
-export const sdkGeneratedClientExtractor = compatExtractor({
+export const sdkGeneratedClientExtractor = defineBuiltinExtractor({
   name: "builtin:js-sdk-generated-client",
   languages: ["javascript", "typescript"],
   frameworks: ["js:package-json"],

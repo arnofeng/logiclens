@@ -1,3 +1,4 @@
+import { extractFacts } from "./helpers/extractFacts.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -38,7 +39,7 @@ describe("generated SDK client extractor", () => {
         parseSourceFile({ repoId: repo.id, absolutePath: consumerPath, relativePath: "consumer.ts", language: "typescript" })
       ]) as ParsedFile[];
 
-      const bundle = await sdkGeneratedClientExtractor.extract({ repos: [repo], parsedFiles, repoResolver: () => repo });
+      const bundle = await extractFacts(sdkGeneratedClientExtractor, { repos: [repo], parsedFiles, repoResolver: () => repo });
 
       expect(bundle.contracts).toEqual([expect.objectContaining({ kind: "api", key: "/api/orders/{id}" })]);
       expect(bundle.repoContracts).toEqual([expect.objectContaining({ role: "consumer" })]);

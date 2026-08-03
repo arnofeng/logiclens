@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import type Parser from "tree-sitter";
 import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
@@ -114,7 +114,7 @@ function expressionType(node: Parser.SyntaxNode | undefined, variables: Map<stri
   return cast;
 }
 
-export const javaEventExtractor = compatExtractor({
+export const javaEventExtractor = defineBuiltinExtractor({
   name: "builtin:java-event",
   languages: ["java"],
   frameworks: ["java:spring-events", "java:spring-kafka", "java:spring-amqp"],

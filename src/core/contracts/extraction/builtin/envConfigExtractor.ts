@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import YAML from "yaml";
@@ -118,7 +118,7 @@ function isProcessEnvMember(node: Parser.SyntaxNode | null): boolean {
   return Boolean(obj && obj.text === "process" && prop && prop.text === "env");
 }
 
-export const envConfigExtractor = compatExtractor({
+export const envConfigExtractor = defineBuiltinExtractor({
   name: "builtin:env-config",
   needs: {
     repoResolver: true

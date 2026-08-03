@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import { entityId } from "../../../../shared/path.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import type { FactCollector } from "../factCollector.js";
@@ -9,7 +9,7 @@ import {
   pushContractEvidence,
   toBusinessEntityName, } from "./shared.js";
 
-export const sharedSymbolExtractor = compatExtractor({
+export const sharedSymbolExtractor = defineBuiltinExtractor({
   name: "builtin:shared-symbol",
   extract(context, collector: FactCollector) {
     for (const file of parsedCodeFiles(context.parsedFiles)) {

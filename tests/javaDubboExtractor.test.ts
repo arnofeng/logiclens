@@ -1,14 +1,15 @@
+import { extractFacts } from "./helpers/extractFacts.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { javaDubboExtractor } from "../src/core/contracts/extraction/builtin/javaDubboExtractor.js";
-import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
+import type { ExtractedFacts } from "../src/core/contracts/extraction/contracts.js";
 import type { DubboMethodSpec } from "../src/core/contracts/spec.js";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { repoId } from "../src/shared/path.js";
 
-async function extract(source: string): Promise<ExtractorFactBundle> {
+async function extract(source: string): Promise<ExtractedFacts> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-java-dubbo-"));
   const rel = "src/main/java/com/acme/order/OrderDubbo.java";
   const abs = path.join(dir, rel);
@@ -16,16 +17,16 @@ async function extract(source: string): Promise<ExtractorFactBundle> {
   await fs.writeFile(abs, source, "utf8");
   const repo = { id: repoId("java-dubbo"), name: "java-dubbo", path: dir, remoteUrl: "", branch: "", commitSha: "", language: "java", indexedAt: "now" } as any;
   const parsed = await parseSourceFile({ repoId: repo.id, absolutePath: abs, relativePath: rel, language: "java" });
-  const bundle = await javaDubboExtractor.extract({ repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
+  const bundle = await extractFacts(javaDubboExtractor, { repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
   await fs.rm(dir, { recursive: true, force: true });
   return bundle;
 }
 
-function specs(bundle: ExtractorFactBundle): DubboMethodSpec[] {
+function specs(bundle: ExtractedFacts): DubboMethodSpec[] {
   return bundle.contractSpecs.map((row) => JSON.parse(row.specJson) as DubboMethodSpec);
 }
 
-function roleKeys(bundle: ExtractorFactBundle, role: "producer" | "consumer"): string[] {
+function roleKeys(bundle: ExtractedFacts, role: "producer" | "consumer"): string[] {
   const contractIds = new Set(bundle.repoContracts.filter((edge) => edge.role === role).map((edge) => edge.contractId));
   return bundle.contracts
     .filter((contract) => contractIds.has(contract.id))

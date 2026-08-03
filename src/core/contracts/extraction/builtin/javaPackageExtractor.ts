@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import {
@@ -12,11 +12,11 @@ import {
  * Extracts Java package contracts from Java file paths.
  *
  * For each Java file, infers the package name from `facts.packageName` or
- * by parsing the file path (e.g. `src/main/java/com/example/Foo.java` â†?`com.example`).
+ * by parsing the file path (e.g. `src/main/java/com/example/Foo.java` â†’ `com.example`).
  *
  * Import-to-package extraction is handled by the separate `importPackageExtractor`.
  */
-export const javaPackageExtractor = compatExtractor({
+export const javaPackageExtractor = defineBuiltinExtractor({
   name: "builtin:java-package",
   languages: ["java"],
   async extract(context, collector: FactCollector) {

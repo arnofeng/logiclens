@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import type Parser from "tree-sitter";
 import type { ParsedFile } from "../../../parsing/types.js";
 import type { FactCollector } from "../factCollector.js";
@@ -81,7 +81,7 @@ function isCeleryTaskDecorator(name: string): boolean {
   return last === "task" || last === "shared_task";
 }
 
-export const pythonEventExtractor = compatExtractor({
+export const pythonEventExtractor = defineBuiltinExtractor({
   name: "builtin:python-event",
   languages: ["python"],
   frameworks: ["python:kafka", "python:pika", "python:redis", "python:celery"],

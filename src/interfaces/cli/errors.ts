@@ -1,4 +1,5 @@
 import { findMcpOwner } from "../mcp/ownerRpc.js";
+import { BRAND } from "../../shared/branding.js";
 
 const KUZU_LOCK_ERROR_FRAGMENT = "Could not set lock on file";
 
@@ -15,18 +16,18 @@ export async function formatCliError(error: unknown, cwd = process.cwd()): Promi
 
   if (owner) {
     return [
-      `RepoHelix database is currently in use by the MCP server (PID ${owner.pid}).`,
+      `${BRAND.displayName} database is currently in use by the MCP server (PID ${owner.pid}).`,
       "",
       "Kuzu permits only one read-write database owner for this workspace.",
-      "Use the RepoHelix MCP tools, or disconnect the MCP server before running this CLI command.",
+      `Use the ${BRAND.displayName} MCP tools, or disconnect the MCP server before running this CLI command.`,
       ...(databasePath ? ["", `Database: ${databasePath}`] : [])
     ].join("\n");
   }
 
   return [
-    "RepoHelix database is currently in use by another process.",
+    `${BRAND.displayName} database is currently in use by another process.`,
     "",
-    "Close the other RepoHelix or Kuzu process and retry.",
+    `Close the other ${BRAND.displayName} or Kuzu process and retry.`,
     ...(databasePath ? ["", `Database: ${databasePath}`] : [])
   ].join("\n");
 }

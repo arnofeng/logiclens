@@ -66,6 +66,9 @@ jobs:
       - name: Lexical retrieval release gate
         run: pnpm run test:retrieval-release
 
+      - name: Contract schema release gate
+        run: pnpm run test:contract-schema-release
+
       - name: Full test suite
         run: pnpm test
 
@@ -74,6 +77,18 @@ jobs:
 
       - name: Production build
         run: pnpm run build:prod
+
+      - name: Production artifact legacy schema scan
+        run: pnpm run scan:legacy-schema:artifacts
+
+      - name: Java schema benchmark trend report
+        run: pnpm run benchmark:java-schema -- --archive "$RUNNER_TEMP/java-schema-fixture.tar.gz" --download
+
+      - name: Upload Java schema benchmark trend
+        uses: actions/upload-artifact@v7
+        with:
+          name: java-schema-benchmark
+          path: benchmark-results/java-schema/*
 
       - name: Production dependency audit
         run: pnpm run audit:prod

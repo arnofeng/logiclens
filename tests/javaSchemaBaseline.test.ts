@@ -1,3 +1,4 @@
+import { extractFacts } from "./helpers/extractFacts.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -129,7 +130,7 @@ describe("Java schema deterministic discovery lifecycle", () => {
     });
     expect(scan.parsedFiles.flatMap((file) => "symbols" in file ? file.symbols.map((symbol) => symbol.name) : []))
       .toEqual(expect.arrayContaining(["ActivityGoodsQueryVO", "LegacyChildDTO"]));
-    const rawJava = await javaSchemaExtractor.extract({ repos: [repo], parsedFiles: scan.parsedFiles, repoResolver: () => repo });
+    const rawJava = await extractFacts(javaSchemaExtractor, { repos: [repo], parsedFiles: scan.parsedFiles, repoResolver: () => repo });
     expect(rawJava.semanticRelations).toHaveLength(0);
     expect(rawJava.schemaDeclarations.map((candidate) => candidate.displayName)).toEqual(expect.arrayContaining(target.targetGroundTruth.schemaNames));
 

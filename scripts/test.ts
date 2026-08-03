@@ -4,6 +4,13 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 export const TEST_SUITES = Object.freeze({
+  "contract-schema-release": Object.freeze([
+    "tests/changedOnlyIncrementalAtomicity.test.ts",
+    "tests/contractSchemaRelease.test.ts",
+    "tests/indexGenerationAtomicity.test.ts",
+    "tests/schemaAdapterContract.test.ts",
+    "tests/schemaQuality.test.ts",
+  ]),
   "retrieval-release": Object.freeze([
     "tests/kuzuLexicalAppendStatsRollback.test.ts",
     "tests/kuzuLexicalLifecycle.test.ts",
@@ -18,6 +25,7 @@ export const TEST_SUITES = Object.freeze({
     "tests/workspaceUnifiedRetrieval.e2e.test.ts",
   ]),
   "neo4j-integration": Object.freeze([
+    "tests/neo4jContractSchemaRelease.test.ts",
     "tests/neo4jLexicalLifecycle.test.ts",
     "tests/neo4jTestEnvironment.test.ts",
     "tests/neo4jWorkspaceLexicalSpike.test.ts",
@@ -27,6 +35,12 @@ export const TEST_SUITES = Object.freeze({
 } as const);
 
 export type TestSuiteName = keyof typeof TEST_SUITES | "all";
+
+const NATIVE_HEAVY_FIRST = Object.freeze([
+  "tests/indexGenerationAtomicity.test.ts",
+  "tests/contractSchemaRelease.test.ts",
+  "tests/changedOnlyIncrementalAtomicity.test.ts"
+]);
 
 function normalizedRoot(directory: string): string {
   return realpathSync(directory).replace(/^[a-z]:/u, (match) => match.toUpperCase());
@@ -48,9 +62,13 @@ export function collectAllTestFiles(directory = process.cwd()): string[] {
     .filter((entry) => entry.isDirectory())
     .map((entry) => path.join(root, "packages", entry.name, "tests"))
     .filter(existsSync);
-  return [path.join(root, "tests"), ...packageTestDirectories]
+  const files = [path.join(root, "tests"), ...packageTestDirectories]
     .flatMap((testDirectory) => collectTestFiles(root, testDirectory))
     .sort();
+  return [
+    ...NATIVE_HEAVY_FIRST.filter((file) => files.includes(file)),
+    ...files.filter((file) => !NATIVE_HEAVY_FIRST.includes(file))
+  ];
 }
 
 export function filesForSuite(suite: TestSuiteName, directory = process.cwd()): readonly string[] {
@@ -62,7 +80,7 @@ function parseSuite(args: readonly string[]): TestSuiteName {
   const suiteIndex = args.indexOf("--suite");
   if (suiteIndex < 0) return "all";
   const value = args[suiteIndex + 1];
-  if (value === "all" || value === "retrieval-release" || value === "neo4j-integration") return value;
+  if (value === "all" || value === "contract-schema-release" || value === "retrieval-release" || value === "neo4j-integration") return value;
   throw new Error(`Unknown test suite: ${value ?? "<missing>"}.`);
 }
 
@@ -81,7 +99,13 @@ export function runTestSuite(suite: TestSuiteName, directory = process.cwd()): v
   const root = normalizedRoot(directory);
   const vitestBin = path.join(root, "node_modules", "vitest", "vitest.mjs");
   const baseArgs = ["run", "--pool", "forks", "--maxWorkers=1", "--reporter", "verbose"];
-  const files = filesForSuite(suite, root);
+  const suiteFiles = filesForSuite(suite, root);
+  const files = suite === "contract-schema-release"
+    ? [
+        ...NATIVE_HEAVY_FIRST,
+        ...suiteFiles.filter((file) => !NATIVE_HEAVY_FIRST.includes(file))
+      ]
+    : suiteFiles;
   const standardFiles = files.filter((file) => file !== "tests/bulkWriter.test.ts");
   for (const file of standardFiles) runVitest(root, vitestBin, [...baseArgs, file]);
   if (files.includes("tests/bulkWriter.test.ts")) {

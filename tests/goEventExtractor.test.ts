@@ -1,3 +1,4 @@
+import { extractFacts } from "./helpers/extractFacts.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -5,16 +6,16 @@ import { describe, expect, it } from "vitest";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { goExtractor } from "../src/core/contracts/extraction/builtin/goExtractor.js";
 import { repoId } from "../src/shared/path.js";
-import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
+import type { ExtractedFacts } from "../src/core/contracts/extraction/contracts.js";
 
-async function extract(source: string): Promise<ExtractorFactBundle> {
+async function extract(source: string): Promise<ExtractedFacts> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-go-event-"));
   const rel = "main.go";
   const abs = path.join(dir, rel);
   await fs.writeFile(abs, source, "utf8");
   const repo = { id: repoId("go-event"), name: "go-event", path: dir, remoteUrl: "", branch: "", commitSha: "", language: "go", indexedAt: "now" } as any;
   const parsed = await parseSourceFile({ repoId: repo.id, absolutePath: abs, relativePath: rel, language: "go" });
-  const bundle = await goExtractor.extract({ repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
+  const bundle = await extractFacts(goExtractor, { repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
   await fs.rm(dir, { recursive: true, force: true });
   return bundle;
 }

@@ -43,7 +43,6 @@ export const NEO4J_LEXICAL_ANALYZER = "standard-no-stop-words";
 const PROJECTION_METADATA_KEY = "projectionSchemaVersion";
 const TOKENIZER_METADATA_KEY = "tokenizerVersion";
 const STATS_METADATA_KEY = "lexicalStatsSchemaVersion";
-const INCOMPLETE_STATS_METADATA_VALUE = "incomplete";
 const ANALYZER_CONFIG_KEY = "fulltext.analyzer";
 const EVENTUALLY_CONSISTENT_CONFIG_KEY = "fulltext.eventually_consistent";
 const NEO4J_QUERY_STOP_WORDS = new Set([
@@ -87,15 +86,6 @@ interface DocumentRow extends Omit<LexicalDocument, "id" | "qualifiedName" | "pa
   ftsSizeBytes?: number | bigint | null;
 }
 
-interface LegacyFileIdentityRow {
-  storageId: string;
-  workspaceId: string;
-  repoId: string;
-  kind: LexicalDocumentKind;
-  canonicalId: string;
-  renderRef: string;
-}
-
 type StoredDocument = {
   storageId: string;
   generation: string;
@@ -137,23 +127,6 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
     const context = { operation: "ensureSchema" } as const;
     try {
       if (await this.hasCurrentSchema()) return;
-      // The logical document id remains stable across generations, so the
-      // physical key must include the generation. Drop the legacy unique
-      // constraints before migrating existing rows to that physical key.
-      await this.db.query("DROP CONSTRAINT lexical_document_id IF EXISTS");
-      await this.db.query("DROP CONSTRAINT lexical_workspace_stats_id IF EXISTS");
-      await this.db.query(
-        "MATCH (n:LexicalDocument) " +
-        "SET n.storageId = coalesce(n.storageId, n.id), n.documentId = coalesce(n.documentId, n.id), " +
-        "n.generation = coalesce(n.generation, 'legacy')"
-      );
-      await this.db.query("MATCH (n:LexicalDocument) REMOVE n.id");
-      await this.db.query(
-        "MATCH (s:LexicalWorkspaceStats) " +
-        "SET s.generation = coalesce(s.generation, 'legacy') " +
-        "SET s.revision = coalesce(s.revision, s.generation), " +
-        "s.id = coalesce(s.id, 'lexical-stats:legacy:' + s.workspaceId)"
-      );
       const statements = [
         "CREATE CONSTRAINT lexical_document_storage_id IF NOT EXISTS FOR (n:LexicalDocument) REQUIRE n.storageId IS UNIQUE",
         "CREATE CONSTRAINT lexical_metadata_key IF NOT EXISTS FOR (n:LexicalMetadata) REQUIRE n.key IS UNIQUE",
@@ -172,8 +145,6 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
       await this.ensureSingleWorkspaceIndex();
 
       await withTransaction(this.db, async () => {
-        // ON CREATE preserves older versions until commitVersions confirms a
-        // complete corpus rebuild. Schema readiness alone cannot upgrade them.
         await this.db.query(
           "MERGE (m:LexicalMetadata {key: $key}) ON CREATE SET m.value = $value",
           { key: PROJECTION_METADATA_KEY, value: LEXICAL_PROJECTION_SCHEMA_VERSION }
@@ -184,15 +155,9 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
         );
         await this.db.query(
           "MERGE (m:LexicalMetadata {key: $key}) ON CREATE SET m.value = $value",
-          { key: STATS_METADATA_KEY, value: INCOMPLETE_STATS_METADATA_VALUE }
+          { key: STATS_METADATA_KEY, value: NEO4J_LEXICAL_STATS_SCHEMA_VERSION }
         );
       });
-
-      await this.migratePayloadSizes();
-      await this.migrateFileIds();
-      if (await this.metadataValue(STATS_METADATA_KEY) !== NEO4J_LEXICAL_STATS_SCHEMA_VERSION) {
-        await this.rebuildWorkspaceStats();
-      }
     } catch (error) {
       throw wrap("schema_failed", context, error);
     }
@@ -524,20 +489,6 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
     } catch (error) { throw wrap("reconcile_failed", context, error); }
   }
 
-  private async migrateFileIds(): Promise<void> {
-    const rows = await this.db.query<LegacyFileIdentityRow>(
-      "MATCH (n:LexicalDocument) WHERE n.fileId IS NULL RETURN n.storageId AS storageId, n.workspaceId AS workspaceId, n.repoId AS repoId, n.kind AS kind, n.canonicalId AS canonicalId, n.renderRef AS renderRef"
-    );
-    const migrated = rows.map((row) => ({ storageId: row.storageId, fileId: fileIdFromIdentity(row) }))
-      .filter((row): row is { storageId: string; fileId: string } => row.fileId !== null);
-    if (migrated.length > 0) {
-      await this.db.query(
-        "UNWIND $documents AS document MATCH (n:LexicalDocument {storageId: document.storageId}) SET n.fileId = document.fileId",
-        { documents: migrated }
-      );
-    }
-  }
-
   async cleanupBatch(request: Readonly<CleanupBatchRequest>): Promise<void> {
     const context = {
       operation: "cleanupBatch",
@@ -816,81 +767,6 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
       { key }
     );
     return rows[0]?.value;
-  }
-
-  private async migratePayloadSizes(): Promise<void> {
-    const rows = await this.db.query<{ storageId: string; ftsText: string | null }>(
-      "MATCH (n:LexicalDocument) WHERE n.ftsSizeBytes IS NULL " +
-      "RETURN n.storageId AS storageId, coalesce(n.ftsText, n.searchableText, '') AS ftsText ORDER BY n.storageId"
-    );
-    if (rows.length === 0) return;
-    await this.db.query(
-      "MERGE (m:LexicalMetadata {key: $key}) SET m.value = $value",
-      { key: STATS_METADATA_KEY, value: INCOMPLETE_STATS_METADATA_VALUE }
-    );
-    await withTransaction(this.db, async () => {
-      for (let offset = 0; offset < rows.length; offset += NEO4J_LEXICAL_UPSERT_CHUNK_SIZE) {
-        const migrations = rows.slice(offset, offset + NEO4J_LEXICAL_UPSERT_CHUNK_SIZE).map((row) => ({
-          storageId: row.storageId,
-          ftsText: row.ftsText ?? "",
-          ftsSizeBytes: Buffer.byteLength(row.ftsText ?? "", "utf8")
-        }));
-        await this.db.query(
-          "UNWIND $documents AS document MATCH (n:LexicalDocument {storageId: document.storageId}) " +
-          "SET n.ftsText = document.ftsText, n.ftsSizeBytes = document.ftsSizeBytes",
-          { documents: migrations }
-        );
-      }
-    });
-  }
-
-  private async rebuildWorkspaceStats(): Promise<void> {
-    // Neo4j does not expose a stable per-full-text-index physical byte size.
-    // Persist the UTF-8 bytes of active ftsText instead: it is deterministic,
-    // transactionally maintained with lifecycle changes, rebuildable, and lets
-    // health remain O(1) without scanning document bodies.
-    await withTransaction(this.db, async () => {
-      await this.db.query("MATCH (s:LexicalWorkspaceStats) DELETE s");
-      const rows = await this.db.query<{
-        workspaceId: string;
-        generation: string;
-        documentCount: number | bigint;
-        indexSizeBytes: number | bigint;
-      }>(
-        "MATCH (n:LexicalDocument) WHERE n.active = true " +
-        "RETURN n.workspaceId AS workspaceId, n.generation AS generation, " +
-        "count(n) AS documentCount, coalesce(sum(n.ftsSizeBytes), 0) AS indexSizeBytes " +
-        "ORDER BY workspaceId, generation"
-      );
-      const activeRows = await this.db.query<{
-        workspaceId: string;
-        activeGeneration: string;
-        activeRevision: string;
-      }>(
-        "MATCH (s:SchemaGenerationState) " +
-        "WHERE s.activeGeneration IS NOT NULL AND s.activeGeneration <> '' " +
-        "RETURN s.workspaceId AS workspaceId, s.activeGeneration AS activeGeneration, " +
-        "s.activeRevision AS activeRevision"
-      );
-      const activeRevisions = new Map(activeRows.map((row) => [
-        `${row.workspaceId}\0${row.activeGeneration}`,
-        row.activeRevision
-      ]));
-      for (const row of rows) {
-        const activeRevision = activeRevisions.get(`${row.workspaceId}\0${row.generation}`);
-        await this.replaceGenerationStats(
-          row.workspaceId,
-          row.generation,
-          activeRevision || row.generation,
-          numeric(row.documentCount),
-          numeric(row.indexSizeBytes)
-        );
-      }
-      await this.db.query(
-        "MERGE (m:LexicalMetadata {key: $key}) SET m.value = $value",
-        { key: STATS_METADATA_KEY, value: NEO4J_LEXICAL_STATS_SCHEMA_VERSION }
-      );
-    });
   }
 
   private async adjustGenerationStats(

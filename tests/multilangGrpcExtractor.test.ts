@@ -4,19 +4,21 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import type { SourceLanguage } from "../src/core/parsing/types.js";
-import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
+import type { ExtractedFacts } from "../src/core/contracts/extraction/contracts.js";
 import type { GrpcMethodSpec } from "../src/core/contracts/spec.js";
 import { javaGrpcExtractor } from "../src/core/contracts/extraction/builtin/javaGrpcExtractor.js";
 import { pythonGrpcExtractor } from "../src/core/contracts/extraction/builtin/pythonGrpcExtractor.js";
 import { jsGrpcExtractor } from "../src/core/contracts/extraction/builtin/jsGrpcExtractor.js";
 import { repoId } from "../src/shared/path.js";
+import type { ContractExtractor } from "../src/core/registries/types.js";
+import { extractFacts } from "./helpers/extractFacts.js";
 
 async function extractOne(
   language: SourceLanguage,
   relPath: string,
   source: string,
-  extractor: { extract(context: any): Promise<ExtractorFactBundle> }
-): Promise<ExtractorFactBundle> {
+  extractor: ContractExtractor
+): Promise<ExtractedFacts> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-grpc-multilang-"));
   const abs = path.join(dir, relPath);
   await fs.mkdir(path.dirname(abs), { recursive: true });
@@ -40,7 +42,7 @@ async function extractOne(
     language
   });
 
-  const bundle = await extractor.extract({
+  const bundle = await extractFacts(extractor, {
     repos: [repo],
     parsedFiles: [parsed],
     repoResolver: () => repo
@@ -50,11 +52,11 @@ async function extractOne(
   return bundle;
 }
 
-function specs(bundle: ExtractorFactBundle): GrpcMethodSpec[] {
+function specs(bundle: ExtractedFacts): GrpcMethodSpec[] {
   return bundle.contractSpecs.map((row) => JSON.parse(row.specJson) as GrpcMethodSpec);
 }
 
-function roleKeys(bundle: ExtractorFactBundle, role: "producer" | "consumer"): string[] {
+function roleKeys(bundle: ExtractedFacts, role: "producer" | "consumer"): string[] {
   const contractIds = new Set(bundle.repoContracts.filter((edge) => edge.role === role).map((edge) => edge.contractId));
   return bundle.contracts
     .filter((contract) => contractIds.has(contract.id))
@@ -180,7 +182,7 @@ describe("multi-language gRPC extractors", () => {
     `, javaGrpcExtractor);
 
     const byMethod = Object.fromEntries(specs(bundle).map((s) => [s.method, s.streaming]));
-    // unary/server-streaming are indistinguishable from the ImplBase signature → unary
+    // unary/server-streaming are indistinguishable from the ImplBase signature — unary
     expect(byMethod["Send"]).toBe("unary");
     expect(byMethod["Collect"]).toBe("client-stream");
   });

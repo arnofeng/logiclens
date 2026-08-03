@@ -53,20 +53,6 @@ function writeExtractionTrace(message: string): void {
   if (shouldWriteExtractionTrace()) process.stderr.write(`${message}\n`);
 }
 
-// -- Deprecated type aliases for backward test compatibility -------------------
-
-/** @deprecated Use ExtractedFacts instead. */
-export type ExtractorFactBundle = ExtractedFacts;
-
-/** @deprecated Use specific edge arrays (repoContracts, etc.) instead. */
-export type ExtractedRelation =
-  | ({ kind: "repo-contract" } & RepoContractEdge)
-  | ({ kind: "repo-dependency" } & RepoDependencyEdge)
-  | ({ kind: "package-usage" } & CrossRepoExtraction["packageUsages"][number])
-  | ({ kind: "contract-entity" } & ContractEntityEdge)
-  | ({ kind: "operation-repo" } & OperationRepoEdge)
-  | ({ kind: "workflow-operation" } & WorkflowOperationEdge);
-
 export type CrossRepoExtraction = {
   contracts: ContractNode[];
   evidence: EvidenceNode[];

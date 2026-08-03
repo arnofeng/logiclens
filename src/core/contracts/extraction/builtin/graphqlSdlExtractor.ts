@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import type { FactCollector } from "../factCollector.js";
 import { parsedCodeFiles, contract, evidence, pushContractEvidence, pushContractSpec, pushGraphqlContract } from "./shared.js";
 import { parseGraphQLSchema, formatGraphQLType, getBaseTypeName, getLineFromLoc } from "./graphqlSchema.js";
@@ -7,7 +7,7 @@ import { createSchemaSpec, schemaFieldFromNormalized } from "../../../schema/mod
 import { normalizePrimitiveType } from "../../spec.js";
 import { resolutionScopeIdForFile } from "../../../schema/sourceScopes.js";
 
-export const graphqlSdlExtractor = compatExtractor({
+export const graphqlSdlExtractor = defineBuiltinExtractor({
   name: "builtin:graphql-sdl",
   languages: ["graphql"],
   extract(context, collector: FactCollector) {

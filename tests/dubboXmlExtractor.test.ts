@@ -1,21 +1,22 @@
+import { extractFacts } from "./helpers/extractFacts.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { dubboXmlExtractor } from "../src/core/contracts/extraction/builtin/dubboXmlExtractor.js";
-import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
+import type { ExtractedFacts } from "../src/core/contracts/extraction/contracts.js";
 import type { DubboMethodSpec } from "../src/core/contracts/spec.js";
 import { builtinLanguageForPath, parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { repoId } from "../src/shared/path.js";
 
-async function extract(source: string): Promise<ExtractorFactBundle> {
+async function extract(source: string): Promise<ExtractedFacts> {
   return extractWorkspace(source, []);
 }
 
 async function extractWorkspace(
   source: string,
   javaFiles: Array<{ path: string; source: string }>
-): Promise<ExtractorFactBundle> {
+): Promise<ExtractedFacts> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-dubbo-xml-"));
   const rel = "src/main/resources/dubbo.xml";
   const abs = path.join(dir, rel);
@@ -34,16 +35,16 @@ async function extractWorkspace(
       language: "java"
     }));
   }
-  const bundle = await dubboXmlExtractor.extract({ repos: [repo], parsedFiles, repoResolver: () => repo });
+  const bundle = await extractFacts(dubboXmlExtractor, { repos: [repo], parsedFiles, repoResolver: () => repo });
   await fs.rm(dir, { recursive: true, force: true });
   return bundle;
 }
 
-function specs(bundle: ExtractorFactBundle): DubboMethodSpec[] {
+function specs(bundle: ExtractedFacts): DubboMethodSpec[] {
   return bundle.contractSpecs.map((row) => JSON.parse(row.specJson) as DubboMethodSpec);
 }
 
-function roleKeys(bundle: ExtractorFactBundle, role: "producer" | "consumer"): string[] {
+function roleKeys(bundle: ExtractedFacts, role: "producer" | "consumer"): string[] {
   const contractIds = new Set(bundle.repoContracts.filter((edge) => edge.role === role).map((edge) => edge.contractId));
   return bundle.contracts
     .filter((contract) => contractIds.has(contract.id))

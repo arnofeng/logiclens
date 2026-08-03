@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import type Parser from "tree-sitter";
 import type { CodeSymbol, ParsedFile } from "../../../parsing/types.js";
 import type { FactCollector } from "../factCollector.js";
@@ -125,7 +125,7 @@ function shouldScanFile(file: ParsedFile): boolean {
   return /\bgrpc\b|GrpcClient|ServiceClient|addService/.test(file.source ?? "");
 }
 
-export const jsGrpcExtractor = compatExtractor({
+export const jsGrpcExtractor = defineBuiltinExtractor({
   name: "builtin:js-grpc",
   languages: ["javascript", "typescript"],
   extract(context, collector: FactCollector) {

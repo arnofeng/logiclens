@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import {
@@ -11,7 +11,7 @@ import {
   pushResolvedPackageOwner,
   readRepoPackageManifests, } from "./shared.js";
 
-export const packageJsonExtractor = compatExtractor({
+export const packageJsonExtractor = defineBuiltinExtractor({
   name: "builtin:package-json",
   languages: ["javascript", "typescript"],
   frameworks: ["js:package-json"],

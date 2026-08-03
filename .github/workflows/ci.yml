@@ -33,11 +33,20 @@ jobs:
       - name: Lexical retrieval release gate
         run: pnpm run test:retrieval-release
 
+      - name: Contract schema release gate
+        run: pnpm run test:contract-schema-release
+
       - name: Test
         run: pnpm test
 
       - name: Production build
         run: pnpm run build:prod
+
+      - name: Production artifact legacy schema scan
+        run: pnpm run scan:legacy-schema:artifacts
+
+      - name: Offline benchmark smoke
+        run: pnpm run benchmark:java-schema:smoke
 
       - name: Package dry run
         run: pnpm run release:check

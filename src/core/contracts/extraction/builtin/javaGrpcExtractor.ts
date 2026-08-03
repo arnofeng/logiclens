@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import type Parser from "tree-sitter";
 import type { CodeSymbol, ParsedFile } from "../../../parsing/types.js";
 import type { FactCollector } from "../factCollector.js";
@@ -110,7 +110,7 @@ function typeFromObjectCreation(node: Parser.SyntaxNode | undefined): string | u
     ?? text.match(/\bnew\s+([A-Za-z_$][\w$.]*)\s*\(/)?.[1];
 }
 
-export const javaGrpcExtractor = compatExtractor({
+export const javaGrpcExtractor = defineBuiltinExtractor({
   name: "builtin:java-grpc",
   languages: ["java"],
   extract(context, collector: FactCollector) {

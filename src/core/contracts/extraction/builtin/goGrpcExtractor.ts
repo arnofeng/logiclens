@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import type Parser from "tree-sitter";
 import type { CodeSymbol } from "../../../parsing/types.js";
 import type { FactCollector } from "../factCollector.js";
@@ -31,7 +31,7 @@ function extractTypeName(node: Parser.SyntaxNode | null | undefined): string | u
   return undefined;
 }
 
-export const goGrpcExtractor = compatExtractor({
+export const goGrpcExtractor = defineBuiltinExtractor({
   name: "builtin:go-grpc",
   languages: ["go"],
   extract(context, collector: FactCollector) {

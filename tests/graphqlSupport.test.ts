@@ -1,3 +1,4 @@
+import { extractFacts } from "./helpers/extractFacts.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -9,13 +10,13 @@ import { graphqlClientExtractor } from "../src/core/contracts/extraction/builtin
 import { resolveGraphqlRelations } from "../src/core/contracts/matching/graphqlResolver.js";
 import { analyzeImpact } from "../src/core/contracts/impact/impactEngine.js";
 import { repoId } from "../src/shared/path.js";
-import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
+import type { ExtractedFacts } from "../src/core/contracts/extraction/contracts.js";
 import type { SchemaSpec, GraphQLOperationSpec } from "../src/core/contracts/spec.js";
 import type { ContractSpecNode } from "../src/core/parsing/types.js";
 import type { SpecRoleMap } from "../src/core/contracts/matching/types.js";
 import { reconcileNonJavaSchemaFacts } from "../src/core/contracts/extraction/nonJavaSchemaReconciler.js";
 
-async function extract(source: string): Promise<ExtractorFactBundle> {
+async function extract(source: string): Promise<ExtractedFacts> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-graphql-sdl-"));
   const rel = "schema.graphql";
   const abs = path.join(dir, rel);
@@ -23,21 +24,21 @@ async function extract(source: string): Promise<ExtractorFactBundle> {
   await fs.writeFile(abs, source, "utf8");
   const repo = { id: repoId("graphql-sdl"), name: "graphql-sdl", path: dir, remoteUrl: "", branch: "", commitSha: "", language: "graphql", indexedAt: "now" } as any;
   const parsed = await parseSourceFile({ repoId: repo.id, absolutePath: abs, relativePath: rel, language: "graphql" });
-  const extracted = await graphqlSdlExtractor.extract({ repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
+  const extracted = await extractFacts(graphqlSdlExtractor, { repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
   const reconciled = reconcileNonJavaSchemaFacts(extracted.contractSpecs, extracted.semanticRelations);
   const bundle = { ...extracted, contractSpecs: reconciled.contractSpecs, semanticRelations: reconciled.semanticRelations };
   await fs.rm(dir, { recursive: true, force: true });
   return bundle;
 }
 
-async function extractClient(source: string, filename: string, language: string): Promise<ExtractorFactBundle> {
+async function extractClient(source: string, filename: string, language: string): Promise<ExtractedFacts> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-graphql-client-"));
   const abs = path.join(dir, filename);
   await fs.mkdir(path.dirname(abs), { recursive: true });
   await fs.writeFile(abs, source, "utf8");
   const repo = { id: repoId("graphql-client"), name: "graphql-client", path: dir, remoteUrl: "", branch: "", commitSha: "", language, indexedAt: "now" } as any;
   const parsed = await parseSourceFile({ repoId: repo.id, absolutePath: abs, relativePath: filename, language });
-  const bundle = await graphqlClientExtractor.extract({ repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
+  const bundle = await extractFacts(graphqlClientExtractor, { repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
   await fs.rm(dir, { recursive: true, force: true });
   return bundle;
 }

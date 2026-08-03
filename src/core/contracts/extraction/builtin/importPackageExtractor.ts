@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import {
@@ -21,9 +21,9 @@ import {
  *   3. For Java files, uses `packageContractKeyForImport` to strip the class suffix
  *      from the import specifier (yielding just the package path).
  *
- * This extractor has no `languages` or `frameworks` restriction â€?it runs for all repos.
+ * This extractor has no `languages` or `frameworks` restriction â€” it runs for all repos.
  */
-export const importPackageExtractor = compatExtractor({
+export const importPackageExtractor = defineBuiltinExtractor({
   name: "builtin:import-package",
   needs: {
     aliasOverrides: true

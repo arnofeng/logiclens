@@ -1,3 +1,4 @@
+import { extractFacts } from "./helpers/extractFacts.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -42,7 +43,7 @@ describe("Env Config Extractor", () => {
       repoResolver: () => null as any
     };
 
-    const extracted = await envConfigExtractor.extract(context);
+    const extracted = await extractFacts(envConfigExtractor, context);
 
     // Verify Contracts
     const contractNames = extracted.contracts.map((c) => c.name);

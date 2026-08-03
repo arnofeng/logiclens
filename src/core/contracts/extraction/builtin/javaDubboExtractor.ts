@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import type Parser from "tree-sitter";
 import type { CodeSymbol, ParsedFile } from "../../../parsing/types.js";
 import type { FactCollector } from "../factCollector.js";
@@ -305,7 +305,7 @@ function referenceReceiverName(objectText: string): string {
   return objectText.replace(/^this\./, "");
 }
 
-export const javaDubboExtractor = compatExtractor({
+export const javaDubboExtractor = defineBuiltinExtractor({
   name: "builtin:java-dubbo",
   languages: ["java"],
   extract(context, collector: FactCollector) {

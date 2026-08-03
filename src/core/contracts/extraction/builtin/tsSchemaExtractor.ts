@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import type Parser from "tree-sitter";
 import type { FactCollector } from "../factCollector.js";
 import type { ParsedFile } from "../../../parsing/types.js";
@@ -38,7 +38,7 @@ const TS_UTILITY_TYPES = new Set([
  * unwrapped to extract the base type reference so the semantic layer can
  * still link consumers to the canonical schema definition.
  */
-export const tsSchemaExtractor = compatExtractor({
+export const tsSchemaExtractor = defineBuiltinExtractor({
   name: "builtin:ts-schema",
   // Include "javascript" / "jsx" so the jsFallbackDetector (which lumps JS/TS
   // under language:"javascript") enables this extractor for JS/TS repos.

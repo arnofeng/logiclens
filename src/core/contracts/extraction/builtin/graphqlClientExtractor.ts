@@ -1,10 +1,10 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import type { FactCollector } from "../factCollector.js";
 import { parsedCodeFiles, pushGraphqlContract } from "./shared.js";
 import { extractClientOperations, findGqlTemplateOccurrences } from "./graphqlSchema.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 
-export const graphqlClientExtractor = compatExtractor({
+export const graphqlClientExtractor = defineBuiltinExtractor({
   name: "builtin:graphql-client",
   languages: ["javascript", "typescript", "jsx", "tsx", "vue", "graphql"],
   extract(context, collector: FactCollector) {

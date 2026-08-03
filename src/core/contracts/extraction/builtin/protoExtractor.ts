@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import type { FactCollector } from "../factCollector.js";
 import type { CodeSymbol } from "../../../parsing/types.js";
 import { parseProto, type Message, type Field, type Service, type Method } from "./protoSchema.js";
@@ -58,7 +58,7 @@ function findLineRange(lines: string[], startRegex: RegExp): { startLine: number
   return { startLine, endLine };
 }
 
-export const protoExtractor = compatExtractor({
+export const protoExtractor = defineBuiltinExtractor({
   name: "builtin:proto",
   languages: ["proto"],
   extract(context, collector: FactCollector) {

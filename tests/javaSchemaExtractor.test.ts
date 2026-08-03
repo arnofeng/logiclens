@@ -1,3 +1,4 @@
+import { extractFacts } from "./helpers/extractFacts.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -60,8 +61,8 @@ class ArbitraryBusinessName {
     const first = await parsed("src/main/java/example/A.java", "package example; class A { B b; }");
     const second = await parsed("src/main/java/example/B.java", "package example; class B { A a; }");
     const repo = repository();
-    const forward = await javaSchemaExtractor.extract({ repos: [repo], parsedFiles: [first, second], repoResolver: () => repo });
-    const reverse = await javaSchemaExtractor.extract({ repos: [repo], parsedFiles: [second, first], repoResolver: () => repo });
+    const forward = await extractFacts(javaSchemaExtractor, { repos: [repo], parsedFiles: [first, second], repoResolver: () => repo });
+    const reverse = await extractFacts(javaSchemaExtractor, { repos: [repo], parsedFiles: [second, first], repoResolver: () => repo });
     const normalize = (values: typeof forward.schemaDeclarations) => values.map(canonicalSerialize).sort();
     expect(normalize(forward.schemaDeclarations)).toEqual(normalize(reverse.schemaDeclarations));
   });
@@ -70,7 +71,7 @@ class ArbitraryBusinessName {
 async function extract(source: string) {
   const file = await parsed("src/main/java/example/Model.java", source);
   const repo = repository();
-  return javaSchemaExtractor.extract({ repos: [repo], parsedFiles: [file], repoResolver: () => repo });
+  return extractFacts(javaSchemaExtractor, { repos: [repo], parsedFiles: [file], repoResolver: () => repo });
 }
 
 async function parsed(relativePath: string, source: string) {

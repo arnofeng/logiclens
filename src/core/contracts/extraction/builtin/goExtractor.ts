@@ -1,4 +1,4 @@
-import { compatExtractor } from "./compat.js";
+import { defineBuiltinExtractor } from "./defineBuiltinExtractor.js";
 import type Parser from "tree-sitter";
 import type { CodeSymbol, ParsedFile } from "../../../parsing/types.js";
 import type { FactCollector } from "../factCollector.js";
@@ -127,7 +127,7 @@ function extractGoEvents(
   walkSourceAst(root, (node) => {
     // NATS subject-as-string calls. `Subscribe`/`Publish` are generic method
     // names, so only attribute them to NATS when the file actually imports
-    // NATS â€?otherwise a kafka-only file's `reader.Subscribe(...)` would be
+    // NATS â€” otherwise a kafka-only file's `reader.Subscribe(...)` would be
     // mislabelled as a nats event.
     const call = importBroker === "nats" ? selectorCall(node) : undefined;
     if (call?.method) {
@@ -198,7 +198,7 @@ function extractGoEvents(
   });
 }
 
-export const goExtractor = compatExtractor({
+export const goExtractor = defineBuiltinExtractor({
   name: "builtin:go-extractor",
   languages: ["go"],
   frameworks: ["go:generic", "go:gin", "go:mod"],
