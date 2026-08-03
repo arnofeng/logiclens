@@ -6,7 +6,7 @@ const document: LexicalDocument = { id: "doc:1", canonicalId: "code:1", workspac
 describe("lexical document contract", () => {
   it("defines the complete, finite document kind set", () => {
     expect(LEXICAL_DOCUMENT_KINDS).toEqual(["repo", "file", "code", "section", "contract", "contractSpec", "operation", "workflow", "entity", "package", "evidence"]);
-    expect(LEXICAL_PROJECTION_SCHEMA_VERSION).toBe("4");
+    expect(LEXICAL_PROJECTION_SCHEMA_VERSION).toBe("5");
   });
   it("requires stable identity and lifecycle fields", () => {
     expect(document).toMatchObject({ workspaceId: "workspace:1", repoId: "repo:1", canonicalId: "code:1", active: true, sourceHash: "hash", batchId: "batch:1", renderRef: "render:1" });

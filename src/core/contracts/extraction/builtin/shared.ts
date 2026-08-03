@@ -236,6 +236,7 @@ export function pushContractSpec(input: {
   pathTemplate?: string;
   eventTopic?: string;
   version?: string;
+  canonicalSourceSignature?: string;
 }): string {
   const specId = input.spec.kind === "schema"
     ? input.spec.id
@@ -246,10 +247,11 @@ export function pushContractSpec(input: {
       kind: input.spec.kind,
       framework: input.framework ?? "",
       sourceSignature: stableFactId("source-signature", {
+        canonical: input.canonicalSourceSignature ?? "",
         fileId: input.fileId,
-        sourceSymbolId: input.sourceSymbolId?.replace(/:\d+$/u, "") ?? "",
+        sourceSymbolId: input.canonicalSourceSignature ? "" : input.sourceSymbolId?.replace(/:\d+$/u, "") ?? "",
         rule: input.evidenceNode.rule,
-        raw: input.evidenceNode.raw
+        raw: input.canonicalSourceSignature ? "" : input.evidenceNode.raw
       })
     });
   const specKind: ContractSpecKind = input.spec.kind;
@@ -295,7 +297,8 @@ function buildHttpEndpointSpec(
   method?: string,
   requestBodyType?: string,
   responseBodyType?: string,
-  declaredResponseType?: string
+  declaredResponseType?: string,
+  metadata?: Pick<HttpEndpointSpec, "requestBodySlots" | "responseBody" | "ownerType" | "methodSignature" | "ownerGenericBindings">
 ): HttpEndpointSpec {
   const pathTemplate = apiPathTemplate(apiContract.key);
   return {
@@ -305,8 +308,13 @@ function buildHttpEndpointSpec(
     pathTemplate,
     pathParams: apiPathParams(pathTemplate),
     requestBodyType,
+    requestBodySlots: metadata?.requestBodySlots,
     responseBodyType,
     declaredResponseType,
+    responseBody: metadata?.responseBody,
+    ownerType: metadata?.ownerType,
+    methodSignature: metadata?.methodSignature,
+    ownerGenericBindings: metadata?.ownerGenericBindings,
     auth: "unknown"
   };
 }
@@ -350,6 +358,11 @@ export function pushApiContractFromPath(input: {
   requestBodyType?: string;
   responseBodyType?: string;
   declaredResponseType?: string;
+  requestBodySlots?: HttpEndpointSpec["requestBodySlots"];
+  responseBody?: boolean;
+  ownerType?: string;
+  methodSignature?: string;
+  ownerGenericBindings?: HttpEndpointSpec["ownerGenericBindings"];
 }): void {
   const apiContract = httpApiContract(input.method, input.apiPath, `HTTP API ${input.apiPath}`);
   const evidenceNode = evidence({
@@ -366,14 +379,29 @@ export function pushApiContractFromPath(input: {
   pushContractSpec({
     collector: input.collector,
     contractNode: apiContract,
-    spec: buildHttpEndpointSpec(apiContract, input.apiPath, input.method, input.requestBodyType, input.responseBodyType, input.declaredResponseType),
+    spec: buildHttpEndpointSpec(
+      apiContract,
+      input.apiPath,
+      input.method,
+      input.requestBodyType,
+      input.responseBodyType,
+      input.declaredResponseType,
+      {
+        requestBodySlots: input.requestBodySlots,
+        responseBody: input.responseBody,
+        ownerType: input.ownerType,
+        methodSignature: input.methodSignature,
+        ownerGenericBindings: input.ownerGenericBindings
+      }
+    ),
     repoId: input.file.repoId,
     fileId: input.file.fileId,
     evidenceNode,
     sourceSymbolId: input.symbol.id,
     framework: input.framework,
     httpMethod: input.method ? input.method.trim().toUpperCase() : undefined,
-    pathTemplate: apiPathTemplate(apiContract.key)
+    pathTemplate: apiPathTemplate(apiContract.key),
+    canonicalSourceSignature: input.methodSignature
   });
 }
 
@@ -952,12 +980,4 @@ export function packageContractKeyForImport(file: ParsedFile, importRef: { modul
   if (file.language !== "java") return moduleName;
   if (/^import\s+static\s+/.test(importRef.raw)) return javaPackageFromStaticImport(moduleName) ?? moduleName;
   return javaPackageFromImport(moduleName) ?? moduleName;
-}
-
-export function classifyLegacyJavaSharedContract(name: string, codeKind: string): ContractKind | undefined {
-  if (codeKind === "enum" || /Enum$/.test(name)) return "enum";
-  if (/Schema$/.test(name)) return "schema";
-  if (/Config$/.test(name)) return "config";
-  if (/(DTO|Dto|Payload)$/.test(name)) return "dto";
-  return undefined;
 }

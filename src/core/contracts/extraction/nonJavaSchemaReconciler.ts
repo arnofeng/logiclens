@@ -19,7 +19,7 @@ import type { SchemaBehaviorFingerprint } from "../../schema/model.js";
 import { createSchemaBehaviorFingerprint } from "../../schema/typeSystem.js";
 import type { ResolutionResult } from "../../schema/typeSystem.js";
 import { IndexedTypeSystemAdapter, type IndexedSchemaDeclaration, type IndexedTypeSystemRules } from "../../schema/indexedTypeSystemAdapter.js";
-import { materializeSchemaRoot } from "../../schema/materializer.js";
+import { materializeSchemaRoot, type MaterializedSchemaType } from "../../schema/materializer.js";
 import { contract, evidence } from "./builtin/shared.js";
 import { entityId } from "../../../shared/path.js";
 import { buildSchemaSourceContexts, type SchemaSourceResolutionContext } from "../../schema/sourceScopes.js";
@@ -73,7 +73,7 @@ export function reconcileNonJavaSchemaFacts(
   const candidateByDeclarationId = new Map(candidateMaterializations.map((item) => [item.spec.identity.declarationId, item.candidate]));
   const parsedSchemas = allContractSpecs.flatMap((node) => {
     const spec = parseSchema(node.specJson);
-    return spec && spec.languageId !== "java" ? [{ node, spec }] : [];
+    return spec ? [{ node, spec }] : [];
   });
   const declarations: TypeDeclarationFact[] = parsedSchemas.map(({ node, spec }) => {
     const candidate = candidateByDeclarationId.get(spec.identity.declarationId);
@@ -81,8 +81,11 @@ export function reconcileNonJavaSchemaFacts(
       id: typeDeclarationIdentityId(spec.declaration),
       identity: spec.declaration,
       fileId: node.fileId,
-      declarationKind: spec.shape.kind,
+      declarationKind: candidate?.declarationKind ?? spec.shape.kind,
       typeParameters: candidate?.typeParameters ?? [],
+      typeParameterBounds: candidate?.typeParameterBounds,
+      modifiers: candidate?.modifiers,
+      enclosingDeclarationId: candidate?.enclosingDeclarationId,
       candidate,
       generation: ""
     };
@@ -103,6 +106,7 @@ export function reconcileNonJavaSchemaFacts(
       });
     }
   }
+  for (const sourceContext of sourceContexts) contextForSource(sourceContext, contexts);
   const adapters = new Map<string, IndexedTypeSystemAdapter>();
 
   for (const { spec } of parsedSchemas) {
@@ -111,7 +115,7 @@ export function reconcileNonJavaSchemaFacts(
     const indexed: IndexedSchemaDeclaration[] = parsedSchemas
       .filter((item) => adapterKey(item.spec.declaration.languageId, item.spec.declaration.repoId) === key)
       .map((item) => ({ fact: declarationsById.get(item.spec.identity.declarationId)!, shape: item.spec.shape }));
-    adapters.set(key, new IndexedTypeSystemAdapter(rulesFor(spec.declaration.languageId), indexed));
+    adapters.set(key, new IndexedTypeSystemAdapter(rulesFor(spec.declaration.languageId), indexed, [...contexts.values()]));
   }
 
   const diagnostics = new Map<string, SchemaDiagnosticFact>();
@@ -121,7 +125,7 @@ export function reconcileNonJavaSchemaFacts(
   const roots: SchemaRootReference[] = [];
   const updatedNodes: ContractSpecNode[] = [];
   const contextsByDeclarationId = new Map<string, ResolutionContextFact>();
-  const materializedIdentities = new Map<string, TypeInstanceIdentity>();
+  const materializedTypes = new Map<string, MaterializedSchemaType>();
   for (const { node, spec } of parsedSchemas) {
     contextsByDeclarationId.set(
       spec.identity.declarationId,
@@ -129,7 +133,7 @@ export function reconcileNonJavaSchemaFacts(
     );
   }
   const mergeMaterialized = (materialized: ReturnType<typeof materializeSchemaRoot>): void => {
-    for (const type of materialized.types) materializedIdentities.set(schemaSpecId(type.identity), type.identity);
+    for (const type of materialized.types) materializedTypes.set(schemaSpecId(type.identity), type);
     for (const relation of materialized.relations) recordRelation(relations, relation);
     for (const dependency of materialized.dependencies) dependencies.set(dependency.id, dependency);
     for (const fact of materialized.provenance) provenance.set(fact.id, fact);
@@ -178,7 +182,7 @@ export function reconcileNonJavaSchemaFacts(
 
   for (const node of allContractSpecs) {
     const schema = parseSchema(node.specJson);
-    if (!schema || schema.languageId === "java" || schema.shape.kind !== "object") {
+    if (!schema || schema.shape.kind !== "object") {
       updatedNodes.push(node);
       continue;
     }
@@ -228,7 +232,7 @@ export function reconcileNonJavaSchemaFacts(
 
   const reconciledSchemas = updatedNodes.flatMap((node) => {
     const spec = parseSchema(node.specJson);
-    return spec && spec.languageId !== "java" ? [{ node, spec }] : [];
+    return spec ? [{ node, spec }] : [];
   });
   adapters.clear();
   for (const { spec } of reconciledSchemas) {
@@ -237,11 +241,11 @@ export function reconcileNonJavaSchemaFacts(
     const indexed: IndexedSchemaDeclaration[] = reconciledSchemas
       .filter((item) => adapterKey(item.spec.declaration.languageId, item.spec.declaration.repoId) === key)
       .map((item) => ({ fact: declarationsById.get(item.spec.identity.declarationId)!, shape: item.spec.shape }));
-    adapters.set(key, new IndexedTypeSystemAdapter(rulesFor(spec.declaration.languageId), indexed));
+    adapters.set(key, new IndexedTypeSystemAdapter(rulesFor(spec.declaration.languageId), indexed, [...contexts.values()]));
   }
   for (const sourceContext of sourceContexts) {
     const key = adapterKey(sourceContext.languageId, sourceContext.repoId);
-    if (!adapters.has(key)) adapters.set(key, new IndexedTypeSystemAdapter(rulesFor(sourceContext.languageId), []));
+    if (!adapters.has(key)) adapters.set(key, new IndexedTypeSystemAdapter(rulesFor(sourceContext.languageId), [], [...contexts.values()]));
   }
 
   for (const node of updatedNodes) {
@@ -256,9 +260,11 @@ export function reconcileNonJavaSchemaFacts(
         const declarationsForAdapter = adapter.indexDeclarations({ generation: "", files: [] });
         const declaration = declarationsForAdapter.find((fact) => fact.fileId === node.fileId) ?? declarationsForAdapter[0];
         if (!sourceContext && !declaration) return [];
-        const context = sourceContext
+        const baseContext = sourceContext
           ? contextForSource(sourceContext, contexts)
           : contextForDeclaration(declaration!, node.fileId, contexts);
+        const context = ownerResolutionContext(node, baseContext, declarations);
+        if (context !== baseContext) contexts.set(context.id, context);
         const expression = adapter.parseTypeExpression(slot.rawType, context);
         return [{ adapter, context, expression, resolution: resolveRootType(adapter, expression, context) }];
       });
@@ -307,14 +313,24 @@ export function reconcileNonJavaSchemaFacts(
   }
 
   const reconciledSchemaByDeclarationId = new Map(reconciledSchemas.map((item) => [item.spec.identity.declarationId, item]));
-  const existingNodeIds = new Set(updatedNodes.map((node) => node.id));
-  for (const [id, identity] of materializedIdentities) {
-    if (existingNodeIds.has(id)) continue;
-    const declaration = reconciledSchemaByDeclarationId.get(identity.declarationId);
+  const existingNodeIndexes = new Map(updatedNodes.map((node, index) => [node.id, index]));
+  for (const [id, materializedType] of [...materializedTypes.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+    const declaration = reconciledSchemaByDeclarationId.get(materializedType.identity.declarationId);
     if (!declaration) continue;
-    const instanceSpec: SchemaSpec = { ...declaration.spec, id, identity };
-    updatedNodes.push({ ...declaration.node, id, specJson: canonicalSerialize(instanceSpec) });
-    existingNodeIds.add(id);
+    const instanceSpec: SchemaSpec = {
+      ...declaration.spec,
+      id,
+      identity: materializedType.identity,
+      shape: materializedType.shape
+    };
+    const instanceNode = { ...declaration.node, id, specJson: canonicalSerialize(instanceSpec) };
+    const existingIndex = existingNodeIndexes.get(id);
+    if (existingIndex === undefined) {
+      existingNodeIndexes.set(id, updatedNodes.length);
+      updatedNodes.push(instanceNode);
+    } else {
+      updatedNodes[existingIndex] = { ...updatedNodes[existingIndex]!, specJson: instanceNode.specJson };
+    }
   }
 
   for (const relation of existingRelations) recordRelation(relations, relation);
@@ -483,9 +499,10 @@ function buildBehaviorFingerprints(input: {
       maxDepth: adapter.maxDepth,
       maxTypesPerRoot: adapter.maxTypesPerRoot,
       buildInputsHash: stableFactId("schema-build-inputs", {
-        declarations: scopedDeclarations,
-        contexts: scopedContexts,
-        roots: scopedRoots,
+        // Source declarations, roots, and resolution contexts are generation
+        // facts, not adapter behavior. Including them here made a normal source
+        // edit look like a rule-set change and broke full/incremental convergence.
+        scope,
         scopeDependencies: scopedDependencies
       }),
       generation: ""
@@ -589,10 +606,11 @@ function isExplicitSchemaNode(node: ContractSpecNode): boolean {
   // can re-enter the active catalog on changed-only runs, but must never turn
   // into explicit public roots merely because a previous generation reached
   // and materialized them.
-  return node.framework !== "ts-schema" && node.framework !== "go-struct";
+  return node.framework !== "ts-schema" && node.framework !== "go-struct" && node.framework !== "java-source";
 }
 
 function rulesFor(languageId: string): IndexedTypeSystemRules {
+  if (languageId === "java") return javaRules();
   return {
     languageId,
     adapterVersion: "1",
@@ -603,6 +621,139 @@ function rulesFor(languageId: string): IndexedTypeSystemRules {
     scalars: COMMON_SCALARS,
     externalSymbols: ["System", "google.protobuf", "GraphQL", "typing", "time", "net/url"],
     wrappers: wrappersFor(languageId)
+  };
+}
+
+function ownerResolutionContext(
+  node: ContractSpecNode,
+  base: ResolutionContextFact,
+  declarations: readonly TypeDeclarationFact[]
+): ResolutionContextFact {
+  let spec: { ownerType?: unknown; methodSignature?: unknown; ownerGenericBindings?: unknown } = {};
+  try { spec = JSON.parse(node.specJson) as typeof spec; } catch {}
+  const ownerType = normalizedOptionalString(spec.ownerType);
+  const methodSignature = normalizedOptionalString(spec.methodSignature);
+  const declaredOwnerBindings = Array.isArray(spec.ownerGenericBindings)
+    ? spec.ownerGenericBindings.flatMap((value) => {
+      if (!value || typeof value !== "object") return [];
+      const binding = value as { name?: unknown; type?: unknown };
+      const name = normalizedOptionalString(binding.name);
+      const type = normalizedOptionalString(binding.type);
+      return name && type ? [{ name, type }] : [];
+    }).sort((left, right) => left.name.localeCompare(right.name) || left.type.localeCompare(right.type))
+    : [];
+  // Non-owner-aware contracts use file/scope resolution only. Reusing the
+  // base context avoids manufacturing a second identity whose only difference
+  // after persistence could be undefined versus an empty sourceSymbolId.
+  if (!ownerType && !methodSignature && declaredOwnerBindings.length === 0) return base;
+  const sourceSymbolId = normalizedOptionalString(node.sourceSymbolId);
+  const owner = ownerType
+    ? declarations.find((declaration) => declaration.identity.languageId === base.languageId
+      && declaration.identity.repoId === base.repoId
+      && declaration.identity.canonicalName === ownerType)
+    : undefined;
+  const bindings = new Map(base.genericBindings.map((binding) => [binding.name, binding]));
+  for (const parameter of owner?.typeParameters ?? []) {
+    const bound = owner?.typeParameterBounds?.[parameter]?.[0];
+    if (bound) bindings.set(parameter, { name: parameter, expression: bound });
+  }
+  for (const binding of declaredOwnerBindings) {
+    bindings.set(binding.name, { name: binding.name, expression: parseGenericBound(binding.type) });
+  }
+  if (methodSignature) {
+    const typeParameters = /^<([^>]+)>/u.exec(methodSignature)?.[1];
+    for (const declaration of typeParameters ? splitGenericParameters(typeParameters) : []) {
+      const match = /^([A-Za-z_$][\w$]*)\s+extends\s+(.+)$/u.exec(declaration.trim());
+      if (match) bindings.set(match[1]!, { name: match[1]!, expression: parseGenericBound(match[2]!) });
+    }
+  }
+  const enclosingDeclarationIds = owner
+    ? [...new Set([...base.enclosingDeclarationIds, owner.id, ...(owner.enclosingDeclarationId ? [owner.enclosingDeclarationId] : [])])]
+    : base.enclosingDeclarationIds;
+  const genericBindings = [...bindings.values()].sort((left, right) => left.name.localeCompare(right.name));
+  return {
+    ...base,
+    id: stableFactId("resolution-context", {
+      base: base.id,
+      ownerDeclarationId: owner?.id,
+      sourceSymbolId,
+      genericBindings
+    }),
+    sourceSymbolId,
+    enclosingDeclarationIds,
+    genericBindings
+  };
+}
+
+function normalizedOptionalString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim();
+  return normalized || undefined;
+}
+
+function splitGenericParameters(value: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index];
+    if (char === "<") depth++;
+    else if (char === ">") depth--;
+    else if (char === "," && depth === 0) {
+      parts.push(value.slice(start, index));
+      start = index + 1;
+    }
+  }
+  parts.push(value.slice(start));
+  return parts.filter(Boolean);
+}
+
+function parseGenericBound(value: string): TypeExpression {
+  const members = value.split(/\s*&\s*/u).filter(Boolean).map((name) => ({ kind: "reference" as const, name }));
+  return members.length === 1 ? members[0]! : { kind: "intersection", members };
+}
+
+function javaRules(): IndexedTypeSystemRules {
+  return {
+    languageId: "java",
+    adapterVersion: "java-type-system-v1",
+    ruleSetVersion: "java-projection-v1",
+    serializationVersion: "java-source-visible-v1",
+    maxDepth: 12,
+    maxTypesPerRoot: 256,
+    scalars: {
+      byte: "integer", short: "integer", int: "integer", long: "integer",
+      float: "number", double: "number", boolean: "boolean", char: "string", void: "void",
+      Byte: "integer", Short: "integer", Integer: "integer", Long: "integer",
+      Float: "number", Double: "number", Boolean: "boolean", Character: "string",
+      String: "string", CharSequence: "string", BigInteger: "bigint", BigDecimal: "number",
+      UUID: "uuid", Date: "date", Instant: "date", LocalDate: "date", LocalDateTime: "date",
+      "java.lang.Byte": "integer", "java.lang.Short": "integer", "java.lang.Integer": "integer",
+      "java.lang.Long": "integer", "java.lang.Float": "number", "java.lang.Double": "number",
+      "java.lang.Boolean": "boolean", "java.lang.Character": "string", "java.lang.String": "string",
+      "java.math.BigInteger": "bigint", "java.math.BigDecimal": "number", "java.util.UUID": "uuid",
+      "java.util.Date": "date", "java.time.Instant": "date", "java.time.LocalDate": "date",
+      "java.time.LocalDateTime": "date"
+    },
+    externalSymbols: [
+      "java.io", "java.nio", "java.net", "jakarta.servlet", "javax.servlet",
+      "org.springframework.core.io", "org.springframework.web.servlet", "org.springframework.web.context.request",
+      "org.reactivestreams", "reactor.core.publisher"
+    ],
+    wrappers: [
+      { canonicalSymbol: "org.springframework.http.ResponseEntity", sourceSymbols: ["ResponseEntity"], behavior: "transparent", argumentIndexes: [0] },
+      { canonicalSymbol: "java.util.Optional", sourceSymbols: ["Optional"], behavior: "transparent", argumentIndexes: [0] },
+      ...["Mono", "Flux", "Publisher", "ModelAndView", "View", "Resource", "InputStreamResource", "StreamingResponseBody", "ResponseBodyEmitter", "SseEmitter", "ServletRequest", "ServletResponse", "HttpServletRequest", "HttpServletResponse", "ServerHttpRequest", "ServerHttpResponse"].map((name) => ({
+        canonicalSymbol: `java-boundary.${name}`, sourceSymbols: [name], behavior: "stop" as const
+      })),
+      ...["Collection", "List", "Set", "Iterable", "ArrayList", "LinkedList", "HashSet", "TreeSet"].map((name) => ({
+        canonicalSymbol: `java.util.${name}`, sourceSymbols: [name], behavior: "collection" as const, argumentIndexes: [0]
+      })),
+      ...["Map", "HashMap", "LinkedHashMap", "TreeMap", "ConcurrentHashMap"].map((name) => ({
+        canonicalSymbol: name === "ConcurrentHashMap" ? "java.util.concurrent.ConcurrentHashMap" : `java.util.${name}`,
+        sourceSymbols: [name], behavior: "map-value" as const, argumentIndexes: [1]
+      }))
+    ]
   };
 }
 
@@ -708,10 +859,24 @@ function contextForSource(source: SchemaSourceResolutionContext, contexts: Map<s
 function typedSlotsFor(node: ContractSpecNode): { rawType: string; kind: SchemaRootReference["relationKind"]; slot: SchemaRootReference["slot"] }[] {
   try {
     const spec = JSON.parse(node.specJson) as Record<string, unknown>;
-    if (spec.kind === "http-endpoint") return [
-      ...(typeof spec.requestBodyType === "string" ? [{ rawType: spec.requestBodyType, kind: "REQUEST_SCHEMA" as const, slot: { kind: "parameter" as const, index: 0, name: "body" } }] : []),
-      ...(typeof spec.responseBodyType === "string" ? [{ rawType: spec.responseBodyType, kind: "RESPONSE_SCHEMA" as const, slot: { kind: "return" as const } }] : [])
-    ];
+    if (spec.kind === "http-endpoint") {
+      const requestSlots = Array.isArray(spec.requestBodySlots)
+        ? spec.requestBodySlots.flatMap((slot) => isTypedBodySlot(slot) && !isSpringBoundaryType(slot.type)
+          ? [{ rawType: slot.type, kind: "REQUEST_SCHEMA" as const, slot: { kind: "parameter" as const, index: slot.index, name: slot.name } }]
+          : [])
+        : typeof spec.requestBodyType === "string" && !isSpringBoundaryType(spec.requestBodyType)
+          ? [{ rawType: spec.requestBodyType, kind: "REQUEST_SCHEMA" as const, slot: { kind: "parameter" as const, index: 0, name: "body" } }]
+          : [];
+      const responseType = typeof spec.declaredResponseType === "string" ? spec.declaredResponseType
+        : typeof spec.responseBodyType === "string" ? spec.responseBodyType : undefined;
+      const responseAllowed = node.framework !== "spring-mvc" || spec.responseBody !== false;
+      return [
+        ...requestSlots,
+        ...(responseAllowed && responseType && !isSpringBoundaryType(responseType)
+          ? [{ rawType: responseType, kind: "RESPONSE_SCHEMA" as const, slot: { kind: "return" as const } }]
+          : [])
+      ];
+    }
     if (spec.kind === "grpc-method") return [
       ...(typeof spec.requestType === "string" ? [{ rawType: spec.requestType, kind: "REQUEST_SCHEMA" as const, slot: { kind: "parameter" as const, index: 0, name: "request" } }] : []),
       ...(typeof spec.responseType === "string" ? [{ rawType: spec.responseType, kind: "RESPONSE_SCHEMA" as const, slot: { kind: "return" as const } }] : [])
@@ -726,6 +891,19 @@ function typedSlotsFor(node: ContractSpecNode): { rawType: string; kind: SchemaR
     if (spec.kind === "event" && typeof spec.payloadType === "string") return [{ rawType: spec.payloadType, kind: "EVENT_PAYLOAD", slot: { kind: "payload" } }];
   } catch {}
   return [];
+}
+
+function isTypedBodySlot(value: unknown): value is { index: number; name?: string; type: string } {
+  if (!value || typeof value !== "object") return false;
+  const slot = value as { index?: unknown; name?: unknown; type?: unknown };
+  return Number.isSafeInteger(slot.index) && typeof slot.type === "string"
+    && (slot.name === undefined || typeof slot.name === "string");
+}
+
+function isSpringBoundaryType(raw: string): boolean {
+  const normalized = raw.replace(/\s+/gu, "").replace(/^(?:[A-Za-z_$][\w$]*\.)+/u, "");
+  if (/^(?:void|Void|boolean|byte|short|int|long|float|double|char|String|Character|Boolean|Byte|Short|Integer|Long|Float|Double)$/u.test(normalized)) return true;
+  return /^(?:ModelAndView|View|Resource|InputStreamResource|StreamingResponseBody|ResponseBodyEmitter|SseEmitter|ServletRequest|ServletResponse|HttpServletRequest|HttpServletResponse|ServerHttpRequest|ServerHttpResponse|Publisher|Mono|Flux)(?:<.*>)?$/u.test(normalized);
 }
 
 function diagnosticFor(kind: "external-symbol" | "unresolved" | "ambiguous" | "unsupported", id: string, expression: TypeExpression, context: ResolutionContextFact, ownerSpecId: string, field: string): SchemaDiagnosticFact {

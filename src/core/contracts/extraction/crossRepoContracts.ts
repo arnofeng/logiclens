@@ -357,13 +357,7 @@ export async function extractCrossRepoContracts(
   const materializedEntities = dedupBy([...facts.entities, ...reconciledSchemas.materialized.entities], (item) => item.id);
   const materializedContractEntities = dedupBy([...facts.contractEntities, ...reconciledSchemas.materialized.contractEntities], (item) => `${item.contractId}\0${item.entityId}\0${item.evidenceId}`);
 
-  // Filter out legacy Java pending placeholder edges (schema-ref:<Type>,
-  // spec:<id>:pending) which cannot be written to the graph (no matching
-  // ContractSpec nodes).  Cross-repo SEMANTIC_REL resolution now runs in the
-  // post-indexing rebuildRepoDependencies phase with full multi-repo visibility.
-  const semanticRelations = reconciledSchemas.semanticRelations.filter(
-    (rel) => !rel.toSpecId.startsWith("schema-ref:") && !rel.fromSpecId.endsWith(":pending")
-  );
+  const semanticRelations = reconciledSchemas.semanticRelations;
 
   const contractsById = new Map(materializedContracts.map((c) => [c.id, c]));
   const evidenceById = new Map(materializedEvidence.map((e) => [e.id, e]));

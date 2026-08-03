@@ -139,7 +139,7 @@ describe("Resolver Integration", () => {
     expect(edges.filter((e) => e.kind === "SUBSCRIBES_EVENT")).toHaveLength(1);
   });
 
-  it("produces REQUEST_SCHEMA from http spec body types", () => {
+  it("retains finalized REQUEST_SCHEMA relations without name-based rematching", () => {
     const httpSpec = makeHttpSpec({
       id: "spec:h1", contractId: "c:h1", repoId: "repo-orders",
       method: "POST", path: "/api/orders", requestBodyType: "CreateOrderDTO"
@@ -153,10 +153,18 @@ describe("Resolver Integration", () => {
       makeRepoContract({ contractId: "c:s1", repoId: "repo-orders", role: "producer" })
     ];
 
+    const finalized: SemanticRelationEdge = {
+      fromSpecId: httpSpec.id,
+      toSpecId: schemaSpec.id,
+      kind: "REQUEST_SCHEMA",
+      evidenceId: "ev:root",
+      reason: "finalized typed root",
+      confidence: 0.95
+    };
     const edges = resolveSemanticRelations({
       contractSpecs: [httpSpec, schemaSpec],
       repoContracts,
-      existingSemanticRelations: []
+      existingSemanticRelations: [finalized]
     });
 
     expect(edges.filter((e) => e.kind === "REQUEST_SCHEMA")).toHaveLength(1);
@@ -193,7 +201,7 @@ describe("Resolver Integration", () => {
   it("deduplicates semantic edges by logical relation and keeps the highest confidence evidence", () => {
     const high: SemanticRelationEdge = {
       fromSpecId: "spec:a",
-      toSpecId: "schema-ref:Target",
+      toSpecId: "spec:b",
       kind: "USES_SCHEMA",
       evidenceId: "ev:high",
       reason: "high",
@@ -208,10 +216,7 @@ describe("Resolver Integration", () => {
       existingSemanticRelations: [high]
     });
 
-    expect(edges.filter((edge) => edge.kind === "USES_SCHEMA")).toEqual([{
-      ...high,
-      toSpecId: target.id
-    }]);
+    expect(edges.filter((edge) => edge.kind === "USES_SCHEMA")).toEqual([high]);
   });
 
   it("handles empty specs gracefully", () => {
@@ -221,40 +226,6 @@ describe("Resolver Integration", () => {
       existingSemanticRelations: []
     });
     expect(edges).toHaveLength(0);
-  });
-
-  it("resolves pending USES_SCHEMA from existing relations", () => {
-    const derivedSpec = makeSchemaSpec({
-      id: "spec:derived", contractId: "c:derived", repoId: "repo-a",
-      name: "DerivedDTO"
-    });
-    const baseSpec = makeSchemaSpec({
-      id: "spec:base", contractId: "c:base", repoId: "repo-a",
-      name: "BaseDTO"
-    });
-    const pendingRel: SemanticRelationEdge = {
-      fromSpecId: "spec:c:derived:pending",
-      toSpecId: "schema-ref:BaseDTO",
-      kind: "USES_SCHEMA",
-      evidenceId: "ev:pending",
-      reason: "TS utility type references base schema BaseDTO",
-      confidence: 0.7
-    };
-    const repoContracts = [
-      makeRepoContract({ contractId: "c:derived", repoId: "repo-a", role: "producer" }),
-      makeRepoContract({ contractId: "c:base", repoId: "repo-a", role: "producer" })
-    ];
-
-    const edges = resolveSemanticRelations({
-      contractSpecs: [derivedSpec, baseSpec],
-      repoContracts,
-      existingSemanticRelations: [pendingRel]
-    });
-
-    const usesEdges = edges.filter((e) => e.kind === "USES_SCHEMA");
-    expect(usesEdges).toHaveLength(1);
-    expect(usesEdges[0]!.fromSpecId).toBe(derivedSpec.id);
-    expect(usesEdges[0]!.toSpecId).toBe(baseSpec.id);
   });
 
   it("skips same-repo consumer-producer pairs (no intra-repo edges)", () => {

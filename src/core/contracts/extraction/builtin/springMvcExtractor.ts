@@ -1,8 +1,8 @@
 import { compatExtractor } from "./compat.js";
-import { canonicalHttpContractKey, joinApiPaths } from "../../apiPath.js";
+import { joinApiPaths } from "../../apiPath.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import type { AnnotationFact } from "../../../parsing/facts.js";
-import type { ParsedFile } from "../../../parsing/types.js";
+import type { CodeSymbol, ParsedFile } from "../../../parsing/types.js";
 import type { FactCollector } from "../factCollector.js";
 import {
   parsedCodeFiles,
@@ -36,8 +36,10 @@ function springPathsFromAnnotation(annotation: AnnotationFact): string[] {
   return pathArgs.length > 0 ? pathArgs.map((argument) => argument.value) : [""];
 }
 
-function springMappingsFromFacts(file: ParsedFile): Map<string, { annotation: string; path: string; raw: string; line: number }[]> {
-  const result = new Map<string, { annotation: string; path: string; raw: string; line: number }[]>();
+type SpringMapping = { annotation: string; path: string; raw: string; line: number };
+
+function springMappingsFromFacts(file: ParsedFile): Map<string, SpringMapping[]> {
+  const result = new Map<string, SpringMapping[]>();
   for (const annotation of file.facts?.annotations ?? []) {
     if (!annotation.ownerSymbolId) continue;
     if (!["RequestMapping", "GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "PatchMapping"].includes(annotation.name)) continue;
@@ -55,9 +57,11 @@ function springMappingsFromFacts(file: ParsedFile): Map<string, { annotation: st
 // ---------------------------------------------------------------------------
 
 type BodyTypeInfo = {
+  requestBodies: { index: number; name?: string; type: string }[];
   requestBodyType?: string;
   responseBodyType?: string;
   declaredResponseType?: string;
+  methodSignature: string;
 };
 
 /**
@@ -73,18 +77,28 @@ function extractBodyTypes(file: ParsedFile): Map<string, BodyTypeInfo> {
     const methodSymbol = findContainingSymbol(file.symbols, node);
     if (!methodSymbol) continue;
 
-    const info: BodyTypeInfo = {};
+    const info: BodyTypeInfo = { requestBodies: [], methodSignature: canonicalJavaMethodSignature(node) };
 
     // Request body: find formal parameter annotated with @RequestBody
     const params = node.childForFieldName("parameters");
     if (params) {
+      let parameterIndex = 0;
       for (let i = 0; i < params.namedChildCount; i++) {
         const param = params.namedChild(i);
         if (!param) continue;
+        if (param.type !== "formal_parameter" && param.type !== "spread_parameter") continue;
         const hasRequestBody = hasAnnotation(param, "RequestBody");
-        if (!hasRequestBody) continue;
+        if (!hasRequestBody) {
+          parameterIndex++;
+          continue;
+        }
         const typeName = extractParameterTypeName(param);
-        if (typeName) info.requestBodyType = typeName;
+        if (typeName) {
+          const name = param.childForFieldName("name")?.text;
+          info.requestBodies.push({ index: parameterIndex, name, type: typeName });
+          info.requestBodyType ??= typeName;
+        }
+        parameterIndex++;
       }
     }
 
@@ -92,8 +106,7 @@ function extractBodyTypes(file: ParsedFile): Map<string, BodyTypeInfo> {
     const returnType = node.childForFieldName("type");
     if (returnType) {
       const declaredResponseType = returnType.text.replace(/\s+/g, " ").trim();
-      const responseType = extractResponseTypeName(returnType) ?? declaredResponseType;
-      if (responseType && responseType !== "void") info.responseBodyType = responseType;
+      if (declaredResponseType && declaredResponseType !== "void") info.responseBodyType = declaredResponseType;
       if (declaredResponseType && declaredResponseType !== "void") info.declaredResponseType = declaredResponseType;
     }
 
@@ -132,17 +145,7 @@ function extractParameterTypeName(param: Parser.SyntaxNode): string | undefined 
     const child = param.namedChild(i);
     if (!child) continue;
     if (child.type === "type_identifier") return child.text;
-    if (child.type === "generic_type") {
-      // ResponseEntity<CreateOrderDTO> -> resolve the first type argument
-      const typeArgs = child.childForFieldName("type_arguments");
-      if (typeArgs) {
-        const first = typeArgs.namedChild(0);
-        if (first?.type === "type_identifier") return first.text;
-        if (first?.type === "generic_type") return first.text;
-      }
-      // Fallback: return the raw generic text
-      return child.text;
-    }
+    if (child.type === "generic_type") return child.text.replace(/\s+/gu, " ").trim();
     if (child.type === "array_type") return child.text;
     if (child.type === "integral_type" || child.type === "floating_point_type" ||
         child.type === "boolean_type" || child.type === "void_type") {
@@ -152,31 +155,167 @@ function extractParameterTypeName(param: Parser.SyntaxNode): string | undefined 
   return undefined;
 }
 
-function extractResponseTypeName(returnType: Parser.SyntaxNode): string | undefined {
-  const raw = returnType.text.replace(/\s+/g, " ").trim();
-  const wrapped = /^(?:ResponseEntity|Mono|Flux)\s*<([\s\S]+)>$/.exec(raw);
-  if (wrapped?.[1]) return wrapped[1].trim();
-  // Direct type_identifier: `OrderResponse someMethod(...)`
-  if (returnType.type === "type_identifier") {
-    return returnType.text;
-  }
-  // Generic type: ResponseEntity<OrderResponse> -> extract first type argument
-  if (returnType.type === "generic_type") {
-    const baseName = returnType.childForFieldName("name");
-    const baseTypeName = baseName?.text;
-    if (baseTypeName === "ResponseEntity" || baseTypeName === "Mono" || baseTypeName === "Flux") {
-      const typeArgs = returnType.childForFieldName("type_arguments");
-      if (typeArgs) {
-        const first = typeArgs.namedChild(0);
-        if (first?.type === "type_identifier") return first.text;
-        if (first?.type === "generic_type") {
-          return first.text;
-        }
-        return first?.text;
+type JavaTypeDescriptor = {
+  file: ParsedFile;
+  symbol: CodeSymbol;
+  canonicalName: string;
+  annotations: AnnotationFact[];
+  mappingsByOwner: Map<string, SpringMapping[]>;
+  bodyTypesBySymbol: Map<string, BodyTypeInfo>;
+  typeParameters: string[];
+  parents: { name: string; arguments: string[] }[];
+};
+
+type ControllerHierarchyEntry = {
+  descriptor: JavaTypeDescriptor;
+  genericBindings: Map<string, string>;
+};
+
+function javaTypeDescriptors(files: ParsedFile[]): JavaTypeDescriptor[] {
+  return files.flatMap((file) => {
+    if (file.language !== "java") return [];
+    const mappingsByOwner = springMappingsFromFacts(file);
+    const bodyTypesBySymbol = extractBodyTypes(file);
+    return file.symbols.filter((symbol) => symbol.kind === "class" || symbol.kind === "interface").map((symbol) => {
+      const header = parseJavaTypeHeader(symbol.source, symbol.name, symbol.kind as "class" | "interface");
+      return {
+        file,
+        symbol,
+        canonicalName: javaOwnerType(file, symbol.name),
+        annotations: (file.facts?.annotations ?? []).filter((annotation) => annotation.ownerSymbolId === symbol.id),
+        mappingsByOwner,
+        bodyTypesBySymbol,
+        typeParameters: header.typeParameters,
+        parents: header.parents
+      };
+    });
+  }).sort((left, right) => left.canonicalName.localeCompare(right.canonicalName)
+    || left.file.fileId.localeCompare(right.file.fileId)
+    || left.symbol.id.localeCompare(right.symbol.id));
+}
+
+function controllerHierarchy(controller: JavaTypeDescriptor, descriptors: JavaTypeDescriptor[]): ControllerHierarchyEntry[] {
+  const result: ControllerHierarchyEntry[] = [{ descriptor: controller, genericBindings: new Map() }];
+  const visited = new Set([controller.canonicalName]);
+  for (let index = 0; index < result.length; index++) {
+    const current = result[index]!;
+    const parents = current.descriptor.parents.flatMap((reference) => {
+      const descriptor = resolveParentDescriptor(current.descriptor, reference.name, descriptors);
+      return descriptor ? [{ descriptor, reference }] : [];
+    }).sort((left, right) => left.descriptor.canonicalName.localeCompare(right.descriptor.canonicalName));
+    for (const { descriptor, reference } of parents) {
+      if (visited.has(descriptor.canonicalName)) continue;
+      visited.add(descriptor.canonicalName);
+      const bindings = new Map<string, string>();
+      for (const [parameterIndex, parameter] of descriptor.typeParameters.entries()) {
+        const argument = reference.arguments[parameterIndex];
+        if (argument) bindings.set(parameter, substituteJavaType(argument, current.genericBindings));
       }
+      result.push({ descriptor, genericBindings: bindings });
+    }
+  }
+  return result;
+}
+
+function resolveParentDescriptor(owner: JavaTypeDescriptor, rawName: string, descriptors: JavaTypeDescriptor[]): JavaTypeDescriptor | undefined {
+  const normalized = rawName.replace(/\s+/gu, "");
+  const packageName = javaPackage(owner.file);
+  const imported = owner.file.imports.find((value) => value.importKind !== "static"
+    && value.module.split(".").at(-1) === normalized)?.module;
+  const canonicalCandidates = new Set([
+    normalized,
+    ...(packageName ? [`${packageName}.${normalized}`] : []),
+    ...(imported ? [imported] : [])
+  ]);
+  const exact = descriptors.filter((value) => value.file.repoId === owner.file.repoId && canonicalCandidates.has(value.canonicalName));
+  if (exact.length === 1) return exact[0];
+  const scoped = descriptors.filter((value) => value.file.repoId === owner.file.repoId
+    && value.canonicalName.split(".").at(-1) === normalized
+    && javaPackage(value.file) === packageName);
+  return scoped.length === 1 ? scoped[0] : undefined;
+}
+
+function parseJavaTypeHeader(
+  source: string,
+  typeName: string,
+  kind: "class" | "interface"
+): { typeParameters: string[]; parents: { name: string; arguments: string[] }[] } {
+  const declaration = new RegExp(`\\b${kind}\\s+${escapeRegExp(typeName)}\\b`, "u").exec(source);
+  if (!declaration) return { typeParameters: [], parents: [] };
+  let cursor = declaration.index + declaration[0].length;
+  cursor = skipWhitespace(source, cursor);
+  let typeParameters: string[] = [];
+  if (source[cursor] === "<") {
+    const group = balancedGroup(source, cursor);
+    if (group) {
+      typeParameters = splitJavaTypes(group.value).flatMap((value) => /^([A-Za-z_$][\w$]*)/u.exec(value.trim())?.[1] ?? []);
+      cursor = group.end;
+    }
+  }
+  const headerEnd = source.indexOf("{", cursor);
+  const header = source.slice(cursor, headerEnd >= 0 ? headerEnd : source.length);
+  const clauses = [...header.matchAll(/\b(?:extends|implements)\s+/gu)];
+  const parents = clauses.flatMap((clause, index) => {
+    const start = (clause.index ?? 0) + clause[0].length;
+    const end = clauses[index + 1]?.index ?? header.length;
+    return splitJavaTypes(header.slice(start, end)).flatMap(parseJavaParentReference);
+  });
+  return { typeParameters, parents };
+}
+
+function parseJavaParentReference(value: string): { name: string; arguments: string[] }[] {
+  const match = /^([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)/u.exec(value.trim());
+  if (!match) return [];
+  const genericStart = value.indexOf("<", match[0].length);
+  const group = genericStart >= 0 ? balancedGroup(value, genericStart) : undefined;
+  return [{ name: match[1]!, arguments: group ? splitJavaTypes(group.value) : [] }];
+}
+
+function balancedGroup(source: string, start: number): { value: string; end: number } | undefined {
+  let depth = 0;
+  for (let index = start; index < source.length; index++) {
+    if (source[index] === "<") depth++;
+    else if (source[index] === ">") {
+      depth--;
+      if (depth === 0) return { value: source.slice(start + 1, index), end: index + 1 };
     }
   }
   return undefined;
+}
+
+function splitJavaTypes(value: string): string[] {
+  const result: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < value.length; index++) {
+    if (value[index] === "<") depth++;
+    else if (value[index] === ">") depth--;
+    else if (value[index] === "," && depth === 0) {
+      result.push(value.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  const tail = value.slice(start).trim();
+  if (tail) result.push(tail);
+  return result;
+}
+
+function substituteJavaType(value: string, bindings: Map<string, string>): string {
+  let result = value;
+  for (const [name, replacement] of [...bindings.entries()].sort(([left], [right]) => right.length - left.length || left.localeCompare(right))) {
+    result = result.replace(new RegExp(`\\b${escapeRegExp(name)}\\b`, "gu"), replacement);
+  }
+  return result;
+}
+
+function skipWhitespace(source: string, start: number): number {
+  let cursor = start;
+  while (/\s/u.test(source[cursor] ?? "")) cursor++;
+  return cursor;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 // ---------------------------------------------------------------------------
@@ -188,21 +327,23 @@ export const springMvcExtractor = compatExtractor({
   languages: ["java"],
   frameworks: ["java:spring-mvc"],
   extract(context, collector: FactCollector) {
-    for (const file of parsedCodeFiles(context.parsedFiles)) {
-      if (file.language !== "java") continue;
-      const mappingsByOwner = springMappingsFromFacts(file);
-      const bodyTypesBySymbol = extractBodyTypes(file);
-      const classSymbols = file.symbols.filter((symbol) => symbol.kind === "class");
-      for (const classSymbol of classSymbols) {
-        const baseMappings = (mappingsByOwner.get(classSymbol.id) ?? [])
-          .filter((mapping) => mapping.annotation === "RequestMapping")
-          .map((mapping) => ({ ...mapping, offset: Math.max(0, classSymbol.source.indexOf(mapping.raw)) }));
+    const descriptors = javaTypeDescriptors([...parsedCodeFiles(context.parsedFiles)]);
+    for (const controller of descriptors) {
+      const isRestController = controller.annotations.some((annotation) => annotation.name === "RestController");
+      const isController = isRestController || controller.annotations.some((annotation) => annotation.name === "Controller");
+      if (!isController) continue;
+      const hierarchy = controllerHierarchy(controller, descriptors);
+      const routeOwner = hierarchy.find(({ descriptor }) => (descriptor.mappingsByOwner.get(descriptor.symbol.id) ?? [])
+        .some((mapping) => mapping.annotation === "RequestMapping"))?.descriptor ?? controller;
+      const baseMappings = (routeOwner.mappingsByOwner.get(routeOwner.symbol.id) ?? [])
+        .filter((mapping) => mapping.annotation === "RequestMapping")
+        .map((mapping) => ({ ...mapping, offset: Math.max(0, routeOwner.symbol.source.indexOf(mapping.raw)) }));
         for (const baseMapping of baseMappings) {
           if (!baseMapping.path) continue;
           pushApiContractFromPath({
             collector,
-            file,
-            symbol: classSymbol,
+            file: routeOwner.file,
+            symbol: routeOwner.symbol,
             apiPath: baseMapping.path,
             role: "producer",
             offset: baseMapping.offset,
@@ -214,21 +355,35 @@ export const springMvcExtractor = compatExtractor({
         }
 
         const basePaths = baseMappings.length > 0 ? baseMappings.map((mapping) => mapping.path) : [""];
-        const methodSymbols = file.symbols.filter((symbol) => symbol.kind === "method" && symbol.startLine >= classSymbol.startLine && symbol.endLine <= classSymbol.endLine);
-        for (const methodSymbol of methodSymbols) {
-          const bodyTypes = bodyTypesBySymbol.get(methodSymbol.id);
-          const rawMappings = mappingsByOwner.get(methodSymbol.id) ?? [];
+        const overriddenSignatures = new Set<string>();
+        for (const entry of hierarchy) {
+          const { descriptor } = entry;
+          const methodSymbols = descriptor.file.symbols.filter((symbol) => symbol.kind === "method"
+            && symbol.startLine >= descriptor.symbol.startLine && symbol.endLine <= descriptor.symbol.endLine);
+          for (const methodSymbol of methodSymbols) {
+          const bodyTypes = descriptor.bodyTypesBySymbol.get(methodSymbol.id);
+          const signature = bodyTypes?.methodSignature ?? methodSymbol.signature;
+          if (overriddenSignatures.has(signature)) continue;
+          overriddenSignatures.add(signature);
+          const methodAnnotations = (descriptor.file.facts?.annotations ?? []).filter((annotation) => annotation.ownerSymbolId === methodSymbol.id);
+          const declaredResponseType = bodyTypes?.declaredResponseType;
+          const responseBody = isRestController
+            || controller.annotations.some((annotation) => annotation.name === "ResponseBody")
+            || descriptor.annotations.some((annotation) => annotation.name === "ResponseBody")
+            || methodAnnotations.some((annotation) => annotation.name === "ResponseBody")
+            || Boolean(declaredResponseType && /^(?:[A-Za-z_$][\w$]*\.)*ResponseEntity\s*</u.test(declaredResponseType));
+          const rawMappings = descriptor.mappingsByOwner.get(methodSymbol.id) ?? [];
           const mappings = rawMappings
             .map((mapping) => ({ ...mapping, offset: Math.max(0, methodSymbol.source.indexOf(mapping.raw)) }));
           for (const mapping of mappings) {
-            const annotationFact = (file.facts?.annotations ?? []).find(
+            const annotationFact = (descriptor.file.facts?.annotations ?? []).find(
               (a) => a.ownerSymbolId === methodSymbol.id && a.raw === mapping.raw
             );
             const httpMethod = annotationFact ? springHttpMethod(annotationFact) : undefined;
             for (const basePath of basePaths) {
               pushApiContractFromPath({
                 collector,
-                file,
+                file: descriptor.file,
                 symbol: methodSymbol,
                 apiPath: joinApiPaths(basePath, mapping.path),
                 role: "producer",
@@ -239,101 +394,43 @@ export const springMvcExtractor = compatExtractor({
                 method: httpMethod,
                 framework: "spring-mvc",
                 requestBodyType: bodyTypes?.requestBodyType,
-                responseBodyType: bodyTypes?.responseBodyType,
-                declaredResponseType: bodyTypes?.declaredResponseType
+                requestBodySlots: bodyTypes?.requestBodies,
+                responseBodyType: responseBody ? bodyTypes?.responseBodyType : undefined,
+                declaredResponseType: bodyTypes?.declaredResponseType,
+                responseBody,
+                ownerType: controller.canonicalName,
+                methodSignature: signature,
+                ownerGenericBindings: [...entry.genericBindings.entries()]
+                  .map(([name, type]) => ({ name, type }))
+                  .sort((left, right) => left.name.localeCompare(right.name))
               });
             }
           }
         }
       }
-    }
-  },
-
-  /**
-   * P1-1 -- postExtract: Cross-file Controller prefix finalization.
-   *
-   * The per-file extract() phase handles same-file prefix+method merging.
-   * This hook handles the edge case where a base @RequestMapping is on a
-   * class that was processed in a different extract() invocation (split repos,
-   * another extractor running after builtin, etc.).
-   *
-   * It scans the merged `repoContracts` for api contracts produced by the
-   * "spring-request-mapping-producer" rule (class-level paths), then re-checks
-   * every file to see if any method-level routes lack the prefix, and if so
-   * emits an additional prefixed contract.
-   *
-   * In practice this is a no-op when all files are processed in one pass
-   * (the common case), but it provides a safety net for multi-batch or
-   * multi-extractor scenarios.
-   */
-  postExtract(context, collector: FactCollector) {
-
-    const prefixesByFile = new Map<string, { line: number; path: string }[]>();
-    for (const relation of context.mergedFacts.repoContracts) {
-      if (relation.role !== "producer") continue;
-      const ev = context.mergedFacts.evidence.find((e) => e.id === relation.evidenceId);
-      if (!ev || ev.rule !== "spring-request-mapping-producer") continue;
-      const contract = context.mergedFacts.contracts.find((c) => c.id === relation.contractId);
-      if (!contract || contract.kind !== "api") continue;
-      const rows = prefixesByFile.get(ev.fileId) ?? [];
-      rows.push({ line: ev.line, path: contract.key });
-      prefixesByFile.set(ev.fileId, rows);
-    }
-
-
-    // For each file that has a class-level prefix, find method-level routes
-    // that were already emitted without the prefix and emit prefixed versions.
-    const alreadyEmitted = new Set(
-      context.mergedFacts.contracts.filter((c) => c.kind === "api").map((c) => c.key)
-    );
-
-    for (const file of parsedCodeFiles(context.parsedFiles)) {
-      if (file.language !== "java") continue;
-      const filePrefixes = prefixesByFile.get(file.fileId);
-      if (!filePrefixes) continue;
-      const mappingsByOwner = springMappingsFromFacts(file);
-      const classSymbols = file.symbols.filter((s) => s.kind === "class");
-      for (const classSymbol of classSymbols) {
-        const prefixes = filePrefixes
-          .filter((prefix) => prefix.line >= classSymbol.startLine && prefix.line <= classSymbol.endLine)
-          .map((prefix) => prefix.path);
-        if (prefixes.length === 0) continue;
-        const methodSymbols = file.symbols.filter(
-          (s) => s.kind === "method" && s.startLine >= classSymbol.startLine && s.endLine <= classSymbol.endLine
-        );
-        for (const prefix of prefixes) {
-          for (const methodSymbol of methodSymbols) {
-            const factMappings = (mappingsByOwner.get(methodSymbol.id) ?? [])
-              .map((m) => ({ ...m, offset: Math.max(0, methodSymbol.source.indexOf(m.raw)) }));
-            const mappings = factMappings;
-            for (const mapping of mappings) {
-              const annotationFact = (file.facts?.annotations ?? []).find(
-                (a) => a.ownerSymbolId === methodSymbol.id && a.raw === mapping.raw
-              );
-              const httpMethod = annotationFact ? springHttpMethod(annotationFact) : undefined;
-              const combined = joinApiPaths(prefix, mapping.path);
-              // alreadyEmitted stores canonical keys (e.g. "get:/smart/customeractivity/list"),
-              // so we must compare against the same canonical form -- the raw path would
-              // never match a method-prefixed key.
-              const combinedKey = canonicalHttpContractKey({ method: httpMethod, path: combined });
-              if (alreadyEmitted.has(combinedKey)) continue; // already correct
-              pushApiContractFromPath({
-                collector,
-                file,
-                symbol: methodSymbol,
-                apiPath: combined,
-                role: "producer",
-                offset: mapping.offset,
-                raw: mapping.raw,
-                rule: "spring-mapping-prefix-merged",
-                confidence: confidenceFor("probable-route-merge"),
-                method: httpMethod,
-                framework: "spring-mvc"
-              });
-            }
-          }
-        }
       }
-    }
   }
 });
+
+function canonicalJavaMethodSignature(node: Parser.SyntaxNode): string {
+  const name = node.childForFieldName("name")?.text ?? "<unknown>";
+  const returnType = node.childForFieldName("type")?.text.replace(/\s+/gu, " ").trim() ?? "void";
+  const parameters = node.childForFieldName("parameters");
+  const parameterTypes = (parameters?.namedChildren ?? []).flatMap((parameter) => {
+    if (parameter.type !== "formal_parameter" && parameter.type !== "spread_parameter") return [];
+    const type = parameter.childForFieldName("type")
+      ?? parameter.namedChildren.find((child) => /(?:_type|type_identifier|generic_type|scoped_type_identifier)$/u.test(child.type));
+    return type ? [type.text.replace(/\s+/gu, " ").trim()] : [];
+  });
+  const typeParameters = node.childForFieldName("type_parameters")?.text.replace(/\s+/gu, " ").trim() ?? "";
+  return `${typeParameters}${name}(${parameterTypes.join(",")}):${returnType}`;
+}
+
+function javaOwnerType(file: ParsedFile, className: string): string {
+  const packageName = javaPackage(file);
+  return packageName ? `${packageName}.${className}` : className;
+}
+
+function javaPackage(file: ParsedFile): string | undefined {
+  return file.source?.match(/^\s*package\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*;/mu)?.[1];
+}

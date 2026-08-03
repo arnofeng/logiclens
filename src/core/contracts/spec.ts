@@ -26,8 +26,13 @@ export type HttpEndpointSpec = {
   pathParams: string[];
   queryParams?: { name: string; type?: string; required?: boolean }[];
   requestBodyType?: string;
+  requestBodySlots?: { index: number; name?: string; type: string }[];
   responseBodyType?: string;
   declaredResponseType?: string;
+  responseBody?: boolean;
+  ownerType?: string;
+  methodSignature?: string;
+  ownerGenericBindings?: { name: string; type: string }[];
   statusCodes?: number[];
   auth?: "unknown" | "none" | "required";
 };
@@ -387,11 +392,6 @@ export function normalizePrimitiveType(
   }
 
   // -- unwrap nullable wrappers ----------------------------------------------
-  // Java Optional<T>
-  if (language === "java") {
-    const opt = unwrapJavaOptional(trimmed);
-    if (opt !== null) return normalizePrimitiveType(language, opt) + "?";
-  }
   // TS  T | null  /  T | undefined
   if (language === "typescript") {
     const inner = unwrapTsUnionNull(trimmed);
@@ -474,34 +474,12 @@ export function normalizePrimitiveType(
     return `array<${base}>`;
   }
 
-  // Java's legacy extractor still normalizes JDK containers here. Other
-  // languages preserve applications losslessly so their adapter can match a
-  // wrapper only after canonical symbol resolution (and respect shadowing).
-  if (language === "java") {
-    const genericArray = unwrapGenericType(trimmed, ["List", "Set", "ArrayList", "LinkedList", "HashSet", "TreeSet"]);
-    if (genericArray) {
-      const inner = genericArray.typeArgs[0];
-      if (inner) {
-        const base = normalizePrimitiveType(language, inner);
-        return `array<${base}>`;
-      }
-    }
-    const genericMap = unwrapGenericType(trimmed, ["Map", "HashMap", "ConcurrentHashMap", "TreeMap", "LinkedHashMap"]);
-    if (genericMap?.typeArgs.length === 2) {
-      return `map<${normalizePrimitiveType(language, genericMap.typeArgs[0]!)},${normalizePrimitiveType(language, genericMap.typeArgs[1]!)}>`;
-    }
-  }
 
   // Return the original name for complex / user-defined types
   return trimmed;
 }
 
 // -- Internal helpers --------------------------------------------------------
-
-function unwrapJavaOptional(raw: string): string | null {
-  const m = raw.match(/^Optional<(.+)>$/);
-  return m ? m[1]!.trim() : null;
-}
 
 function unwrapTsUnionNull(raw: string): string | null {
   // Match "T | null", "T | undefined", "null | T", etc.

@@ -55,6 +55,7 @@ export function resolutionScopeIdForFile(
     const packageName = file.source?.match(/^\s*package\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*;/mu)?.[1];
     return `package:${packageName ?? path.posix.dirname(normalizedPath)}`;
   }
+  if (languageId === "java") return javaResolutionScopeId(normalizedPath);
   if (languageId === "csharp") return `namespace:${csharpNamespace(file.source)}`;
   return `source:${normalizedPath}`;
 }
@@ -135,6 +136,14 @@ export async function schemaDeclarationVisibilityTarget(input: {
         if (importPath) addPrefix("go", file.repoId, `package:${importPath}:`);
         continue;
       }
+      if (languageId === "java") {
+        // The visibility query cannot address declarations by canonical name.
+        // Load the bounded Java declaration catalog for this repository, then
+        // bind only exact imports in addJavaImportBindings. This is catalog
+        // discovery, never a simple-name resolution fallback.
+        if (importRef.importKind !== "static") addPrefix("java", file.repoId, "module:");
+        continue;
+      }
       if (languageId === "proto") {
         const rootTarget = normalizePath(importRef.module);
         const relativeTarget = normalizePath(path.posix.join(path.posix.dirname(normalizePath(file.path)), importRef.module));
@@ -207,7 +216,7 @@ export function buildSchemaSourceContexts(
       repoId: file.repoId,
       fileId: file.fileId,
       resolutionScopeId,
-      namespaceId: resolutionScopeId,
+      namespaceId: languageId === "java" ? `package:${javaPackageName(file.source)}` : resolutionScopeId,
       imports
     });
   }
@@ -223,6 +232,10 @@ function resolveVisibleImports(
   knownPathByFile: ReadonlyMap<string, string>
 ): ResolutionImportBinding[] {
   const result = new Map<string, ResolutionImportBinding>();
+  if (languageId === "java") {
+    addJavaImportBindings(result, file, resolutionScopeId, declarations);
+    return [...result.values()].sort((a, b) => importKey(a).localeCompare(importKey(b)));
+  }
   for (const declaration of declarations) {
     if (declaration.identity.languageId !== languageId
       || declaration.identity.repoId !== file.repoId
@@ -297,6 +310,81 @@ function resolveVisibleImports(
     }
   }
   return [...result.values()].sort((a, b) => importKey(a).localeCompare(importKey(b)));
+}
+
+function addJavaImportBindings(
+  result: Map<string, ResolutionImportBinding>,
+  file: ParsedFile,
+  resolutionScopeId: string,
+  declarations: readonly TypeDeclarationFact[]
+): void {
+  const packageName = javaPackageName(file.source);
+  const repoDeclarations = declarations.filter((declaration) => declaration.identity.languageId === "java"
+    && declaration.identity.repoId === file.repoId);
+  const sameScopeDeclarations = repoDeclarations.filter((declaration) => declaration.identity.resolutionScopeId === resolutionScopeId);
+  const explicitImportDeclarations = repoDeclarations.filter((declaration) =>
+    javaScopeVisibleForExplicitImport(resolutionScopeId, declaration.identity.resolutionScopeId));
+  for (const declaration of sameScopeDeclarations) {
+    const canonicalName = declaration.identity.canonicalName;
+    if (canonicalName === packageName || canonicalName.startsWith(`${packageName}.`)) {
+      const relative = packageName ? canonicalName.slice(packageName.length + 1) : canonicalName;
+      if (relative && !relative.includes(".")) addImport(result, bindingFor(relative, declaration, "named"));
+    }
+    // FQNs are always legal in source and do not depend on import state.
+    addImport(result, bindingFor(canonicalName, declaration, "namespace"));
+  }
+  const imports = [...(file.source ?? "").matchAll(/^\s*import\s+(?!static\s+)([A-Za-z_$][\w$]*(?:\.[A-Za-z_$*][\w$*]*)*)\s*;/gmu)]
+    .map((match) => match[1]!);
+  for (const imported of imports) {
+    if (imported.endsWith(".*")) {
+      const namespace = imported.slice(0, -2);
+      // Wildcards are not precise enough to infer a build dependency. Keep
+      // them source-set local so main/test or sibling modules cannot leak into
+      // one another through a same-package simple name.
+      for (const declaration of sameScopeDeclarations) {
+        if (javaDeclarationPackage(declaration.identity.canonicalName) === namespace) {
+          addImport(result, bindingFor(terminalName(declaration.identity.canonicalName), declaration, "namespace"));
+        }
+      }
+      continue;
+    }
+    // An explicit canonical import is deterministic even when the declaration
+    // lives in another module/source set. The binding retains the target scope,
+    // which is later persisted as a ResolutionScopeDependencyFact.
+    for (const declaration of explicitImportDeclarations) {
+      if (declaration.identity.canonicalName === imported) {
+        addImport(result, bindingFor(terminalName(imported), declaration, "named"));
+      } else if (declaration.identity.canonicalName.startsWith(`${imported}.`)) {
+        addImport(result, bindingFor(declaration.identity.canonicalName.slice(imported.lastIndexOf(".") + 1), declaration, "named"));
+      }
+    }
+  }
+}
+
+function javaScopeVisibleForExplicitImport(fromScopeId: string, targetScopeId: string): boolean {
+  if (fromScopeId === targetScopeId) return true;
+  const from = /^module:(.*):source-set:([^:]+)$/u.exec(fromScopeId);
+  const target = /^module:(.*):source-set:([^:]+)$/u.exec(targetScopeId);
+  if (!from || !target) return false;
+  const [, fromModule, fromSourceSet] = from;
+  const [, targetModule, targetSourceSet] = target;
+  if (targetSourceSet === "main" || targetSourceSet?.startsWith("generated-")) return true;
+  return fromModule === targetModule && fromSourceSet === "test" && targetSourceSet === "test";
+}
+
+function javaResolutionScopeId(normalizedPath: string): string {
+  const match = /^(.*?)(?:\/)?src\/([^/]+)\/(?:java|kotlin)\//u.exec(normalizedPath);
+  return match ? `module:${match[1] || "."}:source-set:${match[2]}` : "module:.:source-set:source";
+}
+
+function javaPackageName(source: string | undefined): string {
+  return source?.match(/^\s*package\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*;/mu)?.[1] ?? "";
+}
+
+function javaDeclarationPackage(canonicalName: string): string {
+  const parts = canonicalName.split(".");
+  const firstType = parts.findIndex((part) => /^[A-Z_$]/u.test(part));
+  return (firstType < 0 ? parts.slice(0, -1) : parts.slice(0, firstType)).join(".");
 }
 
 function declarationsForImport(

@@ -14,7 +14,7 @@ import type { ParsedSourceSet, ResolutionResult, SchemaShape, TypeProjection, Ty
 export type BuiltinTypeRule = {
   canonicalSymbol: string;
   sourceSymbols?: readonly string[];
-  behavior: "transparent" | "collection" | "map-value" | "materialized";
+  behavior: "transparent" | "collection" | "map-value" | "materialized" | "stop";
   argumentIndexes?: readonly number[];
 };
 
@@ -46,8 +46,10 @@ export class IndexedTypeSystemAdapter implements TypeSystemAdapter {
   private readonly declarationsById: Map<string, IndexedSchemaDeclaration>;
   private readonly wrapperRules: Map<string, BuiltinTypeRule>;
   private readonly wrapperSourceSymbols: Map<string, string>;
+  private readonly contextsByFile: Map<string, ResolutionContextFact>;
+  private readonly canonicalScalars: Set<string>;
 
-  constructor(private readonly rules: IndexedTypeSystemRules, declarations: readonly IndexedSchemaDeclaration[]) {
+  constructor(private readonly rules: IndexedTypeSystemRules, declarations: readonly IndexedSchemaDeclaration[], contexts: readonly ResolutionContextFact[] = []) {
     this.languageId = rules.languageId;
     this.adapterVersion = rules.adapterVersion;
     this.ruleSetVersion = rules.ruleSetVersion;
@@ -58,6 +60,8 @@ export class IndexedTypeSystemAdapter implements TypeSystemAdapter {
     this.declarationsById = new Map(declarations.map((item) => [item.fact.id, item]));
     this.wrapperRules = new Map(rules.wrappers.map((rule) => [rule.canonicalSymbol, rule]));
     this.wrapperSourceSymbols = new Map(rules.wrappers.flatMap((rule) => (rule.sourceSymbols ?? []).map((source) => [source, rule.canonicalSymbol] as const)));
+    this.contextsByFile = new Map(contexts.map((context) => [context.fileId, context]));
+    this.canonicalScalars = new Set(Object.values(rules.scalars));
   }
 
   indexDeclarations(_input: ParsedSourceSet): TypeDeclarationFact[] {
@@ -115,6 +119,7 @@ export class IndexedTypeSystemAdapter implements TypeSystemAdapter {
     if (expression.kind === "application" && expression.target.kind === "reference") {
       const rule = this.wrapperRule(expression.target.name, context);
       if (rule && rule.behavior !== "materialized") {
+        if (rule.behavior === "stop") return { kind: "stop", reason: "unsupported" };
         if (rule.behavior === "map-value") {
           const key = expression.arguments[0];
           const value = expression.arguments[1];
@@ -130,7 +135,7 @@ export class IndexedTypeSystemAdapter implements TypeSystemAdapter {
       }
     }
     if (expression.kind === "reference") {
-      const scalar = this.rules.scalars[expression.name];
+      const scalar = this.rules.scalars[expression.name] ?? (this.canonicalScalars.has(expression.name) ? expression.name : undefined);
       if (scalar) return { kind: "stop", reason: "scalar" };
       if (this.isExternal(expression.name)) return { kind: "stop", reason: "external" };
     }
@@ -141,6 +146,10 @@ export class IndexedTypeSystemAdapter implements TypeSystemAdapter {
   }
 
   inspectSchemaShape(instance: TypeInstanceIdentity): SchemaShape {
+    return this.inspectSchemaShapeRecursive(instance, new Set());
+  }
+
+  private inspectSchemaShapeRecursive(instance: TypeInstanceIdentity, visiting: Set<string>): SchemaShape {
     const declaration = this.declarationsById.get(instance.declarationId);
     if (!declaration || declaration.fact.typeParameters.length !== instance.canonicalTypeArguments.length) return {
       kind: "unsupported",
@@ -150,15 +159,62 @@ export class IndexedTypeSystemAdapter implements TypeSystemAdapter {
         code: "unsupported"
       }
     };
+    if (declaration.fact.declarationKind === "interface" || declaration.fact.modifiers?.includes("abstract")) {
+      return {
+        kind: "unsupported",
+        diagnostic: {
+          id: stableFactId("schema-diagnostic", { code: "unsupported", instance: typeInstanceIdentityId(instance), reason: "non-concrete-java-shape" }),
+          generation: declaration.fact.generation,
+          repoId: declaration.fact.identity.repoId,
+          sourceFileId: declaration.fact.fileId,
+          code: "unsupported",
+          symbol: declaration.fact.identity.canonicalName
+        }
+      };
+    }
     const bindings = new Map(declaration.fact.typeParameters.map((name, index) => [
       name,
       canonicalToTypeExpression(instance.canonicalTypeArguments[index]!)
     ]));
-    if (declaration.shape.kind === "enum" || bindings.size === 0) return declaration.shape;
-    return {
+    if (declaration.shape.kind === "enum") return declaration.shape;
+    const substitutedShape: Extract<SchemaShape, { kind: "object" }> = bindings.size === 0 ? declaration.shape : {
       kind: "object",
       fields: declaration.shape.fields.map((field) => substituteSchemaField(field, bindings)),
       baseTypes: declaration.shape.baseTypes?.map((expression) => substituteTypeExpression(expression, bindings))
+    };
+    const declarationContext = this.contextsByFile.get(declaration.fact.fileId);
+    const genericBindings = declarationContext
+      ? [...declarationContext.genericBindings, ...[...bindings.entries()].map(([name, expression]) => ({ name, expression }))]
+      : [];
+    const effectiveContext = declarationContext ? { ...declarationContext, genericBindings } : undefined;
+    const ownShape: Extract<SchemaShape, { kind: "object" }> = effectiveContext ? {
+      ...substitutedShape,
+      fields: substitutedShape.fields.map((field) => ({
+        ...field,
+        type: this.resolveFieldType(
+          field.type.kind === "resolved" ? canonicalToTypeExpression(field.type.expression) : field.type.normalizedExpression,
+          effectiveContext
+        )
+      }))
+    } : substitutedShape;
+    const instanceId = typeInstanceIdentityId(instance);
+    if (visiting.has(instanceId)) return ownShape;
+    visiting.add(instanceId);
+    const fields = new Map<string, SchemaFieldSpec>();
+    if (effectiveContext) {
+      for (const expression of ownShape.baseTypes ?? []) {
+        const parent = this.resolveType(expression, effectiveContext);
+        if (parent.kind !== "resolved") continue;
+        const parentShape = this.inspectSchemaShapeRecursive(parent.instance, visiting);
+        if (parentShape.kind !== "object") continue;
+        for (const field of parentShape.fields) fields.set(field.serializedName, field);
+      }
+    }
+    visiting.delete(instanceId);
+    for (const field of ownShape.fields) fields.set(field.serializedName, field);
+    return {
+      ...ownShape,
+      fields: [...fields.values()]
     };
   }
 
@@ -167,7 +223,9 @@ export class IndexedTypeSystemAdapter implements TypeSystemAdapter {
     | { kind: "diagnostic"; result: Exclude<ResolutionResult, { kind: "resolved" | "scalar" }> } {
     switch (expression.kind) {
       case "reference": {
-        const scalar = this.rules.scalars[expression.name];
+        const lexicalBinding = context.genericBindings.find((binding) => binding.name === expression.name);
+        if (lexicalBinding) return this.canonicalize(lexicalBinding.expression, context);
+        const scalar = this.rules.scalars[expression.name] ?? (this.canonicalScalars.has(expression.name) ? expression.name : undefined);
         if (scalar) return { kind: "canonical", expression: { kind: "scalar", name: scalar } };
         if (this.isExternal(expression.name)) {
           return { kind: "diagnostic", result: {
@@ -190,6 +248,9 @@ export class IndexedTypeSystemAdapter implements TypeSystemAdapter {
         if (expression.target.kind === "reference") {
           const wrapper = this.wrapperRule(expression.target.name, context);
           if (wrapper && wrapper.behavior !== "materialized") {
+            if (wrapper.behavior === "stop") {
+              return { kind: "diagnostic", result: { kind: "unsupported", diagnostic: this.diagnostic("unsupported", expression, context) } };
+            }
             if (wrapper.behavior === "map-value") {
               const key = expression.arguments[0];
               const value = expression.arguments[1];
@@ -272,6 +333,12 @@ export class IndexedTypeSystemAdapter implements TypeSystemAdapter {
   }
 
   private visibleDeclarations(name: string, context: ResolutionContextFact): TypeDeclarationFact[] {
+    const enclosingIds = new Set(context.enclosingDeclarationIds);
+    const enclosing = this.declarations.filter((fact) => fact.identity.languageId === this.languageId
+      && fact.identity.repoId === context.repoId
+      && (enclosingIds.has(fact.id) || (fact.enclosingDeclarationId && enclosingIds.has(fact.enclosingDeclarationId)))
+      && (fact.identity.canonicalName === name || fact.identity.canonicalName.endsWith(`.${name}`)));
+    if (enclosing.length > 0) return enclosing.sort((left, right) => left.id.localeCompare(right.id));
     const exact = this.declarations.filter((fact) => fact.identity.languageId === this.languageId
       && fact.identity.repoId === context.repoId
       && fact.identity.resolutionScopeId === context.resolutionScopeId

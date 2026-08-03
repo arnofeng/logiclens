@@ -72,6 +72,10 @@ export interface SchemaDeclarationCandidate {
   declaration: TypeDeclarationIdentity;
   displayName: string;
   typeParameters: string[];
+  typeParameterBounds?: Record<string, TypeExpression[]>;
+  declarationKind?: "class" | "interface" | "record" | "enum";
+  modifiers?: string[];
+  enclosingDeclarationId?: string;
   shape: { kind: "object"; fields: SchemaFieldSpec[]; baseTypes?: TypeExpression[] } | { kind: "enum"; values: string[] };
   fileId: string;
   filePath: string;
@@ -125,6 +129,9 @@ export interface TypeDeclarationFact {
   fileId: string;
   declarationKind: string;
   typeParameters: string[];
+  typeParameterBounds?: Record<string, TypeExpression[]>;
+  modifiers?: string[];
+  enclosingDeclarationId?: string;
   candidate?: SchemaDeclarationCandidate;
   generation: string;
 }

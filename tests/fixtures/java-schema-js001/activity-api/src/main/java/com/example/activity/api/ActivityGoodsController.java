@@ -1,6 +1,7 @@
 package com.example.activity.api;
 
 import com.example.activity.model.ActivityGoodsQueryVO;
+import com.example.activity.model.ActivityPageDTO;
 import com.example.activity.model.GoodsFilter;
 import com.example.activity.wrapper.Resp;
 import com.example.activity.wrapper.TransportEnvelope;
@@ -19,4 +20,10 @@ public class ActivityGoodsController {
   @PostMapping("/wrapped")
   public TransportEnvelope<Resp<List<ActivityGoodsQueryVO>, String>> wrapped(
       @RequestBody GoodsFilter filter) { return null; }
+
+  @PostMapping("/filter-envelope")
+  public TransportEnvelope<GoodsFilter> filterEnvelope(@RequestBody GoodsFilter filter) { return null; }
+
+  @PostMapping("/page")
+  public ActivityPageDTO page(@RequestBody GoodsFilter filter) { return null; }
 }

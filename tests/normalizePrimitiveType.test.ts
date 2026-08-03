@@ -133,29 +133,28 @@ describe("normalizePrimitiveType", () => {
       expect(normalizePrimitiveType("java", "UUID")).toBe("uuid");
     });
 
-    it("handles Optional<T> nullable wrapper", () => {
-      expect(normalizePrimitiveType("java", "Optional<String>")).toBe("string?");
-      expect(normalizePrimitiveType("java", "Optional<Integer>")).toBe("number?");
-      // Nested Optional is unwrapped to the inner type
-      expect(normalizePrimitiveType("java", "Optional<OrderDTO>")).toBe("OrderDTO?");
+    it("preserves Optional<T> for the Java type-system projection phase", () => {
+      expect(normalizePrimitiveType("java", "Optional<String>")).toBe("Optional<String>");
+      expect(normalizePrimitiveType("java", "Optional<Integer>")).toBe("Optional<Integer>");
+      expect(normalizePrimitiveType("java", "Optional<OrderDTO>")).toBe("Optional<OrderDTO>");
     });
 
-    it("handles List<T> as array", () => {
-      expect(normalizePrimitiveType("java", "List<String>")).toBe("array<string>");
-      expect(normalizePrimitiveType("java", "List<OrderItem>")).toBe("array<OrderItem>");
+    it("preserves List<T> for the Java type-system projection phase", () => {
+      expect(normalizePrimitiveType("java", "List<String>")).toBe("List<String>");
+      expect(normalizePrimitiveType("java", "List<OrderItem>")).toBe("List<OrderItem>");
     });
 
-    it("handles ArrayList<T> as array", () => {
-      expect(normalizePrimitiveType("java", "ArrayList<Integer>")).toBe("array<number>");
+    it("preserves ArrayList<T> for the Java type-system projection phase", () => {
+      expect(normalizePrimitiveType("java", "ArrayList<Integer>")).toBe("ArrayList<Integer>");
     });
 
-    it("handles Set<T> as array", () => {
-      expect(normalizePrimitiveType("java", "Set<String>")).toBe("array<string>");
+    it("preserves Set<T> for the Java type-system projection phase", () => {
+      expect(normalizePrimitiveType("java", "Set<String>")).toBe("Set<String>");
     });
 
-    it("retains Map<K,V> key and value types", () => {
-      expect(normalizePrimitiveType("java", "Map<String, Object>")).toBe("map<string,any>");
-      expect(normalizePrimitiveType("java", "HashMap<String, String>")).toBe("map<string,string>");
+    it("preserves Map<K,V> for the Java type-system projection phase", () => {
+      expect(normalizePrimitiveType("java", "Map<String, Object>")).toBe("Map<String, Object>");
+      expect(normalizePrimitiveType("java", "HashMap<String, String>")).toBe("HashMap<String, String>");
     });
 
     it("returns complex types as-is", () => {

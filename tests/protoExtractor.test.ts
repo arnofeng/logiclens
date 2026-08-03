@@ -6,7 +6,6 @@ import { objectSchemaFields } from "./helpers/schemaModel.js";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { protoExtractor } from "../src/core/contracts/extraction/builtin/protoExtractor.js";
 import { repoId } from "../src/shared/path.js";
-import { resolveSchemaRelations } from "../src/core/contracts/matching/schemaResolver.js";
 import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
 import { reconcileNonJavaSchemaFacts } from "../src/core/contracts/extraction/nonJavaSchemaReconciler.js";
 import type { GrpcMethodSpec, SchemaSpec } from "../src/core/contracts/spec.js";

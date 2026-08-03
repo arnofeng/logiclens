@@ -403,7 +403,7 @@ describe("non-Java schema reconciliation", () => {
     expect([repeated.id, repeated.relationId]).toEqual([provenance.id, provenance.relationId]);
   });
 
-  it("owns behavior fingerprints by repo/language/scope and hashes shape and resolution inputs", () => {
+  it("owns behavior fingerprints by repo/language/scope and hashes only resolution behavior inputs", () => {
     const declaration = {
       languageId: "typescript",
       repoId: "repo:fingerprint",
@@ -486,8 +486,65 @@ describe("non-Java schema reconciliation", () => {
       resolutionScopeId: declaration.resolutionScopeId
     });
     expect(initial.internal.declarations[0]?.id).toBe(shapeChanged.internal.declarations[0]?.id);
-    expect(shapeChanged.internal.fingerprints[0]?.id).not.toBe(fingerprint.id);
-    expect(inputsChanged.internal.fingerprints[0]?.id).not.toBe(fingerprint.id);
+    // Ordinary declaration edits affect the declaration/dependency catalog,
+    // not adapter behavior. Treating them as behavior changes would force a
+    // full reconciliation on every changed-only source update.
+    expect(shapeChanged.internal.fingerprints[0]?.id).toBe(fingerprint.id);
+    expect(inputsChanged.internal.fingerprints[0]?.id).toBe(fingerprint.id);
     expect(initial.internal.fingerprints[0]).not.toHaveProperty("sourceFileId");
+  });
+
+  it("normalizes empty source symbols across persisted contract-spec round trips", () => {
+    const declaration = {
+      languageId: "typescript",
+      repoId: "repo:source-symbol-roundtrip",
+      resolutionScopeId: "module:payload",
+      canonicalName: "Payload"
+    };
+    const declarationId = typeDeclarationIdentityId(declaration);
+    const payload: SchemaDeclarationCandidate = {
+      declaration,
+      displayName: "Payload",
+      typeParameters: [],
+      shape: { kind: "object", fields: [] },
+      fileId: "file:payload",
+      filePath: "payload.ts",
+      framework: "ts-schema",
+      evidence: { line: 1, raw: "interface Payload", rule: "fixture", confidence: 1 }
+    };
+    const context: ResolutionContextFact = {
+      id: "context:event",
+      languageId: declaration.languageId,
+      repoId: declaration.repoId,
+      resolutionScopeId: "module:event",
+      fileId: "file:event",
+      imports: [{
+        localName: "Payload",
+        canonicalName: declaration.canonicalName,
+        declarationId,
+        resolutionScopeId: declaration.resolutionScopeId,
+        kind: "named"
+      }],
+      enclosingDeclarationIds: [],
+      genericBindings: [],
+      generation: ""
+    };
+    const event = (sourceSymbolId: string | undefined): ContractSpecNode => ({
+      id: "spec:event-roundtrip",
+      contractId: "contract:event-roundtrip",
+      specKind: "event",
+      repoId: declaration.repoId,
+      fileId: context.fileId,
+      sourceSymbolId,
+      evidenceId: "evidence:event-roundtrip",
+      canonicalKey: "payload.updated",
+      specJson: JSON.stringify({ kind: "event", topic: "payload.updated", payloadType: "Payload" }),
+      confidence: 1
+    });
+    const clean = reconcileNonJavaSchemaFacts([event(undefined)], [], [payload], { resolutionContexts: [context] });
+    const restored = reconcileNonJavaSchemaFacts([event("  ")], [], [payload], { resolutionContexts: [context] });
+    expect(restored.internal.resolutionContexts).toEqual(clean.internal.resolutionContexts);
+    expect(restored.internal.roots).toEqual(clean.internal.roots);
+    expect(restored.internal.resolutionContexts.some((value) => value.sourceSymbolId === "")).toBe(false);
   });
 });

@@ -13,10 +13,7 @@ export interface ResolutionContext {
   specs: ContractSpecNode[];
   /** Role lookup keyed by `${contractId}:${repoId}`. */
   specRoles: SpecRoleMap;
-  /**
-   * Semantic relations already produced by extractors. Only the legacy Java
-   * schema path may still contain pending `schema-ref:` placeholder IDs.
-   */
+  /** Semantic relations already produced by typed-root materialization. */
   existingRelations: SemanticRelationEdge[];
 }
 

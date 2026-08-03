@@ -14,7 +14,7 @@ import type { ResolutionResult, SchemaShape, TypeProjection, TypeSystemAdapter }
 
 export interface MaterializedSchemaType {
   identity: TypeInstanceIdentity;
-  shape: SchemaShape;
+  shape: Exclude<SchemaShape, { kind: "unsupported" }>;
   depth: number;
 }
 
@@ -33,6 +33,7 @@ type QueueItem = {
   depth: number;
   fieldPath: string[];
   typePath: CanonicalTypeExpression[];
+  projectionRuleIds: string[];
 };
 
 export function materializeSchemaRoot(input: {
@@ -53,7 +54,8 @@ export function materializeSchemaRoot(input: {
       kind: "type-instance",
       declarationId: input.ownerInstance.declarationId,
       arguments: input.ownerInstance.canonicalTypeArguments
-    }] : []
+    }] : [],
+    projectionRuleIds: []
   }];
   const types = new Map<string, MaterializedSchemaType>();
   const dependencies = new Map<string, SchemaDependencyFact>();
@@ -72,13 +74,16 @@ export function materializeSchemaRoot(input: {
   };
 
   while (queue.length > 0) {
+    queue.sort((left, right) => left.depth - right.depth
+      || queueItemSortKey(adapter, left).localeCompare(queueItemSortKey(adapter, right))
+      || canonicalSerialize(left.fieldPath).localeCompare(canonicalSerialize(right.fieldPath)));
     const item = queue.shift()!;
-    if (item.depth > adapter.maxDepth || types.size >= adapter.maxTypesPerRoot) {
+    if (item.depth > adapter.maxDepth) {
       truncated = true;
       const diagnostic: SchemaDiagnosticFact = {
         id: stableFactId("schema-diagnostic", {
           code: "truncated", rootReferenceId: root.id, fieldPath: item.fieldPath,
-          limit: item.depth > adapter.maxDepth ? { kind: "depth", value: adapter.maxDepth } : { kind: "types", value: adapter.maxTypesPerRoot }
+          limit: { kind: "depth", value: adapter.maxDepth }
         }),
         generation: root.generation,
         repoId: root.repoId,
@@ -87,7 +92,7 @@ export function materializeSchemaRoot(input: {
         rootReferenceId: root.id,
         code: "truncated",
         fieldPath: item.fieldPath,
-        limit: item.depth > adapter.maxDepth ? { kind: "depth", value: adapter.maxDepth } : { kind: "types", value: adapter.maxTypesPerRoot }
+        limit: { kind: "depth", value: adapter.maxDepth }
       };
       recordDiagnostic(diagnostic, item.fieldPath);
       continue;
@@ -95,7 +100,13 @@ export function materializeSchemaRoot(input: {
 
     const projection = adapter.projectType(item.expression, item.context);
     if (projection.kind === "transparent") {
-      for (const expression of projection.expressions) queue.push({ ...item, expression });
+      for (const expression of projection.expressions) {
+        queue.push({
+          ...item,
+          expression,
+          projectionRuleIds: [...item.projectionRuleIds, projection.ruleId]
+        });
+      }
       continue;
     }
     if (projection.kind === "stop") {
@@ -120,12 +131,31 @@ export function materializeSchemaRoot(input: {
     if (resolution.kind === "scalar") continue;
 
     const instanceId = typeInstanceIdentityId(resolution.instance);
+    const previouslyVisited = types.has(instanceId);
+    if (!previouslyVisited && types.size >= adapter.maxTypesPerRoot) {
+      truncated = true;
+      recordDiagnostic({
+        id: stableFactId("schema-diagnostic", {
+          code: "truncated", rootReferenceId: root.id, fieldPath: item.fieldPath,
+          candidate: resolution.instance, limit: { kind: "types", value: adapter.maxTypesPerRoot }
+        }),
+        generation: root.generation,
+        repoId: root.repoId,
+        sourceFileId: root.ownerFileId,
+        ownerSpecId: root.ownerSpecId,
+        rootReferenceId: root.id,
+        code: "truncated",
+        fieldPath: item.fieldPath,
+        limit: { kind: "types", value: adapter.maxTypesPerRoot }
+      }, item.fieldPath);
+      continue;
+    }
     const shape = adapter.inspectSchemaShape(resolution.instance);
     if (shape.kind === "unsupported") {
       recordDiagnostic(shape.diagnostic, item.fieldPath);
       continue;
     }
-    if (!types.has(instanceId)) types.set(instanceId, { identity: resolution.instance, shape, depth: item.depth });
+    if (!previouslyVisited) types.set(instanceId, { identity: resolution.instance, shape, depth: item.depth });
 
     const parentExpression = item.typePath.at(-1);
     const parentInstance = parentExpression?.kind === "type-instance" ? {
@@ -170,13 +200,19 @@ export function materializeSchemaRoot(input: {
       typePath: [...item.typePath, resolution.expression],
       fieldPath: item.fieldPath,
       declarationIds: [...new Set([...item.typePath.flatMap(declarationIds), resolution.instance.declarationId])],
-      projectionRuleId: adapter.languageId,
+      projectionRuleId: item.projectionRuleIds.length > 0
+        ? item.projectionRuleIds.join(" > ")
+        : `${adapter.ruleSetVersion}:materialized`,
       projectionRuleVersion: adapter.ruleSetVersion,
       resolution: "resolved",
       evidenceId: root.evidenceId,
       generation: root.generation
     };
     provenance.set(provenanceFact.id, provenanceFact);
+
+    // visited controls expansion only. The relation/provenance above must be
+    // retained for self references, cycles, and repeated fields.
+    if (previouslyVisited) continue;
 
     if (shape.kind === "object") {
       const declarationContext = input.contextForDeclaration?.(resolution.instance.declarationId) ?? item.context;
@@ -189,7 +225,8 @@ export function materializeSchemaRoot(input: {
           context: declarationContext,
           depth: item.depth + 1,
           fieldPath: [...item.fieldPath, field.serializedName],
-          typePath: [...item.typePath, resolution.expression]
+          typePath: [...item.typePath, resolution.expression],
+          projectionRuleIds: item.projectionRuleIds
         });
       }
       for (const [index, expression] of (shape.baseTypes ?? []).entries()) {
@@ -198,7 +235,8 @@ export function materializeSchemaRoot(input: {
           context: declarationContext,
           depth: item.depth + 1,
           fieldPath: [...item.fieldPath, "$base", String(index)],
-          typePath: [...item.typePath, resolution.expression]
+          typePath: [...item.typePath, resolution.expression],
+          projectionRuleIds: item.projectionRuleIds
         });
       }
     }
@@ -212,6 +250,17 @@ export function materializeSchemaRoot(input: {
     relations: [...relations.values()].sort((a, b) => `${a.fromSpecId}:${a.toSpecId}:${a.kind}`.localeCompare(`${b.fromSpecId}:${b.toSpecId}:${b.kind}`)),
     truncated
   };
+}
+
+function queueItemSortKey(adapter: TypeSystemAdapter, item: QueueItem): string {
+  const projection = adapter.projectType(item.expression, item.context);
+  if (projection.kind === "transparent") {
+    return `0:${projection.expressions.map((expression) => queueItemSortKey(adapter, { ...item, expression })).sort().join("|")}`;
+  }
+  const resolution = adapter.resolveType(projection.kind === "materialized" ? projection.expression : item.expression, item.context);
+  if (resolution.kind === "resolved") return `1:${canonicalSerialize(resolution.instance)}`;
+  if (resolution.kind === "scalar") return `2:${resolution.scalar}`;
+  return `3:${resolution.kind}:${resolution.diagnostic.id}`;
 }
 
 function canonicalToTypeExpression(expression: CanonicalTypeExpression): TypeExpression {

@@ -98,13 +98,13 @@ async function openKuzu(prefix: string): Promise<{ db: KuzuGraphDB; directory: s
 
 function schemaNames(specs: Array<{ specKind: string; specJson: string }>): string[] {
   return specs.filter((spec) => spec.specKind === "schema").flatMap((spec) => {
-    const parsed = JSON.parse(spec.specJson) as { name?: string };
-    return parsed.name ? [parsed.name] : [];
+    const parsed = JSON.parse(spec.specJson) as { displayName?: string };
+    return parsed.displayName ? [parsed.displayName] : [];
   }).sort();
 }
 
-describe("JS-001 Java schema failure baseline", () => {
-  it("characterizes suffix-only discovery, pending refs, graph relations, impact, and lexical projection", async () => {
+describe("Java schema deterministic discovery lifecycle", () => {
+  it("closes the suffix/pending baseline through graph, impact, and lexical projection", async () => {
     const target = JSON.parse(await fs.readFile(path.join(fixtureRoot, "baseline-target.json"), "utf8")) as BaselineTarget;
     const coverage = JSON.parse(await fs.readFile(path.join(fixtureRoot, "coverage-matrix.json"), "utf8")) as Record<string, string[]>;
     expect(Object.keys(coverage)).toHaveLength(13);
@@ -130,10 +130,8 @@ describe("JS-001 Java schema failure baseline", () => {
     expect(scan.parsedFiles.flatMap((file) => "symbols" in file ? file.symbols.map((symbol) => symbol.name) : []))
       .toEqual(expect.arrayContaining(["ActivityGoodsQueryVO", "LegacyChildDTO"]));
     const rawJava = await javaSchemaExtractor.extract({ repos: [repo], parsedFiles: scan.parsedFiles, repoResolver: () => repo });
-    const pendingBeforeWrite = rawJava.semanticRelations.filter((relation) =>
-      relation.fromSpecId.includes(":pending") || relation.toSpecId.startsWith("schema-ref:")
-    );
-    expect(pendingBeforeWrite.length).toBeGreaterThanOrEqual(target.currentCharacterization.pendingRefsBeforeWriteMinimum);
+    expect(rawJava.semanticRelations).toHaveLength(0);
+    expect(rawJava.schemaDeclarations.map((candidate) => candidate.displayName)).toEqual(expect.arrayContaining(target.targetGroundTruth.schemaNames));
 
     const facts = await buildGraphFactsBatch({
       workspaceId: deriveWorkspaceId(config.systemName),
@@ -147,55 +145,48 @@ describe("JS-001 Java schema failure baseline", () => {
       config
     });
     const currentSchemaNames = schemaNames(facts.contractSpecs);
-    expect(target.currentCharacterization.missingSchemaNames.every((name) => !currentSchemaNames.includes(name))).toBe(true);
-    expect(target.targetGroundTruth.schemaNames.every((name) => !currentSchemaNames.includes(name))).toBe(true);
+    expect(currentSchemaNames).toEqual(expect.arrayContaining(target.targetGroundTruth.schemaNames));
     expect(facts.contractSpecs.some((spec) => spec.specKind === "http-endpoint")).toBe(true);
 
-    const pendingFacts = facts.semanticRelations.filter((relation) =>
-      relation.fromSpecId.includes(":pending") || relation.toSpecId.startsWith("schema-ref:")
-    );
-    expect(pendingFacts).toHaveLength(target.currentCharacterization.pendingRefsAfterWrite);
+    const specIds = new Set(facts.contractSpecs.map((spec) => spec.id));
+    expect(facts.semanticRelations.every((relation) => specIds.has(relation.fromSpecId) && specIds.has(relation.toSpecId))).toBe(true);
     const targetRelations = facts.semanticRelations.filter((relation) => {
       const from = facts.contractSpecs.find((spec) => spec.id === relation.fromSpecId);
       const to = facts.contractSpecs.find((spec) => spec.id === relation.toSpecId);
       return `${from?.specJson ?? ""}${to?.specJson ?? ""}`.includes("ActivityGoodsQueryVO");
     });
-    expect(targetRelations.filter((relation) => target.currentCharacterization.missingRelationKinds.includes(relation.kind))).toHaveLength(0);
+    expect(target.targetGroundTruth.relationKinds.every((kind) => targetRelations.some((relation) => relation.kind === kind))).toBe(true);
 
     const report = analyzeImpact(
       { target: "schema:ActivityGoodsQueryVO", changeType: "field-removed", detail: "activityId" },
       facts.contractSpecs,
       facts.semanticRelations
     );
-    expect(report.impacts).toHaveLength(target.currentCharacterization.impactTargetMatches);
+    expect(report.impacts.length).toBeGreaterThanOrEqual(target.targetGroundTruth.impactTargetMatchesMinimum);
     const baselineVsTargetDiff = {
       missingSchemas: target.targetGroundTruth.schemaNames.filter((name) => !currentSchemaNames.includes(name)),
       missingRelations: target.targetGroundTruth.relationKinds.filter((kind) =>
         !targetRelations.some((relation) => relation.kind === kind)
       ),
       impactMatchDeficit: target.targetGroundTruth.impactTargetMatchesMinimum - report.impacts.length,
-      pendingRefExcessBeforeWrite: pendingBeforeWrite.length - target.targetGroundTruth.pendingRefsBeforeWrite,
-      pendingRefExcessAfterWrite: pendingFacts.length - target.targetGroundTruth.pendingRefsAfterWrite
+      pendingRefExcessBeforeWrite: rawJava.semanticRelations.length - target.targetGroundTruth.pendingRefsBeforeWrite,
+      pendingRefExcessAfterWrite: facts.semanticRelations.filter((relation) => !specIds.has(relation.fromSpecId) || !specIds.has(relation.toSpecId)).length
     };
-    expect(baselineVsTargetDiff).toEqual({
-      missingSchemas: target.targetGroundTruth.schemaNames,
-      missingRelations: target.targetGroundTruth.relationKinds,
-      impactMatchDeficit: target.targetGroundTruth.impactTargetMatchesMinimum,
-      pendingRefExcessBeforeWrite: expect.any(Number),
-      pendingRefExcessAfterWrite: 0
-    });
-    expect(baselineVsTargetDiff.pendingRefExcessBeforeWrite).toBeGreaterThan(0);
+    expect(baselineVsTargetDiff.missingSchemas).toEqual([]);
+    expect(baselineVsTargetDiff.missingRelations).toEqual([]);
+    expect(baselineVsTargetDiff.impactMatchDeficit).toBeLessThanOrEqual(0);
+    expect(baselineVsTargetDiff.pendingRefExcessBeforeWrite).toBe(0);
+    expect(baselineVsTargetDiff.pendingRefExcessAfterWrite).toBe(0);
 
     const { db } = await openKuzu("test-java-schema-baseline-");
     try {
       await runIndexing(db, config, { cwd: fixtureRoot, writeMode: "auto" });
       const snapshot = await runSchemaSnapshotConformance(db, deriveWorkspaceId(config.systemName));
-      expect(schemaNames(snapshot.publicGraph.contractSpecs as Array<{ specKind: string; specJson: string }>)).not.toEqual(
+      expect(schemaNames(snapshot.publicGraph.contractSpecs as Array<{ specKind: string; specJson: string }>)).toEqual(
         expect.arrayContaining(target.targetGroundTruth.schemaNames)
       );
-      expect(snapshot.publicGraph.semanticRelations.some((relation) =>
-        String(relation.fromSpecId).includes(":pending") || String(relation.toSpecId).startsWith("schema-ref:")
-      )).toBe(false);
+      const activeSpecIds = new Set(snapshot.publicGraph.contractSpecs.map((spec) => spec.id));
+      expect(snapshot.publicGraph.semanticRelations.every((relation) => activeSpecIds.has(String(relation.fromSpecId)) && activeSpecIds.has(String(relation.toSpecId)))).toBe(true);
 
       const activityCode = snapshot.lexical.filter((document) =>
         document.kind === "code" && String(document.searchableText).includes("ActivityGoodsQueryVO")
@@ -204,7 +195,7 @@ describe("JS-001 Java schema failure baseline", () => {
         document.kind === "contractSpec" && String(document.searchableText).includes("ActivityGoodsQueryVO")
       );
       expect(activityCode.length).toBeGreaterThan(0);
-      expect(activityContractSpecs).toHaveLength(0);
+      expect(activityContractSpecs.length).toBeGreaterThan(0);
       expect(snapshot.lexical.every((document) => typeof document.sourceHash === "string" && document.sourceHash.length > 0)).toBe(true);
       const readSnapshot = await pinPublicGraphReadSnapshot(db, deriveWorkspaceId(config.systemName));
       const activityHits = await new KuzuWorkspaceLexicalStore(db).search(
@@ -219,7 +210,7 @@ describe("JS-001 Java schema failure baseline", () => {
         return document?.canonicalId === "ActivityGoodsQueryVO" ||
           String(document?.searchableText ?? "").includes("ActivityGoodsQueryVO");
       });
-      expect(targetContractSpecHits).toHaveLength(0);
+      expect(targetContractSpecHits.length).toBeGreaterThan(0);
       const lexicalKinds = new Set(snapshot.lexical.map((document) => document.kind));
       expect(["code", "file", "contract", "contractSpec"].every((kind) => lexicalKinds.has(kind))).toBe(true);
 

@@ -480,6 +480,16 @@ export function projectContractDocuments(facts: GraphFactsBatch, workspaceId: st
 export function projectContractSpecDocuments(facts: GraphFactsBatch, workspaceId: string, context = createProjectionContext(facts)): LexicalDocument[] {
   const files = context.files;
   const evidence = contextEvidence(context, facts);
+  const specsById = new Map((facts.contractSpecs ?? []).map((spec) => [spec.id, spec]));
+  const relatedSchemaNames = new Map<string, Set<string>>();
+  for (const relation of facts.semanticRelations ?? []) {
+    if (relation.kind !== "USES_SCHEMA" && relation.kind !== "REQUEST_SCHEMA" && relation.kind !== "RESPONSE_SCHEMA" && relation.kind !== "EVENT_PAYLOAD") continue;
+    const target = specsById.get(relation.toSpecId);
+    if (!target || target.specKind !== "schema") continue;
+    const names = relatedSchemaNames.get(relation.fromSpecId) ?? new Set<string>();
+    names.add(target.canonicalKey);
+    relatedSchemaNames.set(relation.fromSpecId, names);
+  }
   const edgesBySpec = new Map<string, ContractSpecEdge[]>();
   for (const edge of facts.contractSpecEdges ?? []) {
     const rows = edgesBySpec.get(edge.specId) ?? [];
@@ -491,7 +501,9 @@ export function projectContractSpecDocuments(facts: GraphFactsBatch, workspaceId
     const location = proof ? evidenceLocation(proof, files) : undefined;
     if (!proof || !location || spec.repoId !== proof.repoId || spec.fileId !== proof.fileId) return [];
     const edges = (edgesBySpec.get(spec.id) ?? []).filter((edge) => edge.contractId === spec.contractId && edge.evidenceId === spec.evidenceId);
-    const searchableText = meaningfulText([spec.specKind, spec.canonicalKey, spec.httpMethod, spec.pathTemplate, spec.eventTopic, spec.framework, spec.version, location.path]);
+    const schemaTerms = schemaSpecProjectionTerms(spec.specJson);
+    const relatedNames = [...(relatedSchemaNames.get(spec.id) ?? [])].sort();
+    const searchableText = meaningfulText([spec.specKind, spec.canonicalKey, spec.httpMethod, spec.pathTemplate, spec.eventTopic, spec.framework, spec.version, ...schemaTerms, ...relatedNames, location.path]);
     return [makeLocatedDocument({
       workspaceId,
       kind: "contractSpec",
@@ -505,9 +517,53 @@ export function projectContractSpecDocuments(facts: GraphFactsBatch, workspaceId
       active: allActive(spec, proof, location.file, ...edges),
       batchId: firstBatchId(facts, spec, proof, ...edges, location.file),
       sourceFileHash: location.file.hash,
-      fingerprintFields: [spec.id, spec.contractId, spec.specKind, spec.repoId, spec.fileId, spec.evidenceId, spec.canonicalKey, spec.httpMethod ?? "", spec.pathTemplate ?? "", spec.eventTopic ?? "", spec.framework ?? "", spec.version ?? "", location.path]
+      fingerprintFields: [spec.id, spec.contractId, spec.specKind, spec.repoId, spec.fileId, spec.evidenceId, spec.canonicalKey, spec.httpMethod ?? "", spec.pathTemplate ?? "", spec.eventTopic ?? "", spec.framework ?? "", spec.version ?? "", schemaTerms, relatedNames, location.path]
     })];
   }));
+}
+
+function schemaSpecProjectionTerms(value: string): string[] {
+  try {
+    const spec = JSON.parse(value) as Record<string, unknown>;
+    if (spec.kind !== "schema" || !spec.shape || typeof spec.shape !== "object") return [];
+    const shape = spec.shape as { kind?: unknown; fields?: unknown; values?: unknown; baseTypes?: unknown };
+    const terms: string[] = [
+      ...(typeof spec.displayName === "string" ? [spec.displayName] : []),
+      ...(typeof shape.kind === "string" ? [shape.kind] : [])
+    ];
+    if (Array.isArray(shape.values)) terms.push(...shape.values.filter((item): item is string => typeof item === "string"));
+    if (Array.isArray(shape.fields)) {
+      for (const value of shape.fields) {
+        if (!value || typeof value !== "object") continue;
+        const field = value as { sourceName?: unknown; serializedName?: unknown; type?: unknown };
+        if (typeof field.sourceName === "string") terms.push(field.sourceName);
+        if (typeof field.serializedName === "string") terms.push(field.serializedName);
+        terms.push(...schemaTypeProjectionTerms(field.type));
+      }
+    }
+    if (Array.isArray(shape.baseTypes)) {
+      for (const baseType of shape.baseTypes) terms.push(...schemaTypeProjectionTerms(baseType));
+    }
+    return terms;
+  } catch {
+    return [];
+  }
+}
+
+function schemaTypeProjectionTerms(value: unknown): string[] {
+  if (!value || typeof value !== "object") return [];
+  const node = value as Record<string, unknown>;
+  const terms: string[] = [];
+  for (const key of ["name", "canonicalName", "declarationId", "scalar", "kind"] as const) {
+    if (typeof node[key] === "string") terms.push(node[key]);
+  }
+  for (const key of ["expression", "normalizedExpression", "symbol", "target", "element", "inner", "key", "value", "type"] as const) {
+    terms.push(...schemaTypeProjectionTerms(node[key]));
+  }
+  for (const key of ["arguments", "members"] as const) {
+    if (Array.isArray(node[key])) for (const child of node[key]) terms.push(...schemaTypeProjectionTerms(child));
+  }
+  return terms;
 }
 
 function entityDocumentsFromMentions(facts: GraphFactsBatch, workspaceId: string, entities: Map<string, EntityNode>, files: Map<string, FileLocation>): LexicalDocument[] {

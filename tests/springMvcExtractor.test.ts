@@ -4,19 +4,27 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { springMvcExtractor } from "../src/core/contracts/extraction/builtin/springMvcExtractor.js";
+import { extractCrossRepoContracts } from "../src/core/contracts/extraction/crossRepoContracts.js";
 import { repoId } from "../src/shared/path.js";
 async function extractFromSource(source: string) {
+  return extractFromSources({ "TestController.java": source });
+}
+
+async function extractFromSources(sources: Record<string, string>) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-spring-test-"));
-  const relativePath = "src/main/java/com/example/TestController.java";
-  const absolutePath = path.join(dir, relativePath);
-  await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-  await fs.writeFile(absolutePath, source, "utf8");
   const repo = { id: repoId("spring-test"), name: "spring-test", path: dir, remoteUrl: "", branch: "", commitSha: "", language: "java", indexedAt: "now" } as any;
-  const parsed = await parseSourceFile({ repoId: repo.id, absolutePath, relativePath, language: "java" });
+  const parsedFiles = [];
+  for (const [name, source] of Object.entries(sources)) {
+    const relativePath = `src/main/java/com/example/${name}`;
+    const absolutePath = path.join(dir, relativePath);
+    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+    await fs.writeFile(absolutePath, source, "utf8");
+    parsedFiles.push(await parseSourceFile({ repoId: repo.id, absolutePath, relativePath, language: "java" }));
+  }
   const bundle = await springMvcExtractor.extract({
-    repos: [repo], parsedFiles: [parsed], repoResolver: () => repo
+    repos: [repo], parsedFiles, repoResolver: () => repo
   });
-  return { bundle, repo, parsed };
+  return { bundle, repo, parsed: parsedFiles[0]!, parsedFiles };
 }
 
 describe("Spring MVC Extractor HTTP method extraction", () => {
@@ -160,7 +168,7 @@ public class OrderController {
     expect(JSON.parse(spec!.specJson).method).toBeUndefined();
   });
 
-  it("preserves declared generic response types and unwraps HTTP body wrappers", async () => {
+  it("preserves declared generic request/response types for adapter projection", async () => {
     const { bundle } = await extractFromSource(`
 @RestController
 public class ActivityController {
@@ -181,9 +189,119 @@ public class ActivityController {
       expect.objectContaining({
         path: "/wrapped",
         requestBodyType: "ActivityCreateDTO",
-        responseBodyType: "Resp<String,String>",
+        responseBodyType: "ResponseEntity<Resp<String,String>>",
         declaredResponseType: "ResponseEntity<Resp<String,String>>"
       })
     ]));
+  });
+
+  it("assigns inherited generic endpoints to the concrete controller owner", async () => {
+    const { bundle } = await extractFromSources({
+      "BaseController.java": `
+package com.example;
+public abstract class BaseController<T> {
+  @PostMapping("/items")
+  public ResponseEntity<List<T>> create(@RequestBody T request) { return null; }
+}`,
+      "GoodsController.java": `
+package com.example;
+@RestController
+@RequestMapping("/api")
+public class GoodsController extends BaseController<GoodsPayload> {}`
+    });
+    const inherited = bundle.contractSpecs.map((row) => JSON.parse(row.specJson)).find((spec) => spec.path === "/api/items");
+    expect(inherited).toMatchObject({
+      ownerType: "com.example.GoodsController",
+      requestBodyType: "T",
+      declaredResponseType: "ResponseEntity<List<T>>",
+      ownerGenericBindings: [{ name: "T", type: "GoodsPayload" }]
+    });
+  });
+
+  it("keeps overloaded endpoint identities distinct by canonical method signature", async () => {
+    const { bundle } = await extractFromSource(`
+package com.example;
+@RestController
+public class OverloadedController {
+  @PostMapping("/items") public Item first(@RequestBody FirstInput input) { return null; }
+  @PostMapping("/items") public Item first(@RequestBody SecondInput input) { return null; }
+}`);
+    const specs = bundle.contractSpecs.filter((row) => row.canonicalKey === "POST:/items");
+    expect(specs).toHaveLength(2);
+    expect(new Set(specs.map((row) => row.id)).size).toBe(2);
+    expect(new Set(specs.map((row) => JSON.parse(row.specJson).methodSignature))).toEqual(new Set([
+      "first(FirstInput):Item",
+      "first(SecondInput):Item"
+    ]));
+  });
+
+  it("finalizes generic mappings inherited through a controller interface chain", async () => {
+    const { bundle } = await extractFromSources({
+      "BaseApi.java": `
+package com.example;
+public interface BaseApi<T> {
+  @PostMapping("/items")
+  ResponseEntity<List<T>> create(@RequestBody T request);
+}`,
+      "GoodsApi.java": `
+package com.example;
+public interface GoodsApi extends BaseApi<GoodsPayload> {}`,
+      "GoodsController.java": `
+package com.example;
+@RestController
+@RequestMapping("/api")
+public class GoodsController implements GoodsApi {}`
+    });
+    const inherited = bundle.contractSpecs.map((row) => JSON.parse(row.specJson)).find((spec) => spec.path === "/api/items");
+    expect(inherited).toMatchObject({
+      ownerType: "com.example.GoodsController",
+      requestBodyType: "T",
+      declaredResponseType: "ResponseEntity<List<T>>",
+      ownerGenericBindings: [{ name: "T", type: "GoodsPayload" }]
+    });
+  });
+
+  it("materializes roots finalized from an inherited generic controller interface", async () => {
+    const { repo, parsedFiles } = await extractFromSources({
+      "BaseApi.java": `
+package com.example;
+public interface BaseApi<T> {
+  @PostMapping("/items")
+  ResponseEntity<List<T>> create(@RequestBody T request);
+}`,
+      "GoodsApi.java": `package com.example; public interface GoodsApi extends BaseApi<GoodsPayload> {}`,
+      "GoodsController.java": `
+package com.example;
+@RestController
+@RequestMapping("/api")
+public class GoodsController implements GoodsApi {}`,
+      "GoodsPayload.java": `package com.example; public record GoodsPayload(String sku) {}`
+    });
+    const facts = await extractCrossRepoContracts([repo], parsedFiles);
+    const goods = facts.contractSpecs.find((node) => node.specKind === "schema"
+      && (JSON.parse(node.specJson) as { displayName?: string }).displayName === "GoodsPayload");
+    const endpoints = new Set(facts.contractSpecs.filter((node) => node.specKind === "http-endpoint").map((node) => node.id));
+    expect(goods).toBeDefined();
+    expect(facts.semanticRelations.some((relation) => endpoints.has(relation.fromSpecId)
+      && relation.toSpecId === goods?.id && relation.kind === "REQUEST_SCHEMA")).toBe(true);
+    expect(facts.semanticRelations.some((relation) => endpoints.has(relation.fromSpecId)
+      && relation.toSpecId === goods?.id && relation.kind === "RESPONSE_SCHEMA")).toBe(true);
+  });
+
+  it("extracts a directly annotated controller interface", async () => {
+    const { bundle } = await extractFromSource(`
+package com.example;
+@RestController
+@RequestMapping("/interface")
+public interface ControllerApi<T extends Payload> {
+  @PostMapping("/create")
+  T create(@RequestBody T request);
+}`);
+    const endpoint = bundle.contractSpecs.map((row) => JSON.parse(row.specJson)).find((spec) => spec.path === "/interface/create");
+    expect(endpoint).toMatchObject({
+      ownerType: "com.example.ControllerApi",
+      requestBodyType: "T",
+      declaredResponseType: "T"
+    });
   });
 });

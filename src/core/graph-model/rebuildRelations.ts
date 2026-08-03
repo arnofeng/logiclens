@@ -394,7 +394,7 @@ async function resolveAndWriteSemanticRelations(
   }
 
   // ------------------------------------------------------------------
-  // Run the language-independent dual-track resolver on the candidate set.
+  // Rebuild non-schema matches while retaining finalized schema relations.
   // ------------------------------------------------------------------
   const resolvedEdges = resolveSemanticRelations({
     contractSpecs,

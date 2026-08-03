@@ -3,7 +3,6 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { csharpSchemaExtractor } from "../packages/plugin-csharp/src/schemaFacts.js";
 import { ExtractionBuilder } from "../src/core/contracts/extraction/extractionBuilder.js";
-import { resolveSchemaRelations } from "../src/core/contracts/matching/schemaResolver.js";
 import { adaptFactExtractor, adaptLanguageParser } from "../src/core/plugins/adapter.js";
 import { reconcileNonJavaSchemaFacts } from "../src/core/contracts/extraction/nonJavaSchemaReconciler.js";
 import type { SchemaSpec } from "../src/core/contracts/spec.js";
@@ -266,7 +265,6 @@ describe("C# schema host integration", () => {
       const parsed = JSON.parse(spec.specJson) as { declaration: unknown };
       return JSON.stringify(parsed.declaration);
     })));
-    const relations = resolveSchemaRelations([...facts.contractSpecs], new Map(), []);
-    expect(relations.filter((relation) => relation.kind === "REQUEST_SCHEMA" || relation.kind === "RESPONSE_SCHEMA")).toHaveLength(0);
+    expect(facts.semanticRelations.filter((relation) => relation.kind === "REQUEST_SCHEMA" || relation.kind === "RESPONSE_SCHEMA")).toHaveLength(0);
   });
 });

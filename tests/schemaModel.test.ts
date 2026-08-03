@@ -73,7 +73,8 @@ describe("deterministic schema shared model", () => {
       scalars: { string: "string" }, externalSymbols: ["std"],
       wrappers: [
         { canonicalSymbol: "fixture.Promise", sourceSymbols: ["Promise"], behavior: "transparent", argumentIndexes: [0] },
-        { canonicalSymbol: "fixture.List", sourceSymbols: ["List"], behavior: "collection", argumentIndexes: [0] }
+        { canonicalSymbol: "fixture.List", sourceSymbols: ["List"], behavior: "collection", argumentIndexes: [0] },
+        { canonicalSymbol: "fixture.Stream", sourceSymbols: ["Stream"], behavior: "stop" }
       ]
     }, [
       { fact: { id: orderId, identity: { ...scope, canonicalName: "acme.Order" }, fileId: "file:order", declarationKind: "object", typeParameters: [], generation: "g" }, shape: { kind: "object", fields: [field("user")] } },
@@ -113,6 +114,15 @@ describe("deterministic schema shared model", () => {
     });
     expect(result.dependencies.every((dependency) => dependency.rootReferenceId === root.id)).toBe(true);
     expect(result.provenance.every((fact) => fact.rootReferenceId === root.id)).toBe(true);
+    expect(result.provenance.find((fact) => fact.fieldPath.length === 0)?.projectionRuleId)
+      .toBe("rules-1:fixture.Promise > rules-1:fixture.List");
+    const boundary = materializeSchemaRoot({
+      adapter,
+      context,
+      root: { ...root, id: "root:boundary", rawTypeExpression: "Stream<User>" }
+    });
+    expect(boundary.types).toEqual([]);
+    expect(boundary.diagnostics.map((fact) => fact.code)).toEqual(["unsupported"]);
     const repeated = materializeSchemaRoot({ adapter, context, root: { ...root, evidenceId: "different-evidence" } });
     expect(repeated.provenance.map((fact) => [fact.id, fact.relationId])).toEqual(result.provenance.map((fact) => [fact.id, fact.relationId]));
     const unresolved = adapter.resolveType(adapter.parseTypeExpression("Order<Missing>", context), context);

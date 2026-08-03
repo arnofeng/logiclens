@@ -2,7 +2,6 @@ import type { ContractSpecNode, RepoContractEdge, SemanticRelationEdge, Contract
 import type { SpecRoleMap } from "./matching/types.js";
 import { resolveHttpRelations } from "./matching/httpResolver.js";
 import { resolveEventRelations } from "./matching/eventResolver.js";
-import { resolveSchemaRelations } from "./matching/schemaResolver.js";
 import { resolveGrpcRelations } from "./matching/grpcResolver.js";
 import { resolveDubboRelations } from "./matching/dubboResolver.js";
 import { resolveGraphqlRelations } from "./matching/graphqlResolver.js";
@@ -17,10 +16,7 @@ export interface ResolveSemanticRelationsInput {
   contractSpecs: ContractSpecNode[];
   /** Repo→Contract role edges (producer/consumer/owner/shared). */
   repoContracts: RepoContractEdge[];
-  /**
-   * Semantic relations already produced by extractors. Only the legacy Java
-   * schema path may still contain pending `schema-ref:` placeholder IDs.
-   */
+  /** Semantic relations already produced by finalized typed roots/materialization. */
   existingSemanticRelations: SemanticRelationEdge[];
 }
 
@@ -32,11 +28,10 @@ export interface ResolveSemanticRelationsInput {
  *   - HTTP endpoint matching    (CALLS_HTTP)
  *   - exact handler call flow   (INTERNAL_CALL)
  *   - Event topic matching      (PUBLISHES_EVENT / SUBSCRIBES_EVENT)
- *   - Schema associations       (REQUEST_SCHEMA / RESPONSE_SCHEMA / EVENT_PAYLOAD / USES_SCHEMA)
+ * Schema associations are already finalized by the typed-root materializer;
+ * this resolver must not perform a second name-based association pass.
  *
- * The resulting edges flow through the existing dual-track pipeline alongside
- * DEPENDS_ON edges. Phase 4.2 will use these to replace the coarse
- * contractId-based pairing in buildRepoDependenciesFromParticipants.
+ * Phase 4.2 consumes the resulting semantic edges alongside DEPENDS_ON edges.
  */
 export function resolveSemanticRelations(
   input: ResolveSemanticRelationsInput
@@ -51,14 +46,13 @@ export function resolveSemanticRelations(
   // Run each domain resolver
   const httpEdges = resolveHttpRelations(contractSpecs, specRoles);
   const eventEdges = resolveEventRelations(contractSpecs, specRoles);
-  const schemaEdges = resolveSchemaRelations(contractSpecs, specRoles, existingSemanticRelations);
   const grpcEdges = resolveGrpcRelations(contractSpecs, specRoles);
   const dubboEdges = resolveDubboRelations(contractSpecs, specRoles);
   const graphqlEdges = resolveGraphqlRelations(contractSpecs, specRoles);
   const internalCallEdges = resolveInternalCallRelations(contractSpecs, specRoles);
 
   // Merge and deduplicate
-  const allEdges = [...httpEdges, ...eventEdges, ...schemaEdges, ...grpcEdges, ...dubboEdges, ...graphqlEdges, ...internalCallEdges];
+  const allEdges = [...existingSemanticRelations, ...httpEdges, ...eventEdges, ...grpcEdges, ...dubboEdges, ...graphqlEdges, ...internalCallEdges];
   return deduplicateEdges(allEdges);
 }
 

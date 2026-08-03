@@ -41,6 +41,9 @@ const JS_INDEXED_NODE_TYPES = new Set([
 ]);
 const JAVA_INDEXED_NODE_TYPES = new Set([
   "class_declaration",
+  "record_declaration",
+  "enum_declaration",
+  "interface_declaration",
   "field_declaration",
   "method_declaration",
   "method_invocation",
