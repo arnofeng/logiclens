@@ -11,6 +11,7 @@ import {
 import type { LexicalIndexHealth, LexicalHit } from "../../core/retrieval/types.js";
 import type { SemanticSearchResult } from "../../core/semantic/semanticIndex.js";
 import { deriveWorkspaceId } from "../../core/workspace/identity.js";
+import { withPublicGraphReadSnapshot, type PublicGraphReadSnapshot } from "../../core/graph-model/readSnapshot.js";
 import { reciprocalRankFusion, type FusedRetrievalCandidate } from "./fusion.js";
 import { determineRetrievalOutcome, safeLexicalProviderDiagnostic, type RetrievalDiagnostics, type RetrievalOutcome, type RetrievalRouteDiagnostic, type RetrievalStageDiagnostic } from "./diagnostics.js";
 import { selectCandidates, type SelectionRejection, type SelectionResult } from "./selection.js";
@@ -36,7 +37,7 @@ export type RetrievalDependencies = Readonly<{
   fusion?: typeof reciprocalRankFusion;
   selection?: typeof selectCandidates;
   sourceLoader?: typeof loadSelectedEvidence;
-  dependencies?: typeof listDependencies;
+  dependencies?: (db: GraphDB, limit?: number | import("../../core/graph-model/queries.js").DependencyQueryOptions) => ReturnType<typeof listDependencies>;
   now?: () => number;
 }>;
 
@@ -47,6 +48,8 @@ export type RetrieveExecutionOptions = Readonly<{
   lexicalStore?: WorkspaceLexicalStore;
   lexicalStoreUnavailable?: boolean;
   lexicalProviderGate?: LexicalProviderGateResult;
+  /** One immutable generation shared by public graph and lexical reads. */
+  publicGraphSnapshot?: PublicGraphReadSnapshot;
   dependencies?: RetrievalDependencies;
   retrieval?: NormalizedRetrieveOptions;
 }>;
@@ -121,6 +124,22 @@ export async function retrieveForQuestion(db: GraphDB, question: string, options
   const totalStart = now();
   const cwd = options.cwd ?? process.cwd();
   const workspaceId = deriveWorkspaceId(options.config?.systemName ?? "default-system");
+  if (!options.publicGraphSnapshot) {
+    return withPublicGraphReadSnapshot(db, workspaceId, (snapshot) =>
+      retrieveForQuestion(db, question, { ...options, publicGraphSnapshot: snapshot }));
+  }
+  if (options.publicGraphSnapshot && options.publicGraphSnapshot.workspaceId !== workspaceId) {
+    throw new TypeError("Pinned public graph snapshot belongs to a different workspace.");
+  }
+  const publicSnapshotPromise = Promise.resolve(options.publicGraphSnapshot);
+  const publicSnapshot = (): Promise<PublicGraphReadSnapshot> => publicSnapshotPromise;
+  const readSnapshot = await publicSnapshot();
+  if (options.lexicalProviderGate && (
+    options.lexicalProviderGate.workspaceId !== readSnapshot.workspaceId
+    || options.lexicalProviderGate.generation !== readSnapshot.generation
+  )) {
+    throw new TypeError("Lexical provider gate does not match the pinned public graph generation.");
+  }
   const repoRoots = options.config?.repos?.map((repo) => path.resolve(cwd, repo.path)) ?? [];
 
   const planningStart = now();
@@ -144,7 +163,7 @@ export async function retrieveForQuestion(db: GraphDB, question: string, options
   const planningTiming = completed(duration(planningStart, now()));
 
   const exactStart = now();
-  const exact = await (deps.exact ?? retrieveExactTargets)(db, plan, { workspaceId, repoRoots });
+  const exact = await (deps.exact ?? retrieveExactTargets)(db, plan, { workspaceId, snapshotProvider: publicSnapshot, repoRoots });
   const exactDuration = duration(exactStart, now());
 
   let lexicalHealth: LexicalIndexHealth | undefined;
@@ -163,8 +182,13 @@ export async function retrieveForQuestion(db: GraphDB, question: string, options
     lexical = emptyRouteResult("lexical", "unavailable", options.lexicalProviderGate.reason);
   } else if (options.lexicalStore) {
     try {
-      lexicalHealth = options.lexicalProviderGate?.health ?? await options.lexicalStore.health(workspaceId);
-      lexical = await (deps.lexical ?? retrieveWorkspaceLexical)(options.lexicalStore, plan, { workspaceId, repoRoots, health: lexicalHealth });
+      lexicalHealth = options.lexicalProviderGate?.health ?? await options.lexicalStore.health(readSnapshot);
+      lexical = await (deps.lexical ?? retrieveWorkspaceLexical)(options.lexicalStore, plan, {
+        workspaceId,
+        generation: readSnapshot.generation,
+        repoRoots,
+        health: lexicalHealth
+      });
     } catch (error) {
       if (error instanceof WorkspaceLexicalStoreError) {
         lexical = emptyRouteResult("lexical", "failed", "health-check-failed");
@@ -173,7 +197,11 @@ export async function retrieveForQuestion(db: GraphDB, question: string, options
       }
     }
   } else {
-    lexical = await (deps.lexical ?? retrieveWorkspaceLexical)(options.lexicalStore, plan, { workspaceId, repoRoots });
+    lexical = await (deps.lexical ?? retrieveWorkspaceLexical)(options.lexicalStore, plan, {
+      workspaceId,
+      generation: readSnapshot.generation,
+      repoRoots
+    });
   }
   const lexicalDuration = duration(lexicalStart, now());
 
@@ -185,7 +213,7 @@ export async function retrieveForQuestion(db: GraphDB, question: string, options
   const graph = retrieval.graphHops === 0
     ? emptyRouteResult<GraphLegacyRow>("graph", "disabled", "route-disabled")
     : await isolateOperational(
-      () => (deps.graph ?? retrieveBoundedGraph)(db, plan, graphSeeds, { workspaceId, graphHops: retrieval.graphHops }),
+      () => (deps.graph ?? retrieveBoundedGraph)(db, plan, graphSeeds, { workspaceId, snapshotProvider: publicSnapshot, graphHops: retrieval.graphHops }),
       (error) => emptyRouteResult<GraphLegacyRow>("graph", "failed", error.reason, { executed: error.attemptedQueryCount > 0, queryCount: error.attemptedQueryCount })
     );
   const graphDuration = duration(graphStart, now());
@@ -223,6 +251,7 @@ export async function retrieveForQuestion(db: GraphDB, question: string, options
   const sourceLoadingStart = now();
   const sourceLoading: SourceLoadResult = await (deps.sourceLoader ?? loadSelectedEvidence)({
     workspaceId,
+    generation: readSnapshot.generation,
     selectedCandidates,
     maxDocuments: retrieval.topK,
     store: options.lexicalStore,
@@ -240,7 +269,9 @@ export async function retrieveForQuestion(db: GraphDB, question: string, options
   if (plan.kind === "workflow" || plan.kind === "dependency" || plan.kind === "impact") {
     dependencyQueryCount = 1;
     try {
-      compatibilityDependencies = await (deps.dependencies ?? listDependencies)(db, 50);
+      compatibilityDependencies = deps.dependencies
+        ? await deps.dependencies(db, 50)
+        : await listDependencies(db, await publicSnapshot(), 50);
       dependencyDiagnostic = Object.freeze({ status: "succeeded" as const, executed: true, queryCount: dependencyQueryCount });
     } catch (error) {
       if (error instanceof RetrieverOperationalError) {

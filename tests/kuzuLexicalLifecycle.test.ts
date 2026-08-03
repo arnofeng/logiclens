@@ -17,6 +17,7 @@ import {
 
 const WORKSPACE = "workspace:lifecycle";
 const FOREIGN_WORKSPACE = "workspace:foreign";
+const GENERATION = "generation:lifecycle";
 
 function document(overrides: Partial<LexicalDocument> = {}): LexicalDocument {
   const result: LexicalDocument = {
@@ -47,10 +48,57 @@ function document(overrides: Partial<LexicalDocument> = {}): LexicalDocument {
   return result;
 }
 
+class GenerationPinnedKuzuStore {
+  generation = GENERATION;
+
+  constructor(private readonly store: KuzuWorkspaceLexicalStore) {}
+
+  ensureSchema(): Promise<void> { return this.store.ensureSchema(); }
+  commitVersions(): Promise<void> { return this.store.commitVersions(); }
+  cleanupBatch(request: { workspaceId: string; batchId: string }): Promise<void> {
+    return this.store.cleanupBatch(request);
+  }
+  upsertDocuments(documents: readonly LexicalDocument[]): Promise<void> {
+    return this.store.upsertDocuments({
+      workspaceId: documents[0]?.workspaceId ?? WORKSPACE,
+      generation: this.generation,
+      documents
+    });
+  }
+  deleteDocuments(request: { workspaceId: string; documentIds: readonly string[] }): Promise<void> {
+    return this.store.deleteDocuments({ ...request, generation: this.generation });
+  }
+  reconcileRepoDocuments(request: {
+    workspaceId: string;
+    repoId: string;
+    batchId: string;
+    activeDocumentIds: readonly string[];
+  }): Promise<void> {
+    return this.store.reconcileRepoDocuments({ ...request, generation: this.generation });
+  }
+  reconcileRepoFileDocuments(request: {
+    workspaceId: string;
+    repoId: string;
+    batchId: string;
+    activeFileIds: readonly string[];
+  }): Promise<void> {
+    return this.store.reconcileRepoFileDocuments({ ...request, generation: this.generation });
+  }
+  loadDocuments(request: { workspaceId: string; documentIds: readonly string[] }): Promise<readonly LexicalDocument[]> {
+    return this.store.loadDocuments({ ...request, generation: this.generation });
+  }
+  search(query: { workspaceId: string; text: string }, options: { topK: number }) {
+    return this.store.search({ ...query, generation: this.generation }, options);
+  }
+  health(workspaceId: string) {
+    return this.store.health({ workspaceId, generation: this.generation });
+  }
+}
+
 describe("Kuzu workspace lexical lifecycle", () => {
   let directory = "";
   let db: KuzuGraphDB;
-  let store: KuzuWorkspaceLexicalStore;
+  let store: GenerationPinnedKuzuStore;
   let previousCloseMode: string | undefined;
   let schemaInitialized = false;
 
@@ -64,7 +112,7 @@ describe("Kuzu workspace lexical lifecycle", () => {
   });
 
   beforeEach(async () => {
-    store = new KuzuWorkspaceLexicalStore(db);
+    store = new GenerationPinnedKuzuStore(new KuzuWorkspaceLexicalStore(db));
     if (schemaInitialized) {
       await db.query("MATCH (n:LexicalDocument) DELETE n;");
       await db.query("MATCH (s:LexicalWorkspaceStats) DELETE s;");
@@ -84,6 +132,7 @@ describe("Kuzu workspace lexical lifecycle", () => {
   });
 
   it("retries interrupted stats migration and keeps schema and the workspace FTS index idempotent", async () => {
+    store.generation = "legacy";
     const legacyRenderRef = createRenderRef({
       workspaceId: WORKSPACE,
       repoId: "repo:legacy",
@@ -109,7 +158,7 @@ describe("Kuzu workspace lexical lifecycle", () => {
     );
     const originalQuery = db.query.bind(db);
     const interrupted = vi.spyOn(db, "query").mockImplementation(async (cypher, params) => {
-      if (cypher === "MATCH (n:LexicalDocument {id: $id}) SET n.ftsSizeBytes = $ftsSizeBytes;") {
+      if (cypher === "MATCH (n:LexicalDocument {storageId: $storageId}) SET n.ftsSizeBytes = $ftsSizeBytes;") {
         throw new Error("injected fts size backfill failure");
       }
       return originalQuery(cypher, params) as ReturnType<typeof db.query>;
@@ -130,7 +179,7 @@ describe("Kuzu workspace lexical lifecycle", () => {
     expect((await db.query<{ name: string }>("CALL table_info('LexicalDocument') RETURN name;"))
       .map((column) => column.name)).toContain("ftsSizeBytes");
     expect(await db.query<{ ftsSizeBytes: number | null }>(
-      "MATCH (n:LexicalDocument {id: 'legacy:one'}) RETURN n.ftsSizeBytes AS ftsSizeBytes;"
+      "MATCH (n:LexicalDocument {storageId: 'legacy:one'}) RETURN n.ftsSizeBytes AS ftsSizeBytes;"
     )).toEqual([{ ftsSizeBytes: null }]);
 
     await store.ensureSchema();
@@ -162,7 +211,7 @@ describe("Kuzu workspace lexical lifecycle", () => {
 
     const columns = await db.query<{ name: string }>("CALL table_info('LexicalDocument') RETURN name;");
     expect(columns.map((column) => column.name)).toEqual(expect.arrayContaining([
-      "id", "canonicalId", "workspaceId", "repoId", "kind", "title", "qualifiedName", "path",
+      "storageId", "documentId", "generation", "canonicalId", "workspaceId", "repoId", "kind", "title", "qualifiedName", "path",
       "searchableText", "tokens", "active", "sourceHash", "batchId", "renderRef", "fileId", "ftsText", "ftsSizeBytes"
     ]));
     const indexes = await db.query<{
@@ -180,19 +229,120 @@ describe("Kuzu workspace lexical lifecycle", () => {
     }]);
     expect(lexicalIndexes.some((index) => /repo/i.test(index.index_name))).toBe(false);
 
-    await db.query("MATCH (n:LexicalDocument {id: 'legacy:one'}) SET n.fileId = NULL, n.renderRef = 'corrupted-render-ref';");
-    await expect(store.ensureSchema()).rejects.toMatchObject({
-      code: "schema_failed",
-      context: { operation: "ensureSchema" },
-      cause: { name: "RenderRefError", code: "format_invalid" }
-    });
-    await db.query("MATCH (n:LexicalDocument {id: 'legacy:one'}) SET n.renderRef = $renderRef;", { renderRef: legacyRenderRef });
-    await store.ensureSchema();
-    expect(await db.query<{ fileId: string }>("MATCH (n:LexicalDocument {id: 'legacy:one'}) RETURN n.fileId AS fileId;"))
+    await db.query("MATCH (n:LexicalDocument {storageId: 'legacy:one'}) SET n.fileId = NULL, n.renderRef = 'corrupted-render-ref';");
+    // Once the clean-cut schema marker is current, ordinary startup is O(1)
+    // and deliberately does not scan/backfill document rows again.
+    await expect(store.ensureSchema()).resolves.toBeUndefined();
+    expect(await db.query<{ fileId: string | null }>(
+      "MATCH (n:LexicalDocument {storageId: 'legacy:one'}) RETURN n.fileId AS fileId;"
+    )).toEqual([{ fileId: null }]);
+    await db.query("MATCH (n:LexicalDocument {storageId: 'legacy:one'}) SET n.renderRef = $renderRef;", { renderRef: legacyRenderRef });
+    await db.query("MATCH (n:LexicalDocument {storageId: 'legacy:one'}) SET n.fileId = 'file:legacy';");
+    expect(await db.query<{ fileId: string }>("MATCH (n:LexicalDocument {storageId: 'legacy:one'}) RETURN n.fileId AS fileId;"))
       .toEqual([{ fileId: "file:legacy" }]);
     await store.reconcileRepoFileDocuments({ workspaceId: WORKSPACE, repoId: "repo:legacy", batchId: "batch:legacy-delete", activeFileIds: [] });
-    expect(await db.query<{ active: boolean }>("MATCH (n:LexicalDocument {id: 'legacy:one'}) RETURN n.active AS active;"))
+    expect(await db.query<{ active: boolean }>("MATCH (n:LexicalDocument {storageId: 'legacy:one'}) RETURN n.active AS active;"))
       .toEqual([{ active: false }]);
+  });
+
+  it("uses the current-schema fast path and applies rollback-safe exact lexical deltas", async () => {
+    const lexical = new KuzuWorkspaceLexicalStore(db);
+    await lexical.ensureSchema();
+    const schemaSpy = vi.spyOn(db, "query");
+    await lexical.ensureSchema();
+    const schemaQueries = schemaSpy.mock.calls.map(([cypher]) => cypher);
+    schemaSpy.mockRestore();
+    expect(schemaQueries.some((cypher) => /^(?:CREATE|DROP|ALTER)\b|\b(?:COPY|LOAD FROM)\b/u.test(cypher))).toBe(false);
+    expect(schemaQueries.some((cypher) => cypher.includes("MATCH (n:LexicalDocument) WHERE n.ftsSizeBytes IS NULL"))).toBe(false);
+    expect(schemaQueries.some((cypher) => cypher.includes("MATCH (n:LexicalDocument) WHERE n.fileId IS NULL"))).toBe(false);
+
+    await lexical.initializeGeneration({ workspaceId: WORKSPACE, generation: GENERATION });
+    const retained = document({ batchId: "batch:initial" });
+    const removed = document({
+      id: "lexical:code:removed",
+      canonicalId: "code:removed",
+      title: "RemovedService",
+      sourceHash: "hash:removed",
+      batchId: "batch:initial"
+    });
+    await lexical.upsertDocuments({
+      workspaceId: WORKSPACE,
+      generation: GENERATION,
+      documents: [retained, removed]
+    });
+
+    const updated = document({
+      title: "Updated OrderService",
+      searchableText: "updated-order-service exact-delta",
+      tokens: ["updated", "order", "service", "exact", "delta"],
+      sourceHash: "hash:updated",
+      batchId: "batch:delta"
+    });
+    const mutationSpy = vi.spyOn(db, "query");
+    await db.transaction(() => lexical.applyIncrementalMutation({
+      workspaceId: WORKSPACE,
+      generation: GENERATION,
+      expectedRevision: GENERATION,
+      nextRevision: "revision:delta",
+      upsertDocuments: [updated],
+      deleteDocumentIds: [removed.id]
+    }));
+    const mutationQueries = mutationSpy.mock.calls.map(([cypher]) => cypher);
+    mutationSpy.mockRestore();
+    expect(mutationQueries.some((cypher) => cypher === "MATCH (n:LexicalDocument) RETURN count(*) AS count;")).toBe(false);
+    expect(mutationQueries.some((cypher) => /^(?:CREATE|DROP|ALTER)\b|\b(?:COPY|LOAD FROM)\b/u.test(cypher))).toBe(false);
+    expect(await lexical.loadDocuments({
+      workspaceId: WORKSPACE,
+      generation: GENERATION,
+      documentIds: [retained.id, removed.id]
+    })).toEqual([updated]);
+    expect(await lexical.documentIdsForSources({
+      workspaceId: WORKSPACE,
+      generation: GENERATION,
+      repoId: retained.repoId,
+      fileIds: [`file:${retained.repoId}:one`]
+    })).toEqual([retained.id]);
+    expect((await lexical.health({
+      workspaceId: WORKSPACE,
+      generation: GENERATION,
+      revision: "revision:delta"
+    })).metrics.documentCount).toBe(1);
+    expect(await lexical.health({
+      workspaceId: WORKSPACE,
+      generation: GENERATION,
+      revision: "revision:missing"
+    })).toMatchObject({
+      status: "unhealthy",
+      reasons: expect.arrayContaining(["lexical_stats_revision_missing"]),
+      metrics: { documentCount: 0, indexSizeBytes: 0 }
+    });
+
+    const beforeRollback = await lexical.loadDocuments({
+      workspaceId: WORKSPACE,
+      generation: GENERATION,
+      documentIds: [retained.id]
+    });
+    await expect(db.transaction(async () => {
+      await lexical.applyIncrementalMutation({
+        workspaceId: WORKSPACE,
+        generation: GENERATION,
+        expectedRevision: "revision:delta",
+        nextRevision: "revision:rollback",
+        upsertDocuments: [],
+        deleteDocumentIds: [retained.id]
+      });
+      throw new Error("injected outer transaction failure");
+    })).rejects.toThrow("injected outer transaction failure");
+    expect(await lexical.loadDocuments({
+      workspaceId: WORKSPACE,
+      generation: GENERATION,
+      documentIds: [retained.id]
+    })).toEqual(beforeRollback);
+    expect((await lexical.health({
+      workspaceId: WORKSPACE,
+      generation: GENERATION,
+      revision: "revision:delta"
+    })).metrics.documentCount).toBe(1);
   });
 
   async function verifyUpsertAndRollbackBoundaries(): Promise<void> {
@@ -352,7 +502,7 @@ describe("Kuzu workspace lexical lifecycle", () => {
     expect(statements.filter((cypher) => cypher.startsWith("LOAD FROM ") && cypher.includes("MERGE (n:LexicalDocument")))
       .toHaveLength(1);
     expect(statements.some((cypher) => cypher.startsWith("COPY LexicalDocument ("))).toBe(false);
-    expect(statements.some((cypher) => cypher.startsWith("MERGE (n:LexicalDocument {id: $id})"))).toBe(false);
+    expect(statements.some((cypher) => cypher.startsWith("MERGE (n:LexicalDocument {storageId: $storageId})"))).toBe(false);
     query.mockRestore();
 
     expect(await store.loadDocuments({
@@ -386,7 +536,7 @@ describe("Kuzu workspace lexical lifecycle", () => {
     const statements = query.mock.calls.map(([cypher]) => String(cypher));
     expect(statements.some((cypher) => cypher.startsWith("LOAD FROM ") && cypher.includes("MERGE (n:LexicalDocument")))
       .toBe(false);
-    expect(statements.filter((cypher) => cypher.startsWith("MERGE (n:LexicalDocument {id: $id})"))).toHaveLength(1);
+    expect(statements.filter((cypher) => cypher.startsWith("MERGE (n:LexicalDocument {storageId: $storageId})"))).toHaveLength(1);
     query.mockRestore();
     expect(await store.loadDocuments({ workspaceId: WORKSPACE, documentIds: [updated.id] })).toEqual([updated]);
   });
@@ -538,8 +688,9 @@ describe("Kuzu workspace lexical lifecycle", () => {
 
     await store.cleanupBatch({ workspaceId: WORKSPACE, batchId: "batch:failed" });
     await store.cleanupBatch({ workspaceId: WORKSPACE, batchId: "batch:failed" });
+    await store.deleteDocuments({ workspaceId: WORKSPACE, documentIds: [failed.id, failed.id] });
     const local = await store.loadDocuments({ workspaceId: WORKSPACE, documentIds: [failed.id, successful.id] });
-    expect(local.find((entry) => entry.id === failed.id)?.active).toBe(false);
+    expect(local.find((entry) => entry.id === failed.id)).toBeUndefined();
     expect(local.find((entry) => entry.id === successful.id)?.active).toBe(true);
     expect(await store.loadDocuments({ workspaceId: FOREIGN_WORKSPACE, documentIds: [foreign.id] })).toEqual([foreign]);
 

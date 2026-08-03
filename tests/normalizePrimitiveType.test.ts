@@ -62,17 +62,17 @@ describe("normalizePrimitiveType", () => {
       expect(result).toBe("string | number");
     });
 
-    it("handles Array<T> generic", () => {
-      expect(normalizePrimitiveType("typescript", "Array<string>")).toBe("array<string>");
-      expect(normalizePrimitiveType("typescript", "Array<OrderItem>")).toBe("array<OrderItem>");
+    it("preserves Array<T> for canonical adapter resolution", () => {
+      expect(normalizePrimitiveType("typescript", "Array<string>")).toBe("Array<string>");
+      expect(normalizePrimitiveType("typescript", "Array<OrderItem>")).toBe("Array<OrderItem>");
     });
 
     it("handles T[] array shorthand", () => {
       expect(normalizePrimitiveType("typescript", "string[]")).toBe("array<string>");
     });
 
-    it("handles List<T> generic (cross-language)", () => {
-      expect(normalizePrimitiveType("typescript", "List<string>")).toBe("array<string>");
+    it("does not guess that a cross-language List<T> symbol is an array", () => {
+      expect(normalizePrimitiveType("typescript", "List<string>")).toBe("List<string>");
     });
 
     it("handles empty string as any", () => {
@@ -80,8 +80,8 @@ describe("normalizePrimitiveType", () => {
       expect(normalizePrimitiveType("typescript", "  ")).toBe("any");
     });
 
-    it("handles Record<K,V> as map", () => {
-      expect(normalizePrimitiveType("typescript", "Record<string, any>")).toBe("map");
+    it("preserves Record<K,V> for canonical adapter resolution", () => {
+      expect(normalizePrimitiveType("typescript", "Record<string, any>")).toBe("Record<string, any>");
     });
   });
 
@@ -153,9 +153,9 @@ describe("normalizePrimitiveType", () => {
       expect(normalizePrimitiveType("java", "Set<String>")).toBe("array<string>");
     });
 
-    it("handles Map<K,V> as map", () => {
-      expect(normalizePrimitiveType("java", "Map<String, Object>")).toBe("map");
-      expect(normalizePrimitiveType("java", "HashMap<String, String>")).toBe("map");
+    it("retains Map<K,V> key and value types", () => {
+      expect(normalizePrimitiveType("java", "Map<String, Object>")).toBe("map<string,any>");
+      expect(normalizePrimitiveType("java", "HashMap<String, String>")).toBe("map<string,string>");
     });
 
     it("returns complex types as-is", () => {
@@ -227,6 +227,10 @@ describe("normalizePrimitiveType", () => {
       expect(normalizePrimitiveType("go", "[]MyStruct")).toBe("array<MyStruct>");
     });
 
+    it("retains map key and value types", () => {
+      expect(normalizePrimitiveType("go", "map[string]MyStruct")).toBe("map<string,MyStruct>");
+    });
+
     it("returns complex types as-is", () => {
       expect(normalizePrimitiveType("go", "MyStruct")).toBe("MyStruct");
     });
@@ -272,6 +276,10 @@ describe("normalizePrimitiveType", () => {
       expect(normalizePrimitiveType("python", "Dict")).toBe("map");
       expect(normalizePrimitiveType("python", "Tuple")).toBe("array");
       expect(normalizePrimitiveType("python", "Any")).toBe("any");
+    });
+
+    it("retains parameterized dictionary key and value types", () => {
+      expect(normalizePrimitiveType("python", "Dict[str, list[Order]]")).toBe("map<string,array<Order>>");
     });
 
     it("handles Optional[T]", () => {
@@ -329,9 +337,9 @@ describe("normalizePrimitiveType", () => {
       expect(normalizePrimitiveType("proto", "repeated CreateOrderRequest")).toBe("array<CreateOrderRequest>");
     });
 
-    it("handles map types", () => {
-      expect(normalizePrimitiveType("proto", "map<string, string>")).toBe("map");
-      expect(normalizePrimitiveType("proto", "map<int32, Order>")).toBe("map");
+    it("retains map key and value types", () => {
+      expect(normalizePrimitiveType("proto", "map<string, string>")).toBe("map<string,string>");
+      expect(normalizePrimitiveType("proto", "map<int32, Order>")).toBe("map<number,Order>");
     });
 
     it("returns complex messages as-is", () => {

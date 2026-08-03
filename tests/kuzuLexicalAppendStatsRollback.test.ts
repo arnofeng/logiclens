@@ -8,6 +8,8 @@ import { createRenderRef } from "../src/core/retrieval/renderRef.js";
 import type { LexicalDocument } from "../src/core/retrieval/types.js";
 
 const WORKSPACE = "workspace:append-stats-rollback";
+const PARENT_GENERATION = "generation:append-stats-parent";
+const PENDING_GENERATION = "generation:append-stats-pending";
 
 function document(overrides: Partial<LexicalDocument>): LexicalDocument {
   const value: LexicalDocument = {
@@ -55,9 +57,15 @@ describe("Kuzu lexical append stats rollback", () => {
     if (directory) await fs.rm(directory, { recursive: true, force: true });
   });
 
-  it("rolls back append-loaded documents when the stats update fails", async () => {
+  it("discards a failed pending append without changing the parent generation", async () => {
     const existing = document({});
-    await store.upsertDocuments([existing]);
+    await store.initializeGeneration({ workspaceId: WORKSPACE, generation: PARENT_GENERATION });
+    await store.upsertDocuments({ workspaceId: WORKSPACE, generation: PARENT_GENERATION, documents: [existing] });
+    await store.initializeGeneration({
+      workspaceId: WORKSPACE,
+      generation: PENDING_GENERATION
+    });
+    await store.upsertDocuments({ workspaceId: WORKSPACE, generation: PENDING_GENERATION, documents: [existing] });
     const prefix = "repohelix-lexical-append-load-";
     const before = new Set((await fs.readdir(os.tmpdir())).filter((name) => name.startsWith(prefix)));
     const originalQuery = db.query.bind(db);
@@ -74,29 +82,39 @@ describe("Kuzu lexical append stats rollback", () => {
       batchId: "batch:append-stats-failed"
     });
 
-    await expect(store.upsertDocuments([appended])).rejects.toMatchObject({
+    await expect(store.upsertDocuments({
+      workspaceId: WORKSPACE,
+      generation: PENDING_GENERATION,
+      documents: [appended]
+    })).rejects.toMatchObject({
       code: "write_failed",
       context: { operation: "upsertDocuments", workspaceId: WORKSPACE, batchId: appended.batchId }
     });
     query.mockRestore();
 
-    expect(await store.loadDocuments({ workspaceId: WORKSPACE, documentIds: [existing.id, appended.id] }))
+    expect(await store.loadDocuments({ workspaceId: WORKSPACE, generation: PARENT_GENERATION, documentIds: [existing.id, appended.id] }))
       .toEqual([existing]);
-    expect(await store.search({ workspaceId: WORKSPACE, text: "appendstatsrollbackmarker" }, { topK: 5 }))
+    expect(await store.search({ workspaceId: WORKSPACE, generation: PARENT_GENERATION, text: "appendstatsrollbackmarker" }, { topK: 5 }))
       .toEqual([]);
-    expect((await store.health(WORKSPACE)).metrics).toEqual({
+    expect((await store.health({ workspaceId: WORKSPACE, generation: PARENT_GENERATION })).metrics).toEqual({
       documentCount: 1,
       indexSizeBytes: Buffer.byteLength([existing.searchableText, ...existing.tokens].join(" "), "utf8")
     });
     const after = (await fs.readdir(os.tmpdir())).filter((name) => name.startsWith(prefix) && !before.has(name));
     expect(after).toEqual([]);
 
-    await store.upsertDocuments([appended]);
-    expect(await store.loadDocuments({ workspaceId: WORKSPACE, documentIds: [existing.id, appended.id] }))
+    await store.deleteGeneration({ workspaceId: WORKSPACE, generation: PENDING_GENERATION });
+    await store.initializeGeneration({
+      workspaceId: WORKSPACE,
+      generation: PENDING_GENERATION
+    });
+    await store.upsertDocuments({ workspaceId: WORKSPACE, generation: PENDING_GENERATION, documents: [existing] });
+    await store.upsertDocuments({ workspaceId: WORKSPACE, generation: PENDING_GENERATION, documents: [appended] });
+    expect(await store.loadDocuments({ workspaceId: WORKSPACE, generation: PENDING_GENERATION, documentIds: [existing.id, appended.id] }))
       .toEqual([existing, appended].sort((left, right) => left.id.localeCompare(right.id)));
-    expect((await store.search({ workspaceId: WORKSPACE, text: "appendstatsrollbackmarker" }, { topK: 5 }))[0]?.documentId)
+    expect((await store.search({ workspaceId: WORKSPACE, generation: PENDING_GENERATION, text: "appendstatsrollbackmarker" }, { topK: 5 }))[0]?.documentId)
       .toBe(appended.id);
-    expect((await store.health(WORKSPACE)).metrics).toEqual({
+    expect((await store.health({ workspaceId: WORKSPACE, generation: PENDING_GENERATION })).metrics).toEqual({
       documentCount: 2,
       indexSizeBytes: Buffer.byteLength([existing.searchableText, ...existing.tokens].join(" "), "utf8") +
         Buffer.byteLength([appended.searchableText, ...appended.tokens].join(" "), "utf8")

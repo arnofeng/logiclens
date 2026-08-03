@@ -30,7 +30,40 @@ export function contractSpecEdgeDedupKey(e: ContractSpecEdge): string {
 }
 
 export function semanticRelationDedupKey(e: SemanticRelationEdge): string {
-  return `${e.fromSpecId}:${e.toSpecId}:${e.kind}:${e.evidenceId}`;
+  return JSON.stringify([e.fromSpecId, e.toSpecId, e.kind]);
+}
+
+/**
+ * Selects the deterministic display/provenance attributes for one logical
+ * relation. Evidence remains an attribute of the selected edge; it is never
+ * part of the logical identity.
+ */
+export function preferredSemanticRelation(
+  left: SemanticRelationEdge,
+  right: SemanticRelationEdge
+): SemanticRelationEdge {
+  const activeDifference = Number(right.active !== false) - Number(left.active !== false);
+  if (activeDifference !== 0) return activeDifference > 0 ? right : left;
+  if (left.confidence !== right.confidence) return left.confidence > right.confidence ? left : right;
+  const evidenceOrder = left.evidenceId.localeCompare(right.evidenceId);
+  if (evidenceOrder !== 0) return evidenceOrder < 0 ? left : right;
+  const reasonOrder = left.reason.localeCompare(right.reason);
+  if (reasonOrder !== 0) return reasonOrder < 0 ? left : right;
+  return (left.batchId ?? "").localeCompare(right.batchId ?? "") <= 0 ? left : right;
+}
+
+export function collapseSemanticRelations(
+  items: readonly SemanticRelationEdge[]
+): SemanticRelationEdge[] {
+  const relations = new Map<string, SemanticRelationEdge>();
+  for (const item of items) {
+    const key = semanticRelationDedupKey(item);
+    const current = relations.get(key);
+    relations.set(key, current ? preferredSemanticRelation(current, item) : item);
+  }
+  return [...relations.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, relation]) => relation);
 }
 
 export function materializedRepoDependencyDedupKey(e: RepoDependencyEdge): string {

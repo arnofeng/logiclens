@@ -22,6 +22,7 @@ function largeFacts(): GraphFactsBatch {
     id: `file:performance:${index}`,
     repoId: repo.id,
     path: `src/generated/file-${index}.ts`,
+    directory: "src/generated",
     language: "typescript",
     hash: `hash-${index}`,
     loc: 10,
@@ -47,6 +48,9 @@ function largeFacts(): GraphFactsBatch {
   });
   return {
     batchId: "batch:projection-performance",
+    workspaceId: "workspace:projection-performance",
+    generation: "generation:projection-performance",
+    systemName: "projection-performance",
     indexedAt: "2026-07-21T00:00:00.000Z",
     repos: [repo],
     parsedFiles: [],

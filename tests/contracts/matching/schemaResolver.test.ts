@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { makeTestSchema } from "../../helpers/schemaModel.js";
 import { resolveSchemaRelations } from "../../../src/core/contracts/matching/schemaResolver.js";
 import { analyzeImpact } from "../../../src/core/contracts/impact/impactEngine.js";
 import type { ContractSpecNode, SemanticRelationEdge } from "../../../src/core/parsing/types.js";
@@ -92,16 +93,7 @@ function makeSchemaSpec(opts: {
     fileId: `file:${opts.repoId ?? "repo-schemas"}:test`,
     evidenceId: `ev:${opts.id}`,
     canonicalKey: opts.name.toLowerCase(),
-    specJson: serializeSpec({
-      kind: "schema",
-      name: opts.name,
-      language: "java",
-      fields: (opts.fields ?? []).map((f) => ({
-        name: f.name,
-        type: f.type,
-        optional: f.optional ?? false
-      }))
-    }),
+    specJson: serializeSpec(makeTestSchema({ name: opts.name, language: "java", repoId: opts.repoId, fields: opts.fields })),
     confidence: 0.85
   };
 }
@@ -139,7 +131,7 @@ describe("Schema Resolver", () => {
     expect(respEdges[0]!.toSpecId).toBe(schemaSpec.id);
   });
 
-  it("creates EVENT_PAYLOAD from event payloadType", () => {
+  it("does not use the Java legacy resolver for event payload types", () => {
     const eventSpec = makeEventSpec({
       id: "spec:e1", contractId: "c:e1", repoId: "repo-a",
       payloadType: "OrderCreatedEvent"
@@ -150,9 +142,7 @@ describe("Schema Resolver", () => {
 
     const edges = resolveSchemaRelations([eventSpec, schemaSpec], new Map(), []);
     const payloadEdges = edges.filter((e) => e.kind === "EVENT_PAYLOAD");
-    expect(payloadEdges).toHaveLength(1);
-    expect(payloadEdges[0]!.fromSpecId).toBe(eventSpec.id);
-    expect(payloadEdges[0]!.toSpecId).toBe(schemaSpec.id);
+    expect(payloadEdges).toHaveLength(0);
   });
 
   it("resolves pending USES_SCHEMA (schema-ref: placeholder)", () => {
@@ -295,7 +285,7 @@ describe("Schema Resolver", () => {
     expect(endpointImpact).toBeDefined();
   });
 
-  it("resolves REQUEST_SCHEMA and RESPONSE_SCHEMA for graphql-operation", () => {
+  it("does not use the Java legacy resolver for GraphQL operations", () => {
     const gqlSpec = makeGraphqlSpec({
       id: "spec:g1", contractId: "c:g1", repoId: "repo-a",
       requestType: "CreateUserInput", responseType: "User"
@@ -310,11 +300,10 @@ describe("Schema Resolver", () => {
     const edges = resolveSchemaRelations(
       [gqlSpec, reqSchema, respSchema], new Map(), []
     );
-    expect(edges.filter((e) => e.kind === "REQUEST_SCHEMA")).toHaveLength(1);
-    expect(edges.filter((e) => e.kind === "RESPONSE_SCHEMA")).toHaveLength(1);
+    expect(edges).toHaveLength(0);
   });
 
-  it("resolves graphql schema-ref placeholders for additional operation arguments", () => {
+  it("rejects legacy GraphQL schema-ref placeholders", () => {
     const gqlSpec = makeGraphqlSpec({
       id: "spec:g1", contractId: "c:g1", repoId: "repo-a",
       requestType: "ID", responseType: "User"
@@ -338,15 +327,6 @@ describe("Schema Resolver", () => {
       [gqlSpec, inputSchema, userSchema], new Map(), existingRelations
     );
 
-    expect(edges).toContainEqual(expect.objectContaining({
-      fromSpecId: gqlSpec.id,
-      toSpecId: inputSchema.id,
-      kind: "REQUEST_SCHEMA"
-    }));
-    expect(edges).toContainEqual(expect.objectContaining({
-      fromSpecId: gqlSpec.id,
-      toSpecId: userSchema.id,
-      kind: "RESPONSE_SCHEMA"
-    }));
+    expect(edges).toHaveLength(0);
   });
 });

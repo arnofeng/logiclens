@@ -23,6 +23,7 @@ function compareText(left: string, right: string): number {
 export async function runLexicalWritePhase(input: {
   store: WorkspaceLexicalStore;
   workspaceId: string;
+  generation: string;
   batchId: string;
   repos: readonly RepoNode[];
   documents: readonly LexicalDocument[];
@@ -31,6 +32,8 @@ export async function runLexicalWritePhase(input: {
   reconcileRepos?: boolean;
   reconcileReason?: string;
   activeFileIdsByRepo?: ReadonlyMap<string, readonly string[]>;
+  touchedFileIdsByRepo?: ReadonlyMap<string, readonly string[]>;
+  deleteDocumentIds?: readonly string[];
 }): Promise<LexicalWriteResult> {
   const phase = await runIndexPhase({
     phase: "lexical-write",
@@ -51,8 +54,24 @@ export async function runLexicalWritePhase(input: {
     writeLexicalTrace(`phase validation documents=${documents.length} duration=${Date.now() - validationStarted}ms`);
     const repos = [...new Map(input.repos.map((repo) => [repo.id, repo])).values()]
       .sort((left, right) => compareText(left.id, right.id));
+    await input.store.stageBatch?.({
+      workspaceId: input.workspaceId,
+      generation: input.generation,
+      batchId: input.batchId,
+      repoIds: repos.map((repo) => repo.id)
+    });
+    const deleteDocumentIds = [...new Set(input.deleteDocumentIds ?? [])].sort(compareText);
+    if (deleteDocumentIds.length > 0) await input.store.deleteDocuments({
+      workspaceId: input.workspaceId,
+      generation: input.generation,
+      documentIds: deleteDocumentIds
+    });
     const upsertStarted = Date.now();
-    if (documents.length > 0) await input.store.upsertDocuments(documents);
+    if (documents.length > 0) await input.store.upsertDocuments({
+      workspaceId: input.workspaceId,
+      generation: input.generation,
+      documents
+    });
     writeLexicalTrace(`phase upsert documents=${documents.length} duration=${Date.now() - upsertStarted}ms`);
     const reconcileStarted = Date.now();
     const reconcileRepos = input.reconcileRepos ?? true;
@@ -64,6 +83,7 @@ export async function runLexicalWritePhase(input: {
         .sort(compareText);
       await input.store.reconcileRepoDocuments({
         workspaceId: input.workspaceId,
+        generation: input.generation,
         repoId: repo.id,
         batchId: input.batchId,
         activeDocumentIds
@@ -72,14 +92,30 @@ export async function runLexicalWritePhase(input: {
     if (input.activeFileIdsByRepo) for (const repo of repos) {
       await input.store.reconcileRepoFileDocuments({
         workspaceId: input.workspaceId,
+        generation: input.generation,
         repoId: repo.id,
         batchId: input.batchId,
         activeFileIds: input.activeFileIdsByRepo.get(repo.id) ?? []
       });
     }
+    if (input.touchedFileIdsByRepo && input.store.replaceSourceDocuments) for (const repo of repos) {
+      const touchedFileIds = input.touchedFileIdsByRepo.get(repo.id) ?? [];
+      if (touchedFileIds.length === 0) continue;
+      await input.store.replaceSourceDocuments({
+        workspaceId: input.workspaceId,
+        generation: input.generation,
+        repoId: repo.id,
+        batchId: input.batchId,
+        touchedFileIds,
+        activeDocumentIds: documents.filter((document) => document.repoId === repo.id && document.active).map((document) => document.id)
+      });
+    }
     writeLexicalTrace(`phase reconcile repos=${repos.length} duration=${Date.now() - reconcileStarted}ms`);
     const healthStarted = Date.now();
-    const providerHealth = await input.store.health(input.workspaceId);
+    const providerHealth = await input.store.pendingHealth({
+      workspaceId: input.workspaceId,
+      generation: input.generation
+    });
     writeLexicalTrace(`phase health duration=${Date.now() - healthStarted}ms status=${providerHealth.status}`);
     return {
       documentCount: documents.length,

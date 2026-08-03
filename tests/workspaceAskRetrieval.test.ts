@@ -11,6 +11,7 @@ import { retrieveForQuestion } from "../src/features/ask/retrieve.js";
 import { answerQuestion, NO_RELIABLE_EVIDENCE } from "../src/features/ask/answer.js";
 import { WORKSPACE_CORPUS } from "./retrieval/workspaceCorpus.js";
 import { workspaceSpikeDocuments } from "./retrieval/workspaceLexicalSpikeFixtures.js";
+import { SchemaGenerationStore } from "../src/core/schema/generationStore.js";
 
 describe("workspace Ask retrieval", () => {
   const cleanup: Array<() => Promise<void>> = [];
@@ -37,8 +38,19 @@ describe("workspace Ask retrieval", () => {
     await realStore.ensureSchema();
     const documents = await workspaceSpikeDocuments(workspaceId);
     expect(new Set(documents.map(({ repoId }) => repoId)).size).toBeGreaterThanOrEqual(2);
-    await realStore.upsertDocuments(documents);
+    const generation = "schema-generation:workspace-ask-integration:initial";
+    const schemaGenerations = new SchemaGenerationStore(db, workspaceId);
+    await schemaGenerations.beginFull({
+      generation,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      expectedActiveGeneration: null,
+      expectedActiveRevision: null
+    });
+    await realStore.initializeGeneration({ workspaceId, generation });
+    await realStore.upsertDocuments({ workspaceId, generation, documents });
     await realStore.commitVersions();
+    await schemaGenerations.validateFull(generation);
+    await schemaGenerations.commitFull(generation);
 
     const search = vi.fn(realStore.search.bind(realStore));
     const health = vi.fn(realStore.health.bind(realStore));
@@ -60,7 +72,7 @@ describe("workspace Ask retrieval", () => {
       const requiresExactContract = plan.contractTargets.length > 0 &&
         plan.contractTargets.every(({ kind }) => kind === "api");
       const direct = plan.enabledRoutes.includes("lexical") && plan.normalizedLexicalQuery
-        ? await realStore.search({ workspaceId, text: plan.normalizedLexicalQuery }, { topK: plan.budgets.lexical.limit })
+        ? await realStore.search({ workspaceId, generation, text: plan.normalizedLexicalQuery }, { topK: plan.budgets.lexical.limit })
         : [];
       const before = search.mock.calls.length;
       const healthBefore = health.mock.calls.length;

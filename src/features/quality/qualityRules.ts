@@ -4,6 +4,7 @@ import {
   listRepoContractCountsByRole,
   listRepoContractKeysByRole
 } from "../../core/graph-model/queries.js";
+import { withPublicGraphReadSnapshot, type PublicGraphReadSnapshot } from "../../core/graph-model/readSnapshot.js";
 
 export type QualityRuleViolation = {
   ruleId: string;
@@ -15,13 +16,20 @@ export type QualityRuleViolation = {
 
 export async function auditContractQuality(
   db: GraphDB,
-  options: { packageInflationLimit?: number } = {}
+  workspaceId: string,
+  options: { packageInflationLimit?: number } = {},
+  pinnedSnapshot?: PublicGraphReadSnapshot
 ): Promise<QualityRuleViolation[]> {
+  if (!pinnedSnapshot) {
+    return withPublicGraphReadSnapshot(db, workspaceId, (snapshot) =>
+      auditContractQuality(db, workspaceId, options, snapshot));
+  }
+  const snapshot = pinnedSnapshot;
   const packageInflationLimit = options.packageInflationLimit ?? 1000;
   const violations: QualityRuleViolation[] = [];
 
   // --- Rule 1: Java Class-level Package Contracts ---
-  const packageContracts = await listContractKeysByKind(db, "package");
+  const packageContracts = await listContractKeysByKind(db, snapshot, "package");
   
   const commonClassNames = new Set([
     "list", "map", "set", "hashmap", "arraylist", "collection", "iterator", "string", "integer", "double", "float", "long", "boolean", "byte", "short", "character", "date", "calendar", "uuid", "file", "path", "stream"
@@ -55,7 +63,7 @@ export async function auditContractQuality(
   }
 
   // --- Rule 2: API Contract Without leading slash ('/') ---
-  const apiContracts = await listContractKeysByKind(db, "api");
+  const apiContracts = await listContractKeysByKind(db, snapshot, "api");
   
   const noSlashApis = apiContracts
     .map(c => c.key)
@@ -72,7 +80,7 @@ export async function auditContractQuality(
   }
 
   // --- Rule 3: API producer only has method path, no class base path ---
-  const producers = await listRepoContractKeysByRole(db, { kind: "api", role: "producer" });
+  const producers = await listRepoContractKeysByRole(db, snapshot, { kind: "api", role: "producer" });
   
   function isMethodPathWithoutBasePath(key: string): boolean {
     const normalized = key.replace(/\{[^}]+\}/g, "param"); // e.g. /{id} -> /param
@@ -103,8 +111,8 @@ export async function auditContractQuality(
   }
 
   // --- Rule 4: Consumer has /smart/backorder, producer only has /smart/backorder/list ---
-  const allConsumers = await listRepoContractKeysByRole(db, { kind: "api", role: "consumer" });
-  const allProducers = await listRepoContractKeysByRole(db, { kind: "api", role: "producer" });
+  const allConsumers = await listRepoContractKeysByRole(db, snapshot, { kind: "api", role: "consumer" });
+  const allProducers = await listRepoContractKeysByRole(db, snapshot, { kind: "api", role: "producer" });
   
   const producerKeys = new Set(allProducers.map(p => p.key));
   const unproducedConsumers = allConsumers.filter(c => !producerKeys.has(c.key));
@@ -161,7 +169,7 @@ export async function auditContractQuality(
   }
 
   // --- Rule 6: Package contract inflation (> 1000) ---
-  const repoPackages = await listRepoContractCountsByRole(db, { kind: "package", role: "owner" });
+  const repoPackages = await listRepoContractCountsByRole(db, snapshot, { kind: "package", role: "owner" });
   
   const inflatedRepos = repoPackages
     .filter(rp => Number(rp.count) > packageInflationLimit)

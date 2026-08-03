@@ -203,7 +203,7 @@ export function findTargetSpecs(
     if (s.specKind === "schema") {
       try {
         const spec = deserializeSpec(s.specJson);
-        if (spec.kind === "schema" && spec.name === parsed.key) return true;
+        if (spec.kind === "schema" && spec.displayName === parsed.key) return true;
       } catch { /* ignore parse errors */ }
     }
     return false;
@@ -477,6 +477,7 @@ function bySeverityThenRepo(a: ImpactItem, b: ImpactItem): number {
 
 import type { GraphDB } from "../../graph-model/db.js";
 import { loadActiveSemanticGraph } from "../../graph-model/queries.js";
+import { withPublicGraphReadSnapshot, type PublicGraphReadSnapshot } from "../../graph-model/readSnapshot.js";
 
 /**
  * Analyzes impact by querying the graph database for ContractSpec nodes and
@@ -485,9 +486,16 @@ import { loadActiveSemanticGraph } from "../../graph-model/queries.js";
 export async function analyzeImpactFromDB(
   change: ChangeIntent,
   db: GraphDB,
-  options: ImpactAnalysisOptions = {}
+  workspaceId: string,
+  options: ImpactAnalysisOptions = {},
+  pinnedSnapshot?: PublicGraphReadSnapshot
 ): Promise<ImpactReport> {
-  const { specs, relations } = await loadActiveSemanticGraph(db);
+  if (!pinnedSnapshot) {
+    return withPublicGraphReadSnapshot(db, workspaceId, (snapshot) =>
+      analyzeImpactFromDB(change, db, workspaceId, options, snapshot));
+  }
+  const snapshot = pinnedSnapshot;
+  const { specs, relations } = await loadActiveSemanticGraph(db, snapshot);
 
   return analyzeImpact(change, specs, relations, options);
 }

@@ -52,7 +52,8 @@ export async function refreshSucceededIndexStateLexicalMetrics(input: {
          s.lexicalTokenizerVersion = $lexicalTokenizerVersion,
          s.lexicalIndexStatus = $lexicalIndexStatus,
          s.lexicalProjectionDurationMs = $lexicalProjectionDurationMs,
-         s.lexicalWriteDurationMs = $lexicalWriteDurationMs;`,
+         s.lexicalWriteDurationMs = $lexicalWriteDurationMs,
+         s.graphWriteStatus = 'committed';`,
     {
       repoIds,
       lexicalDocumentCount: input.lexicalDocumentCount,

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createCypherCrud, type CypherExecutor } from "../src/core/graph-model/cypherCrud.js";
-import type { CodeSymbol, FileNode } from "../src/core/parsing/types.js";
+import type { CodeSymbol, FileNode, SemanticRelationEdge } from "../src/core/parsing/types.js";
 import type { GraphValue } from "../src/core/graph-model/db.js";
+
+const scope = { workspaceId: "workspace:test", generation: "generation:test" };
 
 type QueryCall = {
   cypher: string;
@@ -26,6 +28,7 @@ function fileNode(input: Partial<FileNode> = {}): FileNode {
     id: "file:1",
     repoId: "repo:1",
     path: "src/index.ts",
+    directory: "src",
     language: "typescript",
     hash: "hash",
     loc: 10,
@@ -55,11 +58,14 @@ describe("createCypherCrud", () => {
     const { executor, calls } = createExecutor();
     const crud = createCypherCrud(executor);
 
-    await crud.upsertFile(fileNode());
+    await crud.upsertFile(fileNode(), scope);
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.cypher).toContain("MERGE (f:File {id: $id})");
-    expect(calls[0]!.params).toEqual(expect.objectContaining({
+    expect(calls[0]!.cypher).toContain("MERGE (n:File {storageId: row.storageId})");
+    expect(calls[0]!.params?.row).toEqual(expect.objectContaining({
+      id: "file:1",
+      workspaceId: scope.workspaceId,
+      generation: scope.generation,
       batchId: "",
       indexedAt: "",
       active: true
@@ -70,8 +76,8 @@ describe("createCypherCrud", () => {
     const { executor, calls } = createExecutor();
     const crud = createCypherCrud(executor);
 
-    await crud.upsertFilesBatch([]);
-    await crud.upsertCodeBatch([]);
+    await crud.upsertFilesBatch([], scope);
+    await crud.upsertCodeBatch([], scope);
 
     expect(calls).toHaveLength(0);
   });
@@ -81,7 +87,7 @@ describe("createCypherCrud", () => {
     const crud = createCypherCrud(executor);
     const files = Array.from({ length: 5001 }, (_, index) => fileNode({ id: `file:${index}` }));
 
-    await crud.upsertFilesBatch(files);
+    await crud.upsertFilesBatch(files, scope);
 
     expect(calls).toHaveLength(2);
     expect((calls[0]!.params!.batch as GraphValue[]).length).toBe(5000);
@@ -92,14 +98,53 @@ describe("createCypherCrud", () => {
     const { executor, calls } = createExecutor();
     const crud = createCypherCrud(executor);
 
-    await crud.upsertCodeBatch([codeNode()]);
+    await crud.upsertCodeBatch([codeNode()], scope);
 
     const batch = calls[0]!.params!.batch as Array<Record<string, GraphValue>>;
     expect(batch[0]).toEqual(expect.objectContaining({
       summary: "",
+      workspaceId: scope.workspaceId,
+      generation: scope.generation,
       batchId: "",
       indexedAt: "",
       active: true
+    }));
+  });
+
+  it("merges semantic relations by logical identity while retaining deterministic evidence attributes", async () => {
+    const { executor, calls } = createExecutor();
+    const crud = createCypherCrud(executor);
+    const relations: SemanticRelationEdge[] = [
+      {
+        fromSpecId: "spec:source",
+        toSpecId: "spec:target",
+        kind: "USES_SCHEMA",
+        evidenceId: "evidence:low",
+        reason: "lower confidence path",
+        confidence: 0.7
+      },
+      {
+        fromSpecId: "spec:source",
+        toSpecId: "spec:target",
+        kind: "USES_SCHEMA",
+        evidenceId: "evidence:high",
+        reason: "higher confidence path",
+        confidence: 0.9
+      }
+    ];
+
+    await crud.addSemanticRelationsBatch(relations, scope);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.cypher).toContain("MERGE (a)-[r:SEMANTIC_REL {kind: row.kind}]->(b)");
+    expect(calls[0]!.cypher).not.toContain("evidenceId: row.evidenceId");
+    const batch = calls[0]!.params!.batch as Array<Record<string, GraphValue>>;
+    expect(batch).toHaveLength(1);
+    expect(batch[0]).toEqual(expect.objectContaining({
+      kind: "USES_SCHEMA",
+      evidenceId: "evidence:high",
+      reason: "higher confidence path",
+      confidence: 0.9
     }));
   });
 });

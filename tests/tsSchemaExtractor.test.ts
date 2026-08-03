@@ -2,11 +2,14 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { objectSchemaFields } from "./helpers/schemaModel.js";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { tsSchemaExtractor } from "../src/core/contracts/extraction/builtin/tsSchemaExtractor.js";
 import { repoId } from "../src/shared/path.js";
 import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
+import { reconcileNonJavaSchemaFacts } from "../src/core/contracts/extraction/nonJavaSchemaReconciler.js";
 import type { SchemaSpec } from "../src/core/contracts/spec.js";
+import { createSchemaSpec } from "../src/core/schema/model.js";
 
 async function extract(source: string): Promise<ExtractorFactBundle> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-ts-schema-"));
@@ -16,7 +19,9 @@ async function extract(source: string): Promise<ExtractorFactBundle> {
   await fs.writeFile(abs, source, "utf8");
   const repo = { id: repoId("ts-schema"), name: "ts-schema", path: dir, remoteUrl: "", branch: "", commitSha: "", language: "typescript", indexedAt: "now" } as any;
   const parsed = await parseSourceFile({ repoId: repo.id, absolutePath: abs, relativePath: rel, language: "typescript" });
-  const bundle = await tsSchemaExtractor.extract({ repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
+  const extracted = await tsSchemaExtractor.extract({ repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
+  const reconciled = reconcileNonJavaSchemaFacts(extracted.contractSpecs, extracted.semanticRelations, extracted.schemaDeclarations);
+  const bundle = { ...extracted, contractSpecs: reconciled.contractSpecs, semanticRelations: reconciled.semanticRelations };
   await fs.rm(dir, { recursive: true, force: true });
   return bundle;
 }
@@ -26,8 +31,9 @@ function schemaSpecFromBundle(bundle: ExtractorFactBundle, contractKey: string):
     const contract = bundle.contracts.find((c) => c.id === s.contractId);
     return contract?.key === contractKey;
   });
-  if (!spec) return undefined;
-  return JSON.parse(spec.specJson) as SchemaSpec;
+  if (spec) return JSON.parse(spec.specJson) as SchemaSpec;
+  const candidate = bundle.schemaDeclarations.find((item) => item.declaration.canonicalName.toLowerCase() === contractKey);
+  return candidate ? createSchemaSpec(candidate) : undefined;
 }
 
 describe("TypeScript Schema Extractor", () => {
@@ -42,11 +48,11 @@ export interface CreateOrderDTO {
 }`);
     const spec = schemaSpecFromBundle(bundle, "createorderdto");
     expect(spec).toBeDefined();
-    expect(spec!.fields).toHaveLength(3);
-    expect(spec!.fields[0]).toMatchObject({ name: "sku", type: "string", optional: false });
-    expect(spec!.fields[1]).toMatchObject({ name: "quantity", type: "number", optional: false });
-    expect(spec!.fields[2]).toMatchObject({ name: "price", type: "number", optional: false });
-    expect(spec!.language).toBe("typescript");
+    expect(objectSchemaFields(spec!)).toHaveLength(3);
+    expect(objectSchemaFields(spec!)[0]).toMatchObject({ name: "sku", type: "string", optional: false });
+    expect(objectSchemaFields(spec!)[1]).toMatchObject({ name: "quantity", type: "number", optional: false });
+    expect(objectSchemaFields(spec!)[2]).toMatchObject({ name: "price", type: "number", optional: false });
+    expect(spec!.languageId).toBe("typescript");
   });
 
   it("extracts optional fields (marked with ?)", async () => {
@@ -58,7 +64,7 @@ export interface OrderDTO {
 }`);
     const spec = schemaSpecFromBundle(bundle, "orderdto");
     expect(spec).toBeDefined();
-    const optional = spec!.fields.filter((f) => f.optional);
+    const optional = objectSchemaFields(spec!).filter((f) => f.optional);
     expect(optional).toHaveLength(2);
     expect(optional[0]!.name).toBe("couponCode");
     expect(optional[1]!.name).toBe("notes");
@@ -73,13 +79,16 @@ export interface OrderDTO {
 }`);
     const spec = schemaSpecFromBundle(bundle, "orderdto");
     expect(spec).toBeDefined();
-    expect(spec!.fields).toHaveLength(3);
-    const itemsField = spec!.fields.find((f) => f.name === "items");
+    expect(objectSchemaFields(spec!)).toHaveLength(3);
+    const itemsField = objectSchemaFields(spec!).find((f) => f.name === "items");
     expect(itemsField).toBeDefined();
     expect(itemsField!.type).toBe("array<OrderItem>");
-    const metaField = spec!.fields.find((f) => f.name === "meta");
+    const metaField = objectSchemaFields(spec!).find((f) => f.name === "meta");
     expect(metaField).toBeDefined();
-    expect(metaField!.type).toBe("map");
+    // Declaration candidates preserve the source application until a typed
+    // root supplies a resolution context; the adapter then canonicalizes the
+    // builtin Record symbol to a map without pre-empting user shadowing.
+    expect(metaField!.type).toBe("Record<string,any>");
   });
 
   it("detects nullable from union with null", async () => {
@@ -91,8 +100,8 @@ export interface UserDTO {
 }`);
     const spec = schemaSpecFromBundle(bundle, "userdto");
     expect(spec).toBeDefined();
-    expect(spec!.fields).toHaveLength(3);
-    const avatar = spec!.fields.find((f) => f.name === "avatar");
+    expect(objectSchemaFields(spec!)).toHaveLength(3);
+    const avatar = objectSchemaFields(spec!).find((f) => f.name === "avatar");
     expect(avatar).toBeDefined();
     expect(avatar!.type).toBe("string?");
     // "?" at end of normalized type name signals nullable
@@ -108,8 +117,8 @@ export interface StringMapDTO {
     const spec = schemaSpecFromBundle(bundle, "stringmapdto");
     expect(spec).toBeDefined();
     // Only "count" should be present; index signature is skipped
-    expect(spec!.fields).toHaveLength(1);
-    expect(spec!.fields[0]!.name).toBe("count");
+    expect(objectSchemaFields(spec!)).toHaveLength(1);
+    expect(objectSchemaFields(spec!)[0]!.name).toBe("count");
   });
 
   it("skips method signatures", async () => {
@@ -121,8 +130,8 @@ export interface WithMethodsDTO {
 }`);
     const spec = schemaSpecFromBundle(bundle, "withmethodsdto");
     expect(spec).toBeDefined();
-    expect(spec!.fields).toHaveLength(1);
-    expect(spec!.fields[0]!.name).toBe("id");
+    expect(objectSchemaFields(spec!)).toHaveLength(1);
+    expect(objectSchemaFields(spec!)[0]!.name).toBe("id");
   });
 
   // -- Generic type parameters ---------------------------------------------
@@ -136,7 +145,7 @@ export interface ApiResponseDTO<T> {
     const spec = schemaSpecFromBundle(bundle, "apiresponsedto");
     expect(spec).toBeDefined();
     // Generic parameter T is a reference, not a primitive
-    const dataField = spec!.fields.find((f) => f.name === "data");
+    const dataField = objectSchemaFields(spec!).find((f) => f.name === "data");
     expect(dataField).toBeDefined();
     expect(dataField!.type).toBe("T");
   });
@@ -152,9 +161,9 @@ export type OrderPayload = {
 };`);
     const spec = schemaSpecFromBundle(bundle, "orderpayload");
     expect(spec).toBeDefined();
-    expect(spec!.fields).toHaveLength(3);
-    expect(spec!.fields[0]).toMatchObject({ name: "orderId", type: "string" });
-    expect(spec!.fields[1]).toMatchObject({ name: "amount", type: "number" });
+    expect(objectSchemaFields(spec!)).toHaveLength(3);
+    expect(objectSchemaFields(spec!)[0]).toMatchObject({ name: "orderId", type: "string" });
+    expect(objectSchemaFields(spec!)[1]).toMatchObject({ name: "amount", type: "number" });
   });
 
   // -- TS utility types (Omit / Pick / Partial / Required / Readonly) ------
@@ -172,17 +181,17 @@ export type UpdateOrderDTO = Partial<BaseOrderDTO> & {
     // Check that the base interface was extracted
     const baseSpec = schemaSpecFromBundle(bundle, "baseorderdto");
     expect(baseSpec).toBeDefined();
-    expect(baseSpec!.fields).toHaveLength(3);
+    expect(objectSchemaFields(baseSpec!)).toHaveLength(3);
 
     // Check that the intersection type fields are extracted
     const updateSpec = schemaSpecFromBundle(bundle, "updateorderdto");
     expect(updateSpec).toBeDefined();
     // Should have at least the "version" field from the intersection
-    const versionField = updateSpec!.fields.find((f) => f.name === "version");
+    const versionField = objectSchemaFields(updateSpec!).find((f) => f.name === "version");
     expect(versionField).toBeDefined();
   });
 
-  it("unwraps Pick<T,K> — records base type reference via USES_SCHEMA", async () => {
+  it("unwraps Pick<T,K> 鈥?records base type reference via USES_SCHEMA", async () => {
     const bundle = await extract(`
 export interface FullOrderDTO {
   id: string;
@@ -196,17 +205,15 @@ export type OrderSummaryDTO = Pick<FullOrderDTO, 'id' | 'sku' | 'price'>;`);
     // FullOrderDTO should have its fields extracted
     const fullSpec = schemaSpecFromBundle(bundle, "fullorderdto");
     expect(fullSpec).toBeDefined();
-    expect(fullSpec!.fields.length).toBeGreaterThanOrEqual(5);
+    expect(objectSchemaFields(fullSpec!).length).toBeGreaterThanOrEqual(5);
 
-    // OrderSummaryDTO should have a pending USES_SCHEMA edge to FullOrderDTO
-    const rel = bundle.semanticRelations.find(
-      (r) => r.kind === "USES_SCHEMA" && r.toSpecId === "schema-ref:FullOrderDTO"
-    );
-    expect(rel).toBeDefined();
-    expect(rel!.reason).toContain("FullOrderDTO");
+    expect(bundle.schemaDeclarations.find((item) => item.displayName === "OrderSummaryDTO")?.shape).toMatchObject({
+      baseTypes: [{ kind: "reference", name: "FullOrderDTO" }]
+    });
+    expect(bundle.semanticRelations.filter((r) => r.kind === "USES_SCHEMA")).toHaveLength(0);
   });
 
-  it("unwraps Omit<T,K> — records base type reference", async () => {
+  it("unwraps Omit<T,K> 鈥?records base type reference", async () => {
     const bundle = await extract(`
 export interface UserDTO {
   id: string;
@@ -215,110 +222,135 @@ export interface UserDTO {
 }
 export type PublicUserDTO = Omit<UserDTO, 'password'>;`);
 
-    const rel = bundle.semanticRelations.find(
-      (r) => r.kind === "USES_SCHEMA" && r.toSpecId === "schema-ref:UserDTO"
-    );
-    expect(rel).toBeDefined();
+    expect(bundle.schemaDeclarations.find((item) => item.displayName === "PublicUserDTO")?.shape).toMatchObject({
+      baseTypes: [{ kind: "reference", name: "UserDTO" }]
+    });
+    expect(bundle.semanticRelations.filter((r) => r.kind === "USES_SCHEMA")).toHaveLength(0);
   });
 
-  it("unwraps Readonly<T> — records base type reference", async () => {
+  it("unwraps Readonly<T> 鈥?records base type reference", async () => {
     const bundle = await extract(`
 export interface ConfigDTO { theme: string; }
 export type ReadonlyConfigDTO = Readonly<ConfigDTO>;`);
 
-    const rel = bundle.semanticRelations.find(
-      (r) => r.kind === "USES_SCHEMA" && r.toSpecId === "schema-ref:ConfigDTO"
-    );
-    expect(rel).toBeDefined();
+    expect(bundle.schemaDeclarations.find((item) => item.displayName === "ReadonlyConfigDTO")?.shape).toMatchObject({
+      baseTypes: [{ kind: "reference", name: "ConfigDTO" }]
+    });
   });
 
-  it("unwraps Required<T> — records base type reference", async () => {
+  it("unwraps Required<T> 鈥?records base type reference", async () => {
     const bundle = await extract(`
 export interface PartialUserDTO { name?: string; email?: string; }
 export type FullUserDTO = Required<PartialUserDTO>;`);
 
-    const rel = bundle.semanticRelations.find(
-      (r) => r.kind === "USES_SCHEMA" && r.toSpecId === "schema-ref:PartialUserDTO"
-    );
-    expect(rel).toBeDefined();
+    expect(bundle.schemaDeclarations.find((item) => item.displayName === "FullUserDTO")?.shape).toMatchObject({
+      baseTypes: [{ kind: "reference", name: "PartialUserDTO" }]
+    });
+  });
+
+  it("preserves interface inheritance and recursive field Type IR", async () => {
+    const bundle = await extract(`
+export interface User { id: string; }
+export interface Admin { role: string; }
+export interface Page<T> { value: T; }
+export interface Result extends Page<User>, models.Audited {
+  actor: User | Admin;
+  pages: Page<User>[];
+}`);
+    const result = bundle.schemaDeclarations.find((candidate) => candidate.displayName === "Result");
+    expect(bundle.schemaDeclarations.find((candidate) => candidate.displayName === "Page")?.typeParameters).toEqual(["T"]);
+    expect(result?.shape.kind === "object" ? result.shape.baseTypes : undefined).toEqual([
+      {
+        kind: "application",
+        target: { kind: "reference", name: "Page" },
+        arguments: [{ kind: "reference", name: "User" }]
+      },
+      { kind: "reference", name: "models.Audited" }
+    ]);
+    const fields = result?.shape.kind === "object" ? result.shape.fields : [];
+    expect(fields.find((field) => field.sourceName === "actor")?.type).toMatchObject({
+      kind: "unresolved",
+      normalizedExpression: {
+        kind: "union",
+        members: [{ kind: "reference", name: "User" }, { kind: "reference", name: "Admin" }]
+      }
+    });
+    expect(fields.find((field) => field.sourceName === "pages")?.type).toMatchObject({
+      kind: "unresolved",
+      normalizedExpression: {
+        kind: "array",
+        element: {
+          kind: "application",
+          target: { kind: "reference", name: "Page" },
+          arguments: [{ kind: "reference", name: "User" }]
+        }
+      }
+    });
   });
 
   // -- Schema classification -----------------------------------------------
 
-  it("classifies interfaces ending in DTO / Dto / Payload as dto", async () => {
+  it("indexes declarations independent of naming suffix without public materialization", async () => {
     const bundle = await extract(`
 export interface CreateUserDTO { name: string; }
 export interface OrderPayload { id: string; }
 export interface UpdateUserDto { email: string; }`);
 
-    const dtoContracts = bundle.contracts.filter((c) => c.kind === "dto");
-    expect(dtoContracts.length).toBeGreaterThanOrEqual(3);
-    const keys = dtoContracts.map((c) => c.key).sort();
+    expect(bundle.contractSpecs.filter((spec) => spec.specKind === "schema")).toHaveLength(0);
+    const keys = bundle.schemaDeclarations.map((item) => item.declaration.canonicalName.toLowerCase()).sort();
     expect(keys).toContain("createuserdto");
     expect(keys).toContain("orderpayload");
     expect(keys).toContain("updateuserdto");
   });
 
-  it("classifies interfaces ending in Schema as schema", async () => {
+  it("indexes interfaces ending in Schema without suffix-triggered materialization", async () => {
     const bundle = await extract(`
 export interface OrderSchema { id: string; name: string; }`);
 
-    const schemaContracts = bundle.contracts.filter((c) => c.kind === "schema");
-    const keys = schemaContracts.map((c) => c.key);
-    expect(keys).toContain("orderschema");
+    expect(bundle.schemaDeclarations.map((item) => item.displayName)).toContain("OrderSchema");
+    expect(bundle.contractSpecs.filter((spec) => spec.specKind === "schema")).toHaveLength(0);
   });
 
   // -- Producer / shared role ----------------------------------------------
 
-  it("marks schema contracts with shared role", async () => {
+  it("does not emit a shared role before a declaration becomes reachable", async () => {
     const bundle = await extract(`
 export interface ProductDTO { id: string; name: string; }`);
 
-    const relations = bundle.repoContracts;
-    const productRelation = relations.find((r) => {
-      const contract = bundle.contracts.find((c) => c.id === r.contractId);
-      return contract?.key === "productdto";
-    });
-    expect(productRelation).toBeDefined();
-    expect(productRelation!.role).toBe("shared");
+    expect(bundle.schemaDeclarations).toHaveLength(1);
+    expect(bundle.repoContracts).toHaveLength(0);
   });
 
   // -- Non-DTO/Schema interfaces are skipped --------------------------------
 
-  it("skips interfaces that do not match DTO/Schema naming patterns", async () => {
+  it("indexes explicit TypeScript structures but does not materialize isolated declarations", async () => {
     const bundle = await extract(`
 export interface Props { className?: string; }
 export interface State { loading: boolean; }
 export interface Config { debug: boolean; }`);
 
     // "Props" and "State" don't match DTO/Schema patterns
-    const dtoSpecs = bundle.contractSpecs.filter((s) => s.specKind === "schema");
-    // None should be produced for these non-DTO interfaces
-    expect(dtoSpecs).toHaveLength(0);
+    expect(bundle.schemaDeclarations).toHaveLength(3);
+    expect(bundle.contractSpecs.filter((s) => s.specKind === "schema")).toHaveLength(0);
   });
 
   // -- Contract evidence ---------------------------------------------------
 
-  it("emits evidence with rule ts-schema-fields and confidence 0.75", async () => {
+  it("retains declaration evidence for later materialization", async () => {
     const bundle = await extract(`
 export interface UserDTO { name: string; }`);
 
-    const evidenceNodes = bundle.evidence.filter((e) => e.rule === "ts-schema-fields");
-    expect(evidenceNodes.length).toBeGreaterThanOrEqual(1);
-    for (const ev of evidenceNodes) {
-      expect(ev.confidence).toBe(0.75);
-    }
+    expect(bundle.schemaDeclarations[0]?.evidence).toMatchObject({ rule: "ts-schema-declaration", confidence: 0.75 });
+    expect(bundle.evidence.filter((e) => e.rule === "ts-schema-fields")).toHaveLength(0);
   });
 
   // -- Business entity wiring -----------------------------------------------
 
-  it("wires up business entity for schema contracts", async () => {
+  it("does not wire a business entity for an isolated declaration", async () => {
     const bundle = await extract(`
 export interface OrderDTO { id: string; }`);
 
-    const entities = bundle.entities.filter((e) => e.kind === "domain");
-    expect(entities.length).toBeGreaterThanOrEqual(1);
-    const orderEntity = entities.find((e) => e.name === "Order");
-    expect(orderEntity).toBeDefined();
+    expect(bundle.schemaDeclarations).toHaveLength(1);
+    expect(bundle.entities.filter((e) => e.kind === "domain")).toHaveLength(0);
   });
 });

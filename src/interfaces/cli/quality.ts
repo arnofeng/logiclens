@@ -4,6 +4,7 @@ import { createGraphDB } from "../../core/graph-model/factory.js";
 import { auditRelationQuality, rejectEvidence, upsertAliasOverride } from "../../features/quality/quality.js";
 import { repoId } from "../../shared/path.js";
 import { auditContractQuality } from "../../features/quality/qualityRules.js";
+import { deriveWorkspaceId } from "../../core/workspace/identity.js";
 
 export type QualityOptions = {
   minConfidence?: number;
@@ -38,9 +39,10 @@ export async function qualityCommand(
   });
   try {
     await db.initSchema(config.systemName);
+    const workspaceId = deriveWorkspaceId(config.systemName);
     
     if (action === "contracts") {
-      const violations = await auditContractQuality(db);
+      const violations = await auditContractQuality(db, workspaceId);
       if (violations.length === 0) {
         console.log("No contract quality issues found.");
         return;
@@ -57,7 +59,7 @@ export async function qualityCommand(
     }
 
     if (options.rejectEvidence) {
-      await rejectEvidence(db, { evidenceId: options.rejectEvidence, reason: options.reason ?? "Marked as false positive" });
+      await rejectEvidence(db, workspaceId, { evidenceId: options.rejectEvidence, reason: options.reason ?? "Marked as false positive" });
       console.log(`Rejected evidence: ${options.rejectEvidence}`);
       return;
     }
@@ -66,7 +68,7 @@ export async function qualityCommand(
       console.log(`Alias override: ${options.alias} -> ${options.targetRepo}`);
       return;
     }
-    const audit = await auditRelationQuality(db, { minConfidence: options.minConfidence, limit: options.limit });
+    const audit = await auditRelationQuality(db, workspaceId, { minConfidence: options.minConfidence, limit: options.limit });
     console.log("Low-confidence relations:");
     for (const row of audit.lowConfidence) {
       console.log(`- ${row.evidenceId} ${row.repoName} ${row.role} ${row.contractKind}:${row.contractKey} confidence=${row.confidence} ${row.filePath}:${row.line} rule=${row.rule}`);

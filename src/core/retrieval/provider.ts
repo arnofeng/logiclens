@@ -29,6 +29,7 @@ export interface GraphProviderCapabilities {
 
 export interface ReconcileRepoDocumentsRequest {
   workspaceId: string;
+  generation: string;
   repoId: string;
   batchId: string;
   activeDocumentIds: readonly string[];
@@ -39,25 +40,89 @@ export interface CleanupBatchRequest {
   batchId: string;
 }
 
+export interface StageLexicalBatchRequest extends CleanupBatchRequest {
+  generation: string;
+  repoIds: readonly string[];
+}
+
+export interface LexicalGenerationRequest {
+  workspaceId: string;
+  generation: string;
+  /**
+   * Immutable publication revision whose statistics must be observed. Full
+   * generations use their generation id; incremental publications keep the
+   * physical generation and advance only this revision.
+   */
+  revision?: string;
+}
+
+export type InitializeLexicalGenerationRequest = LexicalGenerationRequest;
+
+export interface UpsertDocumentsRequest extends LexicalGenerationRequest {
+  documents: readonly LexicalDocument[];
+}
+
+export interface DeleteDocumentsRequest extends LexicalGenerationRequest {
+  documentIds: readonly string[];
+}
+
+/**
+ * The lexical component of one already-validated incremental index mutation.
+ * Logical document ids remain stable; the provider derives physical ids from
+ * the active data generation. Callers apply this inside the same GraphDB
+ * transaction as graph, internal-fact, and active-revision mutations.
+ */
+export interface IncrementalLexicalMutationRequest extends LexicalGenerationRequest {
+  expectedRevision: string;
+  nextRevision: string;
+  upsertDocuments: readonly LexicalDocument[];
+  deleteDocumentIds: readonly string[];
+}
+
 export interface LoadDocumentsRequest {
   workspaceId: string;
+  generation: string;
   documentIds: readonly string[];
+}
+export interface DocumentIdsForSourcesRequest extends LexicalGenerationRequest {
+  repoId: string;
+  fileIds: readonly string[];
 }
 export interface ReconcileRepoFileDocumentsRequest {
   workspaceId: string;
+  generation: string;
   repoId: string;
   batchId: string;
   activeFileIds: readonly string[];
 }
 
+export interface ReplaceSourceDocumentsRequest {
+  workspaceId: string;
+  generation: string;
+  repoId: string;
+  batchId: string;
+  touchedFileIds: readonly string[];
+  activeDocumentIds: readonly string[];
+}
+
 export type WorkspaceLexicalStoreOperation =
   | "ensureSchema"
   | "commitVersions"
+  | "initializeGeneration"
+  | "deleteGeneration"
+  | "stageBatch"
+  | "commitBatch"
   | "upsertDocuments"
+  | "deleteDocuments"
+  | "applyIncrementalMutation"
   | "reconcileRepoDocuments"
+  | "reconcileRepoFileDocuments"
+  | "replaceSourceDocuments"
   | "cleanupBatch"
   | "search"
   | "loadDocuments"
+  | "documentIdsForSources"
+  | "pendingHealth"
   | "health";
 
 export type WorkspaceLexicalStoreErrorCode =
@@ -74,6 +139,7 @@ export interface WorkspaceLexicalStoreErrorContext {
   workspaceId?: string;
   repoId?: string;
   batchId?: string;
+  generation?: string;
 }
 
 /** A provider-neutral failure boundary; adapter error text is retained only as a cause. */
@@ -97,15 +163,34 @@ export interface WorkspaceLexicalStore {
   ensureSchema(): Promise<void>;
   /** Advances projection/tokenizer metadata only after a complete rebuild commits. */
   commitVersions(): Promise<void>;
-  upsertDocuments(documents: readonly LexicalDocument[]): Promise<void>;
+  /** Initializes one empty physical generation without reading the active corpus. */
+  initializeGeneration(request: Readonly<InitializeLexicalGenerationRequest>): Promise<void>;
+  /** Deletes only the selected physical generation and its staging markers. */
+  deleteGeneration(request: Readonly<LexicalGenerationRequest>): Promise<void>;
+  stageBatch?(request: Readonly<StageLexicalBatchRequest>): Promise<void>;
+  commitBatch?(request: Readonly<CleanupBatchRequest>): Promise<void>;
+  upsertDocuments(request: Readonly<UpsertDocumentsRequest>): Promise<void>;
+  /** Idempotently removes exact logical documents from only one pending generation. */
+  deleteDocuments(request: Readonly<DeleteDocumentsRequest>): Promise<void>;
+  /**
+   * Applies only exact logical-document deltas. This method deliberately does
+   * not open a generation, clone a corpus, stage a batch, run DDL/COPY, or
+   * commit a transaction; the workspace mutation coordinator owns the outer
+   * provider transaction.
+   */
+  applyIncrementalMutation(request: Readonly<IncrementalLexicalMutationRequest>): Promise<void>;
   reconcileRepoDocuments(request: Readonly<ReconcileRepoDocumentsRequest>): Promise<void>;
   /** Marks only file-backed projections stale; repo-level projections are retained. */
   reconcileRepoFileDocuments(request: Readonly<ReconcileRepoFileDocumentsRequest>): Promise<void>;
+  replaceSourceDocuments?(request: Readonly<ReplaceSourceDocumentsRequest>): Promise<void>;
   cleanupBatch(request: Readonly<CleanupBatchRequest>): Promise<void>;
   /** Returns provider-neutral hits in global workspace order with ranks starting at one. */
   search(query: Readonly<LexicalQuery>, options: Readonly<LexicalSearchOptions>): Promise<readonly LexicalHit[]>;
   loadDocuments(request: Readonly<LoadDocumentsRequest>): Promise<readonly LexicalDocument[]>;
-  health(workspaceId: string): Promise<LexicalIndexHealth>;
+  /** Loads only stable logical ids owned by explicitly touched/deleted sources. */
+  documentIdsForSources(request: Readonly<DocumentIdsForSourcesRequest>): Promise<readonly string[]>;
+  pendingHealth(request: Readonly<LexicalGenerationRequest>): Promise<LexicalIndexHealth>;
+  health(request: Readonly<LexicalGenerationRequest>): Promise<LexicalIndexHealth>;
 }
 
 export type LexicalProviderGateReasonCode =
@@ -127,6 +212,8 @@ export type LexicalProviderGateStatus = "ready" | "unavailable";
 type LexicalProviderGateBase = Readonly<{
   configuredProvider: GraphProviderId | "auto";
   effectiveProvider?: GraphProviderId;
+  workspaceId: string;
+  generation: string;
 }>;
 
 export type LexicalProviderReadyResult = LexicalProviderGateBase & Readonly<{
@@ -168,6 +255,7 @@ export type ResolveLexicalProviderInput = Readonly<{
   lexicalProvider: GraphProviderId | "auto";
   scope: string;
   workspaceId: string;
+  generation: string;
 }>;
 
 export class LexicalProviderNotReadyError extends Error {
@@ -189,6 +277,8 @@ function unavailable(
 ): LexicalProviderUnavailableResult {
   return Object.freeze({
     configuredProvider: input.lexicalProvider,
+    workspaceId: input.workspaceId,
+    generation: input.generation,
     status: "unavailable",
     reason,
     reasonCodes: Object.freeze([reason]),
@@ -244,7 +334,7 @@ export async function resolveLexicalProvider(
   const store = registration.bindLexical(db);
   let health: LexicalIndexHealth;
   try {
-    health = await store.health(input.workspaceId);
+    health = await store.health({ workspaceId: input.workspaceId, generation: input.generation });
   } catch (error) {
     if (error instanceof WorkspaceLexicalStoreError) {
       return unavailable(input, "health_check_failed", { effectiveProvider, capability, store });
@@ -258,6 +348,8 @@ export async function resolveLexicalProvider(
   return Object.freeze({
     configuredProvider: input.lexicalProvider,
     effectiveProvider,
+    workspaceId: input.workspaceId,
+    generation: input.generation,
     status: "ready",
     reasonCodes: Object.freeze([] as const),
     capability,

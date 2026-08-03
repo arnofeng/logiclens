@@ -16,6 +16,7 @@ import { registerBuiltinParsers } from "../src/core/parsing/parserRegistry.js";
 import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
 import { normalizeName, repoId } from "../src/shared/path.js";
 import { assertNormalizedSchemaSnapshot, captureSchemaBaselineSnapshot, runSchemaSnapshotConformance } from "./helpers/schemaBaselineSnapshot.js";
+import { pinPublicGraphReadSnapshot } from "../src/core/graph-model/readSnapshot.js";
 
 type BaselineTarget = {
   currentCharacterization: {
@@ -135,6 +136,9 @@ describe("JS-001 Java schema failure baseline", () => {
     expect(pendingBeforeWrite.length).toBeGreaterThanOrEqual(target.currentCharacterization.pendingRefsBeforeWriteMinimum);
 
     const facts = await buildGraphFactsBatch({
+      workspaceId: deriveWorkspaceId(config.systemName),
+      generation: "generation:java-schema-js001",
+      systemName: config.systemName,
       batchId: "batch:java-schema-js001",
       indexedAt: "2026-01-01T00:00:00.000Z",
       repos: [repo],
@@ -202,8 +206,9 @@ describe("JS-001 Java schema failure baseline", () => {
       expect(activityCode.length).toBeGreaterThan(0);
       expect(activityContractSpecs).toHaveLength(0);
       expect(snapshot.lexical.every((document) => typeof document.sourceHash === "string" && document.sourceHash.length > 0)).toBe(true);
+      const readSnapshot = await pinPublicGraphReadSnapshot(db, deriveWorkspaceId(config.systemName));
       const activityHits = await new KuzuWorkspaceLexicalStore(db).search(
-        { workspaceId: deriveWorkspaceId(config.systemName), text: "ActivityGoodsQueryVO" },
+        { workspaceId: readSnapshot.workspaceId, generation: readSnapshot.generation, text: "ActivityGoodsQueryVO" },
         { topK: 50 }
       );
       expect(activityHits.some((hit) => hit.kind === "code" && activityCode.some((document) => document.canonicalId === hit.canonicalId))).toBe(true);
@@ -220,7 +225,8 @@ describe("JS-001 Java schema failure baseline", () => {
 
       const schemaSpec = snapshot.publicGraph.contractSpecs.find((spec) => spec.specKind === "schema");
       const schemaDocument = snapshot.lexical.find((document) => document.kind === "contractSpec" && document.canonicalId === schemaSpec?.id);
-      expect(schemaSpec?.id).toContain(normalizeName(String(schemaSpec?.evidenceId)));
+      expect(schemaSpec?.id).not.toContain(normalizeName(String(schemaSpec?.evidenceId)));
+      expect(schemaSpec?.id).toMatch(/^spec:schema:[a-f0-9]{64}$/u);
       expect(schemaDocument).toMatchObject({ canonicalId: schemaSpec?.id, active: true });
       expect(String(schemaDocument?.id)).not.toBe(schemaSpec?.id);
     } finally {
@@ -274,11 +280,11 @@ describe("JS-001 Java schema failure baseline", () => {
     expect(automatic.logs.some((message) => message.includes("Batched indexing: batches=2 batchSize=10"))).toBe(true);
     expect(reordered.logs.some((message) => message.includes("Batched indexing: batches=3 batchSize=4"))).toBe(true);
     assertNormalizedSchemaSnapshot(automatic.snapshot);
-    expect(automatic.snapshot.internalIndex.resolutionScopeDependencies).toEqual({ status: "unsupported", items: [] });
+    expect(automatic.snapshot.internalIndex.resolutionScopeDependencies).toEqual({ status: "available", items: [] });
     expect(reordered.snapshot).toEqual(automatic.snapshot);
   }, 120000);
 
-  it("detects the current changed-only graph divergence without accepting it as target semantics", async () => {
+  it("keeps changed-only graph/internal/lexical output equal to a clean reindex after source replacement", async () => {
     const workingCopy = await fs.mkdtemp(path.join(os.tmpdir(), "test-java-schema-changed-copy-"));
     temporaryDirectories.push(workingCopy);
     await fs.cp(fixtureRoot, workingCopy, { recursive: true });
@@ -299,9 +305,9 @@ describe("JS-001 Java schema failure baseline", () => {
         const clean = await captureSchemaBaselineSnapshot(cleanDb.db, workspaceId);
         assertNormalizedSchemaSnapshot(incremental);
         assertNormalizedSchemaSnapshot(clean);
-        expect(incremental).not.toEqual(clean);
-        expect(incremental.publicGraph.contractSpecs.length).toBeLessThan(clean.publicGraph.contractSpecs.length);
-        expect(incremental.lexical.some((document) => document.active === false)).toBe(false);
+        // JS-003 replaces source-owned public and lexical facts atomically, so
+        // the JS-001 characterization divergence is intentionally eliminated.
+        expect(incremental).toEqual(clean);
         expect(clean.lexical.some((document) => document.active === false)).toBe(false);
       } finally {
         await cleanDb.db.close();

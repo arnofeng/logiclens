@@ -37,6 +37,7 @@ import {
   type GraphProviderRegistration
 } from "../src/core/graph-model/factory.js";
 import { WorkspaceLexicalStoreError, type WorkspaceLexicalStore } from "../src/core/retrieval/provider.js";
+import { LEXICAL_PROJECTION_SCHEMA_VERSION, TOKENIZER_VERSION } from "../src/core/retrieval/types.js";
 
 async function makeTempWorkspace(): Promise<string> {
   return await fs.mkdtemp(path.join(os.tmpdir(), brandedTempDirPrefix("sdk-test")));
@@ -53,7 +54,9 @@ function fakeGraphDb(): GraphDB {
   return {
     initSchema: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
-    query: vi.fn().mockResolvedValue([]),
+    query: vi.fn(async (cypher: string) => cypher.includes("SchemaGenerationState")
+      ? [{ activeGeneration: "generation:sdk-test", activeRevision: "revision:sdk-test" }]
+      : []),
     listRepos: vi.fn().mockResolvedValue([])
   } as unknown as GraphDB;
 }
@@ -68,7 +71,9 @@ function fakeLexicalStore(): WorkspaceLexicalStore {
     search: vi.fn(),
     loadDocuments: vi.fn(),
     health: vi.fn().mockResolvedValue({
-      providerVersion: "test-1", projectionSchemaVersion: "1", tokenizerVersion: "1",
+      providerVersion: "test-1",
+      projectionSchemaVersion: LEXICAL_PROJECTION_SCHEMA_VERSION,
+      tokenizerVersion: TOKENIZER_VERSION,
       status: "healthy", reasons: [], metrics: { documentCount: 0, indexSizeBytes: 0 }
     })
   } as unknown as WorkspaceLexicalStore;
@@ -330,7 +335,9 @@ describe("SDK lexical provider health cache", () => {
   }
 
   const healthy = () => ({
-    providerVersion: "test-1", projectionSchemaVersion: "1", tokenizerVersion: "1",
+    providerVersion: "test-1",
+    projectionSchemaVersion: LEXICAL_PROJECTION_SCHEMA_VERSION,
+    tokenizerVersion: TOKENIZER_VERSION,
     status: "healthy" as const, reasons: [], metrics: { documentCount: 1, indexSizeBytes: 10 }
   });
   const unhealthy = () => ({
@@ -368,8 +375,8 @@ describe("SDK lexical provider health cache", () => {
         configuredProvider: "auto",
         gateStatus: "ready",
         providerVersion: "test-1",
-        projectionSchemaVersion: "1",
-        tokenizerVersion: "1",
+        projectionSchemaVersion: LEXICAL_PROJECTION_SCHEMA_VERSION,
+        tokenizerVersion: TOKENIZER_VERSION,
         indexStatus: "healthy"
       });
     }

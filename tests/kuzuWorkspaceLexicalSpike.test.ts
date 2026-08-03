@@ -12,6 +12,7 @@ import { workspaceSpikeDocuments } from "./retrieval/workspaceLexicalSpikeFixtur
 import { createRenderRef } from "../src/core/retrieval/renderRef.js";
 
 const WORKSPACE_ID = "workspace:spike";
+const GENERATION = "schema-generation:workspace-spike:kuzu-fixture";
 
 class KuzuHarness implements LexicalProviderHarness {
   readonly provider = "kuzu-0.11.3";
@@ -32,28 +33,36 @@ class KuzuHarness implements LexicalProviderHarness {
 
   async write(): Promise<void> {
     if (!this.store) throw new Error("Kuzu lexical store is closed");
-    await this.store.upsertDocuments(await workspaceSpikeDocuments(WORKSPACE_ID));
-    await this.store.upsertDocuments([{
-      id: "document:foreign:payment-ledger",
-      canonicalId: "file:foreign:payment-ledger",
+    await this.store.upsertDocuments({
+      workspaceId: WORKSPACE_ID,
+      generation: GENERATION,
+      documents: await workspaceSpikeDocuments(WORKSPACE_ID)
+    });
+    await this.store.upsertDocuments({
       workspaceId: "workspace:foreign",
-      repoId: "repo:foreign",
-      kind: "file",
-      title: "payment ledger",
-      path: "foreign/payment-ledger.txt",
-      searchableText: "payment ledger foreignonlymarker",
-      tokens: ["payment", "ledger", "foreignonlymarker"],
-      active: true,
-      sourceHash: "foreign",
-      batchId: "foreign",
-      renderRef: createRenderRef({ workspaceId: "workspace:foreign", repoId: "repo:foreign", kind: "file", canonicalId: "file:foreign:payment-ledger", fileId: "file:foreign:payment-ledger", path: "foreign/payment-ledger.txt" })
-    }]);
+      generation: GENERATION,
+      documents: [{
+        id: "document:foreign:payment-ledger",
+        canonicalId: "file:foreign:payment-ledger",
+        workspaceId: "workspace:foreign",
+        repoId: "repo:foreign",
+        kind: "file",
+        title: "payment ledger",
+        path: "foreign/payment-ledger.txt",
+        searchableText: "payment ledger foreignonlymarker",
+        tokens: ["payment", "ledger", "foreignonlymarker"],
+        active: true,
+        sourceHash: "foreign",
+        batchId: "foreign",
+        renderRef: createRenderRef({ workspaceId: "workspace:foreign", repoId: "repo:foreign", kind: "file", canonicalId: "file:foreign:payment-ledger", fileId: "file:foreign:payment-ledger", path: "foreign/payment-ledger.txt" })
+      }]
+    });
   }
 
   async search(query: { workspaceId: string; text: string }, options: LexicalSearchOptions): Promise<LexicalHit[]> {
     if (!this.store) throw new Error("Kuzu lexical store is closed");
     this.nativeCalls++;
-    return [...await this.store.search(query, options)];
+    return [...await this.store.search({ ...query, generation: GENERATION }, options)];
   }
 
   nativeSearchCount(): number {
@@ -63,8 +72,8 @@ class KuzuHarness implements LexicalProviderHarness {
   async isWorkspaceVisible(workspaceId: string): Promise<boolean> {
     if (!this.db) return false;
     const rows = await this.db.query<{ count: number }>(
-      "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.active = true RETURN count(*) AS count;",
-      { workspaceId }
+      "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.active = true RETURN count(*) AS count;",
+      { workspaceId, generation: GENERATION }
     );
     return Number(rows[0]?.count ?? 0) > 0;
   }

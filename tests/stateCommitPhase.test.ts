@@ -196,15 +196,19 @@ describe("semantic write and stale mark phases", () => {
       repo,
       activeFileIds: ["file:1", "file:2"],
       batchId: "batch:stale",
-      indexedAt: "2026-06-22T00:00:00.000Z"
+      indexedAt: "2026-06-22T00:00:00.000Z",
+      scope: { workspaceId: "workspace:test", generation: "generation:test" }
     });
 
     expect(count).toBe(3);
-    expect(markRepoArtifactsStale).toHaveBeenCalledWith({
-      repoId: repo.id,
-      activeFileIds: ["file:1", "file:2"],
-      batchId: "batch:stale",
-      indexedAt: "2026-06-22T00:00:00.000Z"
-    });
+    expect(markRepoArtifactsStale).toHaveBeenCalledWith(
+      {
+        repoId: repo.id,
+        activeFileIds: ["file:1", "file:2"],
+        batchId: "batch:stale",
+        indexedAt: "2026-06-22T00:00:00.000Z"
+      },
+      { workspaceId: "workspace:test", generation: "generation:test" }
+    );
   });
 });

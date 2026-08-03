@@ -127,8 +127,8 @@ describe("Go gRPC Extractor", () => {
     expect(createOrderSpec.service).toBe("OrderService");
     expect(createOrderSpec.method).toBe("CreateOrder");
     expect(createOrderSpec.package).toBeUndefined(); // Go side leaves package undefined
-    expect(createOrderSpec.requestType).toBe("CreateOrderRequest");
-    expect(createOrderSpec.responseType).toBe("Order");
+    expect(createOrderSpec.requestType).toBe("pb.CreateOrderRequest");
+    expect(createOrderSpec.responseType).toBe("pb.Order");
     expect(createOrderSpec.streaming).toBe("unary");
 
     // Verify producer spec details (Server streaming)
@@ -139,7 +139,7 @@ describe("Go gRPC Extractor", () => {
     expect(listOrdersSpec.service).toBe("OrderService");
     expect(listOrdersSpec.method).toBe("ListOrders");
     expect(listOrdersSpec.package).toBeUndefined(); // Go side leaves package undefined
-    expect(listOrdersSpec.requestType).toBe("ListOrdersRequest");
+    expect(listOrdersSpec.requestType).toBe("pb.ListOrdersRequest");
     expect(listOrdersSpec.responseType).toBeUndefined();
     expect(listOrdersSpec.streaming).toBe("server-stream");
 
@@ -160,6 +160,6 @@ describe("Go gRPC Extractor", () => {
     expect(consumerSpec.service).toBe("OrderService");
     expect(consumerSpec.method).toBe("CreateOrder");
     expect(consumerSpec.package).toBeUndefined(); // Go side leaves package undefined
-    expect(consumerSpec.requestType).toBe("CreateOrderRequest");
+    expect(consumerSpec.requestType).toBe("pb.CreateOrderRequest");
   });
 });

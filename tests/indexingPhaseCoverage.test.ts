@@ -11,6 +11,8 @@ import { runLlmSummaryPhase } from "../src/core/indexing/summaries.js";
 import { createIndexRunContext, type IndexRunContext } from "../src/core/indexing/context.js";
 import type { RepoNode } from "../src/core/parsing/types.js";
 import type { WorkspaceLexicalStore } from "../src/core/retrieval/provider.js";
+import { LEXICAL_PROJECTION_SCHEMA_VERSION } from "../src/core/retrieval/types.js";
+import { SCHEMA_INDEX_VERSION } from "../src/core/schema/model.js";
 import { registerGraphProvider } from "../src/core/graph-model/factory.js";
 import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
 import { KuzuWorkspaceLexicalStore } from "../src/adapters/graph-db/kuzu/KuzuWorkspaceLexicalStore.js";
@@ -38,7 +40,16 @@ function configWithRepos(count: number) {
 
 function dbWithRepoCount(count: number): KuzuGraphDB {
   return {
-    query: vi.fn().mockResolvedValue([{ count }]),
+    query: vi.fn(async (cypher: string) => cypher.includes("SchemaGenerationState")
+      ? count > 0
+        ? [{
+          activeGeneration: "generation:active",
+          activeRevision: "revision:active",
+          schemaIndexVersion: SCHEMA_INDEX_VERSION,
+          lexicalProjectionVersion: LEXICAL_PROJECTION_SCHEMA_VERSION
+        }]
+        : []
+      : [{ count }]),
     repoCount: vi.fn().mockResolvedValue(count)
   } as unknown as KuzuGraphDB;
 }
@@ -55,7 +66,7 @@ describe("indexing phase coverage", () => {
     { documentCount: Number.NaN, reasons: [] as string[], expected: { reconcile: true, reason: "invalid-document-count" } }
   ])("guards full-copy lexical reconciliation for count=$documentCount reasons=$reasons", async ({ documentCount, reasons, expected }) => {
     const base = configSchema.parse({});
-    const health = vi.fn().mockResolvedValue({
+    const pendingHealth = vi.fn().mockResolvedValue({
       providerVersion: "0.11.3",
       projectionSchemaVersion: "1",
       tokenizerVersion: "1",
@@ -66,11 +77,12 @@ describe("indexing phase coverage", () => {
     const ctx = {
       config: { ...base, graph: { ...base.graph, provider: "kuzu" } },
       workspaceId: "workspace:test",
-      lexicalStore: { health }
+      schemaGeneration: "generation:test",
+      lexicalStore: { pendingHealth }
     } as unknown as IndexRunContext;
 
     await expect(resolveFullCopyLexicalReconcile(ctx)).resolves.toEqual(expected);
-    expect(health).toHaveBeenCalledWith("workspace:test");
+    expect(pendingHealth).toHaveBeenCalledWith({ workspaceId: "workspace:test", generation: "generation:test" });
   });
 
   it("keeps reconciliation enabled when the initial health check fails or the provider is not Kuzu", async () => {
@@ -79,7 +91,8 @@ describe("indexing phase coverage", () => {
     const kuzu = {
       config: { ...base, graph: { ...base.graph, provider: "kuzu" } },
       workspaceId: "workspace:test",
-      lexicalStore: { health: failedHealth }
+      schemaGeneration: "generation:test",
+      lexicalStore: { pendingHealth: failedHealth }
     } as unknown as IndexRunContext;
     expect(await resolveFullCopyLexicalReconcile(kuzu)).toEqual({ reconcile: true, reason: "health-check-failed" });
 
@@ -87,14 +100,15 @@ describe("indexing phase coverage", () => {
     const neo4j = {
       config: { ...base, graph: { ...base.graph, provider: "neo4j" } },
       workspaceId: "workspace:test",
-      lexicalStore: { health: neo4jHealth }
+      schemaGeneration: "generation:test",
+      lexicalStore: { pendingHealth: neo4jHealth }
     } as unknown as IndexRunContext;
     expect(await resolveFullCopyLexicalReconcile(neo4j)).toEqual({ reconcile: true, reason: "non-kuzu-provider" });
     expect(neo4jHealth).not.toHaveBeenCalled();
   });
 
   it("reports provider-derived performance and capacity metrics for full and changed-only indexing", async () => {
-    const health = vi.spyOn(KuzuWorkspaceLexicalStore.prototype, "health");
+    const health = vi.spyOn(KuzuWorkspaceLexicalStore.prototype, "pendingHealth");
     const fixture = await createWorkspaceEvaluationFixture({ copyWorkspace: true });
     try {
       const full = fixture.fullIndexResult;
@@ -212,6 +226,37 @@ describe("indexing phase coverage", () => {
     expect(planning.repoConfigs.map((repoConfig) => repoConfig.name)).toEqual(["service-2"]);
   });
 
+  it("refuses legacy public data without a generation state and requires a clean full reindex", async () => {
+    const db = {
+      query: vi.fn(async (cypher: string) => cypher.includes("SchemaGenerationState") ? [] : [{ count: 1 }]),
+      repoCount: vi.fn()
+    } as unknown as KuzuGraphDB;
+    await expect(planIndexRun({
+      db,
+      config: configWithRepos(1),
+      options: { writeMode: "auto" }
+    })).rejects.toThrow(/clean generated graph\/internal\/lexical artifacts/u);
+    expect(db.repoCount).not.toHaveBeenCalled();
+  });
+
+  it("refuses an old lexical projection revision before changed-only planning", async () => {
+    const db = {
+      query: vi.fn(async (cypher: string) => cypher.includes("SchemaGenerationState") ? [{
+        activeGeneration: "generation:active",
+        activeRevision: "revision:active",
+        schemaIndexVersion: SCHEMA_INDEX_VERSION,
+        lexicalProjectionVersion: "1"
+      }] : []),
+      repoCount: vi.fn()
+    } as unknown as KuzuGraphDB;
+    await expect(planIndexRun({
+      db,
+      config: configWithRepos(1),
+      options: { changedOnly: true, writeMode: "merge" }
+    })).rejects.toThrow(/Lexical projection version 1.*clean generated graph\/internal\/lexical artifacts/iu);
+    expect(db.repoCount).not.toHaveBeenCalled();
+  });
+
   it("skips LLM summary work when summaries are disabled", async () => {
     const createProgressBar = vi.fn();
     const result = await runLlmSummaryPhase({
@@ -240,6 +285,9 @@ describe("indexing phase coverage", () => {
     }));
     const result = await runFactBuildPhase({
       batchId: "batch:facts",
+      workspaceId: "workspace:indexing-phase",
+      generation: "generation:indexing-phase",
+      systemName: "indexing-phase",
       indexedAt: "2026-06-22T00:00:00.000Z",
       repos: [repo],
       parsedFiles: [],
@@ -292,6 +340,9 @@ describe("indexing phase coverage", () => {
 
     await runFactBuildPhase({
       batchId: "batch:facts-progress",
+      workspaceId: "workspace:indexing-phase",
+      generation: "generation:indexing-phase",
+      systemName: "indexing-phase",
       indexedAt: "2026-06-22T00:00:00.000Z",
       repos: [repo, repoB],
       parsedFiles: [parsed, parsedB],
@@ -314,7 +365,7 @@ describe("indexing phase coverage", () => {
     expect(counts).toEqual({ filesScanned: 5, filesChanged: 3 });
   });
 
-  it("records failed index state when full copy bulk graph write fails", async () => {
+  it("leaves failed state publication to the workspace generation coordinator", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-full-bulk-fail-"));
     try {
       const config = configSchema.parse({
@@ -338,6 +389,8 @@ describe("indexing phase coverage", () => {
         logger: { createProgressBar: () => ({ tick: () => {}, update: () => {}, complete: () => {}, reporter: () => () => {} }) },
         writeMode: "bulk",
         workspaceId: "workspace:test",
+        schemaGeneration: "generation:test",
+        pendingIndexStateCommits: new Map(),
         lexicalStore: { cleanupBatch: vi.fn().mockResolvedValue(undefined) } as unknown as WorkspaceLexicalStore,
         additionalIndexFilesByRepo: new Map(),
         activePluginSourceGlobsByRepo: new Map(),
@@ -354,17 +407,16 @@ describe("indexing phase coverage", () => {
           repoConfigs: config.repos,
           batchSize: 0,
           shouldUseCopyBulk: true,
-          initialRepoCount: 0
+          initialRepoCount: 0,
+          publicationMode: "full-snapshot"
         },
         options: { writeMode: "bulk" }
       })).rejects.toThrow("bulk write failed");
 
-      expect(upsertIndexState).toHaveBeenCalledWith(expect.objectContaining({
-        repoName: "empty-service",
-        status: "failed",
-        graphWriteAtomicity: "journaled-recoverable",
-        graphWriteStatus: "failed",
-        error: expect.stringContaining("bulk write failed")
+      expect(upsertIndexState).not.toHaveBeenCalled();
+      expect(db.failGraphWriteBatch).toHaveBeenCalledWith(expect.objectContaining({
+        batchId: expect.any(String),
+        awaitingCleanup: true
       }));
     } finally {
       await fs.rm(dir, { recursive: true, force: true });

@@ -1,13 +1,22 @@
 import type { GraphValue } from "../../../core/graph-model/db.js";
 import { withTransaction } from "../../../core/graph-model/db.js";
+import { assertNoLivePublicGraphReadLeases } from "../../../core/graph-model/readSnapshot.js";
 import { tokenizeLexicalText } from "../../../core/retrieval/tokenizer.js";
 import { parseRenderRef } from "../../../core/retrieval/renderRef.js";
 import {
   WorkspaceLexicalStoreError,
+  type InitializeLexicalGenerationRequest,
   type CleanupBatchRequest,
+  type DeleteDocumentsRequest,
+  type DocumentIdsForSourcesRequest,
+  type IncrementalLexicalMutationRequest,
+  type LexicalGenerationRequest,
   type LoadDocumentsRequest,
   type ReconcileRepoDocumentsRequest,
   type ReconcileRepoFileDocumentsRequest,
+  type ReplaceSourceDocumentsRequest,
+  type StageLexicalBatchRequest,
+  type UpsertDocumentsRequest,
   type WorkspaceLexicalStore,
   type WorkspaceLexicalStoreErrorCode,
   type WorkspaceLexicalStoreErrorContext
@@ -26,7 +35,7 @@ import {
 import { Neo4jGraphDB } from "./Neo4jGraphDB.js";
 
 export const NEO4J_WORKSPACE_FTS_INDEX = "workspace_lexical";
-export const NEO4J_LEXICAL_STATS_SCHEMA_VERSION = "1";
+export const NEO4J_LEXICAL_STATS_SCHEMA_VERSION = "3";
 export const NEO4J_LEXICAL_UPSERT_CHUNK_SIZE = 500;
 export const NEO4J_LEXICAL_INDEX_ONLINE_TIMEOUT_SECONDS = 300;
 export const NEO4J_LEXICAL_ANALYZER = "standard-no-stop-words";
@@ -62,25 +71,36 @@ export interface Neo4jWorkspaceLexicalCompatibility {
 }
 
 interface ExistingDocumentRow {
-  id: string;
+  storageId: string;
   workspaceId: string;
   active: boolean;
   ftsSizeBytes: number | bigint | null;
 }
 
-interface DocumentRow extends Omit<LexicalDocument, "qualifiedName" | "path"> {
+interface DocumentRow extends Omit<LexicalDocument, "id" | "qualifiedName" | "path"> {
+  storageId: string;
+  documentId: string;
+  generation: string;
   qualifiedName: string | null;
   path: string | null;
+  ftsText?: string | null;
+  ftsSizeBytes?: number | bigint | null;
 }
 
 interface LegacyFileIdentityRow {
-  id: string;
+  storageId: string;
   workspaceId: string;
   repoId: string;
   kind: LexicalDocumentKind;
   canonicalId: string;
   renderRef: string;
 }
+
+type StoredDocument = {
+  storageId: string;
+  generation: string;
+  document: LexicalDocument;
+};
 
 interface IndexRow {
   name: string;
@@ -116,12 +136,35 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
   async ensureSchema(): Promise<void> {
     const context = { operation: "ensureSchema" } as const;
     try {
+      if (await this.hasCurrentSchema()) return;
+      // The logical document id remains stable across generations, so the
+      // physical key must include the generation. Drop the legacy unique
+      // constraints before migrating existing rows to that physical key.
+      await this.db.query("DROP CONSTRAINT lexical_document_id IF EXISTS");
+      await this.db.query("DROP CONSTRAINT lexical_workspace_stats_id IF EXISTS");
+      await this.db.query(
+        "MATCH (n:LexicalDocument) " +
+        "SET n.storageId = coalesce(n.storageId, n.id), n.documentId = coalesce(n.documentId, n.id), " +
+        "n.generation = coalesce(n.generation, 'legacy')"
+      );
+      await this.db.query("MATCH (n:LexicalDocument) REMOVE n.id");
+      await this.db.query(
+        "MATCH (s:LexicalWorkspaceStats) " +
+        "SET s.generation = coalesce(s.generation, 'legacy') " +
+        "SET s.revision = coalesce(s.revision, s.generation), " +
+        "s.id = coalesce(s.id, 'lexical-stats:legacy:' + s.workspaceId)"
+      );
       const statements = [
-        "CREATE CONSTRAINT lexical_document_id IF NOT EXISTS FOR (n:LexicalDocument) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT lexical_document_storage_id IF NOT EXISTS FOR (n:LexicalDocument) REQUIRE n.storageId IS UNIQUE",
         "CREATE CONSTRAINT lexical_metadata_key IF NOT EXISTS FOR (n:LexicalMetadata) REQUIRE n.key IS UNIQUE",
-        "CREATE CONSTRAINT lexical_workspace_stats_id IF NOT EXISTS FOR (n:LexicalWorkspaceStats) REQUIRE n.workspaceId IS UNIQUE",
+        "CREATE CONSTRAINT lexical_generation_stats_id IF NOT EXISTS FOR (n:LexicalWorkspaceStats) REQUIRE n.id IS UNIQUE",
+        "CREATE INDEX lexical_generation_stats_scope IF NOT EXISTS FOR (n:LexicalWorkspaceStats) ON (n.workspaceId, n.generation)",
+        "CREATE CONSTRAINT lexical_generation_batch_id IF NOT EXISTS FOR (n:LexicalGenerationBatch) REQUIRE n.id IS UNIQUE",
         "CREATE INDEX lexical_document_workspace IF NOT EXISTS FOR (n:LexicalDocument) ON (n.workspaceId)",
+        "CREATE INDEX lexical_document_generation IF NOT EXISTS FOR (n:LexicalDocument) ON (n.generation)",
+        "CREATE INDEX lexical_document_logical_id IF NOT EXISTS FOR (n:LexicalDocument) ON (n.documentId)",
         "CREATE INDEX lexical_document_repo IF NOT EXISTS FOR (n:LexicalDocument) ON (n.repoId)",
+        "CREATE INDEX lexical_document_file IF NOT EXISTS FOR (n:LexicalDocument) ON (n.fileId)",
         "CREATE INDEX lexical_document_batch IF NOT EXISTS FOR (n:LexicalDocument) ON (n.batchId)",
         "CREATE INDEX lexical_document_active IF NOT EXISTS FOR (n:LexicalDocument) ON (n.active)"
       ];
@@ -173,57 +216,208 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
     }
   }
 
-  async upsertDocuments(documents: readonly LexicalDocument[]): Promise<void> {
-    if (documents.length === 0) return;
+  async initializeGeneration(request: Readonly<InitializeLexicalGenerationRequest>): Promise<void> {
+    const context = {
+      operation: "initializeGeneration",
+      workspaceId: request.workspaceId,
+      generation: request.generation
+    } as const;
+    try {
+      validateGenerationRequest(request);
+      await withTransaction(this.db, async () => {
+        await this.assertGenerationNotActive(request, { allowReservedPending: true });
+        await this.deleteGenerationRows(request);
+      });
+      await this.replaceGenerationStats(
+        request.workspaceId,
+        request.generation,
+        request.generation,
+        0,
+        0
+      );
+    } catch (error) {
+      throw wrap("write_failed", context, error);
+    }
+  }
+
+  async deleteGeneration(request: Readonly<LexicalGenerationRequest>): Promise<void> {
+    const context = {
+      operation: "deleteGeneration",
+      workspaceId: request.workspaceId,
+      generation: request.generation
+    } as const;
+    try {
+      validateGenerationRequest(request);
+      await withTransaction(this.db, async () => {
+        await this.assertGenerationNotActive(request);
+        await this.deleteGenerationRows(request);
+      });
+    } catch (error) {
+      throw wrap("cleanup_failed", context, error);
+    }
+  }
+
+  async deleteDocuments(request: Readonly<DeleteDocumentsRequest>): Promise<void> {
+    const context = {
+      operation: "deleteDocuments",
+      workspaceId: request.workspaceId,
+      generation: request.generation
+    } as const;
+    try {
+      validateGenerationRequest(request);
+      const documentIds = uniqueStrings(request.documentIds, "documentIds");
+      if (documentIds.length === 0) return;
+      await withTransaction(this.db, async () => {
+        const rows = await this.db.query<{ documentCount: number; indexSizeBytes: number | null }>(
+          "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId " +
+          "AND n.generation = $generation AND n.documentId IN $documentIds AND n.active = true " +
+          "RETURN count(n) AS documentCount, coalesce(sum(n.ftsSizeBytes), 0) AS indexSizeBytes",
+          { workspaceId: request.workspaceId, generation: request.generation, documentIds }
+        );
+        await this.db.query(
+          "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId " +
+          "AND n.generation = $generation AND n.documentId IN $documentIds DELETE n",
+          { workspaceId: request.workspaceId, generation: request.generation, documentIds }
+        );
+        await this.adjustGenerationStats(
+          request.workspaceId,
+          request.generation,
+          request.generation,
+          -numeric(rows[0]?.documentCount),
+          -numeric(rows[0]?.indexSizeBytes)
+        );
+      });
+    } catch (error) {
+      throw wrap("write_failed", context, error);
+    }
+  }
+
+  async applyIncrementalMutation(request: Readonly<IncrementalLexicalMutationRequest>): Promise<void> {
     const context: WorkspaceLexicalStoreErrorContext = {
-      operation: "upsertDocuments",
-      workspaceId: documents[0]?.workspaceId,
-      batchId: documents[0]?.batchId
+      operation: "applyIncrementalMutation",
+      workspaceId: request.workspaceId,
+      generation: request.generation,
+      batchId: request.upsertDocuments[0]?.batchId
     };
     try {
-      const unique = validateDocuments(documents);
-      await withTransaction(this.db, async () => {
+      validateGenerationRequest(request);
+      validateBoundary(request.expectedRevision, "expectedRevision");
+      validateBoundary(request.nextRevision, "nextRevision");
+      if (request.expectedRevision === request.nextRevision) {
+        throw new TypeError("Incremental lexical mutation must advance to a distinct revision.");
+      }
+      const validated = request.upsertDocuments.length > 0
+        ? validateDocuments(request.upsertDocuments)
+        : [];
+      if (validated[0] && validated[0].workspaceId !== request.workspaceId) {
+        throw new TypeError("Incremental lexical upsert workspace does not match its generation request.");
+      }
+      const activeUpserts = validated.filter((document) => document.active);
+      const upsertIds = new Set(activeUpserts.map((document) => document.id));
+      const deleteDocumentIds = uniqueStrings([
+        ...request.deleteDocumentIds,
+        ...validated.filter((document) => !document.active).map((document) => document.id)
+      ], "deleteDocumentIds").filter((documentId) => !upsertIds.has(documentId));
+      let documentCountDelta = 0;
+      let indexSizeBytesDelta = 0;
+      if (activeUpserts.length > 0 || deleteDocumentIds.length > 0) {
+        const stored = activeUpserts.map((document) => storedDocument(document, request.generation));
+        const deleteStorageIds = deleteDocumentIds.map((documentId) =>
+          storageId(request.workspaceId, request.generation, documentId));
+        const affectedStorageIds = [...new Set([
+          ...deleteStorageIds,
+          ...stored.map((document) => document.storageId)
+        ])].sort(compareText);
         const existingRows = await this.db.query<ExistingDocumentRow>(
-          "MATCH (n:LexicalDocument) WHERE n.id IN $documentIds " +
-          "RETURN n.id AS id, n.workspaceId AS workspaceId, n.active AS active, n.ftsSizeBytes AS ftsSizeBytes",
-          { documentIds: unique.map((document) => document.id) }
+          "MATCH (n:LexicalDocument) WHERE n.storageId IN $storageIds " +
+          "RETURN n.storageId AS storageId, n.workspaceId AS workspaceId, " +
+          "n.active AS active, n.ftsSizeBytes AS ftsSizeBytes",
+          { storageIds: affectedStorageIds }
         );
-        const existing = new Map(existingRows.map((row) => [row.id, row]));
-        let documentCountDelta = 0;
-        let indexSizeBytesDelta = 0;
-        for (const document of unique) {
-          const previous = existing.get(document.id);
-          if (previous && previous.workspaceId !== document.workspaceId) {
-            throw new TypeError(`Document id cannot move between workspaces: ${document.id}.`);
+        const existing = new Map(existingRows.map((row) => [row.storageId, row]));
+        for (const row of existingRows) {
+          if (row.workspaceId !== request.workspaceId) {
+            throw new TypeError(`Lexical physical document belongs to a different workspace: ${row.storageId}.`);
           }
-          documentCountDelta += Number(document.active) - Number(previous?.active ?? false);
-          indexSizeBytesDelta += (document.active ? payloadSize(document) : 0)
+        }
+
+        for (const physicalId of deleteStorageIds) {
+          const previous = existing.get(physicalId);
+          if (!previous?.active) continue;
+          documentCountDelta -= 1;
+          indexSizeBytesDelta -= numeric(previous.ftsSizeBytes);
+        }
+        for (const item of stored) {
+          const previous = existing.get(item.storageId);
+          documentCountDelta += 1 - Number(previous?.active ?? false);
+          indexSizeBytesDelta += payloadSize(item.document)
             - (previous?.active ? numeric(previous.ftsSizeBytes) : 0);
         }
 
-        for (let offset = 0; offset < unique.length; offset += NEO4J_LEXICAL_UPSERT_CHUNK_SIZE) {
-          const rows = unique.slice(offset, offset + NEO4J_LEXICAL_UPSERT_CHUNK_SIZE).map(documentParameters);
-          const written = await this.db.query<{ written: number }>(
-            "UNWIND $documents AS document " +
-            "MERGE (n:LexicalDocument {id: document.id}) " +
-            "ON CREATE SET n.workspaceId = document.workspaceId " +
-            "WITH n, document WHERE n.workspaceId = document.workspaceId " +
-            "SET n.canonicalId = document.canonicalId, n.workspaceId = document.workspaceId, " +
-            "n.repoId = document.repoId, n.kind = document.kind, n.title = document.title, " +
-            "n.qualifiedName = document.qualifiedName, n.path = document.path, " +
-            "n.searchableText = document.searchableText, n.tokens = document.tokens, " +
-            "n.active = document.active, n.sourceHash = document.sourceHash, " +
-            "n.batchId = document.batchId, n.renderRef = document.renderRef, n.fileId = document.fileId, " +
-            "n.ftsText = document.ftsText, n.ftsSizeBytes = document.ftsSizeBytes " +
-            "RETURN count(n) AS written",
-            { documents: rows }
+        if (deleteStorageIds.length > 0) {
+          await this.db.query(
+            "MATCH (n:LexicalDocument) WHERE n.storageId IN $storageIds DELETE n",
+            { storageIds: deleteStorageIds }
           );
-          if (numeric(written[0]?.written) !== rows.length) {
-            throw new TypeError("Document id cannot move between workspaces.");
-          }
         }
-        await this.adjustWorkspaceStats(unique[0]!.workspaceId, documentCountDelta, indexSizeBytesDelta);
-      });
+        await this.writeStoredDocuments(stored);
+      }
+      await this.applyExactStatsDelta(
+        request.workspaceId,
+        request.generation,
+        request.expectedRevision,
+        request.nextRevision,
+        documentCountDelta,
+        indexSizeBytesDelta
+      );
+    } catch (error) {
+      throw wrap("write_failed", context, error);
+    }
+  }
+
+  async upsertDocuments(request: Readonly<UpsertDocumentsRequest>): Promise<void> {
+    const { documents } = request;
+    const context: WorkspaceLexicalStoreErrorContext = {
+      operation: "upsertDocuments",
+      workspaceId: request.workspaceId,
+      generation: request.generation,
+      batchId: documents[0]?.batchId
+    };
+    try {
+      validateGenerationRequest(request);
+      if (documents.length === 0) return;
+      const unique = validateDocuments(documents);
+      if (unique[0]?.workspaceId !== request.workspaceId) {
+        throw new TypeError("Lexical upsert workspace does not match its generation request.");
+      }
+      const stored = unique.map((document) => storedDocument(document, request.generation));
+      const existingRows = await this.db.query<ExistingDocumentRow>(
+        "MATCH (n:LexicalDocument) WHERE n.storageId IN $storageIds " +
+        "RETURN n.storageId AS storageId, n.workspaceId AS workspaceId, " +
+        "n.active AS active, n.ftsSizeBytes AS ftsSizeBytes",
+        { storageIds: stored.map((item) => item.storageId) }
+      );
+      const existing = new Map(existingRows.map((row) => [row.storageId, row]));
+      let documentCountDelta = 0;
+      let indexSizeBytesDelta = 0;
+      for (const item of stored) {
+        const { document } = item;
+        const previous = existing.get(item.storageId);
+        if (previous && previous.workspaceId !== document.workspaceId) {
+          throw new TypeError(`Document id cannot move between workspaces: ${document.id}.`);
+        }
+        documentCountDelta += Number(document.active) - Number(previous?.active ?? false);
+        indexSizeBytesDelta += (document.active ? payloadSize(document) : 0)
+          - (previous?.active ? numeric(previous.ftsSizeBytes) : 0);
+      }
+      await this.writeStoredDocuments(stored);
+      await this.adjustGenerationStats(
+        request.workspaceId,
+        request.generation,
+        request.generation,
+        documentCountDelta,
+        indexSizeBytesDelta
+      );
     } catch (error) {
       throw wrap("write_failed", context, error);
     }
@@ -233,26 +427,36 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
     const context = {
       operation: "reconcileRepoDocuments",
       workspaceId: request.workspaceId,
+      generation: request.generation,
       repoId: request.repoId,
       batchId: request.batchId
     } as const;
     try {
       validateBoundary(request.workspaceId, "workspaceId");
+      validateBoundary(request.generation, "generation");
       validateBoundary(request.repoId, "repoId");
       validateBoundary(request.batchId, "batchId");
       const activeDocumentIds = uniqueStrings(request.activeDocumentIds, "activeDocumentIds");
       await withTransaction(this.db, async () => {
         const rows = await this.db.query<{ documentCount: number; indexSizeBytes: number | null }>(
           "MATCH (n:LexicalDocument) " +
-          "WHERE n.workspaceId = $workspaceId AND n.repoId = $repoId AND n.active = true " +
-          "AND NOT n.id IN $activeDocumentIds " +
+          "WHERE n.workspaceId = $workspaceId AND n.generation = $generation " +
+          "AND n.repoId = $repoId AND n.active = true " +
+          "AND NOT n.documentId IN $activeDocumentIds " +
           "WITH collect(n) AS stale, count(n) AS documentCount, coalesce(sum(n.ftsSizeBytes), 0) AS indexSizeBytes " +
           "FOREACH (n IN stale | SET n.active = false) " +
           "RETURN documentCount, indexSizeBytes",
-          { workspaceId: request.workspaceId, repoId: request.repoId, activeDocumentIds }
+          {
+            workspaceId: request.workspaceId,
+            generation: request.generation,
+            repoId: request.repoId,
+            activeDocumentIds
+          }
         );
-        await this.adjustWorkspaceStats(
+        await this.adjustGenerationStats(
           request.workspaceId,
+          request.generation,
+          request.generation,
           -numeric(rows[0]?.documentCount),
           -numeric(rows[0]?.indexSizeBytes)
         );
@@ -263,28 +467,72 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
   }
 
   async reconcileRepoFileDocuments(request: Readonly<ReconcileRepoFileDocumentsRequest>): Promise<void> {
-    const context = { operation: "reconcileRepoDocuments", workspaceId: request.workspaceId, repoId: request.repoId, batchId: request.batchId } as const;
+    const context = { operation: "reconcileRepoFileDocuments", workspaceId: request.workspaceId, generation: request.generation, repoId: request.repoId, batchId: request.batchId } as const;
     try {
+      validateBoundary(request.generation, "generation");
       const activeFileIds = uniqueStrings(request.activeFileIds, "activeFileIds");
       await withTransaction(this.db, async () => {
         const rows = await this.db.query<{ documentCount: number; indexSizeBytes: number | null }>(
-          "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.repoId = $repoId AND n.active = true AND n.fileId IS NOT NULL AND NOT (n.fileId IN $activeFileIds) WITH collect(n) AS stale, count(n) AS documentCount, coalesce(sum(n.ftsSizeBytes), 0) AS indexSizeBytes FOREACH (n IN stale | SET n.active = false, n.batchId = $batchId) RETURN documentCount, indexSizeBytes",
-          { workspaceId: request.workspaceId, repoId: request.repoId, batchId: request.batchId, activeFileIds }
+          "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.repoId = $repoId AND n.active = true AND n.fileId IS NOT NULL AND NOT (n.fileId IN $activeFileIds) WITH collect(n) AS stale, count(n) AS documentCount, coalesce(sum(n.ftsSizeBytes), 0) AS indexSizeBytes FOREACH (n IN stale | SET n.active = false, n.batchId = $batchId) RETURN documentCount, indexSizeBytes",
+          { workspaceId: request.workspaceId, generation: request.generation, repoId: request.repoId, batchId: request.batchId, activeFileIds }
         );
-        await this.adjustWorkspaceStats(request.workspaceId, -numeric(rows[0]?.documentCount), -numeric(rows[0]?.indexSizeBytes));
+        await this.adjustGenerationStats(request.workspaceId, request.generation, request.generation, -numeric(rows[0]?.documentCount), -numeric(rows[0]?.indexSizeBytes));
+      });
+    } catch (error) { throw wrap("reconcile_failed", context, error); }
+  }
+
+  async stageBatch(request: Readonly<StageLexicalBatchRequest>): Promise<void> {
+    validateGenerationRequest(request);
+    await withTransaction(this.db, async () => {
+      await this.db.query(
+        "MERGE (b:LexicalGenerationBatch {id: $id}) " +
+        "SET b.workspaceId = $workspaceId, b.generation = $generation, b.batchId = $batchId",
+        {
+          id: batchMarkerId(request.workspaceId, request.batchId),
+          workspaceId: request.workspaceId,
+          generation: request.generation,
+          batchId: request.batchId
+        }
+      );
+    });
+  }
+
+  async commitBatch(request: Readonly<CleanupBatchRequest>): Promise<void> {
+    await withTransaction(this.db, async () => {
+      await this.db.query(
+        "MATCH (b:LexicalGenerationBatch) " +
+        "WHERE b.workspaceId = $workspaceId AND b.batchId = $batchId DELETE b",
+        request
+      );
+    });
+  }
+
+  async replaceSourceDocuments(request: Readonly<ReplaceSourceDocumentsRequest>): Promise<void> {
+    const context = { operation: "replaceSourceDocuments", workspaceId: request.workspaceId, generation: request.generation, repoId: request.repoId, batchId: request.batchId } as const;
+    try {
+      validateBoundary(request.generation, "generation");
+      const touchedFileIds = uniqueStrings(request.touchedFileIds, "touchedFileIds");
+      const activeDocumentIds = uniqueStrings(request.activeDocumentIds, "activeDocumentIds");
+      if (touchedFileIds.length === 0) return;
+      await withTransaction(this.db, async () => {
+        const rows = await this.db.query<{ documentCount: number; indexSizeBytes: number | null }>(
+          "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.repoId = $repoId AND n.active = true AND n.fileId IN $touchedFileIds AND NOT (n.documentId IN $activeDocumentIds) WITH collect(n) AS stale, count(n) AS documentCount, coalesce(sum(n.ftsSizeBytes), 0) AS indexSizeBytes FOREACH (n IN stale | SET n.active = false, n.batchId = $batchId) RETURN documentCount, indexSizeBytes",
+          { workspaceId: request.workspaceId, generation: request.generation, repoId: request.repoId, touchedFileIds, activeDocumentIds, batchId: request.batchId }
+        );
+        await this.adjustGenerationStats(request.workspaceId, request.generation, request.generation, -numeric(rows[0]?.documentCount), -numeric(rows[0]?.indexSizeBytes));
       });
     } catch (error) { throw wrap("reconcile_failed", context, error); }
   }
 
   private async migrateFileIds(): Promise<void> {
     const rows = await this.db.query<LegacyFileIdentityRow>(
-      "MATCH (n:LexicalDocument) WHERE n.fileId IS NULL RETURN n.id AS id, n.workspaceId AS workspaceId, n.repoId AS repoId, n.kind AS kind, n.canonicalId AS canonicalId, n.renderRef AS renderRef"
+      "MATCH (n:LexicalDocument) WHERE n.fileId IS NULL RETURN n.storageId AS storageId, n.workspaceId AS workspaceId, n.repoId AS repoId, n.kind AS kind, n.canonicalId AS canonicalId, n.renderRef AS renderRef"
     );
-    const migrated = rows.map((row) => ({ id: row.id, fileId: fileIdFromIdentity(row) }))
-      .filter((row): row is { id: string; fileId: string } => row.fileId !== null);
+    const migrated = rows.map((row) => ({ storageId: row.storageId, fileId: fileIdFromIdentity(row) }))
+      .filter((row): row is { storageId: string; fileId: string } => row.fileId !== null);
     if (migrated.length > 0) {
       await this.db.query(
-        "UNWIND $documents AS document MATCH (n:LexicalDocument {id: document.id}) SET n.fileId = document.fileId",
+        "UNWIND $documents AS document MATCH (n:LexicalDocument {storageId: document.storageId}) SET n.fileId = document.fileId",
         { documents: migrated }
       );
     }
@@ -300,18 +548,10 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
       validateBoundary(request.workspaceId, "workspaceId");
       validateBoundary(request.batchId, "batchId");
       await withTransaction(this.db, async () => {
-        const rows = await this.db.query<{ documentCount: number; indexSizeBytes: number | null }>(
-          "MATCH (n:LexicalDocument) " +
-          "WHERE n.workspaceId = $workspaceId AND n.batchId = $batchId AND n.active = true " +
-          "WITH collect(n) AS failed, count(n) AS documentCount, coalesce(sum(n.ftsSizeBytes), 0) AS indexSizeBytes " +
-          "FOREACH (n IN failed | SET n.active = false) " +
-          "RETURN documentCount, indexSizeBytes",
-          { workspaceId: request.workspaceId, batchId: request.batchId }
-        );
-        await this.adjustWorkspaceStats(
-          request.workspaceId,
-          -numeric(rows[0]?.documentCount),
-          -numeric(rows[0]?.indexSizeBytes)
+        await this.db.query(
+          "MATCH (b:LexicalGenerationBatch) " +
+          "WHERE b.workspaceId = $workspaceId AND b.batchId = $batchId DELETE b",
+          request
         );
       });
     } catch (error) {
@@ -323,9 +563,10 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
     query: Readonly<LexicalQuery>,
     options: Readonly<LexicalSearchOptions>
   ): Promise<readonly LexicalHit[]> {
-    const context = { operation: "search", workspaceId: query.workspaceId } as const;
+    const context = { operation: "search", workspaceId: query.workspaceId, generation: query.generation } as const;
     try {
       validateBoundary(query.workspaceId, "workspaceId");
+      validateBoundary(query.generation, "generation");
       if (!Number.isSafeInteger(options.topK) || options.topK <= 0) {
         throw new TypeError("topK must be a positive safe integer.");
       }
@@ -340,11 +581,17 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
         score: number;
       }>(
         "CALL db.index.fulltext.queryNodes($indexName, $text) YIELD node, score " +
-        "WHERE node.workspaceId = $workspaceId AND node.active = true " +
-        "RETURN node.canonicalId AS canonicalId, node.id AS documentId, node.repoId AS repoId, " +
+        "WHERE node.workspaceId = $workspaceId AND node.generation = $generation AND node.active = true " +
+        "RETURN node.canonicalId AS canonicalId, node.documentId AS documentId, node.repoId AS repoId, " +
         "node.kind AS kind, node.renderRef AS renderRef, score " +
         "ORDER BY score DESC, documentId ASC LIMIT toInteger($topK)",
-        { indexName: this.indexName, text: normalizedQuery, workspaceId: query.workspaceId, topK: options.topK }
+        {
+          indexName: this.indexName,
+          text: normalizedQuery,
+          workspaceId: query.workspaceId,
+          generation: query.generation,
+          topK: options.topK
+        }
       );
       return rows.map((row, index) => ({
         canonicalId: row.canonicalId,
@@ -361,15 +608,17 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
   }
 
   async loadDocuments(request: Readonly<LoadDocumentsRequest>): Promise<readonly LexicalDocument[]> {
-    const context = { operation: "loadDocuments", workspaceId: request.workspaceId } as const;
+    const context = { operation: "loadDocuments", workspaceId: request.workspaceId, generation: request.generation } as const;
     try {
       validateBoundary(request.workspaceId, "workspaceId");
+      validateBoundary(request.generation, "generation");
       const documentIds = uniqueStrings(request.documentIds, "documentIds");
       if (documentIds.length === 0) return [];
       const rows = await this.db.query<DocumentRow>(
-        "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.id IN $documentIds " +
-        documentReturnClause() + " ORDER BY n.id",
-        { workspaceId: request.workspaceId, documentIds }
+        "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId " +
+        "AND n.generation = $generation AND n.documentId IN $documentIds " +
+        documentReturnClause() + " ORDER BY n.documentId",
+        { workspaceId: request.workspaceId, generation: request.generation, documentIds }
       );
       return rows.map(documentFromRow);
     } catch (error) {
@@ -377,10 +626,47 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
     }
   }
 
-  async health(workspaceId: string): Promise<LexicalIndexHealth> {
-    const context = { operation: "health", workspaceId } as const;
+  async pendingHealth(request: Readonly<LexicalGenerationRequest>): Promise<LexicalIndexHealth> {
+    return this.generationHealth(request, "pendingHealth");
+  }
+
+  async documentIdsForSources(request: Readonly<DocumentIdsForSourcesRequest>): Promise<readonly string[]> {
+    const context: WorkspaceLexicalStoreErrorContext = {
+      operation: "documentIdsForSources",
+      workspaceId: request.workspaceId,
+      repoId: request.repoId,
+      generation: request.generation
+    };
+    try {
+      validateGenerationRequest(request);
+      validateBoundary(request.repoId, "repoId");
+      const fileIds = uniqueStrings(request.fileIds, "fileIds");
+      if (fileIds.length === 0) return [];
+      const rows = await this.db.query<{ documentId: string }>(
+        "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation " +
+        "AND n.repoId = $repoId AND n.active = true AND n.fileId IN $fileIds " +
+        "RETURN n.documentId AS documentId ORDER BY n.documentId",
+        { workspaceId: request.workspaceId, generation: request.generation, repoId: request.repoId, fileIds }
+      );
+      return [...new Set(rows.map((row) => row.documentId))].sort(compareText);
+    } catch (error) {
+      throw wrap("load_failed", context, error);
+    }
+  }
+
+  async health(request: Readonly<LexicalGenerationRequest>): Promise<LexicalIndexHealth> {
+    return this.generationHealth(request, "health");
+  }
+
+  private async generationHealth(
+    request: Readonly<LexicalGenerationRequest>,
+    operation: "health" | "pendingHealth"
+  ): Promise<LexicalIndexHealth> {
+    const { workspaceId, generation } = request;
+    const context = { operation, workspaceId, generation } as const;
     try {
       validateBoundary(workspaceId, "workspaceId");
+      validateBoundary(generation, "generation");
       const reasons: string[] = [];
       const versionRows = await this.db.query<{ version: string }>(
         "CALL dbms.components() YIELD versions RETURN versions[0] AS version"
@@ -419,11 +705,27 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
         reasons.push("lexical_stats_version_mismatch");
       }
 
-      const statsRows = await this.db.query<{ documentCount: number; indexSizeBytes: number }>(
-        "MATCH (s:LexicalWorkspaceStats {workspaceId: $workspaceId}) " +
-        "RETURN s.documentCount AS documentCount, s.indexSizeBytes AS indexSizeBytes",
-        { workspaceId }
+      const revision = await this.resolveHealthRevision(request, operation);
+      const statsRows = await this.db.query<{
+        workspaceId: string;
+        generation: string;
+        revision: string;
+        documentCount: number;
+        indexSizeBytes: number;
+      }>(
+        "MATCH (s:LexicalWorkspaceStats {id: $id}) " +
+        "RETURN s.workspaceId AS workspaceId, s.generation AS generation, s.revision AS revision, " +
+        "s.documentCount AS documentCount, s.indexSizeBytes AS indexSizeBytes",
+        { id: generationStatsId(workspaceId, generation, revision) }
       );
+      const stats = statsRows[0];
+      const validStats = stats?.workspaceId === workspaceId && stats.generation === generation
+        && stats.revision === revision
+        ? stats
+        : undefined;
+      if (!validStats) {
+        reasons.push("lexical_stats_revision_missing");
+      }
       return {
         providerVersion,
         projectionSchemaVersion,
@@ -431,13 +733,34 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
         status: reasons.length === 0 ? "healthy" : "unhealthy",
         reasons,
         metrics: {
-          documentCount: numeric(statsRows[0]?.documentCount),
-          indexSizeBytes: numeric(statsRows[0]?.indexSizeBytes)
+          documentCount: validStats ? numeric(validStats.documentCount) : 0,
+          indexSizeBytes: validStats ? numeric(validStats.indexSizeBytes) : 0
         }
       };
     } catch (error) {
       throw wrap("health_check_failed", context, error);
     }
+  }
+
+  private async resolveHealthRevision(
+    request: Readonly<LexicalGenerationRequest>,
+    operation: "health" | "pendingHealth"
+  ): Promise<string> {
+    if (request.revision) {
+      validateBoundary(request.revision, "revision");
+      return request.revision;
+    }
+    if (operation === "pendingHealth") return request.generation;
+    const rows = await this.db.query<{ activeGeneration?: GraphValue; activeRevision?: GraphValue }>(
+      "MATCH (s:SchemaGenerationState {id: $id}) " +
+      "RETURN s.activeGeneration AS activeGeneration, s.activeRevision AS activeRevision",
+      { id: `schema-generation-state:${request.workspaceId}` }
+    );
+    const activeRevision = rows[0]?.activeRevision;
+    return rows[0]?.activeGeneration === request.generation
+      && typeof activeRevision === "string" && activeRevision.length > 0
+      ? activeRevision
+      : request.generation;
   }
 
   private async indexRows(): Promise<IndexRow[]> {
@@ -496,9 +819,9 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
   }
 
   private async migratePayloadSizes(): Promise<void> {
-    const rows = await this.db.query<{ id: string; ftsText: string | null }>(
+    const rows = await this.db.query<{ storageId: string; ftsText: string | null }>(
       "MATCH (n:LexicalDocument) WHERE n.ftsSizeBytes IS NULL " +
-      "RETURN n.id AS id, coalesce(n.ftsText, n.searchableText, '') AS ftsText ORDER BY n.id"
+      "RETURN n.storageId AS storageId, coalesce(n.ftsText, n.searchableText, '') AS ftsText ORDER BY n.storageId"
     );
     if (rows.length === 0) return;
     await this.db.query(
@@ -508,12 +831,12 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
     await withTransaction(this.db, async () => {
       for (let offset = 0; offset < rows.length; offset += NEO4J_LEXICAL_UPSERT_CHUNK_SIZE) {
         const migrations = rows.slice(offset, offset + NEO4J_LEXICAL_UPSERT_CHUNK_SIZE).map((row) => ({
-          id: row.id,
+          storageId: row.storageId,
           ftsText: row.ftsText ?? "",
           ftsSizeBytes: Buffer.byteLength(row.ftsText ?? "", "utf8")
         }));
         await this.db.query(
-          "UNWIND $documents AS document MATCH (n:LexicalDocument {id: document.id}) " +
+          "UNWIND $documents AS document MATCH (n:LexicalDocument {storageId: document.storageId}) " +
           "SET n.ftsText = document.ftsText, n.ftsSizeBytes = document.ftsSizeBytes",
           { documents: migrations }
         );
@@ -528,13 +851,41 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
     // health remain O(1) without scanning document bodies.
     await withTransaction(this.db, async () => {
       await this.db.query("MATCH (s:LexicalWorkspaceStats) DELETE s");
-      await this.db.query(
+      const rows = await this.db.query<{
+        workspaceId: string;
+        generation: string;
+        documentCount: number | bigint;
+        indexSizeBytes: number | bigint;
+      }>(
         "MATCH (n:LexicalDocument) WHERE n.active = true " +
-        "WITH n.workspaceId AS workspaceId, count(n) AS documentCount, " +
-        "coalesce(sum(n.ftsSizeBytes), 0) AS indexSizeBytes " +
-        "MERGE (s:LexicalWorkspaceStats {workspaceId: workspaceId}) " +
-        "SET s.documentCount = documentCount, s.indexSizeBytes = indexSizeBytes"
+        "RETURN n.workspaceId AS workspaceId, n.generation AS generation, " +
+        "count(n) AS documentCount, coalesce(sum(n.ftsSizeBytes), 0) AS indexSizeBytes " +
+        "ORDER BY workspaceId, generation"
       );
+      const activeRows = await this.db.query<{
+        workspaceId: string;
+        activeGeneration: string;
+        activeRevision: string;
+      }>(
+        "MATCH (s:SchemaGenerationState) " +
+        "WHERE s.activeGeneration IS NOT NULL AND s.activeGeneration <> '' " +
+        "RETURN s.workspaceId AS workspaceId, s.activeGeneration AS activeGeneration, " +
+        "s.activeRevision AS activeRevision"
+      );
+      const activeRevisions = new Map(activeRows.map((row) => [
+        `${row.workspaceId}\0${row.activeGeneration}`,
+        row.activeRevision
+      ]));
+      for (const row of rows) {
+        const activeRevision = activeRevisions.get(`${row.workspaceId}\0${row.generation}`);
+        await this.replaceGenerationStats(
+          row.workspaceId,
+          row.generation,
+          activeRevision || row.generation,
+          numeric(row.documentCount),
+          numeric(row.indexSizeBytes)
+        );
+      }
       await this.db.query(
         "MERGE (m:LexicalMetadata {key: $key}) SET m.value = $value",
         { key: STATS_METADATA_KEY, value: NEO4J_LEXICAL_STATS_SCHEMA_VERSION }
@@ -542,18 +893,194 @@ export class Neo4jWorkspaceLexicalStore implements WorkspaceLexicalStore {
     });
   }
 
-  private async adjustWorkspaceStats(
+  private async adjustGenerationStats(
     workspaceId: string,
+    generation: string,
+    revision: string,
     documentCountDelta: number,
     indexSizeBytesDelta: number
   ): Promise<void> {
     await this.db.query(
-      "MERGE (s:LexicalWorkspaceStats {workspaceId: $workspaceId}) " +
-      "ON CREATE SET s.documentCount = 0, s.indexSizeBytes = 0 " +
+      "MERGE (s:LexicalWorkspaceStats {id: $id}) " +
+      "ON CREATE SET s.workspaceId = $workspaceId, s.generation = $generation, s.revision = $revision, " +
+      "s.documentCount = 0, s.indexSizeBytes = 0 " +
       "SET s.documentCount = s.documentCount + $documentCountDelta, " +
       "s.indexSizeBytes = s.indexSizeBytes + $indexSizeBytesDelta",
-      { workspaceId, documentCountDelta, indexSizeBytesDelta }
+      {
+        id: generationStatsId(workspaceId, generation, revision),
+        workspaceId,
+        generation,
+        revision,
+        documentCountDelta,
+        indexSizeBytesDelta
+      }
     );
+  }
+
+  /** Current clean-cut schemas never run row backfills during ordinary startup. */
+  private async hasCurrentSchema(): Promise<boolean> {
+    const [projectionVersion, tokenizerVersion, statsVersion] = await Promise.all([
+      this.metadataValue(PROJECTION_METADATA_KEY),
+      this.metadataValue(TOKENIZER_METADATA_KEY),
+      this.metadataValue(STATS_METADATA_KEY)
+    ]);
+    if (projectionVersion !== LEXICAL_PROJECTION_SCHEMA_VERSION
+      || tokenizerVersion !== TOKENIZER_VERSION
+      || statsVersion !== NEO4J_LEXICAL_STATS_SCHEMA_VERSION) return false;
+    const lexicalIndexes = (await this.indexRows()).filter((index) =>
+      index.type === "FULLTEXT" && index.labelsOrTypes.includes("LexicalDocument")
+    );
+    return lexicalIndexes.length === 1
+      && lexicalIndexes[0]?.name === this.indexName
+      && lexicalIndexes[0].state === "ONLINE"
+      && sameStrings(lexicalIndexes[0].properties, ["ftsText"])
+      && hasExpectedAnalyzer(lexicalIndexes[0])
+      && hasSynchronousUpdates(lexicalIndexes[0]);
+  }
+
+  private async applyExactStatsDelta(
+    workspaceId: string,
+    generation: string,
+    expectedRevision: string,
+    nextRevision: string,
+    documentCountDelta: number,
+    indexSizeBytesDelta: number
+  ): Promise<void> {
+    const rows = await this.db.query<{
+      workspaceId: string;
+      generation: string;
+      revision: string;
+      documentCount: number | bigint;
+      indexSizeBytes: number | bigint;
+    }>(
+      "MATCH (s:LexicalWorkspaceStats {id: $id}) " +
+      "RETURN s.workspaceId AS workspaceId, s.generation AS generation, s.revision AS revision, " +
+      "s.documentCount AS documentCount, s.indexSizeBytes AS indexSizeBytes",
+      { id: generationStatsId(workspaceId, generation, expectedRevision) }
+    );
+    const current = rows[0];
+    if (!current || current.workspaceId !== workspaceId || current.generation !== generation
+      || current.revision !== expectedRevision) {
+      throw new TypeError(
+        `Missing lexical statistics for generation ${generation} at revision ${expectedRevision}.`
+      );
+    }
+    const documentCount = numeric(current.documentCount) + documentCountDelta;
+    const indexSizeBytes = numeric(current.indexSizeBytes) + indexSizeBytesDelta;
+    if (!Number.isSafeInteger(documentCount) || documentCount < 0
+      || !Number.isSafeInteger(indexSizeBytes) || indexSizeBytes < 0) {
+      throw new TypeError(`Incremental lexical statistics underflow for generation ${generation}.`);
+    }
+    const nextId = generationStatsId(workspaceId, generation, nextRevision);
+    const existingNext = await this.db.query<{ id: string }>(
+      "MATCH (s:LexicalWorkspaceStats {id: $id}) RETURN s.id AS id",
+      { id: nextId }
+    );
+    if (existingNext.length > 0) {
+      throw new Error(`Lexical statistics revision ${nextRevision} already exists.`);
+    }
+    await this.db.query(
+      "CREATE (:LexicalWorkspaceStats {id: $id, workspaceId: $workspaceId, generation: $generation, " +
+      "revision: $revision, documentCount: $documentCount, indexSizeBytes: $indexSizeBytes})",
+      {
+        id: nextId,
+        workspaceId,
+        generation,
+        revision: nextRevision,
+        documentCount,
+        indexSizeBytes
+      }
+    );
+  }
+
+  private async replaceGenerationStats(
+    workspaceId: string,
+    generation: string,
+    revision: string,
+    documentCount: number,
+    indexSizeBytes: number
+  ): Promise<void> {
+    await this.db.query(
+      "MERGE (s:LexicalWorkspaceStats {id: $id}) " +
+      "SET s.workspaceId = $workspaceId, s.generation = $generation, s.revision = $revision, " +
+      "s.documentCount = $documentCount, s.indexSizeBytes = $indexSizeBytes",
+      {
+        id: generationStatsId(workspaceId, generation, revision),
+        workspaceId,
+        generation,
+        revision,
+        documentCount,
+        indexSizeBytes
+      }
+    );
+  }
+
+  private async deleteGenerationRows(request: Readonly<LexicalGenerationRequest>): Promise<void> {
+    const generation = { workspaceId: request.workspaceId, generation: request.generation };
+    await this.db.query(
+      "MATCH (b:LexicalGenerationBatch) " +
+      "WHERE b.workspaceId = $workspaceId AND b.generation = $generation DELETE b",
+      generation
+    );
+    await this.db.query(
+      "MATCH (n:LexicalDocument) " +
+      "WHERE n.workspaceId = $workspaceId AND n.generation = $generation DELETE n",
+      generation
+    );
+    await this.db.query(
+      "MATCH (s:LexicalWorkspaceStats) " +
+      "WHERE s.workspaceId = $workspaceId AND s.generation = $generation DELETE s",
+      generation
+    );
+  }
+
+  private async assertGenerationNotActive(
+    request: Readonly<LexicalGenerationRequest>,
+    options: { allowReservedPending?: boolean } = {}
+  ): Promise<void> {
+    const rows = await this.db.query<{ activeGeneration?: GraphValue; pendingGeneration?: GraphValue }>(
+      "MATCH (s:SchemaGenerationState {id: $id}) SET s.protocolNonce=$nonce RETURN s.activeGeneration AS activeGeneration, s.pendingGeneration AS pendingGeneration",
+      { id: `schema-generation-state:${request.workspaceId}`, nonce: `lexical-cleanup:${request.generation}` }
+    );
+    if (rows[0]?.activeGeneration === request.generation) {
+      throw new TypeError(`Cannot delete active lexical generation ${request.generation}.`);
+    }
+    if (rows[0]?.pendingGeneration === request.generation && !options.allowReservedPending) {
+      throw new TypeError(`Cannot delete reserved pending lexical generation ${request.generation}.`);
+    }
+    if (typeof rows[0]?.pendingGeneration === "string" && rows[0].pendingGeneration
+      && rows[0].pendingGeneration !== request.generation) {
+      throw new TypeError(`Cannot initialize lexical generation ${request.generation} while ${rows[0].pendingGeneration} is reserved.`);
+    }
+    if (!options.allowReservedPending) {
+      await assertNoLivePublicGraphReadLeases(this.db, request);
+    }
+  }
+
+  private async writeStoredDocuments(documents: readonly StoredDocument[]): Promise<void> {
+    for (let offset = 0; offset < documents.length; offset += NEO4J_LEXICAL_UPSERT_CHUNK_SIZE) {
+      const rows = documents
+        .slice(offset, offset + NEO4J_LEXICAL_UPSERT_CHUNK_SIZE)
+        .map(storedDocumentParameters);
+      const written = await this.db.query<{ written: number }>(
+        "UNWIND $documents AS document " +
+        "MERGE (n:LexicalDocument {storageId: document.storageId}) " +
+        "ON CREATE SET n.workspaceId = document.workspaceId, n.generation = document.generation " +
+        "WITH n, document WHERE n.workspaceId = document.workspaceId AND n.generation = document.generation " +
+        "SET n.documentId = document.documentId, n.canonicalId = document.canonicalId, " +
+        "n.repoId = document.repoId, n.kind = document.kind, n.title = document.title, " +
+        "n.qualifiedName = document.qualifiedName, n.path = document.path, " +
+        "n.searchableText = document.searchableText, n.tokens = document.tokens, " +
+        "n.active = document.active, n.sourceHash = document.sourceHash, " +
+        "n.batchId = document.batchId, n.renderRef = document.renderRef, n.fileId = document.fileId, " +
+        "n.ftsText = document.ftsText, n.ftsSizeBytes = document.ftsSizeBytes " +
+        "RETURN count(n) AS written",
+        { documents: rows }
+      );
+      if (numeric(written[0]?.written) !== rows.length) {
+        throw new TypeError("Lexical physical document identity is inconsistent.");
+      }
+    }
   }
 }
 
@@ -584,10 +1111,38 @@ function validateDocuments(documents: readonly LexicalDocument[]): LexicalDocume
   return [...byId.values()].sort((left, right) => compareText(left.id, right.id));
 }
 
-function documentParameters(document: LexicalDocument): Record<string, GraphValue> {
+function validateGenerationRequest(request: Readonly<LexicalGenerationRequest>): void {
+  validateBoundary(request.workspaceId, "workspaceId");
+  validateBoundary(request.generation, "generation");
+}
+
+function storageId(workspaceId: string, generation: string, documentId: string): string {
+  return `lexical-storage:${JSON.stringify([workspaceId, generation, documentId])}`;
+}
+
+function storedDocument(document: LexicalDocument, generation: string): StoredDocument {
+  return {
+    storageId: storageId(document.workspaceId, generation, document.id),
+    generation,
+    document
+  };
+}
+
+function generationStatsId(workspaceId: string, generation: string, revision: string): string {
+  return `lexical-stats:${JSON.stringify([workspaceId, generation, revision])}`;
+}
+
+function batchMarkerId(workspaceId: string, batchId: string): string {
+  return `lexical-batch:${JSON.stringify([workspaceId, batchId])}`;
+}
+
+function storedDocumentParameters(item: StoredDocument): Record<string, GraphValue> {
+  const { document } = item;
   const ftsText = indexedText(document);
   return {
-    id: document.id,
+    storageId: item.storageId,
+    documentId: document.id,
+    generation: item.generation,
     canonicalId: document.canonicalId,
     workspaceId: document.workspaceId,
     repoId: document.repoId,
@@ -628,15 +1183,17 @@ function payloadSize(document: LexicalDocument): number {
 }
 
 function documentReturnClause(): string {
-  return "RETURN n.id AS id, n.canonicalId AS canonicalId, n.workspaceId AS workspaceId, " +
+  return "RETURN n.storageId AS storageId, n.documentId AS documentId, n.generation AS generation, " +
+    "n.canonicalId AS canonicalId, n.workspaceId AS workspaceId, " +
     "n.repoId AS repoId, n.kind AS kind, n.title AS title, n.qualifiedName AS qualifiedName, " +
     "n.path AS path, n.searchableText AS searchableText, n.tokens AS tokens, n.active AS active, " +
-    "n.sourceHash AS sourceHash, n.batchId AS batchId, n.renderRef AS renderRef";
+    "n.sourceHash AS sourceHash, n.batchId AS batchId, n.renderRef AS renderRef, " +
+    "n.ftsText AS ftsText, n.ftsSizeBytes AS ftsSizeBytes";
 }
 
 function documentFromRow(row: DocumentRow): LexicalDocument {
   return {
-    id: row.id,
+    id: row.documentId,
     canonicalId: row.canonicalId,
     workspaceId: row.workspaceId,
     repoId: row.repoId,

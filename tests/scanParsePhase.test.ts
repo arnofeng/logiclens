@@ -1,9 +1,10 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { configSchema } from "../src/config/schema.js";
 import type { KuzuGraphDB } from "../src/core/graph-model/db.js";
+import type { PublicGraphGenerationScope } from "../src/core/graph-model/publicGraphGeneration.js";
 import { scanAndParseRepo } from "../src/core/indexing/scanParse.js";
 import { registerBuiltinParsers } from "../src/core/parsing/parserRegistry.js";
 import type { RepoNode } from "../src/core/parsing/types.js";
@@ -28,6 +29,22 @@ function repoFor(name: string, repoPath: string): RepoNode {
     commitSha: "",
     language: "typescript",
     indexedAt: new Date().toISOString()
+  };
+}
+
+const ACTIVE_PUBLIC_GRAPH_SCOPE = {
+  workspaceId: "workspace:scan-parse-phase",
+  generation: "generation:active"
+} satisfies PublicGraphGenerationScope;
+
+function changedOnlyDb(hashes: ReadonlyMap<string, string>) {
+  const knownFileHashes = vi.fn(async (
+    _repoId: string,
+    _scope: PublicGraphGenerationScope
+  ): Promise<Map<string, string>> => new Map(hashes));
+  return {
+    db: { knownFileHashes } as unknown as KuzuGraphDB,
+    knownFileHashes
   };
 }
 
@@ -62,19 +79,21 @@ describe("scan/parse phase", () => {
 
     const repo = repoFor("scan-parse-skip", cwd);
     const unchangedFileId = fileId(repo.id, "src/index.ts");
-    const db = {
-      query: async () => [{ id: unchangedFileId, hash: hashText(source) }],
-      knownFileHashes: async () => new Map([[unchangedFileId, hashText(source)]])
-    } as unknown as KuzuGraphDB;
+    const { db, knownFileHashes } = changedOnlyDb(new Map([
+      [unchangedFileId, hashText(source)]
+    ]));
 
     const result = await scanAndParseRepo({
       db,
       repo,
       config: configSchema.parse({}),
       changedOnly: true,
+      publicGraphScope: ACTIVE_PUBLIC_GRAPH_SCOPE,
       createProgressBar
     });
 
+    expect(knownFileHashes).toHaveBeenCalledOnce();
+    expect(knownFileHashes).toHaveBeenCalledWith(repo.id, ACTIVE_PUBLIC_GRAPH_SCOPE);
     expect(result.filesScanned).toBe(1);
     expect(result.filesChanged).toBe(0);
     expect(result.activeFileIds).toEqual([unchangedFileId]);
@@ -87,19 +106,21 @@ describe("scan/parse phase", () => {
     await fs.writeFile(path.join(cwd, "dubbo.xml"), source, "utf8");
     const repo = repoFor("scan-parse-added", cwd);
     const addedFileId = fileId(repo.id, "dubbo.xml");
-    const db = {
-      knownFileHashes: async () => new Map([[addedFileId, hashText(source)]])
-    } as unknown as KuzuGraphDB;
+    const { db, knownFileHashes } = changedOnlyDb(new Map([
+      [addedFileId, hashText(source)]
+    ]));
 
     const result = await scanAndParseRepo({
       db,
       repo,
       config: configSchema.parse({}),
       changedOnly: true,
+      publicGraphScope: ACTIVE_PUBLIC_GRAPH_SCOPE,
       additionalIndexFiles: ["dubbo.xml"],
       createProgressBar
     });
 
+    expect(knownFileHashes).toHaveBeenCalledWith(repo.id, ACTIVE_PUBLIC_GRAPH_SCOPE);
     expect(result.filesScanned).toBe(1);
     expect(result.filesChanged).toBe(0);
     expect(result.activeFileIds).toEqual([addedFileId]);
@@ -119,15 +140,35 @@ describe("scan/parse phase", () => {
     await fs.writeFile(path.join(cwd, "Active.cs"), source, "utf8");
     const repo = repoFor("scan-parse-plugin", cwd);
     const activeId = fileId(repo.id, "Active.cs");
-    const db = { knownFileHashes: async () => new Map([[activeId, hashText(source)]]) } as unknown as KuzuGraphDB;
+    const { db, knownFileHashes } = changedOnlyDb(new Map([
+      [activeId, hashText(source)]
+    ]));
 
     const result = await scanAndParseRepo({
       db, repo, config: configSchema.parse({}), changedOnly: true,
+      publicGraphScope: ACTIVE_PUBLIC_GRAPH_SCOPE,
       activePluginSourceGlobs: ["**/*.cs"], createProgressBar
     });
+    expect(knownFileHashes).toHaveBeenCalledWith(repo.id, ACTIVE_PUBLIC_GRAPH_SCOPE);
     expect(result.activeFileIds).toEqual([activeId]);
     expect(result.parsedFiles).toEqual([]);
     parserRegistry.unregisterLanguage("csharp");
+  });
+
+  it("rejects changed-only hash reads without an active public graph generation", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-scan-parse-generation-guard-"));
+    await fs.writeFile(path.join(cwd, "index.ts"), "export const active = true;\n", "utf8");
+    const repo = repoFor("scan-parse-generation-guard", cwd);
+    const { db, knownFileHashes } = changedOnlyDb(new Map());
+
+    await expect(scanAndParseRepo({
+      db,
+      repo,
+      config: configSchema.parse({}),
+      changedOnly: true,
+      createProgressBar
+    })).rejects.toThrow("Changed-only indexing requires an active public graph generation.");
+    expect(knownFileHashes).not.toHaveBeenCalled();
   });
 
   it("wraps parse failures with phase, repo, and file context", async () => {

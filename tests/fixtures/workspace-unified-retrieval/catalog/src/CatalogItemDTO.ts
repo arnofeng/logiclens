@@ -3,3 +3,5 @@ export interface CatalogItemSchema {
   catalog_item_id: string;
   displayName: string;
 }
+
+broker.publish<CatalogItemSchema>("catalog.items", item);

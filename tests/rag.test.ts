@@ -4,6 +4,13 @@ import { compatibilityEntityTargets, retrieveForQuestion } from "../src/features
 import { scoreCallResolution } from "../src/core/extraction/resolveReferences.js";
 import { chunk } from "../src/shared/chunk.js";
 import { BRAND } from "../src/shared/branding.js";
+import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
+
+const READ_SNAPSHOT = Object.freeze({
+  workspaceId: deriveWorkspaceId("default-system"),
+  generation: "generation:rag-test",
+  revision: "generation:rag-test"
+});
 
 describe("rag helpers", () => {
   it.each([
@@ -40,7 +47,9 @@ describe("rag helpers", () => {
         return [];
       }
     };
-    const retrieval = await retrieveForQuestion(db as never, question);
+    const retrieval = await retrieveForQuestion(db as never, question, {
+      publicGraphSnapshot: READ_SNAPSHOT
+    });
     expect(retrieval.entities).toEqual([expect.objectContaining({ entityName: "Order", sourceKind: "operation" })]);
     expect(new Set(tracedTerms)).toEqual(new Set(["order"]));
   });
@@ -95,6 +104,7 @@ describe("rag helpers", () => {
     };
 
     const retrieval = await retrieveForQuestion(db as never, "Who calls /smart/backorder?", {
+      publicGraphSnapshot: READ_SNAPSHOT,
       config: {
         embedding: { level: "off", model: "test", apiKey: "", baseUrl: "" },
         semantic: { provider: "json", jsonPath: `${BRAND.configDirName}/test-semantic-index.json` }
@@ -113,6 +123,7 @@ describe("rag helpers", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const retrieval = await retrieveForQuestion(db as never, "anything?", {
+      publicGraphSnapshot: READ_SNAPSHOT,
       config: {
         embedding: { level: "file", provider: "does-not-exist" },
         semantic: { provider: "json", jsonPath: `${BRAND.configDirName}/test-missing-provider-index.json` }

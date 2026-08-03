@@ -14,6 +14,8 @@ const localUtility = {
 export interface OrderDTO {
   sku: string;
   userId: string;
+  schema: OrderSchema;
+  payment: PaymentConfig;
 }
 
 export type OrderSchema = {
@@ -46,7 +48,7 @@ export class PaymentService {
     await this.orderGrpcClient.getOrderStream(userId);
     await fetch(buildDynamicOrderUrl(userId));
     localUtility.get("/api/local/cache");
-    eventBus.subscribe("order.created", (_payload: ServiceAOrderDTO) => undefined);
+    eventBus.subscribe<OrderDTO>("order.created", (_payload: OrderDTO) => undefined);
     process.env.ORDER_SHARED_CONFIG;
     return { id: `payment-${userId}`, amount };
   }

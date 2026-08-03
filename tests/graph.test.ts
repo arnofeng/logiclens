@@ -11,6 +11,8 @@ import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import type { ParsedFile, RepoNode } from "../src/core/parsing/types.js";
 import { retrieveForQuestion } from "../src/features/ask/retrieve.js";
 import { fileId, repoId } from "../src/shared/path.js";
+import { stageAndActivatePublicGraphGeneration } from "./helpers/publicGraphGeneration.js";
+import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
 
 describe("graph", () => {
   function parsedFile(repo: RepoNode, relativePath: string): ParsedFile {
@@ -57,14 +59,16 @@ describe("graph", () => {
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("method-aware-contract-test");
+      const scope = { workspaceId: "workspace:method-aware-contract", generation: "generation:method-aware-contract" };
       const cases = [
         { repoName: "get-producer", key: "GET:/orders" },
         { repoName: "path-producer", key: "/orders" },
         { repoName: "post-producer", key: "POST:/orders" }
       ];
 
-      for (const [index, entry] of cases.entries()) {
-        const repo: RepoNode = {
+      const { snapshot } = await stageAndActivatePublicGraphGeneration(db, scope, async (writeScope) => {
+        for (const [index, entry] of cases.entries()) {
+          const repo: RepoNode = {
           id: repoId(entry.repoName),
           name: entry.repoName,
           path: path.join(dir, entry.repoName),
@@ -76,9 +80,9 @@ describe("graph", () => {
         };
         const contractId = `contract:api:${entry.key}`;
         const evidenceId = `evidence:method-aware:${index}`;
-        await db.upsertRepo(repo);
-        await db.upsertContract({ id: contractId, kind: "api", key: entry.key, name: entry.key, description: "method-aware regression" });
-        await db.upsertEvidence({
+          await db.upsertRepo(repo, writeScope);
+          await db.upsertContract({ id: contractId, kind: "api", key: entry.key, name: entry.key, description: "method-aware regression" }, writeScope);
+          await db.upsertEvidence({
           id: evidenceId,
           repoId: repo.id,
           fileId: `file:${entry.repoName}`,
@@ -88,11 +92,12 @@ describe("graph", () => {
           rule: "method-aware-test",
           confidence: 1,
           active: true
-        });
-        await db.addRepoContract({ repoId: repo.id, contractId, role: "producer", evidenceId, confidence: 1, active: true });
-      }
+          }, writeScope);
+          await db.addRepoContract({ repoId: repo.id, contractId, role: "producer", evidenceId, confidence: 1, active: true }, writeScope);
+        }
+      });
 
-      const rows = await traceContract(db, "api", "/orders", "GET");
+      const rows = await traceContract(db, snapshot, "api", "/orders", "GET");
       expect(rows.map((row) => row.repoName)).toEqual(["get-producer", "path-producer"]);
       expect(rows.map((row) => row.evidenceId)).toEqual(["evidence:method-aware:0", "evidence:method-aware:1"]);
       expect(rows.map((row) => row.repoName)).not.toContain("post-producer");
@@ -106,39 +111,42 @@ describe("graph", () => {
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("exact-entity-lifecycle-test");
+      const scope = { workspaceId: "workspace:exact-entity-lifecycle", generation: "generation:exact-entity-lifecycle" };
       const repo: RepoNode = {
         id: repoId("entity-lifecycle"), name: "entity-lifecycle", path: dir,
         remoteUrl: "", branch: "", commitSha: "", language: "typescript", indexedAt: "now"
       };
-      await db.upsertRepo(repo);
-      await db.upsertEntity({ id: "entity:order-contract", name: "Order", kind: "domain", description: "order contract entity" });
-      await db.upsertEntity({ id: "entity:invoice-contract", name: "Invoice", kind: "domain", description: "invoice contract entity" });
-      await db.upsertEntity({ id: "entity:stale-order-contract", name: "Order", kind: "domain", description: "stale order contract entity" });
       const contractFixtures = [
         { id: "contract:api:/orders", key: "/orders", entityId: "entity:order-contract", evidenceId: "evidence:orders", active: true, evidenceActive: true },
         { id: "contract:api:/invoices", key: "/invoices", entityId: "entity:invoice-contract", evidenceId: "evidence:invoices", active: true, evidenceActive: true },
         { id: "contract:api:/inactive-mention", key: "/inactive-mention", entityId: "entity:stale-order-contract", evidenceId: "evidence:inactive-mention", active: false, evidenceActive: true },
         { id: "contract:api:/inactive-evidence", key: "/inactive-evidence", entityId: "entity:stale-order-contract", evidenceId: "evidence:inactive-evidence", active: true, evidenceActive: false }
       ] as const;
-      for (const fixture of contractFixtures) {
-        await db.upsertContract({ id: fixture.id, kind: "api", key: fixture.key, name: fixture.key, description: fixture.key });
-        await db.upsertEvidence({
-          id: fixture.evidenceId, repoId: repo.id, fileId: `file:${fixture.evidenceId}`, filePath: `${fixture.key.slice(1)}.ts`,
-          line: 1, raw: fixture.key, rule: "exact-entity-test", confidence: 1, active: fixture.evidenceActive
-        });
-        await db.addRepoContract({ repoId: repo.id, contractId: fixture.id, role: "producer", evidenceId: fixture.evidenceId, confidence: 1, active: true });
-        await db.addContractEntity({ contractId: fixture.id, entityId: fixture.entityId, evidenceId: fixture.evidenceId, confidence: 1, active: fixture.active });
-      }
-      await db.upsertOperation({ id: "operation:active-order", verb: "create", entityName: "Order", description: "active order" });
-      await db.upsertOperation({ id: "operation:inactive-order", verb: "delete", entityName: "Order", description: "inactive order" });
-      await db.upsertWorkflow({ id: "workflow:active-order", name: "ActiveOrderWorkflow", description: "active workflow" });
-      await db.upsertWorkflow({ id: "workflow:inactive-order", name: "InactiveOrderWorkflow", description: "inactive workflow" });
-      await db.addOperationRepo({ operationId: "operation:active-order", repoId: repo.id, role: "producer", evidenceId: "evidence:active", confidence: 1, active: true });
-      await db.addOperationRepo({ operationId: "operation:inactive-order", repoId: repo.id, role: "stale", evidenceId: "evidence:inactive", confidence: 1, active: false });
-      await db.addWorkflowOperation({ workflowId: "workflow:active-order", operationId: "operation:active-order", step: 1, evidenceId: "evidence:active", confidence: 1, active: true });
-      await db.addWorkflowOperation({ workflowId: "workflow:inactive-order", operationId: "operation:active-order", step: 2, evidenceId: "evidence:inactive", confidence: 1, active: false });
+      const { snapshot } = await stageAndActivatePublicGraphGeneration(db, scope, async (writeScope) => {
+        await db.upsertRepo(repo, writeScope);
+        await db.upsertEntity({ id: "entity:order-contract", name: "Order", kind: "domain", description: "order contract entity" }, writeScope);
+        await db.upsertEntity({ id: "entity:invoice-contract", name: "Invoice", kind: "domain", description: "invoice contract entity" }, writeScope);
+        await db.upsertEntity({ id: "entity:stale-order-contract", name: "Order", kind: "domain", description: "stale order contract entity" }, writeScope);
+        for (const fixture of contractFixtures) {
+          await db.upsertContract({ id: fixture.id, kind: "api", key: fixture.key, name: fixture.key, description: fixture.key }, writeScope);
+          await db.upsertEvidence({
+            id: fixture.evidenceId, repoId: repo.id, fileId: `file:${fixture.evidenceId}`, filePath: `${fixture.key.slice(1)}.ts`,
+            line: 1, raw: fixture.key, rule: "exact-entity-test", confidence: 1, active: fixture.evidenceActive
+          }, writeScope);
+          await db.addRepoContract({ repoId: repo.id, contractId: fixture.id, role: "producer", evidenceId: fixture.evidenceId, confidence: 1, active: true }, writeScope);
+          await db.addContractEntity({ contractId: fixture.id, entityId: fixture.entityId, evidenceId: fixture.evidenceId, confidence: 1, active: fixture.active }, writeScope);
+        }
+        await db.upsertOperation({ id: "operation:active-order", verb: "create", entityName: "Order", description: "active order" }, writeScope);
+        await db.upsertOperation({ id: "operation:inactive-order", verb: "delete", entityName: "Order", description: "inactive order" }, writeScope);
+        await db.upsertWorkflow({ id: "workflow:active-order", name: "ActiveOrderWorkflow", description: "active workflow" }, writeScope);
+        await db.upsertWorkflow({ id: "workflow:inactive-order", name: "InactiveOrderWorkflow", description: "inactive workflow" }, writeScope);
+        await db.addOperationRepo({ operationId: "operation:active-order", repoId: repo.id, role: "producer", evidenceId: "evidence:active", confidence: 1, active: true }, writeScope);
+        await db.addOperationRepo({ operationId: "operation:inactive-order", repoId: repo.id, role: "stale", evidenceId: "evidence:inactive", confidence: 1, active: false }, writeScope);
+        await db.addWorkflowOperation({ workflowId: "workflow:active-order", operationId: "operation:active-order", step: 1, evidenceId: "evidence:active", confidence: 1, active: true }, writeScope);
+        await db.addWorkflowOperation({ workflowId: "workflow:inactive-order", operationId: "operation:active-order", step: 2, evidenceId: "evidence:inactive", confidence: 1, active: false }, writeScope);
+      });
 
-      const result = await traceEntitiesExactWithQueryCount(db, ["Order"], 10);
+      const result = await traceEntitiesExactWithQueryCount(db, snapshot, ["Order"], 10);
       expect(result.queryCount).toBe(8);
       expect(result.rows).toEqual(expect.arrayContaining([
         expect.objectContaining({ sourceKind: "contract", name: "api:/orders", role: "producer" }),
@@ -151,7 +159,7 @@ describe("graph", () => {
         expect.objectContaining({ role: "stale" }),
         expect.objectContaining({ name: "InactiveOrderWorkflow" })
       ]));
-      const contractOnly = await traceEntitiesExactWithQueryCount(db, ["Invoice"], 10);
+      const contractOnly = await traceEntitiesExactWithQueryCount(db, snapshot, ["Invoice"], 10);
       expect(contractOnly.queryCount).toBe(8);
       expect(contractOnly.rows).toEqual([expect.objectContaining({ sourceKind: "contract", name: "api:/invoices", role: "producer" })]);
     } finally {
@@ -165,12 +173,14 @@ describe("graph", () => {
       const db = await KuzuGraphDB.open(path.join(dir, "graph"));
       try {
         await db.initSchema("exact-entity-order-test");
+        const scope = { workspaceId: "workspace:exact-entity-order", generation: `generation:exact-entity-order:${entityIds.join("-")}` };
         const repo: RepoNode = {
           id: repoId("entity-order"), name: "entity-order", path: dir,
           remoteUrl: "", branch: "", commitSha: "", language: "typescript", indexedAt: "now"
         };
         const file = {
           id: fileId(repo.id, "src/entities.ts"), repoId: repo.id, path: "src/entities.ts",
+          directory: "src",
           language: "typescript", hash: "entities", loc: 3, active: true
         };
         const code = {
@@ -178,17 +188,19 @@ describe("graph", () => {
           kind: "function" as const, name: "handle", qualifiedName: "handle", startLine: 1, endLine: 3,
           signature: "handle()", source: "handle()", hash: "handle", active: true
         };
-        await db.upsertRepo(repo);
-        await db.upsertFile(file);
-        await db.upsertCode(code);
-        await db.addContains(repo.id, file.id);
-        await db.addContains(file.id, code.id);
         const names = new Map([["entity:a", "Account"], ["entity:b", "Customer"], ["entity:c", "Order"]]);
-        for (const entityId of entityIds) {
-          await db.upsertEntity({ id: entityId, name: names.get(entityId)!, kind: "domain", description: entityId });
-          await db.addMention(code.id, entityId, 1);
-        }
-        return await traceEntitiesExactWithQueryCount(db, [...names.values()], limit);
+        const { snapshot } = await stageAndActivatePublicGraphGeneration(db, scope, async (writeScope) => {
+          await db.upsertRepo(repo, writeScope);
+          await db.upsertFile(file, writeScope);
+          await db.upsertCode(code, writeScope);
+          await db.addContains(repo.id, file.id, writeScope);
+          await db.addContains(file.id, code.id, writeScope);
+          for (const entityId of entityIds) {
+            await db.upsertEntity({ id: entityId, name: names.get(entityId)!, kind: "domain", description: entityId }, writeScope);
+            await db.addMention(code.id, entityId, 1, writeScope);
+          }
+        });
+        return await traceEntitiesExactWithQueryCount(db, snapshot, [...names.values()], limit);
       } finally {
         await db.close();
       }
@@ -209,6 +221,7 @@ describe("graph", () => {
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("clear-repo-test");
+      const scope = { workspaceId: "workspace:clear-repo", generation: "generation:clear-repo" };
       const repo: RepoNode = {
         id: repoId("clear-repo"),
         name: "clear-repo",
@@ -223,6 +236,7 @@ describe("graph", () => {
         id: fileId(repo.id, "src/app.ts"),
         repoId: repo.id,
         path: "src/app.ts",
+        directory: "src",
         language: "typescript",
         hash: "file-hash",
         loc: 3,
@@ -267,24 +281,26 @@ describe("graph", () => {
         active: true
       };
 
-      await db.upsertRepo(repo);
-      await db.upsertFile(file);
-      await db.upsertCode(code);
-      await db.upsertContract(contract);
-      await db.upsertEvidence(evidence);
-      await db.addContains(repo.id, file.id);
-      await db.addContains(file.id, code.id);
-      await db.addRepoContract({ repoId: repo.id, contractId: contract.id, role: "producer", evidenceId: evidence.id, confidence: 0.9, batchId: "batch:clear", active: true });
-      await db.addContractEvidence(contract.id, evidence.id);
-      await db.addRepoEvidence(repo.id, evidence.id);
+      await stageAndActivatePublicGraphGeneration(db, scope, async (writeScope) => {
+        await db.upsertRepo(repo, writeScope);
+        await db.upsertFile(file, writeScope);
+        await db.upsertCode(code, writeScope);
+        await db.upsertContract(contract, writeScope);
+        await db.upsertEvidence(evidence, writeScope);
+        await db.addContains(repo.id, file.id, writeScope);
+        await db.addContains(file.id, code.id, writeScope);
+        await db.addRepoContract({ repoId: repo.id, contractId: contract.id, role: "producer", evidenceId: evidence.id, confidence: 0.9, batchId: "batch:clear", active: true }, writeScope);
+        await db.addContractEvidence(contract.id, evidence.id, writeScope);
+        await db.addRepoEvidence(repo.id, evidence.id, writeScope);
+      });
 
-      await db.clearRepoIndexedArtifacts(repo.id);
+      await db.clearRepoIndexedArtifacts(repo.id, scope);
 
-      expect(await db.query("MATCH (f:File) WHERE f.repoId = $repoId RETURN f.id AS id;", { repoId: repo.id })).toEqual([]);
-      expect(await db.query("MATCH (c:Code) WHERE c.repoId = $repoId RETURN c.id AS id;", { repoId: repo.id })).toEqual([]);
-      expect(await db.query("MATCH (e:Evidence) WHERE e.repoId = $repoId RETURN e.id AS id;", { repoId: repo.id })).toEqual([]);
-      const contractEdges = await db.query<{ count: number | bigint }>("MATCH (:Repo {id: $repoId})-[r:PRODUCES]->(:Contract) RETURN count(r) AS count;", { repoId: repo.id });
-      const containmentEdges = await db.query<{ count: number | bigint }>("MATCH (:Repo {id: $repoId})-[r:CONTAINS]->(:File) RETURN count(r) AS count;", { repoId: repo.id });
+      expect(await db.query("MATCH (f:File) WHERE f.repoId = $repoId AND f.workspaceId = $workspaceId AND f.generation = $generation RETURN f.id AS id;", { repoId: repo.id, ...scope })).toEqual([]);
+      expect(await db.query("MATCH (c:Code) WHERE c.repoId = $repoId AND c.workspaceId = $workspaceId AND c.generation = $generation RETURN c.id AS id;", { repoId: repo.id, ...scope })).toEqual([]);
+      expect(await db.query("MATCH (e:Evidence) WHERE e.repoId = $repoId AND e.workspaceId = $workspaceId AND e.generation = $generation RETURN e.id AS id;", { repoId: repo.id, ...scope })).toEqual([]);
+      const contractEdges = await db.query<{ count: number | bigint }>("MATCH (repo:Repo {id: $repoId})-[r:PRODUCES]->(c:Contract) WHERE repo.workspaceId = $workspaceId AND repo.generation = $generation AND r.workspaceId = $workspaceId AND r.generation = $generation AND c.workspaceId = $workspaceId AND c.generation = $generation RETURN count(r) AS count;", { repoId: repo.id, ...scope });
+      const containmentEdges = await db.query<{ count: number | bigint }>("MATCH (repo:Repo {id: $repoId})-[r:CONTAINS]->(f:File) WHERE repo.workspaceId = $workspaceId AND repo.generation = $generation AND r.workspaceId = $workspaceId AND r.generation = $generation AND f.workspaceId = $workspaceId AND f.generation = $generation RETURN count(r) AS count;", { repoId: repo.id, ...scope });
       expect(Number(contractEdges[0]?.count ?? -1)).toBe(0);
       expect(Number(containmentEdges[0]?.count ?? -1)).toBe(0);
     } finally {
@@ -297,12 +313,11 @@ describe("graph", () => {
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("test");
+      const workspaceId = deriveWorkspaceId("default-system");
+      const scope = { workspaceId, generation: "generation:graph-end-to-end" };
       const repoA = { id: repoId("service-a"), name: "service-a", path: path.resolve("tests/fixtures/service-a"), remoteUrl: "", branch: "", commitSha: "", language: "typescript", indexedAt: new Date().toISOString() };
       const repoB = { id: repoId("service-b"), name: "service-b", path: path.resolve("tests/fixtures/service-b"), remoteUrl: "", branch: "", commitSha: "", language: "typescript", indexedAt: new Date().toISOString() };
       const repoC = { id: repoId("service-c"), name: "service-c", path: path.resolve("tests/fixtures/service-c"), remoteUrl: "", branch: "", commitSha: "", language: "javascript", indexedAt: new Date().toISOString() };
-      await db.upsertRepo(repoA);
-      await db.upsertRepo(repoB);
-      await db.upsertRepo(repoC);
       const parsed = await Promise.all([
         parseSourceFile({ repoId: repoA.id, absolutePath: path.resolve("tests/fixtures/service-a/src/OrderController.ts"), relativePath: "src/OrderController.ts", language: "typescript" }),
         parseSourceFile({ repoId: repoA.id, absolutePath: path.resolve("tests/fixtures/service-a/src/OrderService.ts"), relativePath: "src/OrderService.ts", language: "typescript" }),
@@ -312,15 +327,25 @@ describe("graph", () => {
         parseSourceFile({ repoId: repoC.id, absolutePath: path.resolve("tests/fixtures/service-c/src/InventoryService.js"), relativePath: "src/InventoryService.js", language: "javascript" }),
         parseSourceFile({ repoId: repoC.id, absolutePath: path.resolve("tests/fixtures/service-c/src/InventoryPanel.jsx"), relativePath: "src/InventoryPanel.jsx", language: "jsx" })
       ]);
-      await upsertParsedFiles(db, parsed, true, [repoA, repoB, repoC]);
-      const stats = await db.stats();
+      const { snapshot } = await stageAndActivatePublicGraphGeneration(db, scope, async (writeScope) => {
+        await db.upsertRepo(repoA, writeScope);
+        await db.upsertRepo(repoB, writeScope);
+        await db.upsertRepo(repoC, writeScope);
+        await upsertParsedFiles(db, parsed, {
+          semantic: true,
+          workspaceId,
+          generation: writeScope.generation,
+          systemName: "default-system"
+        }, [repoA, repoB, repoC]);
+      });
+      const stats = await db.stats(snapshot);
       expect(stats.repos).toBe(3);
       expect(stats.files).toBe(7);
       expect(stats.codeNodes).toBeGreaterThanOrEqual(10);
       expect(stats.sectionNodes).toBeGreaterThanOrEqual(2);
       expect(stats.callEdges).toBeGreaterThanOrEqual(2);
-      const codeIds = await db.query<{ codeId: string }>("MATCH (c:Code) RETURN c.id AS codeId ORDER BY c.id;");
-      const callEdges = await callEdgesAround(db, codeIds.map((row) => row.codeId), 10);
+      const codeIds = await db.query<{ codeId: string }>("MATCH (c:Code) WHERE c.workspaceId = $workspaceId AND c.generation = $generation AND (c.active IS NULL OR c.active = true) RETURN c.id AS codeId ORDER BY c.id;", { workspaceId: snapshot.workspaceId, generation: snapshot.generation });
+      const callEdges = await callEdgesAround(db, snapshot, codeIds.map((row) => row.codeId), 10);
       expect(callEdges.length).toBeGreaterThan(0);
       expect(callEdges.every((edge) => edge.fromCodeId?.startsWith("code:") && edge.toCodeId?.startsWith("code:") &&
         edge.fromRepoId?.startsWith("repo:") && edge.toRepoId?.startsWith("repo:") &&
@@ -335,11 +360,14 @@ describe("graph", () => {
       expect(retrieval.semantic).toBeDefined();
       expect(retrieval.edges.every((edge) => ["exact", "probable", "heuristic"].includes(edge.resolution))).toBe(true);
       const workflowRetrieval = await retrieveForQuestion(db, "Order workflow");
-      expect(workflowRetrieval.entities.some((entity) => entity.sourceKind === "contract" || entity.sourceKind === "operation")).toBe(true);
+      expect(
+        workflowRetrieval.entities.some((entity) => entity.sourceKind === "contract" || entity.sourceKind === "operation"),
+        JSON.stringify(workflowRetrieval.entities)
+      ).toBe(true);
       expect(workflowRetrieval.dependencies.some((dependency) => dependency.contractKey === "/api/order/{id}")).toBe(true);
-      const impactSections = await findImpactSections(db, "OrderCreatedEvent");
+      const impactSections = await findImpactSections(db, snapshot, "OrderCreatedEvent");
       expect(impactSections.some((section) => section.heading === "Events")).toBe(true);
-      const documented = await sectionsDocumentingCode(db, retrieval.code.map((row) => row.codeId));
+      const documented = await sectionsDocumentingCode(db, snapshot, retrieval.code.map((row) => row.codeId));
       expect(documented.some((section) => section.heading === "Events")).toBe(true);
       const repoDependencies = await db.query<{ fromRepo: string; toRepo: string; dependencyType: string; evidenceRule: string; raw: string }>(
         `MATCH (from:Repo)-[d:DEPENDS_ON]->(to:Repo), (e:Evidence)
@@ -352,12 +380,12 @@ describe("graph", () => {
         expect.objectContaining({ fromRepo: "service-b", toRepo: "service-a", dependencyType: "api", evidenceRule: "http-client-api-consumer" }),
         expect.objectContaining({ fromRepo: "service-b", toRepo: "service-a", dependencyType: "event", evidenceRule: "event-consumer" })
       ]));
-      const dependencyRows = await listDependencies(db);
+      const dependencyRows = await listDependencies(db, snapshot);
       expect(dependencyRows).toEqual(expect.arrayContaining([
         expect.objectContaining({ fromRepo: "service-b", toRepo: "service-a", dependencyType: "api", contractKind: "api", contractKey: "/api/order/{id}" })
       ]));
       expect(dependencyRows.every((row) => ["exact", "probable", "heuristic"].includes(row.resolution))).toBe(true);
-      const contractRows = await listContracts(db);
+      const contractRows = await listContracts(db, snapshot);
       expect(contractRows).toEqual(expect.arrayContaining([
         expect.objectContaining({ kind: "api", key: "/api/order/{id}" }),
         expect.objectContaining({ kind: "event", key: "order.created" })
@@ -367,7 +395,7 @@ describe("graph", () => {
          RETURN c.kind AS kind, c.key AS key, count(DISTINCT r) AS repoCount;`
       );
       expect(sharedContracts).toEqual(expect.arrayContaining([
-        expect.objectContaining({ kind: "dto", key: "orderdto" }),
+        expect.objectContaining({ kind: "schema", key: "orderdto" }),
         expect.objectContaining({ kind: "schema", key: "orderschema" }),
         expect.objectContaining({ kind: "enum", key: "orderstatus" }),
         expect.objectContaining({ kind: "config", key: "ORDER_SHARED_CONFIG" })
@@ -398,7 +426,7 @@ describe("graph", () => {
       expect(packageUsages).toEqual(expect.arrayContaining([
         expect.objectContaining({ repoName: "service-b", packageName: "@fixture/service-a", rule: "import-specifier-package-owner" })
       ]));
-      const apiTrace = await traceContract(db, "api", "/api/order/:id");
+      const apiTrace = await traceContract(db, snapshot, "api", "/api/order/:id");
       expect(apiTrace).toEqual(expect.arrayContaining([
         expect.objectContaining({ repoName: "service-a", role: "producer", filePath: "src/OrderController.ts", rule: "api-path-producer" })
       ]));
@@ -411,7 +439,7 @@ describe("graph", () => {
       expect(methodConsumers).toEqual(expect.arrayContaining([
         expect.objectContaining({ repoName: "service-b", key: "GET:/api/order/{id}" })
       ]));
-      const unresolvedEvidence = await listUnresolvedEvidence(db);
+      const unresolvedEvidence = await listUnresolvedEvidence(db, snapshot);
       expect(unresolvedEvidence).toEqual(expect.arrayContaining([
         expect.objectContaining({
           repoName: "service-b",
@@ -428,20 +456,20 @@ describe("graph", () => {
       expect(httpSpecs).toEqual(expect.arrayContaining([
         expect.objectContaining({ httpMethod: "GET", pathTemplate: "/api/order/{id}", specKind: "http-endpoint" })
       ]));
-      const eventTrace = await traceContract(db, "event", "ORDER.CREATED");
+      const eventTrace = await traceContract(db, snapshot, "event", "ORDER.CREATED");
       expect(eventTrace).toEqual(expect.arrayContaining([
         expect.objectContaining({ repoName: "service-a", role: "producer", rule: "event-publisher" }),
         expect.objectContaining({ repoName: "service-b", role: "consumer", rule: "event-consumer" })
       ]));
-      const dtoTrace = await traceContract(db, "dto", "OrderDTO");
-      expect(dtoTrace.filter((row) => row.role === "shared").map((row) => row.repoName)).toEqual(expect.arrayContaining(["service-a", "service-b"]));
-      const schemaTrace = await traceContract(db, "schema", "OrderSchema");
+      const dtoTrace = await traceContract(db, snapshot, "dto", "OrderDTO");
+      expect(dtoTrace).toEqual([]);
+      const schemaTrace = await traceContract(db, snapshot, "schema", "OrderSchema");
       expect(schemaTrace.filter((row) => row.role === "shared").map((row) => row.repoName)).toEqual(expect.arrayContaining(["service-a", "service-b"]));
-      const enumTrace = await traceContract(db, "enum", "OrderStatus");
+      const enumTrace = await traceContract(db, snapshot, "enum", "OrderStatus");
       expect(enumTrace.filter((row) => row.role === "shared").map((row) => row.repoName)).toEqual(expect.arrayContaining(["service-a", "service-b"]));
-      const configTrace = await traceContract(db, "config", "ORDER_SHARED_CONFIG");
+      const configTrace = await traceContract(db, snapshot, "config", "ORDER_SHARED_CONFIG");
       expect(configTrace.filter((row) => row.role === "shared").map((row) => row.repoName)).toEqual(expect.arrayContaining(["service-a", "service-b"]));
-      const entityTrace = await traceEntity(db, "Order");
+      const entityTrace = await traceEntity(db, snapshot, "Order");
       expect(entityTrace).toEqual(expect.arrayContaining([
         expect.objectContaining({ repoName: "service-a", sourceKind: "contract" }),
         expect.objectContaining({ repoName: "service-b", sourceKind: "operation" })
@@ -505,21 +533,31 @@ describe("graph", () => {
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("monorepo-test");
+      const workspaceId = deriveWorkspaceId("monorepo-test");
+      const scope = { workspaceId, generation: "generation:monorepo-test" };
       const monorepo: RepoNode = { id: repoId("common"), name: "common", path: monorepoPath, remoteUrl: "", branch: "", commitSha: "", language: "typescript", indexedAt: "now" };
       const consumer: RepoNode = { id: repoId("consumer"), name: "consumer", path: consumerPath, remoteUrl: "", branch: "", commitSha: "", language: "typescript", indexedAt: "now" };
-      await db.upsertRepo(monorepo);
-      await db.upsertRepo(consumer);
-      await upsertParsedFiles(db, [
-        parsedFile(monorepo, "packages/widget/src/index.ts"),
-        parsedFile(consumer, "src/app.ts")
-      ], { semantic: true, batchId: "batch:monorepo-graph" }, [monorepo, consumer]);
+      const { snapshot } = await stageAndActivatePublicGraphGeneration(db, scope, async (writeScope) => {
+        await db.upsertRepo(monorepo, writeScope);
+        await db.upsertRepo(consumer, writeScope);
+        await upsertParsedFiles(db, [
+          parsedFile(monorepo, "packages/widget/src/index.ts"),
+          parsedFile(consumer, "src/app.ts")
+        ], {
+          semantic: true,
+          batchId: "batch:monorepo-graph",
+          workspaceId,
+          generation: writeScope.generation,
+          systemName: "monorepo-test"
+        }, [monorepo, consumer]);
+      });
 
-      const trace = await traceContract(db, "package", "@scope/widget");
+      const trace = await traceContract(db, snapshot, "package", "@scope/widget");
       expect(trace).toEqual(expect.arrayContaining([
         expect.objectContaining({ repoName: "common", role: "owner", filePath: "packages/widget/package.json", rule: "package-json-name" }),
         expect.objectContaining({ repoName: "consumer", role: "consumer", filePath: "package.json", rule: "package-json-dependency" })
       ]));
-      const contracts = await listContracts(db, { kind: "package" });
+      const contracts = await listContracts(db, snapshot, { kind: "package" });
       expect(contracts).toEqual(expect.arrayContaining([
         expect.objectContaining({ key: "@scope/widget", producers: 1, consumers: 1 })
       ]));

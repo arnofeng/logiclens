@@ -33,23 +33,30 @@ function facts(overrides: Partial<GraphFactsBatch> = {}): GraphFactsBatch {
 
 const health: LexicalIndexHealth = {
   providerVersion: "test-1",
-  projectionSchemaVersion: "1",
+  projectionSchemaVersion: "2",
   tokenizerVersion: "1",
   status: "unhealthy",
   reasons: ["index_populating"],
   metrics: { documentCount: 1, indexSizeBytes: 10 }
 };
+const GENERATION = "generation:test";
 
 function fakeStore() {
   return {
     ensureSchema: vi.fn().mockResolvedValue(undefined),
     commitVersions: vi.fn().mockResolvedValue(undefined),
+    initializeGeneration: vi.fn().mockResolvedValue(undefined),
+    deleteGeneration: vi.fn().mockResolvedValue(undefined),
     upsertDocuments: vi.fn().mockResolvedValue(undefined),
+    deleteDocuments: vi.fn().mockResolvedValue(undefined),
+    applyIncrementalMutation: vi.fn().mockResolvedValue(undefined),
     reconcileRepoDocuments: vi.fn().mockResolvedValue(undefined),
     reconcileRepoFileDocuments: vi.fn().mockResolvedValue(undefined),
     cleanupBatch: vi.fn().mockResolvedValue(undefined),
     search: vi.fn().mockResolvedValue([]),
     loadDocuments: vi.fn().mockResolvedValue([]),
+    documentIdsForSources: vi.fn().mockResolvedValue([]),
+    pendingHealth: vi.fn().mockResolvedValue(health),
     health: vi.fn().mockResolvedValue(health)
   };
 }
@@ -166,12 +173,12 @@ describe("indexing phases", () => {
   it("writes lexical documents without repeating schema DDL inside the journal boundary", async () => {
     const store = fakeStore();
     const calls: string[] = [];
-    for (const method of ["upsertDocuments", "reconcileRepoDocuments", "health"] as const) {
-      (store[method] as ReturnType<typeof vi.fn>).mockImplementation(async () => { calls.push(method); return method === "health" ? health : undefined; });
+    for (const method of ["upsertDocuments", "reconcileRepoDocuments", "pendingHealth"] as const) {
+      (store[method] as ReturnType<typeof vi.fn>).mockImplementation(async () => { calls.push(method); return method === "pendingHealth" ? health : undefined; });
     }
     const projected = await runLexicalProjectionPhase({ facts: facts(), workspaceId: "workspace:a" });
-    const result = await runLexicalWritePhase({ store, workspaceId: "workspace:a", batchId: "batch:lexical", repos: [repo], documents: projected.documents });
-    expect(calls).toEqual(["upsertDocuments", "reconcileRepoDocuments", "health"]);
+    const result = await runLexicalWritePhase({ store, workspaceId: "workspace:a", generation: GENERATION, batchId: "batch:lexical", repos: [repo], documents: projected.documents });
+    expect(calls).toEqual(["upsertDocuments", "reconcileRepoDocuments", "pendingHealth"]);
     expect(store.ensureSchema).not.toHaveBeenCalled();
     expect(result).toMatchObject({ documentCount: 1, reconciledRepoIds: [repo.id], indexStatus: "unhealthy", indexReasons: ["index_populating"] });
     expect(store.commitVersions).not.toHaveBeenCalled();
@@ -183,6 +190,7 @@ describe("indexing phases", () => {
     const result = await runLexicalWritePhase({
       store,
       workspaceId: "workspace:a",
+      generation: GENERATION,
       batchId: "batch:lexical",
       repos: [repo],
       documents: projected.documents,
@@ -192,20 +200,20 @@ describe("indexing phases", () => {
 
     expect(store.upsertDocuments).toHaveBeenCalledOnce();
     expect(store.reconcileRepoDocuments).not.toHaveBeenCalled();
-    expect(store.health).toHaveBeenCalledWith("workspace:a");
+    expect(store.pendingHealth).toHaveBeenCalledWith({ workspaceId: "workspace:a", generation: GENERATION });
     expect(result.reconciledRepoIds).toEqual([]);
   });
 
   it("reports the provider's actual projection and tokenizer versions", async () => {
     const store = fakeStore();
-    store.health.mockResolvedValueOnce({
+    store.pendingHealth.mockResolvedValueOnce({
       ...health,
       projectionSchemaVersion: "old-projection",
       tokenizerVersion: "old-tokenizer",
       reasons: ["projection_schema_version_mismatch", "tokenizer_version_mismatch"]
     });
     const projected = await runLexicalProjectionPhase({ facts: facts(), workspaceId: "workspace:a" });
-    const result = await runLexicalWritePhase({ store, workspaceId: "workspace:a", batchId: "batch:lexical", repos: [repo], documents: projected.documents });
+    const result = await runLexicalWritePhase({ store, workspaceId: "workspace:a", generation: GENERATION, batchId: "batch:lexical", repos: [repo], documents: projected.documents });
     expect(result.projectionSchemaVersion).toBe("old-projection");
     expect(result.tokenizerVersion).toBe("old-tokenizer");
   });
@@ -219,34 +227,34 @@ describe("indexing phases", () => {
       { id: "inactive", workspaceId: "workspace:a", repoId: repo.id, batchId: "batch:lexical", active: false },
       { id: "other", workspaceId: "workspace:a", repoId: repoB.id, batchId: "batch:lexical", active: true }
     ] as LexicalDocument[];
-    await runLexicalWritePhase({ store, workspaceId: "workspace:a", batchId: "batch:lexical", repos: [repoB, repo, repo], documents });
+    await runLexicalWritePhase({ store, workspaceId: "workspace:a", generation: GENERATION, batchId: "batch:lexical", repos: [repoB, repo, repo], documents });
     expect(store.reconcileRepoDocuments.mock.calls.map((call: unknown[]) => call[0])).toEqual([
-      { workspaceId: "workspace:a", repoId: repo.id, batchId: "batch:lexical", activeDocumentIds: ["a", "z"] },
-      { workspaceId: "workspace:a", repoId: repoB.id, batchId: "batch:lexical", activeDocumentIds: ["other"] }
+      { workspaceId: "workspace:a", generation: GENERATION, repoId: repo.id, batchId: "batch:lexical", activeDocumentIds: ["a", "z"] },
+      { workspaceId: "workspace:a", generation: GENERATION, repoId: repoB.id, batchId: "batch:lexical", activeDocumentIds: ["other"] }
     ]);
   });
 
   it("reconciles an empty projection and stops after the first provider failure", async () => {
     const store = fakeStore();
-    await runLexicalWritePhase({ store, workspaceId: "workspace:a", batchId: "batch:lexical", repos: [repo], documents: [] });
+    await runLexicalWritePhase({ store, workspaceId: "workspace:a", generation: GENERATION, batchId: "batch:lexical", repos: [repo], documents: [] });
     expect(store.upsertDocuments).not.toHaveBeenCalled();
-    expect(store.reconcileRepoDocuments).toHaveBeenCalledWith({ workspaceId: "workspace:a", repoId: repo.id, batchId: "batch:lexical", activeDocumentIds: [] });
+    expect(store.reconcileRepoDocuments).toHaveBeenCalledWith({ workspaceId: "workspace:a", generation: GENERATION, repoId: repo.id, batchId: "batch:lexical", activeDocumentIds: [] });
 
     const providerError = new WorkspaceLexicalStoreError("reconcile_failed", { operation: "reconcileRepoDocuments", workspaceId: "workspace:a" });
     store.reconcileRepoDocuments.mockRejectedValueOnce(providerError);
-    await expect(runLexicalWritePhase({ store, workspaceId: "workspace:a", batchId: "batch:lexical", repos: [repo], documents: [] })).rejects.toMatchObject({ cause: providerError });
-    expect(store.health).toHaveBeenCalledTimes(1);
+    await expect(runLexicalWritePhase({ store, workspaceId: "workspace:a", generation: GENERATION, batchId: "batch:lexical", repos: [repo], documents: [] })).rejects.toMatchObject({ cause: providerError });
+    expect(store.pendingHealth).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["upsertDocuments", "reconcileRepoDocuments", "health"] as const)(
+  it.each(["upsertDocuments", "reconcileRepoDocuments", "pendingHealth"] as const)(
     "wraps a %s failure and does not continue to later lexical steps",
     async (failedMethod) => {
       const store = fakeStore();
       const providerError = new WorkspaceLexicalStoreError("write_failed", { operation: failedMethod });
       store[failedMethod].mockRejectedValueOnce(providerError);
       const projected = await runLexicalProjectionPhase({ facts: facts(), workspaceId: "workspace:a" });
-      await expect(runLexicalWritePhase({ store, workspaceId: "workspace:a", batchId: "batch:lexical", repos: [repo], documents: projected.documents })).rejects.toMatchObject({ cause: providerError });
-      const order = ["upsertDocuments", "reconcileRepoDocuments", "health"] as const;
+      await expect(runLexicalWritePhase({ store, workspaceId: "workspace:a", generation: GENERATION, batchId: "batch:lexical", repos: [repo], documents: projected.documents })).rejects.toMatchObject({ cause: providerError });
+      const order = ["upsertDocuments", "reconcileRepoDocuments", "pendingHealth"] as const;
       for (const later of order.slice(order.indexOf(failedMethod) + 1)) expect(store[later]).not.toHaveBeenCalled();
     }
   );

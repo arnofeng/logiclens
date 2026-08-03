@@ -77,14 +77,22 @@ describe("confidence rules", () => {
 
   it("uses the probable threshold as the default relation-quality audit cutoff", async () => {
     const seenMinConfidence: number[] = [];
+    const seenGenerations: string[] = [];
+    const snapshotQueries: string[] = [];
     const db = {
-      async query(_sql: string, params?: { minConfidence?: number }) {
+      async query(sql: string, params?: { minConfidence?: number; generation?: string }) {
+        if (sql.includes("SchemaGenerationState")) {
+          snapshotQueries.push(sql);
+          return [{ activeGeneration: "generation:test", activeRevision: "revision:test" }];
+        }
         if (params?.minConfidence !== undefined) seenMinConfidence.push(params.minConfidence);
+        if (params?.generation) seenGenerations.push(params.generation);
         return [];
-      }
+      },
+      readTransaction: async <T>(operation: () => Promise<T>) => operation()
     };
 
-    await auditRelationQuality(db as never);
+    await auditRelationQuality(db as never, "workspace:test");
 
     expect(seenMinConfidence).toEqual([
       PROBABLE_CONFIDENCE_THRESHOLD,
@@ -92,5 +100,8 @@ describe("confidence rules", () => {
       PROBABLE_CONFIDENCE_THRESHOLD,
       PROBABLE_CONFIDENCE_THRESHOLD
     ]);
+    expect(snapshotQueries).toHaveLength(1);
+    expect(snapshotQueries[0]).toContain("s.activeRevision AS activeRevision");
+    expect(seenGenerations).toEqual(Array(5).fill("generation:test"));
   });
 });

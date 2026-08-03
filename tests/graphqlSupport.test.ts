@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { makeTestSchema, objectSchemaFields } from "./helpers/schemaModel.js";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { graphqlSdlExtractor } from "../src/core/contracts/extraction/builtin/graphqlSdlExtractor.js";
 import { graphqlClientExtractor } from "../src/core/contracts/extraction/builtin/graphqlClientExtractor.js";
@@ -12,6 +13,7 @@ import type { ExtractorFactBundle } from "../src/core/contracts/extraction/cross
 import type { SchemaSpec, GraphQLOperationSpec } from "../src/core/contracts/spec.js";
 import type { ContractSpecNode } from "../src/core/parsing/types.js";
 import type { SpecRoleMap } from "../src/core/contracts/matching/types.js";
+import { reconcileNonJavaSchemaFacts } from "../src/core/contracts/extraction/nonJavaSchemaReconciler.js";
 
 async function extract(source: string): Promise<ExtractorFactBundle> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-graphql-sdl-"));
@@ -21,7 +23,9 @@ async function extract(source: string): Promise<ExtractorFactBundle> {
   await fs.writeFile(abs, source, "utf8");
   const repo = { id: repoId("graphql-sdl"), name: "graphql-sdl", path: dir, remoteUrl: "", branch: "", commitSha: "", language: "graphql", indexedAt: "now" } as any;
   const parsed = await parseSourceFile({ repoId: repo.id, absolutePath: abs, relativePath: rel, language: "graphql" });
-  const bundle = await graphqlSdlExtractor.extract({ repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
+  const extracted = await graphqlSdlExtractor.extract({ repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
+  const reconciled = reconcileNonJavaSchemaFacts(extracted.contractSpecs, extracted.semanticRelations);
+  const bundle = { ...extracted, contractSpecs: reconciled.contractSpecs, semanticRelations: reconciled.semanticRelations };
   await fs.rm(dir, { recursive: true, force: true });
   return bundle;
 }
@@ -123,10 +127,10 @@ describe("GraphQL SDL Extractor", () => {
     });
     expect(userSpec).toBeDefined();
     const userSpecData = JSON.parse(userSpec!.specJson) as SchemaSpec;
-    expect(userSpecData.fields).toHaveLength(3);
-    expect(userSpecData.fields[0]).toMatchObject({ name: "id", type: "ID!" });
-    expect(userSpecData.fields[1]).toMatchObject({ name: "name", type: "String!" });
-    expect(userSpecData.fields[2]).toMatchObject({ name: "email", type: "String" });
+    expect(objectSchemaFields(userSpecData)).toHaveLength(3);
+    expect(objectSchemaFields(userSpecData)[0]).toMatchObject({ name: "id", type: "string" });
+    expect(objectSchemaFields(userSpecData)[1]).toMatchObject({ name: "name", type: "string" });
+    expect(objectSchemaFields(userSpecData)[2]).toMatchObject({ name: "email", type: "string?" });
 
     // 2. Verify operations
     const userOp = bundle.contractSpecs.find(s => {
@@ -164,12 +168,12 @@ describe("GraphQL SDL Extractor", () => {
     // query.user returns User
     const userResponseRel = relations.find(r => r.fromSpecId === userOp!.id && r.kind === "RESPONSE_SCHEMA");
     expect(userResponseRel).toBeDefined();
-    expect(userResponseRel!.toSpecId).toBe("schema-ref:User");
+    expect(userResponseRel!.toSpecId).toMatch(/^spec:schema:[a-f0-9]{64}$/u);
 
     // createUser takes CreateUserInput
     const createUserRequestRel = relations.find(r => r.fromSpecId === createUserOp!.id && r.kind === "REQUEST_SCHEMA");
     expect(createUserRequestRel).toBeDefined();
-    expect(createUserRequestRel!.toSpecId).toBe("schema-ref:CreateUserInput");
+    expect(createUserRequestRel!.toSpecId).toMatch(/^spec:schema:[a-f0-9]{64}$/u);
   });
 });
 
@@ -413,12 +417,7 @@ describe("GraphQL Impact Analysis", () => {
       fileId: "graphql/schema",
       evidenceId: "ev-schema",
       canonicalKey: "User",
-      specJson: JSON.stringify({
-        kind: "schema",
-        name: "User",
-        language: "graphql",
-        fields: [{ name: "email", type: "String", optional: true }]
-      }),
+      specJson: JSON.stringify(makeTestSchema({ name: "User", language: "graphql", repoId: "repo-prod", fields: [{ name: "email", type: "string", optional: true }] })),
       confidence: 1.0
     };
 

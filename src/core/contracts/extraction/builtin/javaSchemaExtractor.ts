@@ -6,7 +6,7 @@ import type { SchemaFieldSpec, SchemaSpec } from "../../spec.js";
 import { normalizePrimitiveType } from "../../spec.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import {
-  classifySharedContract,
+  classifyLegacyJavaSharedContract,
   contract,
   evidence,
   parsedCodeFiles,
@@ -18,6 +18,7 @@ import {
   walkSourceAst
 } from "./sourceAstUtils.js";
 import { entityId } from "../../../../shared/path.js";
+import { createSchemaSpec, schemaFieldFromNormalized } from "../../../schema/model.js";
 
 /**
  * Java Schema Extractor extracts field-level schema information from POJO /
@@ -50,7 +51,7 @@ export const javaSchemaExtractor = compatExtractor({
       for (const symbol of file.symbols) {
         if (symbol.kind !== "class") continue;
 
-        const sharedKind = classifySharedContract(symbol.name, symbol.kind);
+        const sharedKind = classifyLegacyJavaSharedContract(symbol.name, symbol.kind);
         if (sharedKind !== "schema" && sharedKind !== "dto") continue;
 
         // Find the class_declaration node
@@ -63,12 +64,11 @@ export const javaSchemaExtractor = compatExtractor({
         const fields = extractClassFields(classNode, file);
         if (fields.length === 0 && !parentClass) continue;
 
-        const schemaSpec: SchemaSpec = {
-          kind: "schema",
-          name: symbol.name,
-          language: "java",
-          fields
-        };
+        const schemaSpec: SchemaSpec = createSchemaSpec({
+          declaration: { languageId: "java", repoId: file.repoId, resolutionScopeId: "legacy-java", canonicalName: symbol.qualifiedName || symbol.name },
+          displayName: symbol.name,
+          shape: { kind: "object", fields }
+        });
 
         const schemaContract = contract(sharedKind, symbol.name, `${sharedKind.toUpperCase()} ${symbol.name}`);
         const evidenceNode = evidence({
@@ -189,7 +189,7 @@ function extractClassFields(
     if (!child) continue;
     if (child.type !== "field_declaration") continue;
 
-    const field = parseJavaField(child);
+    const field = parseJavaField(child, _file);
     if (field) fields.push(field);
   }
 
@@ -201,7 +201,7 @@ function extractClassFields(
  * Skips static / transient / final fields because they are not part of the
  * data schema (they are constants, utilities, or framework internals).
  */
-function parseJavaField(node: Parser.SyntaxNode): SchemaFieldSpec | undefined {
+function parseJavaField(node: Parser.SyntaxNode, file: ParsedFile): SchemaFieldSpec | undefined {
   // Find modifiers by type (tree-sitter-java may not expose "modifiers" as a
   // named field, only as a named node type).
   const modifiers = findModifiers(node);
@@ -249,13 +249,16 @@ function parseJavaField(node: Parser.SyntaxNode): SchemaFieldSpec | undefined {
   // Optional<T> implies nullable
   if (rawType.startsWith("Optional<")) nullable = true;
 
-  return {
-    name,
-    type: normalized,
-    optional: false, // Java fields are required by default
-    nullable: nullable || undefined,
-    sourceLine: node.startPosition.row + 1
-  };
+  return schemaFieldFromNormalized({
+    languageId: "java",
+    repoId: file.repoId,
+    fileId: file.fileId,
+    sourceName: name,
+    normalizedType: normalized,
+    optional: false,
+    nullable: nullable ?? false,
+    line: node.startPosition.row + 1
+  });
 }
 
 /** Finds the modifiers child of a class or field declaration by node type. */

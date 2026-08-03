@@ -17,6 +17,7 @@ import { canonicalHttpContractKey, canonicalGrpcContractKey, canonicalDubboContr
 import { canonicalEventContractKey, type EventBroker } from "../../event.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import { serializeSpec, type ContractSpec, type DubboMethodSpec, type EventSpec, type HttpEndpointSpec, type GrpcMethodSpec, type GrpcStreaming, type SchemaSpec, type SchemaFieldSpec, type GraphQLOperationSpec } from "../../spec.js";
+import { createSchemaSpec, stableFactId } from "../../../schema/model.js";
 import type { AliasOverride } from "../crossRepoContracts.js";
 import type { FactCollector } from "../factCollector.js";
 
@@ -236,7 +237,21 @@ export function pushContractSpec(input: {
   eventTopic?: string;
   version?: string;
 }): string {
-  const specId = `spec:${normalizeName(`${input.contractNode.id}:${input.evidenceNode.id}`)}`;
+  const specId = input.spec.kind === "schema"
+    ? input.spec.id
+    : stableFactId("spec", {
+      repoId: input.repoId,
+      contractId: input.contractNode.id,
+      canonicalKey: input.contractNode.key,
+      kind: input.spec.kind,
+      framework: input.framework ?? "",
+      sourceSignature: stableFactId("source-signature", {
+        fileId: input.fileId,
+        sourceSymbolId: input.sourceSymbolId?.replace(/:\d+$/u, "") ?? "",
+        rule: input.evidenceNode.rule,
+        raw: input.evidenceNode.raw
+      })
+    });
   const specKind: ContractSpecKind = input.spec.kind;
   input.collector.addContractSpec({
     id: specId,
@@ -384,7 +399,7 @@ export function pushEventContract(input: {
   rule: string;
   confidence: number;
   sourceSymbolId?: string;
-}): { contractNode: ContractNode; evidenceNode: EvidenceNode } {
+}): { contractNode: ContractNode; evidenceNode: EvidenceNode; specId: string } {
   const eventContract = contract("event", input.topic, `Event topic ${input.topic}`);
   const evidenceNode = evidence({
     repoId: input.file.repoId,
@@ -405,7 +420,7 @@ export function pushEventContract(input: {
     payloadType: input.payloadType,
     broker: input.broker
   };
-  pushContractSpec({
+  const specId = pushContractSpec({
     collector: input.collector,
     contractNode: eventContract,
     spec: eventSpec,
@@ -426,7 +441,7 @@ export function pushEventContract(input: {
     input.collector.addOperationRepo({ operationId, repoId: input.file.repoId, role: input.role, evidenceId: evidenceNode.id, confidence: evidenceNode.confidence });
   }
 
-  return { contractNode: eventContract, evidenceNode };
+  return { contractNode: eventContract, evidenceNode, specId };
 }
 
 export function pushGrpcContract(input: {
@@ -446,7 +461,7 @@ export function pushGrpcContract(input: {
   responseType?: string;
   streaming: GrpcStreaming;
   framework?: "proto" | "grpc-go" | "grpc-java" | "grpc-python" | "grpc-js";
-}): { contractNode: ContractNode; evidenceNode: EvidenceNode } {
+}): { contractNode: ContractNode; evidenceNode: EvidenceNode; specId: string } {
   const contractNode = grpcContract(input.fullName, `gRPC ${input.fullName}`);
   const evidenceNode = evidence({
     repoId: input.file.repoId,
@@ -472,7 +487,7 @@ export function pushGrpcContract(input: {
     framework: input.framework
   };
 
-  pushContractSpec({
+  const specId = pushContractSpec({
     collector: input.collector,
     contractNode,
     spec: grpcSpec,
@@ -530,7 +545,7 @@ export function pushGrpcContract(input: {
     });
   }
 
-  return { contractNode, evidenceNode };
+  return { contractNode, evidenceNode, specId };
 }
 
 export function pushGraphqlContract(input: {
@@ -544,11 +559,12 @@ export function pushGraphqlContract(input: {
   rule: string;
   confidence: number;
   requestType?: string;
+  requestTypes?: string[];
   responseType?: string;
   source: "sdl" | "code-first" | "client-document";
   operationName?: string;
   sourceSymbolId?: string;
-}): { contractNode: ContractNode; evidenceNode: EvidenceNode } {
+}): { contractNode: ContractNode; evidenceNode: EvidenceNode; specId: string } {
   const name = `${input.operationType}.${input.field}`;
   const contractNode = graphqlContract(input.operationType, input.field, `GraphQL ${name}`);
   const evidenceNode = evidence({
@@ -570,11 +586,12 @@ export function pushGraphqlContract(input: {
     operationName: input.operationName,
     fullName: `${input.operationType === "query" ? "Query" : input.operationType === "mutation" ? "Mutation" : "Subscription"}.${input.field}`,
     requestType: input.requestType,
+    requestTypes: input.requestTypes,
     responseType: input.responseType,
     source: input.source
   };
 
-  pushContractSpec({
+  const specId = pushContractSpec({
     collector: input.collector,
     contractNode,
     spec: graphqlSpec,
@@ -627,7 +644,7 @@ export function pushGraphqlContract(input: {
     });
   }
 
-  return { contractNode, evidenceNode };
+  return { contractNode, evidenceNode, specId };
 }
 
 export function pushDubboContract(input: {
@@ -737,7 +754,8 @@ export function pushSchemaContract(input: {
   raw: string;
   rule: string;
   confidence: number;
-}): { contractNode: ContractNode; evidenceNode: EvidenceNode } {
+  resolutionScopeId: string;
+}): { contractNode: ContractNode; evidenceNode: EvidenceNode; specId: string } {
   const contractNode = contract("schema", input.name);
   const evidenceNode = evidence({
     repoId: input.file.repoId,
@@ -751,14 +769,18 @@ export function pushSchemaContract(input: {
 
   pushContractEvidence(input.collector, input.file.repoId, contractNode, "shared", evidenceNode);
 
-  const schemaSpec: SchemaSpec = {
-    kind: "schema",
-    name: input.name,
-    language: input.language,
-    fields: input.fields
-  };
+  const schemaSpec: SchemaSpec = createSchemaSpec({
+    declaration: {
+    languageId: input.language,
+    repoId: input.file.repoId,
+    resolutionScopeId: input.resolutionScopeId,
+    canonicalName: input.name
+    },
+    displayName: input.name,
+    shape: { kind: "object", fields: input.fields }
+  });
 
-  pushContractSpec({
+  const specId = pushContractSpec({
     collector: input.collector,
     contractNode,
     spec: schemaSpec,
@@ -768,7 +790,7 @@ export function pushSchemaContract(input: {
     sourceSymbolId: input.symbol.id
   });
 
-  return { contractNode, evidenceNode };
+  return { contractNode, evidenceNode, specId };
 }
 
 async function readPackageManifest(repo: RepoNode, manifestPath: string): Promise<RepoPackageManifest | undefined> {
@@ -932,7 +954,7 @@ export function packageContractKeyForImport(file: ParsedFile, importRef: { modul
   return javaPackageFromImport(moduleName) ?? moduleName;
 }
 
-export function classifySharedContract(name: string, codeKind: string): ContractKind | undefined {
+export function classifyLegacyJavaSharedContract(name: string, codeKind: string): ContractKind | undefined {
   if (codeKind === "enum" || /Enum$/.test(name)) return "enum";
   if (/Schema$/.test(name)) return "schema";
   if (/Config$/.test(name)) return "config";

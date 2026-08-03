@@ -41,7 +41,9 @@ import { buildExtractionFileIndex, filesForRepoId, filesForRepoIds } from "./fil
 import { registerBuiltinsForParsedFiles } from "../../plugins/bootstrap.js";
 import { ensureBuiltinGrammarsForParsedFiles } from "../../parsing/parserRegistry.js";
 import type { ProgressReporter } from "../../../shared/progress.js";
+import type { SchemaDeclarationCandidate } from "../../schema/model.js";
 import { astNodeIndexMetrics } from "./builtin/astCache.js";
+import { reconcileNonJavaSchemaFacts, type SchemaInternalFacts } from "./nonJavaSchemaReconciler.js";
 
 function shouldWriteExtractionTrace(): boolean {
   return getBrandedEnv("EXTRACT_TRACE") === "1" || getBrandedEnv("EXTRACT_TRACE") === "true";
@@ -87,6 +89,8 @@ export type CrossRepoExtraction = {
   contractSpecs: ContractSpecNode[];
   contractSpecEdges: ContractSpecEdge[];
   semanticRelations: SemanticRelationEdge[];
+  schemaInternalFacts: SchemaInternalFacts;
+  schemaDeclarations: SchemaDeclarationCandidate[];
 };
 
 export type ContractParticipant = RepoContractEdge & {
@@ -343,17 +347,27 @@ export async function extractCrossRepoContracts(
     aliasOverrides: options.aliasOverrides
   }, config, options.progress, options.frameworkProgress);
 
-  // Filter out pending placeholder edges that carry IDs (schema-ref:<Type>,
+  const reconciledSchemas = reconcileNonJavaSchemaFacts(facts.contractSpecs, facts.semanticRelations, facts.schemaDeclarations, {
+    sourceFiles: parsedFiles
+  });
+  const materializedContracts = dedupBy([...facts.contracts, ...reconciledSchemas.materialized.contracts], (item) => item.id);
+  const materializedEvidence = dedupBy([...facts.evidence, ...reconciledSchemas.materialized.evidence], (item) => item.id);
+  const materializedRepoContracts = dedupBy([...facts.repoContracts, ...reconciledSchemas.materialized.repoContracts], (item) => `${item.repoId}\0${item.contractId}\0${item.role}\0${item.evidenceId}`);
+  const materializedSpecEdges = dedupBy([...facts.contractSpecEdges, ...reconciledSchemas.materialized.contractSpecEdges], (item) => `${item.contractId}\0${item.specId}\0${item.evidenceId}`);
+  const materializedEntities = dedupBy([...facts.entities, ...reconciledSchemas.materialized.entities], (item) => item.id);
+  const materializedContractEntities = dedupBy([...facts.contractEntities, ...reconciledSchemas.materialized.contractEntities], (item) => `${item.contractId}\0${item.entityId}\0${item.evidenceId}`);
+
+  // Filter out legacy Java pending placeholder edges (schema-ref:<Type>,
   // spec:<id>:pending) which cannot be written to the graph (no matching
   // ContractSpec nodes).  Cross-repo SEMANTIC_REL resolution now runs in the
   // post-indexing rebuildRepoDependencies phase with full multi-repo visibility.
-  const semanticRelations = facts.semanticRelations.filter(
+  const semanticRelations = reconciledSchemas.semanticRelations.filter(
     (rel) => !rel.toSpecId.startsWith("schema-ref:") && !rel.fromSpecId.endsWith(":pending")
   );
 
-  const contractsById = new Map(facts.contracts.map((c) => [c.id, c]));
-  const evidenceById = new Map(facts.evidence.map((e) => [e.id, e]));
-  const participants: ContractParticipant[] = facts.repoContracts.flatMap((edge) => {
+  const contractsById = new Map(materializedContracts.map((c) => [c.id, c]));
+  const evidenceById = new Map(materializedEvidence.map((e) => [e.id, e]));
+  const participants: ContractParticipant[] = materializedRepoContracts.flatMap((edge) => {
     const contractNode = contractsById.get(edge.contractId);
     const evidenceNode = evidenceById.get(edge.evidenceId);
     return contractNode && evidenceNode ? [{ ...edge, contract: contractNode, evidence: evidenceNode }] : [];
@@ -362,7 +376,7 @@ export async function extractCrossRepoContracts(
   // Phase 4.2: Materialize API and event dependencies from SEMANTIC_REL edges.
   const semanticDeps = materializeDependenciesFromSemanticRelations(
     semanticRelations,
-    [...facts.contractSpecs]
+    reconciledSchemas.contractSpecs
   );
 
   // Legacy matcher runs for ALL kinds as fallback.
@@ -396,20 +410,22 @@ export async function extractCrossRepoContracts(
   }
 
   return {
-    contracts: [...facts.contracts],
-    evidence: [...facts.evidence],
-    entities: [...facts.entities],
-    repoContracts: [...facts.repoContracts],
+    contracts: materializedContracts,
+    evidence: materializedEvidence,
+    entities: materializedEntities,
+    repoContracts: materializedRepoContracts,
     repoDependencies,
-    contractEntities: [...facts.contractEntities],
+    contractEntities: materializedContractEntities,
     operations: [...facts.operations],
     workflows: [...workflowMap.values()],
     operationRepos: [...facts.operationRepos],
     workflowOperations: dedupBy(workflowOperations, materializedWorkflowOperationDedupKey),
     packageUsages: [...facts.packageUsages],
-    contractSpecs: [...facts.contractSpecs],
-    contractSpecEdges: [...facts.contractSpecEdges],
+    contractSpecs: reconciledSchemas.contractSpecs,
+    contractSpecEdges: materializedSpecEdges,
     semanticRelations,
+    schemaInternalFacts: reconciledSchemas.internal,
+    schemaDeclarations: [...facts.schemaDeclarations],
   };
 }
 

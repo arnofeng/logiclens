@@ -10,6 +10,8 @@ import { KuzuGraphDB } from "../src/core/graph-model/db.js";
 import type { ContractNode, EvidenceNode, ParsedFile, RepoNode } from "../src/core/parsing/types.js";
 import { evidenceId, fileId, repoId } from "../src/shared/path.js";
 
+const graphScope = { workspaceId: "workspace:contract-spec", generation: "generation:contract-spec" };
+
 // --- Helpers ---
 
 function makeRepo(name: string): RepoNode {
@@ -294,7 +296,13 @@ describe("extractor pipeline plumbing", () => {
     const repo = makeRepo("pipeline-test");
     const parsed = makeParsedFile(repo, "src/index.ts");
     const facts = await buildGraphFactsBatch({
-      batchId: "batch:pipeline", repos: [repo], parsedFiles: [parsed], semantic: false
+      batchId: "batch:pipeline",
+      workspaceId: graphScope.workspaceId,
+      generation: graphScope.generation,
+      systemName: "contract-spec-test",
+      repos: [repo],
+      parsedFiles: [parsed],
+      semantic: false
     });
     expect(facts).toHaveProperty("contractSpecs");
     expect(facts).toHaveProperty("contractSpecEdges");
@@ -313,18 +321,21 @@ describe("graph schema and GC for ContractSpec", () => {
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("spec-test");
-      await db.upsertContract({ id: "contract:api:test", kind: "api", key: "/api/test", name: "/api/test", description: "" });
+      await db.upsertContract({ id: "contract:api:test", kind: "api", key: "/api/test", name: "/api/test", description: "" }, graphScope);
       await db.upsertContractSpec({
         id: "spec:test", contractId: "contract:api:test", specKind: "http-endpoint",
         repoId: "repo:test", fileId: "file:test:src/a.ts", evidenceId: "ev:test",
         canonicalKey: "GET /api/test", specJson: "{}", confidence: 0.9,
         batchId: "batch:1", indexedAt: "now", active: true
-      });
+      }, graphScope);
       await db.addHasSpec({
         contractId: "contract:api:test", specId: "spec:test",
         evidenceId: "ev:test", confidence: 0.9, batchId: "batch:1", active: true
-      });
-      const specs = await db.query<{ id: string }>("MATCH (s:ContractSpec) RETURN s.id AS id;");
+      }, graphScope);
+      const specs = await db.query<{ id: string }>(
+        "MATCH (s:ContractSpec) WHERE s.workspaceId = $workspaceId AND s.generation = $generation RETURN s.id AS id;",
+        graphScope
+      );
       expect(specs).toHaveLength(1);
       expect(specs[0]!.id).toBe("spec:test");
     } finally {
@@ -338,51 +349,55 @@ describe("graph schema and GC for ContractSpec", () => {
     try {
       await db.initSchema("gc-test");
       const repoNode: RepoNode = { id: repoId("gc-repo"), name: "gc-repo", path: dir, remoteUrl: "", branch: "", commitSha: "", language: "typescript", indexedAt: "now" };
-      await db.upsertRepo(repoNode);
+      await db.upsertSystem("gc-test", graphScope);
+      await db.upsertRepo(repoNode, graphScope);
 
       const staleFileId = fileId(repoNode.id, "src/stale.ts");
       const activeFileId = fileId(repoNode.id, "src/active.ts");
-      await db.upsertFile({ id: staleFileId, repoId: repoNode.id, path: "src/stale.ts", language: "typescript", hash: "h1", loc: 10, batchId: "batch:1", indexedAt: "now", active: true });
-      await db.upsertFile({ id: activeFileId, repoId: repoNode.id, path: "src/active.ts", language: "typescript", hash: "h2", loc: 10, batchId: "batch:1", indexedAt: "now", active: true });
-      await db.addContains(repoNode.id, staleFileId);
-      await db.addContains(repoNode.id, activeFileId);
+      await db.upsertFile({ id: staleFileId, repoId: repoNode.id, path: "src/stale.ts", directory: "src", language: "typescript", hash: "h1", loc: 10, batchId: "batch:1", indexedAt: "now", active: true }, graphScope);
+      await db.upsertFile({ id: activeFileId, repoId: repoNode.id, path: "src/active.ts", directory: "src", language: "typescript", hash: "h2", loc: 10, batchId: "batch:1", indexedAt: "now", active: true }, graphScope);
+      await db.addContains(repoNode.id, staleFileId, graphScope);
+      await db.addContains(repoNode.id, activeFileId, graphScope);
 
-      await db.upsertContract({ id: "contract:api:gc", kind: "api", key: "/api/gc", name: "/api/gc", description: "" });
+      await db.upsertContract({ id: "contract:api:gc", kind: "api", key: "/api/gc", name: "/api/gc", description: "" }, graphScope);
       await db.upsertContractSpec({
         id: "spec:stale", contractId: "contract:api:gc", specKind: "http-endpoint",
         repoId: repoNode.id, fileId: staleFileId, evidenceId: "ev:stale",
         canonicalKey: "GET /api/gc", specJson: "{}", confidence: 0.9,
         batchId: "batch:1", indexedAt: "now", active: true
-      });
+      }, graphScope);
       await db.upsertContractSpec({
         id: "spec:active", contractId: "contract:api:gc", specKind: "http-endpoint",
         repoId: repoNode.id, fileId: activeFileId, evidenceId: "ev:active",
         canonicalKey: "POST /api/gc", specJson: "{}", confidence: 0.9,
         batchId: "batch:1", indexedAt: "now", active: true
-      });
+      }, graphScope);
       await db.addSemanticRelation({
         fromSpecId: "spec:stale", toSpecId: "spec:active", kind: "CALLS_HTTP",
         evidenceId: "ev:stale", reason: "test", confidence: 0.9,
         batchId: "batch:1", active: true
-      });
+      }, graphScope);
 
       const staleCount = await db.markRepoArtifactsStale({
         repoId: repoNode.id, activeFileIds: [activeFileId], batchId: "batch:2", indexedAt: "now2"
-      });
+      }, graphScope);
       expect(staleCount).toBe(1);
 
       const staleSpecs = await db.query<{ id: string; active: boolean }>(
-        "MATCH (s:ContractSpec) WHERE s.id = 'spec:stale' RETURN s.id AS id, s.active AS active;"
+        "MATCH (s:ContractSpec) WHERE s.workspaceId = $workspaceId AND s.generation = $generation AND s.id = 'spec:stale' RETURN s.id AS id, s.active AS active;",
+        graphScope
       );
       expect(staleSpecs[0]!.active).toBe(false);
 
       const activeSpecs = await db.query<{ id: string; active: boolean }>(
-        "MATCH (s:ContractSpec) WHERE s.id = 'spec:active' RETURN s.id AS id, s.active AS active;"
+        "MATCH (s:ContractSpec) WHERE s.workspaceId = $workspaceId AND s.generation = $generation AND s.id = 'spec:active' RETURN s.id AS id, s.active AS active;",
+        graphScope
       );
       expect(activeSpecs[0]!.active).toBe(true);
 
       const semRels = await db.query<{ active: boolean }>(
-        "MATCH ()-[r:SEMANTIC_REL]->() RETURN r.active AS active;"
+        "MATCH ()-[r:SEMANTIC_REL]->() WHERE r.workspaceId = $workspaceId AND r.generation = $generation RETURN r.active AS active;",
+        graphScope
       );
       expect(semRels).toHaveLength(1);
       expect(semRels[0]!.active).toBe(false);

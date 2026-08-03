@@ -3,6 +3,7 @@ import { OrderService } from "./OrderService";
 export interface OrderDTO {
   sku: string;
   userId: string;
+  schema: OrderSchema;
 }
 
 export type OrderSchema = {
@@ -21,7 +22,7 @@ export class OrderController {
   async createOrder(input: OrderDTO) {
     const route = "/api/order/:id";
     process.env.ORDER_SHARED_CONFIG;
-    eventBus.publish("order.created", input);
+    eventBus.publish<OrderDTO>("order.created", input);
     return this.orderService.createOrder(input);
   }
 }

@@ -19,6 +19,7 @@ import {
   candidatesFromSectionRows
 } from "../candidates.js";
 import type { QueryPlan } from "../planner.js";
+import { pinPublicGraphReadSnapshot, releasePublicGraphReadSnapshot, withPublicGraphReadSnapshot, type PublicGraphReadSnapshot } from "../../../core/graph-model/readSnapshot.js";
 import { emptyRouteResult, failedRouteResult, RetrieverOperationalError, successfulRouteResult, type RetrieverRouteResult } from "./types.js";
 
 export type ExactLegacyRow =
@@ -32,10 +33,10 @@ export type ExactRetrievalResult = Readonly<{
 }>;
 
 export type ExactRetrieverDependencies = Readonly<{
-  findExactCode?: typeof findExactCode;
-  findSectionsAtExactPaths?: typeof findSectionsAtExactPaths;
-  traceContract?: typeof traceContractWithQueryCount;
-  traceEntitiesExact?: typeof traceEntitiesExactWithQueryCount;
+  findExactCode?: (db: GraphDB, input: Parameters<typeof findExactCode>[2]) => ReturnType<typeof findExactCode>;
+  findSectionsAtExactPaths?: (db: GraphDB, paths: readonly string[], limit: number, scopedPaths?: readonly import("../../../core/graph-model/queries.js").RepoScopedPath[]) => ReturnType<typeof findSectionsAtExactPaths>;
+  traceContract?: (db: GraphDB, kind: Parameters<typeof traceContractWithQueryCount>[2], value: string, method?: string, limit?: number) => ReturnType<typeof traceContractWithQueryCount>;
+  traceEntitiesExact?: (db: GraphDB, values: readonly string[], limit?: number) => ReturnType<typeof traceEntitiesExactWithQueryCount>;
 }>;
 
 const GENERIC_ENTITY_TERMS = new Set([
@@ -104,13 +105,26 @@ function uniqueRows<T>(rows: readonly T[], key: (row: T) => string, limit: numbe
 export async function retrieveExactTargets(
   db: GraphDB,
   plan: QueryPlan,
-  options: { workspaceId: string; repoRoots?: readonly string[]; dependencies?: ExactRetrieverDependencies }
+  options: { workspaceId: string; snapshot?: PublicGraphReadSnapshot; snapshotProvider?: () => Promise<PublicGraphReadSnapshot>; repoRoots?: readonly string[]; dependencies?: ExactRetrieverDependencies }
 ): Promise<ExactRetrievalResult> {
+  if (!options.snapshot && !options.snapshotProvider && db.readTransaction) {
+    return withPublicGraphReadSnapshot(db, options.workspaceId, (snapshot) =>
+      retrieveExactTargets(db, plan, { ...options, snapshot }));
+  }
+  let snapshotPromise: Promise<PublicGraphReadSnapshot> | undefined;
+  let ownedSnapshot: PublicGraphReadSnapshot | undefined;
+  const snapshot = (): Promise<PublicGraphReadSnapshot> => snapshotPromise ??= options.snapshot
+    ? Promise.resolve(options.snapshot)
+    : options.snapshotProvider?.() ?? pinPublicGraphReadSnapshot(db, options.workspaceId).then((value) => {
+      ownedSnapshot = value;
+      return value;
+    });
+  try {
   const deps = {
-    findExactCode: options.dependencies?.findExactCode ?? findExactCode,
-    findSectionsAtExactPaths: options.dependencies?.findSectionsAtExactPaths ?? findSectionsAtExactPaths,
-    traceContract: options.dependencies?.traceContract ?? traceContractWithQueryCount,
-    traceEntitiesExact: options.dependencies?.traceEntitiesExact ?? traceEntitiesExactWithQueryCount
+    findExactCode: options.dependencies?.findExactCode ?? (async (targetDb: GraphDB, input: Parameters<typeof findExactCode>[2]) => findExactCode(targetDb, await snapshot(), input)),
+    findSectionsAtExactPaths: options.dependencies?.findSectionsAtExactPaths ?? (async (targetDb: GraphDB, paths: readonly string[], limit: number, scopedPaths?: readonly import("../../../core/graph-model/queries.js").RepoScopedPath[]) => findSectionsAtExactPaths(targetDb, await snapshot(), paths, limit, scopedPaths)),
+    traceContract: options.dependencies?.traceContract ?? (async (targetDb: GraphDB, kind: Parameters<typeof traceContractWithQueryCount>[2], value: string, method?: string, limit?: number) => traceContractWithQueryCount(targetDb, await snapshot(), kind, value, method, limit)),
+    traceEntitiesExact: options.dependencies?.traceEntitiesExact ?? (async (targetDb: GraphDB, values: readonly string[], limit?: number) => traceEntitiesExactWithQueryCount(targetDb, await snapshot(), values, limit))
   };
   const identifiers = uniqueSorted(plan.exactIdentifiers);
   const scopedRawPaths = new Set((plan.scopedPaths ?? []).map(({ raw }) => raw));
@@ -235,5 +249,8 @@ export async function retrieveExactTargets(
     }
   }
 
-  return Object.freeze({ exact, contract, entity });
+    return Object.freeze({ exact, contract, entity });
+  } finally {
+    if (ownedSnapshot) await releasePublicGraphReadSnapshot(db, ownedSnapshot);
+  }
 }

@@ -129,7 +129,7 @@ describe("multi-language gRPC extractors", () => {
     expect(roleKeys(bundle, "producer")).toEqual(["OrderService/CreateOrder"]);
     expect(roleKeys(bundle, "consumer")).toEqual(["OrderService/CreateOrder"]);
     expect(specs(bundle)).toEqual(expect.arrayContaining([
-      expect.objectContaining({ framework: "grpc-python", service: "OrderService", method: "CreateOrder" })
+      expect.objectContaining({ framework: "grpc-python", service: "OrderService", method: "CreateOrder", requestType: "order_pb2.CreateOrderRequest" })
     ]));
   });
 

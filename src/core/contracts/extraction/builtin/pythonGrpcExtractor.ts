@@ -57,7 +57,7 @@ function typeFromCall(node: Parser.SyntaxNode | undefined): string | undefined {
   const fn = node.childForFieldName("function") ?? node.namedChild(0);
   if (!fn) return undefined;
   if (fn.type === "identifier") return fn.text;
-  if (fn.type === "attribute") return attributeParts(fn).property;
+  if (fn.type === "attribute") return fn.text;
   return undefined;
 }
 
@@ -136,7 +136,7 @@ export const pythonGrpcExtractor = compatExtractor({
         const name = assignedName(node);
         const value = assignedValue(node);
         if (!name || !value || value.type !== "call") return;
-        const calledType = typeFromCall(value);
+        const calledType = typeFromCall(value)?.split(".").at(-1);
         const service = calledType?.match(/^([A-Za-z_]\w*)Stub$/)?.[1];
         if (service) stubVariables.set(name, service);
       });

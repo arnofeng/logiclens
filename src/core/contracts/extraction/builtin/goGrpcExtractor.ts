@@ -12,9 +12,9 @@ import { hashText } from "../../../../shared/hash.js";
 function extractTypeName(node: Parser.SyntaxNode | null | undefined): string | undefined {
   if (!node) return undefined;
   if (node.type === "qualified_type") {
-    return node.childForFieldName("name")?.text || node.namedChild(1)?.text || undefined;
+    return node.text.trim() || undefined;
   }
-  if (node.type === "type_identifier") {
+  if (node.type === "type_identifier" || node.type === "generic_type") {
     return node.text;
   }
   if (node.type === "pointer_type") {
@@ -122,7 +122,8 @@ export const goGrpcExtractor = compatExtractor({
         let streamParamIndex = -1;
         for (let i = 0; i < params.length; i++) {
           const tName = extractTypeName(params[i]);
-          if (tName && /^[A-Za-z0-9]+_[A-Za-z0-9]+(Server|Client)$/.test(tName)) {
+          const localTypeName = tName?.split(".").at(-1);
+          if (localTypeName && /^[A-Za-z0-9]+_[A-Za-z0-9]+(Server|Client)$/.test(localTypeName)) {
             streamParamIndex = i;
             break;
           }

@@ -6,6 +6,7 @@ import { stageGraphFactsAsCsv, type CsvStagingResult } from "./csvStaging.js";
 import type { GraphFactsBatch } from "./facts.js";
 import { systemId } from "./schema.js";
 import type { ProgressReporter } from "../../shared/progress.js";
+import { publicNodeStorageId } from "./publicGraphGeneration.js";
 
 export type KuzuBulkWriteResult = {
   staging: CsvStagingResult;
@@ -35,6 +36,7 @@ export type KuzuBulkUpsertOptions = {
 };
 
 const COPY_ORDER: CsvTableName[] = [
+  "System",
   "Repo",
   "File",
   "Code",
@@ -88,15 +90,22 @@ async function writePairCsv(stagingDir: string, spec: PairCopySpec): Promise<str
 }
 
 function pairCopySpecs(facts: GraphFactsBatch): PairCopySpec[] {
+  const row = (fromId: string, toId: string, properties: Array<string | number | boolean> = []): Array<string | number | boolean> => [
+    publicNodeStorageId(facts.generation, fromId),
+    publicNodeStorageId(facts.generation, toId),
+    facts.workspaceId,
+    facts.generation,
+    ...properties
+  ];
   return [
-    { table: "CONTAINS", from: "System", to: "Repo", rows: facts.repos.map((repo) => [systemId, repo.id]) },
-    { table: "CONTAINS", from: "Repo", to: "File", rows: facts.contains.filter((edge) => edge.fromId.startsWith("repo:") && edge.toId.startsWith("file:")).map((edge) => [edge.fromId, edge.toId]) },
-    { table: "CONTAINS", from: "File", to: "Code", rows: facts.contains.filter((edge) => edge.fromId.startsWith("file:") && edge.toId.startsWith("code:")).map((edge) => [edge.fromId, edge.toId]) },
-    { table: "CONTAINS", from: "File", to: "Section", rows: facts.contains.filter((edge) => edge.fromId.startsWith("file:") && edge.toId.startsWith("section:")).map((edge) => [edge.fromId, edge.toId]) },
-    { table: "MENTIONS", from: "Code", to: "Entity", rows: facts.mentions.filter((edge) => edge.sourceKind === "code").map((edge) => [edge.fromId, edge.entityId, edge.confidence]) },
-    { table: "MENTIONS", from: "Section", to: "Entity", rows: facts.mentions.filter((edge) => edge.sourceKind === "section").map((edge) => [edge.fromId, edge.entityId, edge.confidence]) },
-    { table: "HAS_EVIDENCE", from: "Contract", to: "Evidence", rows: facts.repoContracts.map((edge) => [edge.contractId, edge.evidenceId]) },
-    { table: "HAS_EVIDENCE", from: "Repo", to: "Evidence", rows: facts.evidence.map((evidence) => [evidence.repoId, evidence.id]) }
+    { table: "CONTAINS", from: "System", to: "Repo", rows: facts.repos.map((repo) => row(systemId, repo.id)) },
+    { table: "CONTAINS", from: "Repo", to: "File", rows: facts.contains.filter((edge) => edge.fromId.startsWith("repo:") && edge.toId.startsWith("file:")).map((edge) => row(edge.fromId, edge.toId)) },
+    { table: "CONTAINS", from: "File", to: "Code", rows: facts.contains.filter((edge) => edge.fromId.startsWith("file:") && edge.toId.startsWith("code:")).map((edge) => row(edge.fromId, edge.toId)) },
+    { table: "CONTAINS", from: "File", to: "Section", rows: facts.contains.filter((edge) => edge.fromId.startsWith("file:") && edge.toId.startsWith("section:")).map((edge) => row(edge.fromId, edge.toId)) },
+    { table: "MENTIONS", from: "Code", to: "Entity", rows: facts.mentions.filter((edge) => edge.sourceKind === "code").map((edge) => row(edge.fromId, edge.entityId, [edge.confidence])) },
+    { table: "MENTIONS", from: "Section", to: "Entity", rows: facts.mentions.filter((edge) => edge.sourceKind === "section").map((edge) => row(edge.fromId, edge.entityId, [edge.confidence])) },
+    { table: "HAS_EVIDENCE", from: "Contract", to: "Evidence", rows: facts.repoContracts.map((edge) => row(edge.contractId, edge.evidenceId)) },
+    { table: "HAS_EVIDENCE", from: "Repo", to: "Evidence", rows: facts.evidence.map((evidence) => row(evidence.repoId, evidence.id)) }
   ];
 }
 
@@ -104,8 +113,12 @@ type NodeUpsertSpec = {
   table: CsvTableName;
   aliases: string[];
   idAlias: string;
+  keyProperty?: string;
   properties: string[];
 };
+
+const NODE_PREFIX = ["storageId", "id", "workspaceId", "generation"];
+const RELATION_PREFIX = ["fromStorageId", "toStorageId", "workspaceId", "generation"];
 
 type RelationUpsertSpec = {
   table: CsvTableName;
@@ -119,18 +132,19 @@ type RelationUpsertSpec = {
 };
 
 const NODE_UPSERT_SPECS: NodeUpsertSpec[] = [
-  { table: "Repo", aliases: ["id", "name", "path", "remoteUrl", "branch", "commitSha", "language", "indexedAt", "summary"], idAlias: "id", properties: ["name", "path", "remoteUrl", "branch", "commitSha", "language", "indexedAt", "summary"] },
-  { table: "File", aliases: ["id", "repoId", "path", "language", "hash", "loc", "batchId", "indexedAt", "active"], idAlias: "id", properties: ["repoId", "path", "language", "hash", "loc", "batchId", "indexedAt", "active"] },
-  { table: "Code", aliases: ["id", "repoId", "fileId", "kind", "name", "qualifiedName", "startLine", "endLine", "signature", "summary", "hash", "batchId", "indexedAt", "active"], idAlias: "id", properties: ["repoId", "fileId", "kind", "name", "qualifiedName", "startLine", "endLine", "signature", "summary", "hash", "batchId", "indexedAt", "active"] },
-  { table: "Section", aliases: ["id", "repoId", "fileId", "heading", "level", "startLine", "endLine", "text", "summary", "hash", "batchId", "indexedAt", "active"], idAlias: "id", properties: ["repoId", "fileId", "heading", "level", "startLine", "endLine", "text", "summary", "hash", "batchId", "indexedAt", "active"] },
-  { table: "Entity", aliases: ["id", "name", "kind", "description"], idAlias: "id", properties: ["name", "kind", "description"] },
-  { table: "Operation", aliases: ["id", "verb", "entityName", "description"], idAlias: "id", properties: ["verb", "entityName", "description"] },
-  { table: "Workflow", aliases: ["id", "name", "description"], idAlias: "id", properties: ["name", "description"] },
-  { table: "Contract", aliases: ["id", "kind", "key", "name", "description"], idAlias: "id", properties: ["kind", "key", "name", "description"] },
-  { table: "Evidence", aliases: ["id", "repoId", "fileId", "filePath", "line", "raw", "rule", "confidence", "batchId", "indexedAt", "active"], idAlias: "id", properties: ["repoId", "fileId", "filePath", "line", "raw", "rule", "confidence", "batchId", "indexedAt", "active"] }
+  { table: "System", aliases: [...NODE_PREFIX, "name", "summary"], idAlias: "storageId", properties: ["id", "workspaceId", "generation", "name", "summary"] },
+  { table: "Repo", aliases: [...NODE_PREFIX, "name", "path", "remoteUrl", "branch", "commitSha", "language", "indexedAt", "summary"], idAlias: "storageId", properties: ["id", "workspaceId", "generation", "name", "path", "remoteUrl", "branch", "commitSha", "language", "indexedAt", "summary"] },
+  { table: "File", aliases: [...NODE_PREFIX, "repoId", "path", "directory", "language", "hash", "loc", "batchId", "indexedAt", "active"], idAlias: "storageId", properties: ["id", "workspaceId", "generation", "repoId", "path", "directory", "language", "hash", "loc", "batchId", "indexedAt", "active"] },
+  { table: "Code", aliases: [...NODE_PREFIX, "repoId", "fileId", "kind", "name", "qualifiedName", "startLine", "endLine", "signature", "summary", "hash", "batchId", "indexedAt", "active"], idAlias: "storageId", properties: ["id", "workspaceId", "generation", "repoId", "fileId", "kind", "name", "qualifiedName", "startLine", "endLine", "signature", "summary", "hash", "batchId", "indexedAt", "active"] },
+  { table: "Section", aliases: [...NODE_PREFIX, "repoId", "fileId", "heading", "level", "startLine", "endLine", "text", "summary", "hash", "batchId", "indexedAt", "active"], idAlias: "storageId", properties: ["id", "workspaceId", "generation", "repoId", "fileId", "heading", "level", "startLine", "endLine", "text", "summary", "hash", "batchId", "indexedAt", "active"] },
+  { table: "Entity", aliases: [...NODE_PREFIX, "name", "kind", "description"], idAlias: "storageId", properties: ["id", "workspaceId", "generation", "name", "kind", "description"] },
+  { table: "Operation", aliases: [...NODE_PREFIX, "verb", "entityName", "description"], idAlias: "storageId", properties: ["id", "workspaceId", "generation", "verb", "entityName", "description"] },
+  { table: "Workflow", aliases: [...NODE_PREFIX, "name", "description"], idAlias: "storageId", properties: ["id", "workspaceId", "generation", "name", "description"] },
+  { table: "Contract", aliases: [...NODE_PREFIX, "kind", "key", "name", "description"], idAlias: "storageId", properties: ["id", "workspaceId", "generation", "kind", "key", "name", "description"] },
+  { table: "Evidence", aliases: [...NODE_PREFIX, "repoId", "fileId", "filePath", "line", "raw", "rule", "confidence", "batchId", "indexedAt", "active"], idAlias: "storageId", properties: ["id", "workspaceId", "generation", "repoId", "fileId", "filePath", "line", "raw", "rule", "confidence", "batchId", "indexedAt", "active"] }
 ];
 
-const RELATION_UPSERT_SPECS: RelationUpsertSpec[] = [
+const BASE_RELATION_UPSERT_SPECS: RelationUpsertSpec[] = [
   { table: "IMPORTS", from: "File", to: "File", aliases: ["fromId", "toId", "module", "raw", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["module"], setProperties: ["raw", "batchId", "active"] },
   { table: "CALLS", from: "Code", to: "Code", aliases: ["fromId", "toId", "confidence", "resolution", "raw", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["raw"], setProperties: ["confidence", "resolution", "batchId", "active"] },
   { table: "DESCRIBES", from: "Section", to: "Repo", aliases: ["fromId", "toId"], fromAlias: "fromId", toAlias: "toId" },
@@ -146,8 +160,16 @@ const RELATION_UPSERT_SPECS: RelationUpsertSpec[] = [
   { table: "USES_PACKAGE", from: "Repo", to: "Contract", aliases: ["fromId", "toId", "packageName", "evidenceId", "raw", "confidence", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["packageName", "evidenceId", "raw"], setProperties: ["confidence", "batchId", "active"] },
   { table: "DEPENDS_ON", from: "Repo", to: "Repo", aliases: ["fromId", "toId", "dependencyType", "sourceContractId", "targetContractId", "evidenceId", "raw", "confidence", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["dependencyType", "sourceContractId", "targetContractId", "evidenceId"], setProperties: ["raw", "confidence", "batchId", "active"] },
   { table: "HAS_SPEC", from: "Contract", to: "ContractSpec", aliases: ["fromId", "toId", "evidenceId", "confidence", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["evidenceId"], setProperties: ["confidence", "batchId", "active"] },
-  { table: "SEMANTIC_REL", from: "ContractSpec", to: "ContractSpec", aliases: ["fromId", "toId", "kind", "evidenceId", "reason", "confidence", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["kind", "evidenceId"], setProperties: ["reason", "confidence", "batchId", "active"] }
+  { table: "SEMANTIC_REL", from: "ContractSpec", to: "ContractSpec", aliases: ["fromId", "toId", "kind", "evidenceId", "reason", "confidence", "batchId", "active"], fromAlias: "fromId", toAlias: "toId", mergeProperties: ["kind"], setProperties: ["evidenceId", "reason", "confidence", "batchId", "active"] }
 ];
+
+const RELATION_UPSERT_SPECS: RelationUpsertSpec[] = BASE_RELATION_UPSERT_SPECS.map((spec) => ({
+  ...spec,
+  aliases: [...RELATION_PREFIX, ...spec.aliases.slice(2)],
+  fromAlias: "fromStorageId",
+  toAlias: "toStorageId",
+  setProperties: ["workspaceId", "generation", ...(spec.setProperties ?? [])]
+}));
 
 const COLUMN_TYPES: Record<string, "INT64" | "DOUBLE" | "BOOL"> = {
   loc: "INT64",
@@ -180,7 +202,7 @@ function propertyMap(properties: string[] | undefined): string {
 async function upsertNodeTable(db: GraphDB, filePath: string, spec: NodeUpsertSpec): Promise<void> {
   await db.query(
     `LOAD FROM "${toKuzuPath(filePath)}" (PARALLEL=false) WITH ${withColumns(spec.aliases)} ` +
-    `MERGE (n:${spec.table} {${spec.idAlias}: ${spec.idAlias}})` +
+    `MERGE (n:${spec.table} {${spec.keyProperty ?? spec.idAlias}: ${spec.idAlias}})` +
     `${setClause("n", spec.properties)};`
   );
 }
@@ -189,10 +211,18 @@ async function upsertRelationTable(db: GraphDB, filePath: string, spec: Relation
   const matchProperties = propertyMap(spec.mergeProperties);
   await db.query(
     `LOAD FROM "${toKuzuPath(filePath)}" (PARALLEL=false) WITH ${withColumns(spec.aliases)} ` +
-    `MATCH (a:${spec.from} {id: ${spec.fromAlias}}), (b:${spec.to} {id: ${spec.toAlias}}) ` +
+    `MATCH (a:${spec.from} {storageId: ${spec.fromAlias}}), (b:${spec.to} {storageId: ${spec.toAlias}}) ` +
     `MERGE (a)-[r:${spec.table}${matchProperties}]->(b)` +
     `${setClause("r", spec.setProperties)};`
   );
+}
+
+async function upsertContractSpecs(db: GraphDB, facts: GraphFactsBatch): Promise<void> {
+  const unique = new Map(facts.contractSpecs.map((spec) => [spec.id, spec]));
+  const scope = { workspaceId: facts.workspaceId, generation: facts.generation };
+  for (const spec of [...unique.values()].sort((a, b) => a.id.localeCompare(b.id))) {
+    await db.upsertContractSpec(spec, scope);
+  }
 }
 
 async function copyRelationTable(db: GraphDB, filePath: string, table: CsvTableName): Promise<void> {
@@ -246,7 +276,10 @@ async function upsertRelationTableChunked(
 
 export async function writeGraphFactsWithKuzuBulk(db: GraphDB, facts: GraphFactsBatch, options: KuzuBulkWriteOptions): Promise<KuzuBulkWriteResult> {
   if (options.requireEmpty !== false) {
-    const existing = await db.query<{ count: number }>("MATCH (r:Repo) RETURN count(r) AS count;");
+    const existing = await db.query<{ count: number }>(
+      "MATCH (r:Repo) WHERE r.workspaceId = $workspaceId AND r.generation = $generation RETURN count(r) AS count;",
+      { workspaceId: facts.workspaceId, generation: facts.generation }
+    );
     if (Number(existing[0]?.count ?? 0) > 0) {
       throw new Error("Kuzu bulk writer currently supports empty graph imports only. Use merge mode for existing graphs.");
     }
@@ -301,7 +334,7 @@ export async function writeGraphFactsWithKuzuAppendCopy(db: GraphDB, facts: Grap
   const nodeSpecs = NODE_UPSERT_SPECS.filter((spec) => staging.files[spec.table]);
   const relationSpecs = RELATION_UPSERT_SPECS.filter((spec) => staging.files[spec.table]);
   const pairSpecs = pairCopySpecs(facts).filter((spec) => spec.rows.length > 0);
-  const hasContractSpec = staging.files["ContractSpec"] !== undefined;
+  const hasContractSpec = facts.contractSpecs.length > 0;
   const totalSteps = nodeSpecs.length + relationSpecs.length + pairSpecs.length + (hasContractSpec ? 1 : 0);
   let completedSteps = 0;
   try {
@@ -318,20 +351,10 @@ export async function writeGraphFactsWithKuzuAppendCopy(db: GraphDB, facts: Grap
         throw new Error(`Failed to append-copy upsert ${spec.table} from ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    // ContractSpec is handled via COPY FROM (not MERGE+SET) because
-    // clearRepoIndexedArtifacts already deletes old ContractSpec rows for
-    // the repos in this batch before we reach this writer.
     if (hasContractSpec) {
-      const contractSpecPath = staging.files["ContractSpec"]!;
-      try {
-        options.progress?.({ current: completedSteps, total: totalSteps, label: "copy ContractSpec" });
-        await db.query(`COPY ContractSpec FROM "${toKuzuPath(contractSpecPath)}" (PARALLEL=false);`);
-        upsertedNodeTables.push("ContractSpec");
-        completedSteps += 1;
-        options.progress?.({ current: completedSteps, total: totalSteps, label: "copy ContractSpec" });
-      } catch (error) {
-        throw new Error(`Failed to append-copy ContractSpec from ${contractSpecPath}: ${error instanceof Error ? error.message : String(error)}`);
-      }
+      await upsertContractSpecs(db, facts);
+      upsertedNodeTables.push("ContractSpec");
+      completedSteps += 1;
     }
     // Pair tables use COPY FROM (not LOAD FROM + MERGE) because
     // clearRepoIndexedArtifacts already deletes old CONTAINS, MENTIONS, and
@@ -381,20 +404,10 @@ export async function writeGraphFactsWithKuzuBulkUpsert(db: GraphDB, facts: Grap
   const nodeSpecs = NODE_UPSERT_SPECS.filter((spec) => staging.files[spec.table]);
   const relationSpecs = RELATION_UPSERT_SPECS.filter((spec) => staging.files[spec.table]);
   const pairSpecs = pairCopySpecs(facts).filter((spec) => spec.rows.length > 0);
-  const hasContractSpec = staging.files["ContractSpec"] !== undefined;
+  const hasContractSpec = facts.contractSpecs.length > 0;
   const totalSteps = nodeSpecs.length + relationSpecs.length + pairSpecs.length + (hasContractSpec ? 1 : 0);
   let completedSteps = 0;
   try {
-    // Clean up existing ContractSpec data for repos in this batch so that
-    // the following COPY FROM can safely insert without primary-key conflicts.
-    if (hasContractSpec) {
-      const batchRepoIds = [...new Set(facts.repos.map((r) => r.id))];
-      for (const repoId of batchRepoIds) {
-        await db.query("MATCH (a:ContractSpec)-[r:SEMANTIC_REL]->(b:ContractSpec) WHERE a.repoId = $repoId OR b.repoId = $repoId DELETE r;", { repoId });
-        await db.query("MATCH (:Contract)-[r:HAS_SPEC]->(s:ContractSpec) WHERE s.repoId = $repoId DELETE r;", { repoId });
-        await db.query("MATCH (s:ContractSpec) WHERE s.repoId = $repoId DELETE s;", { repoId });
-      }
-    }
     for (const spec of nodeSpecs) {
       const filePath = staging.files[spec.table];
       if (!filePath) continue;
@@ -408,20 +421,13 @@ export async function writeGraphFactsWithKuzuBulkUpsert(db: GraphDB, facts: Grap
         throw new Error(`Failed to bulk upsert ${spec.table} from ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
+    if (hasContractSpec) {
+      await upsertContractSpecs(db, facts);
+      upsertedTables.push("ContractSpec");
+      completedSteps += 1;
+    }
     // ContractSpec is handled via cleanup + COPY FROM (not MERGE+SET) to
     // avoid a KùzuDB parser limitation with the MERGE+SET query shape.
-    if (hasContractSpec) {
-      const contractSpecPath = staging.files["ContractSpec"]!;
-      try {
-        options.progress?.({ current: completedSteps, total: totalSteps, label: "copy ContractSpec" });
-        await db.query(`COPY ContractSpec FROM "${toKuzuPath(contractSpecPath)}" (PARALLEL=false);`);
-        upsertedTables.push("ContractSpec");
-        completedSteps += 1;
-        options.progress?.({ current: completedSteps, total: totalSteps, label: "copy ContractSpec" });
-      } catch (error) {
-        throw new Error(`Failed to bulk upsert ContractSpec from ${contractSpecPath}: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
     // Pair tables (CONTAINS, MENTIONS, HAS_EVIDENCE) use LOAD FROM + MATCH
     // + DELETE/CREATE which pins pages aggressively.  Run them BEFORE
     // relation tables so the buffer pool is still relatively clean.
@@ -434,10 +440,14 @@ export async function writeGraphFactsWithKuzuBulkUpsert(db: GraphDB, facts: Grap
           table: spec.table,
           from: spec.from,
           to: spec.to,
-          aliases: spec.table === "MENTIONS" ? ["fromId", "toId", "confidence"] : ["fromId", "toId"],
-          fromAlias: "fromId",
-          toAlias: "toId",
-          setProperties: spec.table === "MENTIONS" ? ["confidence"] : []
+          aliases: spec.table === "MENTIONS"
+            ? [...RELATION_PREFIX, "confidence"]
+            : [...RELATION_PREFIX],
+          fromAlias: "fromStorageId",
+          toAlias: "toStorageId",
+          setProperties: spec.table === "MENTIONS"
+            ? ["workspaceId", "generation", "confidence"]
+            : ["workspaceId", "generation"]
         };
         await upsertRelationTableChunked(db, filePath, relationSpec, PAIR_TABLE_CHUNK_SIZE);
         upsertedTables.push(spec.table);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { makeTestSchema } from "./helpers/schemaModel.js";
 import {
   normalizeSemanticTarget,
   traceSemanticGraph,
@@ -35,10 +36,7 @@ function schemaSpec(id: string, repo: string, name: string): ContractSpecNode {
     id, contractId: `contract:schema:${name}`, specKind: "schema",
     repoId: `repo:${repo}`, fileId: `file:${repo}:dto.ts`, evidenceId: `ev:${id}`,
     canonicalKey: name,
-    specJson: serializeSpec({
-      kind: "schema", name, language: "typescript",
-      fields: [{ name: "sku", type: "string", optional: false }]
-    }),
+    specJson: serializeSpec(makeTestSchema({ name, language: "typescript", repoId: `repo:${repo}`, fields: [{ name: "sku", type: "string", optional: false }] })),
     confidence: 0.95
   };
 }

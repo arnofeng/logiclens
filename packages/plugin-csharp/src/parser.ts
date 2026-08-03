@@ -173,11 +173,8 @@ function extract(root: SyntaxNode): PluginParseResult {
     if (node.type === "field_declaration" || node.type === "property_declaration") nextAnnotationOwner = "field";
 
     if (node.type === "using_directive" && !node.hasError) {
-      const alias = node.childForFieldName("name");
-      const target = alias
-        ? node.namedChildren.find((child) => child.startIndex !== alias.startIndex)
-        : node.namedChildren.at(-1);
-      if (target) imports.push({ module: target.text, raw: node.text, line: line(node) });
+      const parsed = parseUsingDirective(node.text);
+      if (parsed) imports.push({ ...parsed, raw: node.text, line: line(node) });
     }
 
     if (node.type === "invocation_expression" && !node.hasError) {
@@ -213,6 +210,16 @@ function extract(root: SyntaxNode): PluginParseResult {
   if (annotations.length) facts.annotations = annotations;
   if (literals.length) facts.literals = literals;
   return { symbols, imports, calls, facts };
+}
+
+function parseUsingDirective(raw: string): Pick<PluginParsedImport, "module" | "importKind" | "alias"> | undefined {
+  const match = raw.trim().match(/^(?:global\s+)?using\s+(?:(static)\s+)?(?:([A-Za-z_]\w*)\s*=\s*)?(.+?)\s*;$/u);
+  if (!match) return undefined;
+  const module = match[3]?.trim().replace(/^global::/u, "");
+  if (!module) return undefined;
+  const alias = match[2];
+  if (alias) return { module, importKind: "alias", alias };
+  return { module, importKind: match[1] ? "static" : "namespace" };
 }
 
 export function createCSharpParser(moduleLoader: ModuleLoader = (specifier) => import(specifier)) {

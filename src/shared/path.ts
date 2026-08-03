@@ -16,6 +16,10 @@ export function fileId(repoIdValue: string, relativePath: string): string {
   return `file:${repoIdValue}:${toPosixPath(relativePath)}`;
 }
 
+export function sourceDirectory(relativePath: string): string {
+  return path.posix.dirname(toPosixPath(relativePath));
+}
+
 export function codeId(repoIdValue: string, relativePath: string, kind: string, qualifiedName: string, startLine: number): string {
   return `code:${repoIdValue}:${toPosixPath(relativePath)}:${kind}:${qualifiedName}:${startLine}`;
 }

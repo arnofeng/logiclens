@@ -7,6 +7,13 @@ import { reciprocalRankFusion, type FusedRetrievalCandidate } from "../src/featu
 import { loadSelectedEvidence } from "../src/features/ask/sourceLoader.js";
 
 const WORKSPACE_ID = "workspace:test";
+const GENERATION = "generation:test";
+
+function loadEvidence(
+  input: Omit<Parameters<typeof loadSelectedEvidence>[0], "generation">
+): ReturnType<typeof loadSelectedEvidence> {
+  return loadSelectedEvidence({ ...input, generation: GENERATION });
+}
 
 function fixture(id: string, overrides: Partial<LexicalDocument> = {}): { candidate: FusedRetrievalCandidate; document: LexicalDocument } {
   const repoId = "repo:a";
@@ -34,11 +41,12 @@ describe("selected evidence source loader", () => {
     const a = fixture("a");
     const b = fixture("b");
     const unselected = fixture("unselected");
-    const load = vi.fn(async ({ documentIds }) => {
+    const load = vi.fn(async ({ documentIds, generation }) => {
+      expect(generation).toBe(GENERATION);
       expect(documentIds).toEqual([a.document.id, b.document.id]);
       return [b.document, a.document, unselected.document];
     });
-    const result = await loadSelectedEvidence({ workspaceId: WORKSPACE_ID, selectedCandidates: [a.candidate, a.candidate, b.candidate], store: store(load) });
+    const result = await loadEvidence({ workspaceId: WORKSPACE_ID, selectedCandidates: [a.candidate, a.candidate, b.candidate], store: store(load) });
     expect(load).toHaveBeenCalledTimes(1);
     expect(result.queryCount).toBe(1);
     expect(result.evidence.map(({ document }) => document.id)).toEqual([a.document.id, b.document.id]);
@@ -46,7 +54,7 @@ describe("selected evidence source loader", () => {
 
   it("does not call the provider when no selected provenance is loadable", async () => {
     const load = vi.fn();
-    const result = await loadSelectedEvidence({ workspaceId: WORKSPACE_ID, selectedCandidates: [], store: store(load) });
+    const result = await loadEvidence({ workspaceId: WORKSPACE_ID, selectedCandidates: [], store: store(load) });
     expect(load).not.toHaveBeenCalled();
     expect(result).toMatchObject({ status: "skipped", queryCount: 0, evidence: [] });
   });
@@ -58,7 +66,7 @@ describe("selected evidence source loader", () => {
       expect(documentIds).toEqual([a.document.id]);
       return [a.document, b.document];
     });
-    const result = await loadSelectedEvidence({
+    const result = await loadEvidence({
       workspaceId: WORKSPACE_ID,
       selectedCandidates: [a.candidate, b.candidate],
       maxDocuments: 1,
@@ -84,7 +92,7 @@ describe("selected evidence source loader", () => {
       canonicalId: "code:malformed",
       provenance: [{ route: "lexical", rank: 1, confidence: "discovery", documentId: "doc:malformed", renderRef: "bad-ref" }]
     })])[0]!;
-    const result = await loadSelectedEvidence({
+    const result = await loadEvidence({
       workspaceId: WORKSPACE_ID,
       selectedCandidates: [valid.candidate, inactive.candidate, missing.candidate, mismatch.candidate, crossCandidate, malformed],
       store: store(vi.fn(async () => [valid.document, inactive.document, mismatch.document]))
@@ -97,19 +105,19 @@ describe("selected evidence source loader", () => {
 
   it("classifies operational provider failures and rethrows ordinary errors", async () => {
     const a = fixture("a");
-    const operational = await loadSelectedEvidence({
+    const operational = await loadEvidence({
       workspaceId: WORKSPACE_ID,
       selectedCandidates: [a.candidate],
       store: store(async () => { throw new WorkspaceLexicalStoreError("load_failed", { operation: "loadDocuments", workspaceId: WORKSPACE_ID }, { cause: new Error("secret") }); })
     });
     expect(operational).toMatchObject({ status: "failed", queryCount: 1, reason: "provider_failed", evidence: [] });
     expect(JSON.stringify(operational)).not.toContain("secret");
-    await expect(loadSelectedEvidence({ workspaceId: WORKSPACE_ID, selectedCandidates: [a.candidate], store: store(async () => { throw new Error("programming bug"); }) })).rejects.toThrow("programming bug");
+    await expect(loadEvidence({ workspaceId: WORKSPACE_ID, selectedCandidates: [a.candidate], store: store(async () => { throw new Error("programming bug"); }) })).rejects.toThrow("programming bug");
   });
 
   it("reports provider unavailability without issuing a query", async () => {
     const a = fixture("a");
-    const result = await loadSelectedEvidence({ workspaceId: WORKSPACE_ID, selectedCandidates: [a.candidate], storeUnavailable: true });
+    const result = await loadEvidence({ workspaceId: WORKSPACE_ID, selectedCandidates: [a.candidate], storeUnavailable: true });
     expect(result).toMatchObject({ status: "unavailable", queryCount: 0, reason: "provider_unavailable", evidence: [] });
   });
 });

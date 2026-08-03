@@ -2,10 +2,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { objectSchemaFields } from "./helpers/schemaModel.js";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { pythonSchemaExtractor } from "../src/core/contracts/extraction/builtin/pythonSchemaExtractor.js";
 import { repoId } from "../src/shared/path.js";
 import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
+import { reconcileNonJavaSchemaFacts } from "../src/core/contracts/extraction/nonJavaSchemaReconciler.js";
 import type { SchemaSpec } from "../src/core/contracts/spec.js";
 
 async function extract(source: string): Promise<ExtractorFactBundle> {
@@ -16,7 +18,9 @@ async function extract(source: string): Promise<ExtractorFactBundle> {
   await fs.writeFile(abs, source, "utf8");
   const repo = { id: repoId("py-schema"), name: "py-schema", path: dir, remoteUrl: "", branch: "", commitSha: "", language: "python", indexedAt: "now" } as any;
   const parsed = await parseSourceFile({ repoId: repo.id, absolutePath: abs, relativePath: rel, language: "python" });
-  const bundle = await pythonSchemaExtractor.extract({ repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
+  const extracted = await pythonSchemaExtractor.extract({ repos: [repo], parsedFiles: [parsed], repoResolver: () => repo });
+  const reconciled = reconcileNonJavaSchemaFacts(extracted.contractSpecs, extracted.semanticRelations);
+  const bundle = { ...extracted, contractSpecs: reconciled.contractSpecs, semanticRelations: reconciled.semanticRelations };
   await fs.rm(dir, { recursive: true, force: true });
   return bundle;
 }
@@ -46,12 +50,23 @@ class CreateOrderDTO:
 `);
     const spec = schemaSpecFromBundle(bundle, "createorderdto");
     expect(spec).toBeDefined();
-    expect(spec!.fields).toHaveLength(4);
-    expect(spec!.fields[0]).toMatchObject({ name: "sku", type: "string" });
-    expect(spec!.fields[1]).toMatchObject({ name: "quantity", type: "number" });
-    expect(spec!.fields[2]).toMatchObject({ name: "price", type: "number" });
-    expect(spec!.fields[3]).toMatchObject({ name: "active", type: "boolean" });
-    expect(spec!.language).toBe("python");
+    expect(objectSchemaFields(spec!)).toHaveLength(4);
+    expect(objectSchemaFields(spec!)[0]).toMatchObject({ name: "sku", type: "string" });
+    expect(objectSchemaFields(spec!)[1]).toMatchObject({ name: "quantity", type: "number" });
+    expect(objectSchemaFields(spec!)[2]).toMatchObject({ name: "price", type: "number" });
+    expect(objectSchemaFields(spec!)[3]).toMatchObject({ name: "active", type: "boolean" });
+    expect(spec!.languageId).toBe("python");
+  });
+
+  it("preserves an empty explicit dataclass as a stable object schema", async () => {
+    const bundle = await extract(`
+from dataclasses import dataclass
+@dataclass
+class Empty:
+    pass
+`);
+    const spec = schemaSpecFromBundle(bundle, "empty");
+    expect(spec?.shape).toEqual({ kind: "object", fields: [], baseTypes: [] });
   });
 
   it("detects Optional[T] fields via default None", async () => {
@@ -67,8 +82,8 @@ class OrderDTO:
 `);
     const spec = schemaSpecFromBundle(bundle, "orderdto");
     expect(spec).toBeDefined();
-    expect(spec!.fields).toHaveLength(3);
-    const coupon = spec!.fields.find((f) => f.name === "coupon_code");
+    expect(objectSchemaFields(spec!)).toHaveLength(3);
+    const coupon = objectSchemaFields(spec!).find((f) => f.name === "coupon_code");
     expect(coupon).toBeDefined();
     // Optional[T] is unwrapped to T?
     expect(coupon!.type).toBe("string?");
@@ -89,12 +104,12 @@ class OrderPayload:
 `);
     const spec = schemaSpecFromBundle(bundle, "orderpayload");
     expect(spec).toBeDefined();
-    const tags = spec!.fields.find((f) => f.name === "tags");
+    const tags = objectSchemaFields(spec!).find((f) => f.name === "tags");
     expect(tags!.type).toBe("array<string>");
-    const items = spec!.fields.find((f) => f.name === "items");
+    const items = objectSchemaFields(spec!).find((f) => f.name === "items");
     expect(items!.type).toBe("array<OrderItem>");
-    const meta = spec!.fields.find((f) => f.name === "meta");
-    expect(meta!.type).toBe("map");
+    const meta = objectSchemaFields(spec!).find((f) => f.name === "meta");
+    expect(meta!.type).toBe("map<string,string>");
   });
 
   // -- TypedDict ------------------------------------------------------------
@@ -110,9 +125,9 @@ class OrderSchema(TypedDict):
 `);
     const spec = schemaSpecFromBundle(bundle, "orderschema");
     expect(spec).toBeDefined();
-    expect(spec!.fields).toHaveLength(3);
-    expect(spec!.fields[0]).toMatchObject({ name: "order_id", type: "string" });
-    expect(spec!.fields[1]).toMatchObject({ name: "amount", type: "number" });
+    expect(objectSchemaFields(spec!)).toHaveLength(3);
+    expect(objectSchemaFields(spec!)[0]).toMatchObject({ name: "order_id", type: "string" });
+    expect(objectSchemaFields(spec!)[1]).toMatchObject({ name: "amount", type: "number" });
   });
 
   it("records framework as python-typeddict for TypedDict", async () => {
@@ -139,7 +154,7 @@ class OrderItemDTO(NamedTuple):
 `);
     const spec = schemaSpecFromBundle(bundle, "orderitemdto");
     expect(spec).toBeDefined();
-    expect(spec!.fields).toHaveLength(3);
+    expect(objectSchemaFields(spec!)).toHaveLength(3);
 
     // Verify framework is recorded on the ContractSpecNode
     const specNode = bundle.contractSpecs.find((s) => s.specKind === "schema");
@@ -149,7 +164,7 @@ class OrderItemDTO(NamedTuple):
 
   // -- Schema classification -----------------------------------------------
 
-  it("classifies classes ending in DTO / Dto / Payload as dto", async () => {
+  it("uses one schema contract kind for explicit Python schema mechanisms", async () => {
     const bundle = await extract(`
 from dataclasses import dataclass
 
@@ -164,7 +179,7 @@ class UpdateUserDto:
 class EventPayload(TypedDict):
     data: str
 `);
-    const dtoContracts = bundle.contracts.filter((c) => c.kind === "dto");
+    const dtoContracts = bundle.contracts.filter((c) => c.kind === "schema");
     expect(dtoContracts.length).toBeGreaterThanOrEqual(3);
     const keys = dtoContracts.map((c) => c.key).sort();
     expect(keys).toContain("productdto");
@@ -249,6 +264,9 @@ class UniqueDTO:
     const bundle = await extract(`
 from dataclasses import dataclass
 @dataclass
+class BaseResponseDTO:
+    id: str
+@dataclass
 class OrderResponseDTO(BaseResponseDTO):
     order_id: str
 `);
@@ -258,25 +276,62 @@ class OrderResponseDTO(BaseResponseDTO):
     expect(spec).toBeDefined();
 
     const rel = bundle.semanticRelations.find(
-      (r) => r.kind === "USES_SCHEMA" && r.toSpecId === "schema-ref:BaseResponseDTO"
+      (r) => r.kind === "USES_SCHEMA" && r.toSpecId.startsWith("spec:schema:")
     );
     expect(rel).toBeDefined();
-    expect(rel!.fromSpecId).toBe(`spec:${spec!.contractId}:pending`);
-    expect(rel!.reason).toContain("inherits");
+    expect(rel!.fromSpecId).toBe(spec!.id);
+    expect(rel!.reason).toContain("through python rules");
   });
 
   it("excludes TypedDict/NamedTuple markers and object from USES_SCHEMA", async () => {
     const bundle = await extract(`
 from typing import TypedDict
+class BaseShipmentDTO(TypedDict):
+    id: str
 class ShipmentDTO(BaseShipmentDTO, TypedDict):
     extra: str
 `);
     const refs = bundle.semanticRelations
       .filter((r) => r.kind === "USES_SCHEMA")
       .map((r) => r.toSpecId);
-    expect(refs).toContain("schema-ref:BaseShipmentDTO");
-    expect(refs).not.toContain("schema-ref:TypedDict");
-    expect(refs).not.toContain("schema-ref:object");
+    expect(refs.some((ref) => ref.startsWith("spec:schema:"))).toBe(true);
+    expect(refs.some((ref) => ref.includes("TypedDict") || ref.includes("object"))).toBe(false);
+  });
+
+  it("preserves qualified generic bases and recursive field expressions", async () => {
+    const bundle = await extract(`
+from dataclasses import dataclass
+from typing import Dict
+@dataclass
+class ResultDTO(models.Page[User]):
+    pages: Page[User]
+    actors: User | Admin
+    lookup: Dict[str, User]
+`);
+    const result = schemaSpecFromBundle(bundle, "resultdto");
+    expect(result?.shape.kind === "object" ? result.shape.baseTypes : undefined).toEqual([{
+      kind: "application",
+      target: { kind: "reference", name: "models.Page" },
+      arguments: [{ kind: "reference", name: "User" }]
+    }]);
+    const fields = result?.shape.kind === "object" ? result.shape.fields : [];
+    expect(fields.find((field) => field.sourceName === "pages")?.type).toMatchObject({
+      normalizedExpression: {
+        kind: "application",
+        target: { kind: "reference", name: "Page" },
+        arguments: [{ kind: "reference", name: "User" }]
+      }
+    });
+    expect(fields.find((field) => field.sourceName === "actors")?.type).toMatchObject({
+      normalizedExpression: { kind: "union", members: expect.any(Array) }
+    });
+    expect(fields.find((field) => field.sourceName === "lookup")?.type).toMatchObject({
+      normalizedExpression: {
+        kind: "map",
+        key: { kind: "reference", name: "string" },
+        value: { kind: "reference", name: "User" }
+      }
+    });
   });
 
   it("does not emit USES_SCHEMA for a class without base classes", async () => {

@@ -23,6 +23,7 @@ import type {
   WorkflowNode
 } from "../../parsing/types.js";
 import type { PackageUsageEntry } from "./factCollector.js";
+import type { SchemaDeclarationCandidate } from "../../schema/model.js";
 
 /**
  * Frozen read-only facts produced by extraction (Phase 1 + postExtract).
@@ -39,6 +40,7 @@ export interface ExtractedFacts {
   readonly contractSpecs: readonly ContractSpecNode[];
   readonly contractSpecEdges: readonly ContractSpecEdge[];
   readonly semanticRelations: readonly SemanticRelationEdge[];
+  readonly schemaDeclarations: readonly SchemaDeclarationCandidate[];
 }
 
 /**

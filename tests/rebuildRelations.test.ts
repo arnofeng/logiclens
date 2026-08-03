@@ -16,6 +16,11 @@ import type {
 } from "../src/core/parsing/types.js";
 import { repoId } from "../src/shared/path.js";
 
+const TEST_SCOPE = {
+  workspaceId: "workspace:rebuild-relations",
+  generation: "generation:rebuild-relations"
+} as const;
+
 // ---------------------------------------------------------------------------
 // Pure-function unit tests
 // ---------------------------------------------------------------------------
@@ -119,9 +124,10 @@ describe("addSemanticRelationsBatch", () => {
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("batch-empty-test");
-      await db.addSemanticRelationsBatch([]);
+      await db.addSemanticRelationsBatch([], TEST_SCOPE);
       const rows = await db.query<{ count: number }>(
-        "MATCH ()-[r:SEMANTIC_REL]->() RETURN count(r) AS count;"
+        "MATCH ()-[r:SEMANTIC_REL]->() WHERE r.workspaceId = $workspaceId AND r.generation = $generation RETURN count(r) AS count;",
+        TEST_SCOPE
       );
       expect(Number(rows[0]?.count ?? 0)).toBe(0);
     } finally {
@@ -136,8 +142,8 @@ describe("addSemanticRelationsBatch", () => {
       await db.initSchema("batch-single-test");
       const from = makeSpec("contract:api:orders", "repo:producer", "/api/orders");
       const to = makeSpec("contract:api:orders", "repo:consumer", "/api/orders");
-      await db.upsertContractSpec(from);
-      await db.upsertContractSpec(to);
+      await db.upsertContractSpec(from, TEST_SCOPE);
+      await db.upsertContractSpec(to, TEST_SCOPE);
 
       const edge: SemanticRelationEdge = {
         fromSpecId: from.id,
@@ -149,7 +155,7 @@ describe("addSemanticRelationsBatch", () => {
         batchId: "batch:test",
         active: true
       };
-      await db.addSemanticRelationsBatch([edge]);
+      await db.addSemanticRelationsBatch([edge], TEST_SCOPE);
 
       const rows = await db.query<{
         fromSpecId: string; toSpecId: string; kind: string;
@@ -157,9 +163,11 @@ describe("addSemanticRelationsBatch", () => {
         batchId: string; active: boolean;
       }>(
         "MATCH (a:ContractSpec)-[r:SEMANTIC_REL]->(b:ContractSpec) " +
+        "WHERE a.workspaceId = $workspaceId AND a.generation = $generation AND r.workspaceId = $workspaceId AND r.generation = $generation AND b.workspaceId = $workspaceId AND b.generation = $generation " +
         "RETURN a.id AS fromSpecId, b.id AS toSpecId, r.kind AS kind, " +
         "r.evidenceId AS evidenceId, r.reason AS reason, r.confidence AS confidence, " +
-        "r.batchId AS batchId, r.active AS active;"
+        "r.batchId AS batchId, r.active AS active;",
+        TEST_SCOPE
       );
       expect(rows).toHaveLength(1);
       const row = rows[0]!;
@@ -189,7 +197,7 @@ describe("addSemanticRelationsBatch", () => {
         makeSpec(`contract:api:ep${i}`, "repo:consumer", `/api/endpoint${i}`)
       );
       for (const s of [...producers, ...consumers]) {
-        await db.upsertContractSpec(s);
+        await db.upsertContractSpec(s, TEST_SCOPE);
       }
 
       const edges: SemanticRelationEdge[] = producers.map((p, i) => ({
@@ -202,10 +210,11 @@ describe("addSemanticRelationsBatch", () => {
         batchId: "batch:many",
         active: true
       }));
-      await db.addSemanticRelationsBatch(edges);
+      await db.addSemanticRelationsBatch(edges, TEST_SCOPE);
 
       const rows = await db.query<{ count: number }>(
-        "MATCH ()-[r:SEMANTIC_REL]->() RETURN count(r) AS count;"
+        "MATCH ()-[r:SEMANTIC_REL]->() WHERE r.workspaceId = $workspaceId AND r.generation = $generation RETURN count(r) AS count;",
+        TEST_SCOPE
       );
       expect(Number(rows[0]?.count ?? 0)).toBe(5);
     } finally {
@@ -220,8 +229,8 @@ describe("addSemanticRelationsBatch", () => {
       await db.initSchema("batch-defaults-test");
       const from = makeSpec("contract:api:def", "repo:a", "/api/def");
       const to = makeSpec("contract:api:def", "repo:b", "/api/def");
-      await db.upsertContractSpec(from);
-      await db.upsertContractSpec(to);
+      await db.upsertContractSpec(from, TEST_SCOPE);
+      await db.upsertContractSpec(to, TEST_SCOPE);
 
       const edge: SemanticRelationEdge = {
         fromSpecId: from.id,
@@ -232,10 +241,11 @@ describe("addSemanticRelationsBatch", () => {
         confidence: 0.7
         // batchId and active intentionally omitted
       };
-      await db.addSemanticRelationsBatch([edge]);
+      await db.addSemanticRelationsBatch([edge], TEST_SCOPE);
 
       const rows = await db.query<{ batchId: string; active: boolean }>(
-        "MATCH ()-[r:SEMANTIC_REL]->() RETURN r.batchId AS batchId, r.active AS active;"
+        "MATCH ()-[r:SEMANTIC_REL]->() WHERE r.workspaceId = $workspaceId AND r.generation = $generation RETURN r.batchId AS batchId, r.active AS active;",
+        TEST_SCOPE
       );
       expect(rows[0]?.batchId).toBe("");
       expect(rows[0]?.active).toBe(true);
@@ -244,15 +254,15 @@ describe("addSemanticRelationsBatch", () => {
     }
   }, 15000);
 
-  it("idempotently merges on (kind, evidenceId) key when re-written", async () => {
+  it("idempotently merges on the evidence-independent logical relation key", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-batch-merge-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("batch-merge-test");
       const from = makeSpec("contract:api:merge", "repo:a", "/api/merge");
       const to = makeSpec("contract:api:merge", "repo:b", "/api/merge");
-      await db.upsertContractSpec(from);
-      await db.upsertContractSpec(to);
+      await db.upsertContractSpec(from, TEST_SCOPE);
+      await db.upsertContractSpec(to, TEST_SCOPE);
 
       const edge: SemanticRelationEdge = {
         fromSpecId: from.id,
@@ -264,22 +274,25 @@ describe("addSemanticRelationsBatch", () => {
         batchId: "batch:first",
         active: true
       };
-      await db.addSemanticRelationsBatch([edge]);
+      await db.addSemanticRelationsBatch([edge], TEST_SCOPE);
 
       // Write again with a different reason/confidence — should merge (no duplicate edge)
       const edge2: SemanticRelationEdge = {
         ...edge,
+        evidenceId: "ev:merge:second-source",
         reason: "updated reason",
         confidence: 0.99,
         batchId: "batch:second"
       };
-      await db.addSemanticRelationsBatch([edge2]);
+      await db.addSemanticRelationsBatch([edge2], TEST_SCOPE);
 
-      const rows = await db.query<{ count: number; reason: string; confidence: number; batchId: string }>(
-        "MATCH ()-[r:SEMANTIC_REL]->() RETURN count(r) AS count, r.reason AS reason, r.confidence AS confidence, r.batchId AS batchId;"
+      const rows = await db.query<{ count: number; evidenceId: string; reason: string; confidence: number; batchId: string }>(
+        "MATCH ()-[r:SEMANTIC_REL]->() WHERE r.workspaceId = $workspaceId AND r.generation = $generation RETURN count(r) AS count, r.evidenceId AS evidenceId, r.reason AS reason, r.confidence AS confidence, r.batchId AS batchId;",
+        TEST_SCOPE
       );
       expect(Number(rows[0]?.count ?? 0)).toBe(1);
-      // MERGE ... SET overwrites with last write
+      // Evidence remains an attribute without participating in MERGE identity.
+      expect(rows[0]?.evidenceId).toBe("ev:merge:second-source");
       expect(rows[0]?.reason).toBe("updated reason");
       expect(Number(rows[0]?.confidence)).toBe(0.99);
       expect(rows[0]?.batchId).toBe("batch:second");
@@ -318,14 +331,14 @@ async function addParticipant(
     rule?: string;
   }
 ): Promise<void> {
-  await db.upsertRepo(input.repo);
+  await db.upsertRepo(input.repo, TEST_SCOPE);
   await db.upsertContract({
     id: input.contractId,
     kind: input.kind,
     key: input.key,
     name: input.key,
     description: `${input.kind} ${input.key}`
-  });
+  }, TEST_SCOPE);
   await db.upsertEvidence({
     id: input.evidenceId,
     repoId: input.repo.id,
@@ -338,7 +351,7 @@ async function addParticipant(
     batchId: "batch:test",
     indexedAt: new Date().toISOString(),
     active: true
-  });
+  }, TEST_SCOPE);
   await db.addRepoContract({
     repoId: input.repo.id,
     contractId: input.contractId,
@@ -347,9 +360,9 @@ async function addParticipant(
     confidence: 0.9,
     batchId: "batch:test",
     active: true
-  });
-  await db.addContractEvidence(input.contractId, input.evidenceId);
-  await db.addRepoEvidence(input.repo.id, input.evidenceId);
+  }, TEST_SCOPE);
+  await db.addContractEvidence(input.contractId, input.evidenceId, TEST_SCOPE);
+  await db.addRepoEvidence(input.repo.id, input.evidenceId, TEST_SCOPE);
 }
 
 async function semanticRelRows(
@@ -357,8 +370,15 @@ async function semanticRelRows(
 ): Promise<{ fromSpecId: string; toSpecId: string; kind: string }[]> {
   return db.query<{ fromSpecId: string; toSpecId: string; kind: string }>(
     `MATCH (a:ContractSpec)-[r:SEMANTIC_REL]->(b:ContractSpec)
+     WHERE a.workspaceId = $workspaceId AND a.generation = $generation
+       AND r.workspaceId = $workspaceId AND r.generation = $generation
+       AND b.workspaceId = $workspaceId AND b.generation = $generation
+       AND (a.active IS NULL OR a.active = true)
+       AND (r.active IS NULL OR r.active = true)
+       AND (b.active IS NULL OR b.active = true)
      RETURN a.id AS fromSpecId, b.id AS toSpecId, r.kind AS kind
-     ORDER BY fromSpecId, toSpecId, kind;`
+     ORDER BY fromSpecId, toSpecId, kind;`,
+    TEST_SCOPE
   );
 }
 
@@ -419,8 +439,8 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
         evidenceId: "ev:consumer-orders-spec"
       };
 
-      await db.upsertContractSpec(producerSpec);
-      await db.upsertContractSpec(consumerSpec);
+      await db.upsertContractSpec(producerSpec, TEST_SCOPE);
+      await db.upsertContractSpec(consumerSpec, TEST_SCOPE);
 
       await addParticipant(db, {
         repo: producerRepo,
@@ -447,6 +467,7 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
 
       // Rebuild targeting only the consumer repo
       await rebuildRepoDependencies(db, {
+        scope: TEST_SCOPE,
         repoIds: [consumerRepo.id],
         batchId: "batch:scoped"
       });
@@ -508,8 +529,8 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
         evidenceId: "ev:sub-order-created-spec"
       };
 
-      await db.upsertContractSpec(publisherSpec);
-      await db.upsertContractSpec(subscriberSpec);
+      await db.upsertContractSpec(publisherSpec, TEST_SCOPE);
+      await db.upsertContractSpec(subscriberSpec, TEST_SCOPE);
 
       await addParticipant(db, {
         repo: publisherRepo,
@@ -537,6 +558,7 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
 
       // Rebuild targeting subscriber repo
       await rebuildRepoDependencies(db, {
+        scope: TEST_SCOPE,
         repoIds: [subscriberRepo.id],
         batchId: "batch:scoped-event"
       });
@@ -590,9 +612,9 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
         repoId: otherB.id
       };
 
-      await db.upsertContractSpec(targetSpec);
-      await db.upsertContractSpec(specA);
-      await db.upsertContractSpec(specB);
+      await db.upsertContractSpec(targetSpec, TEST_SCOPE);
+      await db.upsertContractSpec(specA, TEST_SCOPE);
+      await db.upsertContractSpec(specB, TEST_SCOPE);
 
       await addParticipant(db, {
         repo: targetRepo, contractId: "contract:api:shared",
@@ -612,6 +634,7 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
 
       // Rebuild only targeting targetRepo
       await rebuildRepoDependencies(db, {
+        scope: TEST_SCOPE,
         repoIds: [targetRepo.id],
         batchId: "batch:scoped-filter"
       });
@@ -671,8 +694,8 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
         repoId: repoB.id
       };
 
-      await db.upsertContractSpec(specA);
-      await db.upsertContractSpec(specB);
+      await db.upsertContractSpec(specA, TEST_SCOPE);
+      await db.upsertContractSpec(specB, TEST_SCOPE);
 
       await addParticipant(db, {
         repo: repoA, contractId: "contract:api:full-shared",
@@ -686,7 +709,7 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
       });
 
       // Full rebuild (no target repoIds)
-      await rebuildRepoDependencies(db, { batchId: "batch:full" });
+      await rebuildRepoDependencies(db, { scope: TEST_SCOPE, batchId: "batch:full" });
 
       const after = await semanticRelRows(db);
       const callEdges = after.filter((r) => r.kind === "CALLS_HTTP");
@@ -726,8 +749,8 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
         id: "spec:intra-consumer"
       };
 
-      await db.upsertContractSpec(producerSpec);
-      await db.upsertContractSpec(consumerSpec);
+      await db.upsertContractSpec(producerSpec, TEST_SCOPE);
+      await db.upsertContractSpec(consumerSpec, TEST_SCOPE);
 
       // Both producer and consumer in the same repo
       await addParticipant(db, {
@@ -742,6 +765,7 @@ describe("scoped SEMANTIC_REL resolution via rebuildRepoDependencies", () => {
       });
 
       await rebuildRepoDependencies(db, {
+        scope: TEST_SCOPE,
         repoIds: [singleRepo.id],
         batchId: "batch:intra"
       });

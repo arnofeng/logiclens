@@ -7,6 +7,8 @@ import { auditContractQuality } from "../src/features/quality/qualityRules.js";
 import { traceContract } from "../src/core/graph-model/queries.js";
 import { retrieveForQuestion } from "../src/features/ask/retrieve.js";
 import { BRAND } from "../src/shared/branding.js";
+import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
+import { stageAndActivatePublicGraphGeneration } from "./helpers/publicGraphGeneration.js";
 
 describe("Quality Closed-Loop Test Suite", () => {
   it("runs end-to-end contract quality audits, tracing, and retrieval", async () => {
@@ -14,27 +16,30 @@ describe("Quality Closed-Loop Test Suite", () => {
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
       await db.initSchema("closed-loop-test");
+      const workspaceId = deriveWorkspaceId("default-system");
+      const scope = { workspaceId, generation: "generation:quality-closed-loop" };
 
-      const repoA = { id: "repo:service-a", name: "service-a", path: "/path/service-a", remoteUrl: "", branch: "", commitSha: "", language: "java", indexedAt: new Date().toISOString() };
-      const repoB = { id: "repo:service-b", name: "service-b", path: "/path/service-b", remoteUrl: "", branch: "", commitSha: "", language: "javascript", indexedAt: new Date().toISOString() };
-      await db.upsertRepo(repoA);
-      await db.upsertRepo(repoB);
+      const { snapshot } = await stageAndActivatePublicGraphGeneration(db, scope, async (writeScope) => {
+        const repoA = { id: "repo:service-a", name: "service-a", path: "/path/service-a", remoteUrl: "", branch: "", commitSha: "", language: "java", indexedAt: new Date().toISOString() };
+        const repoB = { id: "repo:service-b", name: "service-b", path: "/path/service-b", remoteUrl: "", branch: "", commitSha: "", language: "javascript", indexedAt: new Date().toISOString() };
+        await db.upsertRepo(repoA, writeScope);
+        await db.upsertRepo(repoB, writeScope);
 
-      async function setupContractEvidence(contractNode: any, evidenceNode: any, role: string) {
-        await db.upsertContract(contractNode);
-        await db.upsertEvidence(evidenceNode);
-        await db.addContractEvidence(contractNode.id, evidenceNode.id);
-        await db.addRepoEvidence(evidenceNode.repoId, evidenceNode.id);
-        await db.addRepoContract({
-          repoId: evidenceNode.repoId,
-          contractId: contractNode.id,
-          role: role as any,
-          evidenceId: evidenceNode.id,
-          confidence: evidenceNode.confidence,
-          batchId: "b1",
-          active: true
-        });
-      }
+        async function setupContractEvidence(contractNode: any, evidenceNode: any, role: string) {
+          await db.upsertContract(contractNode, writeScope);
+          await db.upsertEvidence(evidenceNode, writeScope);
+          await db.addContractEvidence(contractNode.id, evidenceNode.id, writeScope);
+          await db.addRepoEvidence(evidenceNode.repoId, evidenceNode.id, writeScope);
+          await db.addRepoContract({
+            repoId: evidenceNode.repoId,
+            contractId: contractNode.id,
+            role: role as any,
+            evidenceId: evidenceNode.id,
+            confidence: evidenceNode.confidence,
+            batchId: "b1",
+            active: true
+          }, writeScope);
+        }
 
       // Case 1: Java class-level package contract
       await setupContractEvidence(
@@ -78,17 +83,18 @@ describe("Quality Closed-Loop Test Suite", () => {
       );
 
       // Case 6: Package contract inflation (> 1000)
-      for (let i = 0; i < 5; i++) {
-        const key = `com.example.pkg${i}`;
-        await setupContractEvidence(
-          { id: `contract:package:${key}`, kind: "package", key, name: key, description: "" },
-          { id: `evidence:epkg${i}`, repoId: repoA.id, fileId: "fpkg", filePath: "Main.java", line: 1, raw: `package ${key}`, rule: "java-package-path", confidence: 0.9, batchId: "b1", indexedAt: new Date().toISOString(), active: true },
-          "owner"
-        );
-      }
+        for (let i = 0; i < 5; i++) {
+          const key = `com.example.pkg${i}`;
+          await setupContractEvidence(
+            { id: `contract:package:${key}`, kind: "package", key, name: key, description: "" },
+            { id: `evidence:epkg${i}`, repoId: repoA.id, fileId: "fpkg", filePath: "Main.java", line: 1, raw: `package ${key}`, rule: "java-package-path", confidence: 0.9, batchId: "b1", indexedAt: new Date().toISOString(), active: true },
+            "owner"
+          );
+        }
+      });
 
       // --- EXECUTE QUALITY AUDIT ---
-      const violations = await auditContractQuality(db, { packageInflationLimit: 3 });
+      const violations = await auditContractQuality(db, workspaceId, { packageInflationLimit: 3 });
       
       const ruleIds = violations.map(v => v.ruleId);
       expect(ruleIds).toContain("java-class-level-package");
@@ -105,7 +111,7 @@ describe("Quality Closed-Loop Test Suite", () => {
       expect(noSlashViolation?.details).toContain("- smart/backorder");
 
       // --- VERIFY TRACE TEST ---
-      const traces = await traceContract(db, "api", "/smart/backorder/list");
+      const traces = await traceContract(db, snapshot, "api", "/smart/backorder/list");
       expect(traces.length).toBe(1);
       expect(traces[0]?.repoName).toBe("service-a");
       expect(traces[0]?.role).toBe("producer");

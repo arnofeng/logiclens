@@ -1,4 +1,5 @@
 import type { GraphDB } from "./db.js";
+import { publicGraphActivePredicate, withPublicGraphSnapshotParams, type PublicGraphReadSnapshot } from "./readSnapshot.js";
 
 export type EdgeRow = {
   fromCodeId?: string;
@@ -16,17 +17,24 @@ export type EdgeRow = {
   raw: string;
 };
 
-export async function callEdgesAround(db: GraphDB, codeIds: string[], limit = 100): Promise<EdgeRow[]> {
+export async function callEdgesAround(db: GraphDB, snapshot: PublicGraphReadSnapshot, codeIds: string[], limit = 100): Promise<EdgeRow[]> {
   if (codeIds.length === 0) return [];
   if (!Number.isSafeInteger(limit) || limit < 1) return [];
   return db.query<EdgeRow>(
-    `MATCH (fromRepo:Repo)-[:CONTAINS]->(fromFile:File)-[:CONTAINS]->(a:Code)-[r:CALLS]->(b:Code)<-[:CONTAINS]-(toFile:File)<-[:CONTAINS]-(toRepo:Repo)
+    `MATCH (fromRepo:Repo)-[fromRepoContains:CONTAINS]->(fromFile:File)-[fromFileContains:CONTAINS]->(a:Code)-[r:CALLS]->(b:Code)<-[toFileContains:CONTAINS]-(toFile:File)<-[toRepoContains:CONTAINS]-(toRepo:Repo)
      WHERE (a.id IN $ids OR b.id IN $ids)
-       AND (fromFile.active IS NULL OR fromFile.active = true)
-       AND (toFile.active IS NULL OR toFile.active = true)
-       AND (a.active IS NULL OR a.active = true)
-       AND (b.active IS NULL OR b.active = true)
-       AND (r.active IS NULL OR r.active = true)
+       AND fromRepo.workspaceId = $workspaceId AND fromRepo.generation = $generation
+       AND fromRepoContains.workspaceId = $workspaceId AND fromRepoContains.generation = $generation
+       AND fromFile.workspaceId = $workspaceId AND fromFile.generation = $generation
+       AND fromFileContains.workspaceId = $workspaceId AND fromFileContains.generation = $generation
+       AND a.workspaceId = $workspaceId AND a.generation = $generation
+       AND r.workspaceId = $workspaceId AND r.generation = $generation
+       AND b.workspaceId = $workspaceId AND b.generation = $generation
+       AND toFileContains.workspaceId = $workspaceId AND toFileContains.generation = $generation
+       AND toFile.workspaceId = $workspaceId AND toFile.generation = $generation
+       AND toRepoContains.workspaceId = $workspaceId AND toRepoContains.generation = $generation
+       AND toRepo.workspaceId = $workspaceId AND toRepo.generation = $generation
+       AND ${publicGraphActivePredicate("fromFile", "a", "r", "b", "toFile")}
      RETURN a.id AS fromCodeId, b.id AS toCodeId,
        fromRepo.id AS fromRepoId, toRepo.id AS toRepoId,
        fromFile.path AS fromPath, toFile.path AS toPath,
@@ -38,6 +46,6 @@ export async function callEdgesAround(db: GraphDB, codeIds: string[], limit = 10
        r.raw AS raw
      ORDER BY a.id, b.id, fromFile.path, toFile.path
      LIMIT ${limit};`,
-    { ids: codeIds }
+    withPublicGraphSnapshotParams(snapshot, { ids: codeIds })
   );
 }

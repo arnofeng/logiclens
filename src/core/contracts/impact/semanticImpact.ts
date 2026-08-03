@@ -5,6 +5,7 @@ import type {
 import { isKnownContractSpecNode } from "../../parsing/types.js";
 import type { GraphDB } from "../../graph-model/db.js";
 import { loadActiveSemanticGraph } from "../../graph-model/queries.js";
+import { withPublicGraphReadSnapshot, type PublicGraphReadSnapshot } from "../../graph-model/readSnapshot.js";
 import { SEMANTIC_REL_META, selectImpactRootIds, semanticRelationResolution } from "../semanticRelations.js";
 import { findTargetSpecs } from "./impactEngine.js";
 import { normalizeSemanticTarget } from "../targetNormalization.js";
@@ -275,9 +276,16 @@ export function analyzeSemanticImpact(
 export async function analyzeSemanticImpactFromDB(
   target: string,
   db: GraphDB,
-  options: SemanticImpactOptions = {}
+  workspaceId: string,
+  options: SemanticImpactOptions = {},
+  pinnedSnapshot?: PublicGraphReadSnapshot
 ): Promise<SemanticImpactReport | null> {
-  const { specs, relations } = await loadActiveSemanticGraph(db);
+  if (!pinnedSnapshot) {
+    return withPublicGraphReadSnapshot(db, workspaceId, (snapshot) =>
+      analyzeSemanticImpactFromDB(target, db, workspaceId, options, snapshot));
+  }
+  const snapshot = pinnedSnapshot;
+  const { specs, relations } = await loadActiveSemanticGraph(db, snapshot);
 
   return analyzeSemanticImpact(
     target,

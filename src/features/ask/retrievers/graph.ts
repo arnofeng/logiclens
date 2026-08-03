@@ -11,6 +11,7 @@ import {
   type RetrievalCandidate
 } from "../candidates.js";
 import type { QueryPlan } from "../planner.js";
+import { pinPublicGraphReadSnapshot, releasePublicGraphReadSnapshot, withPublicGraphReadSnapshot, type PublicGraphReadSnapshot } from "../../../core/graph-model/readSnapshot.js";
 import { emptyRouteResult, RetrieverOperationalError, successfulRouteResult, type RetrieverRouteResult } from "./types.js";
 
 export type GraphLegacyRow =
@@ -19,9 +20,9 @@ export type GraphLegacyRow =
   | Readonly<{ kind: "edge"; row: EdgeRow }>;
 
 export type GraphRetrieverDependencies = Readonly<{
-  callEdgesAround?: typeof callEdgesAround;
-  findContractSourceSymbols?: typeof findContractSourceSymbols;
-  sectionsDocumentingCode?: typeof sectionsDocumentingCode;
+  callEdgesAround?: (db: GraphDB, codeIds: string[], limit?: number) => ReturnType<typeof callEdgesAround>;
+  findContractSourceSymbols?: (db: GraphDB, contractIds: string[], limit?: number) => ReturnType<typeof findContractSourceSymbols>;
+  sectionsDocumentingCode?: (db: GraphDB, codeIds: string[], limit?: number) => ReturnType<typeof sectionsDocumentingCode>;
 }>;
 
 const STRONG_LEXICAL_MATCH_REASONS = new Set(["exact-identifier", "exact-path", "exact-contract", "canonical-id"]);
@@ -114,8 +115,12 @@ export async function retrieveBoundedGraph(
   db: GraphDB,
   plan: QueryPlan,
   seeds: readonly RetrievalCandidate[],
-  options: { workspaceId: string; seedLimit?: number; graphHops?: number; dependencies?: GraphRetrieverDependencies }
+  options: { workspaceId: string; snapshot?: PublicGraphReadSnapshot; snapshotProvider?: () => Promise<PublicGraphReadSnapshot>; seedLimit?: number; graphHops?: number; dependencies?: GraphRetrieverDependencies }
 ): Promise<RetrieverRouteResult<GraphLegacyRow>> {
+  if (!options.snapshot && !options.snapshotProvider && db.readTransaction) {
+    return withPublicGraphReadSnapshot(db, options.workspaceId, (snapshot) =>
+      retrieveBoundedGraph(db, plan, seeds, { ...options, snapshot }));
+  }
   if (!plan.enabledRoutes.includes("graph")) {
     return emptyRouteResult("graph", "disabled", "route-disabled");
   }
@@ -135,10 +140,19 @@ export async function retrieveBoundedGraph(
     return emptyRouteResult("graph", "disabled", "no-eligible-seeds");
   }
 
+  let snapshotPromise: Promise<PublicGraphReadSnapshot> | undefined;
+  let ownedSnapshot: PublicGraphReadSnapshot | undefined;
+  const snapshot = (): Promise<PublicGraphReadSnapshot> => snapshotPromise ??= options.snapshot
+    ? Promise.resolve(options.snapshot)
+    : options.snapshotProvider?.() ?? pinPublicGraphReadSnapshot(db, options.workspaceId).then((value) => {
+      ownedSnapshot = value;
+      return value;
+    });
+  try {
   const deps = {
-    callEdgesAround: options.dependencies?.callEdgesAround ?? callEdgesAround,
-    findContractSourceSymbols: options.dependencies?.findContractSourceSymbols ?? findContractSourceSymbols,
-    sectionsDocumentingCode: options.dependencies?.sectionsDocumentingCode ?? sectionsDocumentingCode
+    callEdgesAround: options.dependencies?.callEdgesAround ?? (async (targetDb: GraphDB, codeIds: string[], limit?: number) => callEdgesAround(targetDb, await snapshot(), codeIds, limit)),
+    findContractSourceSymbols: options.dependencies?.findContractSourceSymbols ?? (async (targetDb: GraphDB, contractIds: string[], limit?: number) => findContractSourceSymbols(targetDb, await snapshot(), contractIds, limit)),
+    sectionsDocumentingCode: options.dependencies?.sectionsDocumentingCode ?? (async (targetDb: GraphDB, codeIds: string[], limit?: number) => sectionsDocumentingCode(targetDb, await snapshot(), codeIds, limit))
   };
   const contractIds = uniqueSeeds
     .filter((candidate) => candidate.kind === "contract")
@@ -216,5 +230,8 @@ export async function retrieveBoundedGraph(
     ...sections.map((row): GraphLegacyRow => ({ kind: "section", row })),
     ...edges.map((row): GraphLegacyRow => ({ kind: "edge", row }))
   ];
-  return successfulRouteResult("graph", candidates, legacyRows, queryCount);
+    return successfulRouteResult("graph", candidates, legacyRows, queryCount);
+  } finally {
+    if (ownedSnapshot) await releasePublicGraphReadSnapshot(db, ownedSnapshot);
+  }
 }

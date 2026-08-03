@@ -2,6 +2,15 @@ import { describe, expect, it, vi, type Mock } from "vitest";
 import type { GraphDB } from "../src/core/graph-model/db.js";
 import { listLowConfidenceRelations, loadActiveSemanticGraph, traceContract } from "../src/core/graph-model/queries.js";
 
+const PUBLIC_SCOPE = {
+  workspaceId: "workspace:test",
+  generation: "generation:test"
+} as const;
+const PUBLIC_SNAPSHOT = {
+  ...PUBLIC_SCOPE,
+  revision: "generation:test"
+} as const;
+
 describe("query hotspots", () => {
   it("traces all matching contract ids with a bounded number of relationship queries", async () => {
     const query = vi.fn(async (cypher: string, _params?: Record<string, unknown>) => {
@@ -22,12 +31,12 @@ describe("query hotspots", () => {
     });
     const db = { query } as unknown as GraphDB;
 
-    const rows = await traceContract(db, "api", "/api/a");
+    const rows = await traceContract(db, PUBLIC_SNAPSHOT, "api", "/api/a");
 
     expect(rows).toHaveLength(4);
     expect(query).toHaveBeenCalledTimes(5);
     for (const call of (query as Mock).mock.calls.slice(1)) {
-      expect(call[1]).toEqual({ contractIds: ["contract:one", "contract:two"] });
+      expect(call[1]).toEqual({ contractIds: ["contract:one", "contract:two"], ...PUBLIC_SCOPE });
     }
   });
 
@@ -69,7 +78,7 @@ describe("query hotspots", () => {
     });
     const db = { query } as unknown as GraphDB;
 
-    const graph = await loadActiveSemanticGraph(db);
+    const graph = await loadActiveSemanticGraph(db, PUBLIC_SNAPSHOT);
 
     expect(graph.specs).toHaveLength(1);
     expect(graph.specs[0]?.canonicalKey).toBe("Order");
@@ -98,17 +107,17 @@ describe("query hotspots", () => {
     });
     const db = { query } as unknown as GraphDB;
 
-    await expect(loadActiveSemanticGraph(db)).rejects.toThrow(/full `repohelix index`.*rebuild-relations/);
+    await expect(loadActiveSemanticGraph(db, PUBLIC_SNAPSHOT)).rejects.toThrow(/full `repohelix index`.*rebuild-relations/);
   });
 
   it("centralizes low-confidence relation queries", async () => {
     const query = vi.fn(async (_cypher: string, params?: Record<string, unknown>) => {
-      expect(params).toEqual({ minConfidence: 0.8, limit: 10 });
+      expect(params).toEqual({ minConfidence: 0.8, limit: 10, ...PUBLIC_SCOPE });
       return [];
     });
     const db = { query } as unknown as GraphDB;
 
-    await listLowConfidenceRelations(db, { minConfidence: 0.8, limit: 10 });
+    await listLowConfidenceRelations(db, PUBLIC_SNAPSHOT, { minConfidence: 0.8, limit: 10 });
 
     expect(query).toHaveBeenCalledTimes(4);
   });

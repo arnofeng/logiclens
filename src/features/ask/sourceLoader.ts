@@ -171,6 +171,7 @@ function validateDocument(
 export async function loadSelectedEvidence(
   input: Readonly<{
     workspaceId: string;
+    generation: string;
     selectedCandidates: readonly FusedRetrievalCandidate[];
     maxDocuments?: number;
     store?: WorkspaceLexicalStore;
@@ -227,6 +228,7 @@ export async function loadSelectedEvidence(
   try {
     documents = await input.store.loadDocuments({
       workspaceId: input.workspaceId,
+      generation: input.generation,
       documentIds: loadables.map(({ provenance }) => provenance.documentId!),
     });
   } catch (error) {

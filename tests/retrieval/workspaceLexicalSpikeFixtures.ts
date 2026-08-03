@@ -7,6 +7,8 @@ import { parseSourceFile } from "../../src/core/parsing/parserRegistry.js";
 import { projectLexicalDocuments } from "../../src/core/retrieval/projection.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "workspace-unified-retrieval");
+const FIXTURE_GENERATION = "schema-generation:workspace-spike:fixture";
+const FIXTURE_SYSTEM_NAME = "workspace-lexical-spike-fixture";
 const sources = [
   ["repo:api", "src/contracts/orders.ts", "typescript", "api"], ["repo:api", "src/routes/orders.go", "go", "api"],
   ["repo:catalog", "docs/zh-CN/inventory.md", "markdown", "catalog"], ["repo:catalog", "src/CatalogItemDTO.ts", "typescript", "catalog"], ["repo:worker", "src/handlers/orderCreated.ts", "typescript", "worker"]
@@ -24,7 +26,16 @@ export function lexicalTokens(text: string): string[] {
 export async function workspaceSpikeDocuments(workspaceId: string): Promise<LexicalDocument[]> {
   const parsedFiles = await Promise.all(sources.map(([repoId, relativePath, language, repo]) => parseSourceFile({ repoId, relativePath, language, absolutePath: path.join(root, repo, relativePath) })));
   const repos = ["api", "catalog", "worker"].map((name) => ({ id: `repo:${name}`, name, path: path.join(root, name), remoteUrl: "", branch: "", commitSha: "", language: "", indexedAt: "" }));
-  const facts = await buildGraphFactsBatch({ batchId: "workspace-spike", indexedAt: "fixture", repos, parsedFiles, semantic: false });
+  const facts = await buildGraphFactsBatch({
+    batchId: "workspace-spike",
+    workspaceId,
+    generation: FIXTURE_GENERATION,
+    systemName: FIXTURE_SYSTEM_NAME,
+    indexedAt: "fixture",
+    repos,
+    parsedFiles,
+    semantic: false
+  });
   return projectLexicalDocuments(facts, workspaceId)
     .filter((document) => ["file", "code", "section", "contract"].includes(document.kind));
 }

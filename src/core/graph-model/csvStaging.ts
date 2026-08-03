@@ -2,8 +2,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { systemId } from "./schema.js";
 import type { GraphFactsBatch } from "./facts.js";
+import { publicNodeStorageId } from "./publicGraphGeneration.js";
+import { collapseSemanticRelations } from "../contracts/extraction/dedup.js";
 
 export type CsvTableName =
+  | "System"
   | "Repo"
   | "File"
   | "Code"
@@ -67,9 +70,22 @@ export async function stageGraphFactsAsCsv(facts: GraphFactsBatch, outputRoot: s
   const outputDir = path.join(outputRoot, facts.batchId.replace(/[^a-zA-Z0-9_.-]+/g, "_"));
   await fs.mkdir(outputDir, { recursive: true });
   const result: CsvStagingResult = { dir: outputDir, files: {}, rowCounts: {} };
+  const nodePrefix = (id: string): CsvRow => [
+    publicNodeStorageId(facts.generation, id),
+    id,
+    facts.workspaceId,
+    facts.generation
+  ];
+  const relationPrefix = (fromId: string, toId: string): CsvRow => [
+    publicNodeStorageId(facts.generation, fromId),
+    publicNodeStorageId(facts.generation, toId),
+    facts.workspaceId,
+    facts.generation
+  ];
 
+  await writeTable(outputDir, "System", [[...nodePrefix(systemId), facts.systemName, ""]], result);
   await writeTable(outputDir, "Repo", facts.repos.map((repo) => [
-    repo.id,
+    ...nodePrefix(repo.id),
     repo.name,
     repo.path,
     repo.remoteUrl,
@@ -80,9 +96,10 @@ export async function stageGraphFactsAsCsv(facts: GraphFactsBatch, outputRoot: s
     repo.summary ?? ""
   ]), result);
   await writeTable(outputDir, "File", facts.files.map((file) => [
-    file.id,
+    ...nodePrefix(file.id),
     file.repoId,
     file.path,
+    file.directory,
     file.language,
     file.hash,
     file.loc,
@@ -91,7 +108,7 @@ export async function stageGraphFactsAsCsv(facts: GraphFactsBatch, outputRoot: s
     file.active ?? true
   ]), result);
   await writeTable(outputDir, "Code", facts.code.map((code) => [
-    code.id,
+    ...nodePrefix(code.id),
     code.repoId,
     code.fileId,
     code.kind,
@@ -107,7 +124,7 @@ export async function stageGraphFactsAsCsv(facts: GraphFactsBatch, outputRoot: s
     code.active ?? true
   ]), result);
   await writeTable(outputDir, "Section", facts.sections.map((section) => [
-    section.id,
+    ...nodePrefix(section.id),
     section.repoId,
     section.fileId,
     section.heading,
@@ -121,12 +138,12 @@ export async function stageGraphFactsAsCsv(facts: GraphFactsBatch, outputRoot: s
     section.indexedAt ?? "",
     section.active ?? true
   ]), result);
-  await writeTable(outputDir, "Entity", facts.entities.map((entity) => [entity.id, entity.name, entity.kind, entity.description]), result);
-  await writeTable(outputDir, "Operation", facts.operations.map((operation) => [operation.id, operation.verb, operation.entityName, operation.description]), result);
-  await writeTable(outputDir, "Workflow", facts.workflows.map((workflow) => [workflow.id, workflow.name, workflow.description]), result);
-  await writeTable(outputDir, "Contract", facts.contracts.map((contract) => [contract.id, contract.kind, contract.key, contract.name, contract.description]), result);
+  await writeTable(outputDir, "Entity", facts.entities.map((entity) => [...nodePrefix(entity.id), entity.name, entity.kind, entity.description]), result);
+  await writeTable(outputDir, "Operation", facts.operations.map((operation) => [...nodePrefix(operation.id), operation.verb, operation.entityName, operation.description]), result);
+  await writeTable(outputDir, "Workflow", facts.workflows.map((workflow) => [...nodePrefix(workflow.id), workflow.name, workflow.description]), result);
+  await writeTable(outputDir, "Contract", facts.contracts.map((contract) => [...nodePrefix(contract.id), contract.kind, contract.key, contract.name, contract.description]), result);
   await writeTable(outputDir, "ContractSpec", facts.contractSpecs.map((spec) => [
-    spec.id,
+    ...nodePrefix(spec.id),
     spec.contractId,
     spec.specKind,
     spec.repoId,
@@ -146,7 +163,7 @@ export async function stageGraphFactsAsCsv(facts: GraphFactsBatch, outputRoot: s
     spec.active ?? true
   ]), result);
   await writeTable(outputDir, "Evidence", facts.evidence.map((evidence) => [
-    evidence.id,
+    ...nodePrefix(evidence.id),
     evidence.repoId,
     evidence.fileId,
     evidence.filePath,
@@ -160,32 +177,31 @@ export async function stageGraphFactsAsCsv(facts: GraphFactsBatch, outputRoot: s
   ]), result);
 
   await writeTable(outputDir, "CONTAINS", [
-    ...facts.repos.map((repo) => [systemId, repo.id]),
-    ...facts.contains.map((edge) => [edge.fromId, edge.toId])
+    ...facts.repos.map((repo) => relationPrefix(systemId, repo.id)),
+    ...facts.contains.map((edge) => relationPrefix(edge.fromId, edge.toId))
   ], result);
-  await writeTable(outputDir, "IMPORTS", facts.imports.map((edge) => [edge.fromFileId, edge.toFileId, edge.module, edge.raw, edge.batchId ?? "", edge.active ?? true]), result);
-  await writeTable(outputDir, "CALLS", facts.calls.map((edge) => [edge.fromCodeId, edge.toCodeId, formatDouble(edge.confidence), edge.resolution, edge.raw, edge.batchId ?? "", edge.active ?? true]), result);
-  await writeTable(outputDir, "MENTIONS", facts.mentions.map((edge) => [edge.fromId, edge.entityId, formatDouble(edge.confidence)]), result);
-  await writeTable(outputDir, "DESCRIBES", facts.sectionDescribesRepos.map((edge) => [edge.sectionId, edge.repoId]), result);
-  await writeTable(outputDir, "DOCUMENTS", facts.sectionDocumentsCode.map((edge) => [edge.sectionId, edge.codeId, formatDouble(edge.confidence)]), result);
-  await writeTable(outputDir, "REFERENCES", facts.sectionReferencesFile.map((edge) => [edge.sectionId, edge.fileId, edge.raw]), result);
+  await writeTable(outputDir, "IMPORTS", facts.imports.map((edge) => [...relationPrefix(edge.fromFileId, edge.toFileId), edge.module, edge.raw, edge.batchId ?? "", edge.active ?? true]), result);
+  await writeTable(outputDir, "CALLS", facts.calls.map((edge) => [...relationPrefix(edge.fromCodeId, edge.toCodeId), formatDouble(edge.confidence), edge.resolution, edge.raw, edge.batchId ?? "", edge.active ?? true]), result);
+  await writeTable(outputDir, "MENTIONS", facts.mentions.map((edge) => [...relationPrefix(edge.fromId, edge.entityId), formatDouble(edge.confidence)]), result);
+  await writeTable(outputDir, "DESCRIBES", facts.sectionDescribesRepos.map((edge) => relationPrefix(edge.sectionId, edge.repoId)), result);
+  await writeTable(outputDir, "DOCUMENTS", facts.sectionDocumentsCode.map((edge) => [...relationPrefix(edge.sectionId, edge.codeId), formatDouble(edge.confidence)]), result);
+  await writeTable(outputDir, "REFERENCES", facts.sectionReferencesFile.map((edge) => [...relationPrefix(edge.sectionId, edge.fileId), edge.raw]), result);
   await writeTable(outputDir, "HAS_EVIDENCE", [
-    ...facts.repoContracts.map((edge) => [edge.contractId, edge.evidenceId]),
-    ...facts.evidence.map((evidence) => [evidence.repoId, evidence.id])
+    ...facts.repoContracts.map((edge) => relationPrefix(edge.contractId, edge.evidenceId)),
+    ...facts.evidence.map((evidence) => relationPrefix(evidence.repoId, evidence.id))
   ], result);
 
-  const repoContractRows = facts.repoContracts.map((edge) => [edge.repoId, edge.contractId, edge.evidenceId, formatDouble(edge.confidence), edge.batchId ?? "", edge.active ?? true]);
+  const repoContractRows = facts.repoContracts.map((edge) => [...relationPrefix(edge.repoId, edge.contractId), edge.evidenceId, formatDouble(edge.confidence), edge.batchId ?? "", edge.active ?? true]);
   await writeTable(outputDir, "OWNS_PACKAGE", repoContractRows.filter((_row, index) => facts.repoContracts[index]?.role === "owner"), result);
   await writeTable(outputDir, "PRODUCES", repoContractRows.filter((_row, index) => facts.repoContracts[index]?.role === "producer"), result);
   await writeTable(outputDir, "CONSUMES", repoContractRows.filter((_row, index) => facts.repoContracts[index]?.role === "consumer"), result);
   await writeTable(outputDir, "SHARES_CONTRACT", repoContractRows.filter((_row, index) => facts.repoContracts[index]?.role === "shared"), result);
-  await writeTable(outputDir, "CONTRACT_MENTIONS", facts.contractEntities.map((edge) => [edge.contractId, edge.entityId, edge.evidenceId, formatDouble(edge.confidence), edge.batchId ?? "", edge.active ?? true]), result);
-  await writeTable(outputDir, "PARTICIPATES_IN", facts.operationRepos.map((edge) => [edge.repoId, edge.operationId, edge.role, edge.evidenceId, formatDouble(edge.confidence), edge.batchId ?? "", edge.active ?? true]), result);
-  await writeTable(outputDir, "WORKFLOW_STEP", facts.workflowOperations.map((edge) => [edge.workflowId, edge.operationId, edge.step, edge.evidenceId, formatDouble(edge.confidence), edge.batchId ?? "", edge.active ?? true]), result);
-  await writeTable(outputDir, "USES_PACKAGE", facts.packageUsages.map((edge) => [edge.repoId, edge.packageContractId, edge.packageName, edge.evidenceId, edge.raw, formatDouble(edge.confidence), edge.batchId ?? "", edge.active ?? true]), result);
+  await writeTable(outputDir, "CONTRACT_MENTIONS", facts.contractEntities.map((edge) => [...relationPrefix(edge.contractId, edge.entityId), edge.evidenceId, formatDouble(edge.confidence), edge.batchId ?? "", edge.active ?? true]), result);
+  await writeTable(outputDir, "PARTICIPATES_IN", facts.operationRepos.map((edge) => [...relationPrefix(edge.repoId, edge.operationId), edge.role, edge.evidenceId, formatDouble(edge.confidence), edge.batchId ?? "", edge.active ?? true]), result);
+  await writeTable(outputDir, "WORKFLOW_STEP", facts.workflowOperations.map((edge) => [...relationPrefix(edge.workflowId, edge.operationId), edge.step, edge.evidenceId, formatDouble(edge.confidence), edge.batchId ?? "", edge.active ?? true]), result);
+  await writeTable(outputDir, "USES_PACKAGE", facts.packageUsages.map((edge) => [...relationPrefix(edge.repoId, edge.packageContractId), edge.packageName, edge.evidenceId, edge.raw, formatDouble(edge.confidence), edge.batchId ?? "", edge.active ?? true]), result);
   await writeTable(outputDir, "DEPENDS_ON", facts.repoDependencies.map((edge) => [
-    edge.fromRepoId,
-    edge.toRepoId,
+    ...relationPrefix(edge.fromRepoId, edge.toRepoId),
     edge.dependencyType,
     edge.sourceContractId,
     edge.targetContractId,
@@ -196,16 +212,14 @@ export async function stageGraphFactsAsCsv(facts: GraphFactsBatch, outputRoot: s
     edge.active ?? true
   ]), result);
   await writeTable(outputDir, "HAS_SPEC", facts.contractSpecEdges.map((edge) => [
-    edge.contractId,
-    edge.specId,
+    ...relationPrefix(edge.contractId, edge.specId),
     edge.evidenceId,
     formatDouble(edge.confidence),
     edge.batchId ?? "",
     edge.active ?? true
   ]), result);
-  await writeTable(outputDir, "SEMANTIC_REL", facts.semanticRelations.map((edge) => [
-    edge.fromSpecId,
-    edge.toSpecId,
+  await writeTable(outputDir, "SEMANTIC_REL", collapseSemanticRelations(facts.semanticRelations).map((edge) => [
+    ...relationPrefix(edge.fromSpecId, edge.toSpecId),
     edge.kind,
     edge.evidenceId,
     edge.reason,

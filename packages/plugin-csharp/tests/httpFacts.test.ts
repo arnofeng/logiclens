@@ -16,7 +16,7 @@ async function run(inputSources?: Array<{ path: string; source: string }>) {
       qualifiedName: symbol.qualifiedName ?? symbol.name, startLine: symbol.startLine, endLine: symbol.endLine,
       signature: symbol.signature ?? ""
     }));
-    return { repoId: "repo:csharp", path: filePath, language: "csharp", source, symbols, imports: [], calls: [] };
+    return { repoId: "repo:csharp", fileId: `file:repo:csharp:${filePath}`, path: filePath, language: "csharp", source, symbols, imports: [], calls: [] };
   }));
   const symbols = fileViews.flatMap((file) => file.symbols);
   const files = Object.assign(fileViews, {

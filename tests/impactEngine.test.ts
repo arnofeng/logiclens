@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { makeTestSchema } from "./helpers/schemaModel.js";
 import {
   analyzeImpact,
   findFieldReferences,
@@ -91,17 +92,7 @@ function makeSchemaSpec(opts: {
     fileId: opts.fileId ?? `file:${opts.repoId}:dto/${opts.name}.ts`,
     evidenceId: `ev:${opts.id}`,
     canonicalKey: opts.name.toLowerCase(),
-    specJson: serializeSpec({
-      kind: "schema",
-      name: opts.name,
-      language: opts.language ?? "typescript",
-      fields: (opts.fields ?? []).map((f) => ({
-        name: f.name,
-        type: f.type,
-        optional: f.optional ?? false,
-        sourceLine: f.sourceLine
-      }))
-    }),
+    specJson: serializeSpec(makeTestSchema({ name: opts.name, language: opts.language, repoId: opts.repoId, fileId: opts.fileId, fields: opts.fields })),
     confidence: opts.confidence ?? 0.75
   };
 }

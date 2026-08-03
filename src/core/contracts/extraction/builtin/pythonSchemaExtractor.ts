@@ -6,7 +6,6 @@ import type { SchemaFieldSpec, SchemaSpec } from "../../spec.js";
 import { normalizePrimitiveType } from "../../spec.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
 import {
-  classifySharedContract,
   contract,
   evidence,
   parsedCodeFiles,
@@ -18,6 +17,8 @@ import {
   walkSourceAst
 } from "./sourceAstUtils.js";
 import { entityId } from "../../../../shared/path.js";
+import { createSchemaSpec, schemaFieldFromNormalized, typeExpressionFromNormalized } from "../../../schema/model.js";
+import { resolutionScopeIdForFile } from "../../../schema/sourceScopes.js";
 
 /**
  * Python Schema Extractor extracts field-level schema information from:
@@ -47,9 +48,6 @@ export const pythonSchemaExtractor = compatExtractor({
       for (const symbol of file.symbols) {
         if (symbol.kind !== "class") continue;
 
-        const sharedKind = classifySharedContract(symbol.name, symbol.kind);
-        if (sharedKind !== "schema" && sharedKind !== "dto") continue;
-
         const ast = parseSourceAst(file, "python");
         if (!ast) continue;
 
@@ -64,16 +62,15 @@ export const pythonSchemaExtractor = compatExtractor({
         if (!hasDecorator && !schemaBase) continue;
 
         const fields = extractClassFields(classNode, file);
-        if (fields.length === 0) continue;
+        const baseTypes = extractBaseClasses(classNode);
 
-        const schemaSpec: SchemaSpec = {
-          kind: "schema",
-          name: symbol.name,
-          language: "python",
-          fields
-        };
+        const schemaSpec: SchemaSpec = createSchemaSpec({
+          declaration: { languageId: "python", repoId: file.repoId, resolutionScopeId: resolutionScopeIdForFile(file), canonicalName: symbol.qualifiedName || symbol.name },
+          displayName: symbol.name,
+          shape: { kind: "object", fields, baseTypes }
+        });
 
-        const schemaContract = contract(sharedKind, symbol.name, `${sharedKind.toUpperCase()} ${symbol.name}`);
+        const schemaContract = contract("schema", symbol.qualifiedName || symbol.name, `SCHEMA ${symbol.name}`);
         const evidenceNode = evidence({
           repoId: file.repoId,
           fileId: file.fileId,
@@ -114,22 +111,6 @@ export const pythonSchemaExtractor = compatExtractor({
           });
         }
 
-        // For each user-defined base class, emit a USES_SCHEMA placeholder so
-        // impact analysis can traverse from the derived class to its parent.
-        // The schema-marker bases (TypedDict/NamedTuple) and `object` are
-        // excluded they are mechanism markers, not data-bearing schemas.
-        // The placeholder is resolved by schemaResolver once the full batch is
-        // available (mirrors the Java `extends` / TS utility-type handling).
-        for (const base of extractBaseClasses(classNode)) {
-          collector.addSemanticRelation({
-            fromSpecId: `spec:${schemaContract.id}:pending`,
-            toSpecId: `schema-ref:${base}`,
-            kind: "USES_SCHEMA",
-            evidenceId: evidenceNode.id,
-            reason: `Python class inherits ${base}`,
-            confidence: confidenceFor("heuristic-generic-type-param")
-          });
-        }
       }
     }
 
@@ -189,7 +170,7 @@ function classHasSchemaDecorator(node: Parser.SyntaxNode): boolean {
  * (`total=False`, `metaclass=...`) and parametrised bases (`Generic[T]`) are
  * ignored.
  */
-function extractBaseClasses(node: Parser.SyntaxNode): string[] {
+function extractBaseClasses(node: Parser.SyntaxNode): ReturnType<typeof typeExpressionFromNormalized>[] {
   const innerClass = node.type === "decorated_definition"
     ? node.namedChildren.find((c) => c.type === "class_definition")
     : node;
@@ -197,18 +178,14 @@ function extractBaseClasses(node: Parser.SyntaxNode): string[] {
   const argList = innerClass.namedChildren.find((c) => c.type === "argument_list");
   if (!argList) return [];
 
-  const bases: string[] = [];
+  const bases: ReturnType<typeof typeExpressionFromNormalized>[] = [];
   for (const child of argList.namedChildren) {
-    let name: string | undefined;
-    if (child.type === "identifier") {
-      name = child.text;
-    } else if (child.type === "attribute") {
-      const parts = child.text.split(".");
-      name = parts[parts.length - 1];
-    }
-    if (!name) continue;
-    if (SCHEMA_BASES.has(name) || name === "object") continue;
-    bases.push(name);
+    if (child.type === "keyword_argument") continue;
+    const rawType = child.text.trim();
+    if (!rawType) continue;
+    const target = rawType.replace(/\[.*$/su, "").split(".").at(-1);
+    if (!target || SCHEMA_BASES.has(target) || target === "object" || target === "Generic") continue;
+    bases.push(typeExpressionFromNormalized(normalizePrimitiveType("python", rawType), "python"));
   }
   return bases;
 }
@@ -246,7 +223,7 @@ function extractClassFields(
     const assignment = stmt.namedChildren.find((c) => c.type === "assignment");
     if (!assignment) continue;
 
-    const field = parseFieldAssignment(assignment);
+    const field = parseFieldAssignment(assignment, _file);
     if (field) fields.push(field);
   }
 
@@ -254,7 +231,7 @@ function extractClassFields(
 }
 
 /** Parses an `assignment` node like `name: type` or `name: type = default`. */
-function parseFieldAssignment(node: Parser.SyntaxNode): SchemaFieldSpec | undefined {
+function parseFieldAssignment(node: Parser.SyntaxNode, file: ParsedFile): SchemaFieldSpec | undefined {
   // The identifier (field name) is the first named child
   const nameNode = node.namedChildren.find((c) => c.type === "identifier");
   if (!nameNode) return undefined;
@@ -274,13 +251,16 @@ function parseFieldAssignment(node: Parser.SyntaxNode): SchemaFieldSpec | undefi
 
   const normalized = normalizePrimitiveType("python", rawType);
 
-  return {
-    name,
-    type: normalized,
+  return schemaFieldFromNormalized({
+    languageId: "python",
+    repoId: file.repoId,
+    fileId: file.fileId,
+    sourceName: name,
+    normalizedType: normalized,
     optional: hasDefaultNone,
-    nullable: normalized.endsWith("?") ? true : undefined,
-    sourceLine: node.startPosition.row + 1
-  };
+    nullable: normalized.endsWith("?"),
+    line: node.startPosition.row + 1
+  });
 }
 
 /**
@@ -294,8 +274,9 @@ function pythonTypeText(node: Parser.SyntaxNode): string {
     const param = node.namedChildren.find((c) => c.type === "type_parameter");
     const base = name?.text ?? node.text;
     if (param) {
-      const innerType = param.namedChildren.find((c) => c.type !== "[" && c.type !== "]");
-      const inner = innerType ? pythonTypeText(innerType) : param.text.replace(/^\[|\]$/g, "");
+      const inner = param.namedChildren.length > 0
+        ? param.namedChildren.map(pythonTypeText).join(", ")
+        : param.text.replace(/^\[|\]$/g, "");
       return `${base}[${inner}]`;
     }
     return base;

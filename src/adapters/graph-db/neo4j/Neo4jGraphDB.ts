@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import { randomUUID } from "node:crypto";
 import neo4j, { type Driver, type Session, type Record as Neo4jRecord, type Integer } from "neo4j-driver";
 import type {
   CallEdge,
@@ -22,8 +24,16 @@ import type {
   WorkflowNode,
   WorkflowOperationEdge
 } from "../../../core/parsing/types.js";
-import { systemId } from "../../../core/graph-model/schema.js";
 import { createCypherCrud, type CypherCrud } from "../../../core/graph-model/cypherCrud.js";
+import {
+  PUBLIC_GRAPH_NODE_LABELS,
+  deletePublicGraphGeneration,
+  publicGraphStatsId,
+  publicNodeStorageId,
+  publicRelationshipScopeParams,
+  type PublicGraphGenerationScope
+} from "../../../core/graph-model/publicGraphGeneration.js";
+import { assertNoLivePublicGraphReadLeases } from "../../../core/graph-model/readSnapshot.js";
 import {
   GraphDatabaseOperationalError,
   GraphDatabaseClosedError,
@@ -33,15 +43,52 @@ import {
   type GraphWriteAtomicityMode,
   type GraphWriteBatchStatus,
   type GraphWriteBatchJournal,
+  type IncrementalIndexCommitRequest,
+  type PublicGraphStatsUpdate,
+  type PublicGraphStatsSnapshot,
   type ActiveAliasOverride,
   type ContractSummaryRow,
   type Stats,
   withTransaction,
   ALL_EVIDENCE_REL_TYPES,
-  REJECT_EVIDENCE_REL_TYPES
+  REJECT_EVIDENCE_REL_TYPES,
+  validateIncrementalIndexCommitRequest
 } from "../../../core/graph-model/db.js";
 
 type Neo4jCodedError = Error & { code?: unknown };
+
+type Neo4jTransaction = ReturnType<Session["beginTransaction"]>;
+
+type Neo4jTransactionContext = {
+  session: Session;
+  transaction: Neo4jTransaction;
+  depth: number;
+};
+
+type Neo4jConstraintRow = {
+  name?: unknown;
+  labelsOrTypes?: unknown;
+  properties?: unknown;
+  type?: unknown;
+};
+
+type IncrementalCommitStateRow = {
+  activeGeneration?: GraphValue;
+  activeRevision?: GraphValue;
+  pendingGeneration?: GraphValue;
+  pendingRevision?: GraphValue;
+  pendingParentGeneration?: GraphValue;
+  pendingParentRevision?: GraphValue;
+  pendingLeaseUntil?: GraphValue;
+};
+
+function optionalString(value: GraphValue | undefined): string {
+  return typeof value === "string" ? value : "";
+}
+
+function neo4jIdentifier(value: string): string {
+  return `\`${value.replaceAll("`", "``")}\``;
+}
 
 export const classifyNeo4jQueryError: GraphDatabaseErrorClassifier = (error) => {
   if (!(error instanceof Error)) return undefined;
@@ -110,25 +157,24 @@ export function recordToPlain(record: Neo4jRecord): Record<string, unknown> {
 }
 
 const CONSTRAINT_STATEMENTS = [
-  "CREATE CONSTRAINT IF NOT EXISTS FOR (n:System) REQUIRE n.id IS UNIQUE",
-  "CREATE CONSTRAINT IF NOT EXISTS FOR (n:Repo) REQUIRE n.id IS UNIQUE",
-  "CREATE CONSTRAINT IF NOT EXISTS FOR (n:File) REQUIRE n.id IS UNIQUE",
-  "CREATE CONSTRAINT IF NOT EXISTS FOR (n:Code) REQUIRE n.id IS UNIQUE",
-  "CREATE CONSTRAINT IF NOT EXISTS FOR (n:Section) REQUIRE n.id IS UNIQUE",
-  "CREATE CONSTRAINT IF NOT EXISTS FOR (n:Entity) REQUIRE n.id IS UNIQUE",
-  "CREATE CONSTRAINT IF NOT EXISTS FOR (n:Operation) REQUIRE n.id IS UNIQUE",
-  "CREATE CONSTRAINT IF NOT EXISTS FOR (n:Workflow) REQUIRE n.id IS UNIQUE",
-  "CREATE CONSTRAINT IF NOT EXISTS FOR (n:Contract) REQUIRE n.id IS UNIQUE",
-  "CREATE CONSTRAINT IF NOT EXISTS FOR (n:Evidence) REQUIRE n.id IS UNIQUE",
+  ...PUBLIC_GRAPH_NODE_LABELS.map((label) =>
+    `CREATE CONSTRAINT IF NOT EXISTS FOR (n:${label}) REQUIRE n.storageId IS UNIQUE`
+  ),
   "CREATE CONSTRAINT IF NOT EXISTS FOR (n:IndexState) REQUIRE n.id IS UNIQUE",
   "CREATE CONSTRAINT IF NOT EXISTS FOR (n:GraphWriteBatch) REQUIRE n.id IS UNIQUE",
+  "CREATE CONSTRAINT IF NOT EXISTS FOR (n:PublicGraphStats) REQUIRE n.id IS UNIQUE",
   "CREATE CONSTRAINT IF NOT EXISTS FOR (n:RelationFeedback) REQUIRE n.id IS UNIQUE",
   "CREATE CONSTRAINT IF NOT EXISTS FOR (n:AliasOverride) REQUIRE n.id IS UNIQUE",
-  "CREATE CONSTRAINT IF NOT EXISTS FOR (n:ContractSpec) REQUIRE n.id IS UNIQUE"
+  ...["SchemaGeneration", "SchemaGenerationState", "SchemaGenerationReadLease", "SchemaSourceReplacement", "SchemaBehaviorReplacement", "SchemaContributionReplacement", "TypeDeclarationFact", "ResolutionContextFact", "ResolutionScopeDependencyFact", "SchemaRootFact", "SchemaDependencyFact", "SchemaProvenanceFact", "SchemaDiagnosticFact", "SchemaBehaviorFingerprintFact", "SchemaContribution"]
+    .map((label) => `CREATE CONSTRAINT IF NOT EXISTS FOR (n:${label}) REQUIRE n.id IS UNIQUE`)
 ];
 
 const INDEX_STATEMENTS = [
+  ...PUBLIC_GRAPH_NODE_LABELS.map((label) =>
+    `CREATE INDEX IF NOT EXISTS FOR (n:${label}) ON (n.workspaceId, n.generation, n.id)`
+  ),
   "CREATE INDEX IF NOT EXISTS FOR (f:File) ON (f.repoId)",
+  "CREATE INDEX IF NOT EXISTS FOR (f:File) ON (f.workspaceId, f.generation, f.repoId, f.language, f.directory)",
   "CREATE INDEX IF NOT EXISTS FOR (c:Code) ON (c.repoId)",
   "CREATE INDEX IF NOT EXISTS FOR (c:Code) ON (c.fileId)",
   "CREATE INDEX IF NOT EXISTS FOR (s:Section) ON (s.repoId)",
@@ -137,6 +183,7 @@ const INDEX_STATEMENTS = [
   "CREATE INDEX IF NOT EXISTS FOR (e:Evidence) ON (e.fileId)",
   "CREATE INDEX IF NOT EXISTS FOR (i:IndexState) ON (i.repoId)",
   "CREATE INDEX IF NOT EXISTS FOR (g:GraphWriteBatch) ON (g.batchId)",
+  "CREATE INDEX IF NOT EXISTS FOR (s:PublicGraphStats) ON (s.workspaceId, s.generation)",
   "CREATE INDEX IF NOT EXISTS FOR (s:ContractSpec) ON (s.contractId)",
   "CREATE INDEX IF NOT EXISTS FOR (s:ContractSpec) ON (s.specKind)",
   "CREATE INDEX IF NOT EXISTS FOR (s:ContractSpec) ON (s.httpMethod)",
@@ -144,15 +191,26 @@ const INDEX_STATEMENTS = [
   "CREATE INDEX IF NOT EXISTS FOR (s:ContractSpec) ON (s.eventTopic)",
   "CREATE INDEX IF NOT EXISTS FOR (s:ContractSpec) ON (s.canonicalKey)",
   "CREATE INDEX IF NOT EXISTS FOR (s:ContractSpec) ON (s.fileId)",
-  "CREATE INDEX IF NOT EXISTS FOR (s:ContractSpec) ON (s.repoId)"
+  "CREATE INDEX IF NOT EXISTS FOR (s:ContractSpec) ON (s.repoId)",
+  ...["TypeDeclarationFact", "ResolutionContextFact", "ResolutionScopeDependencyFact", "SchemaRootFact", "SchemaDependencyFact", "SchemaProvenanceFact", "SchemaDiagnosticFact", "SchemaBehaviorFingerprintFact", "SchemaContribution", "SchemaContributionReplacement"]
+    .map((label) => `CREATE INDEX IF NOT EXISTS FOR (n:${label}) ON (n.generation)`),
+  ...["TypeDeclarationFact", "ResolutionContextFact", "ResolutionScopeDependencyFact", "SchemaRootFact", "SchemaDependencyFact", "SchemaProvenanceFact", "SchemaDiagnosticFact", "SchemaBehaviorFingerprintFact"]
+    .map((label) => `CREATE INDEX IF NOT EXISTS FOR (n:${label}) ON (n.generation, n.repoId, n.fileId)`),
+  "CREATE INDEX IF NOT EXISTS FOR (n:SchemaDependencyFact) ON (n.generation, n.declarationId)",
+  "CREATE INDEX IF NOT EXISTS FOR (n:SchemaRootFact) ON (n.generation, n.rootReferenceId)",
+  "CREATE INDEX IF NOT EXISTS FOR (n:SchemaContribution) ON (n.generation, n.rootReferenceId)",
+  "CREATE INDEX IF NOT EXISTS FOR (n:SchemaContribution) ON (n.generation, n.entityKind, n.entityId)",
+  "CREATE INDEX IF NOT EXISTS FOR (n:SchemaContributionReplacement) ON (n.generation, n.rootReferenceId)",
+  "CREATE INDEX IF NOT EXISTS FOR (n:SchemaBehaviorReplacement) ON (n.generation, n.repoId, n.languageId, n.resolutionScopeId)"
 ];
 
 export class Neo4jGraphDB implements GraphDB {
   private driver: Driver;
   private closed = false;
-  private activeSession: Session | null = null;
-  private activeTx: any = null;
-  private txDepth = 0;
+  private manualSession: Session | null = null;
+  private manualTransaction: Neo4jTransaction | null = null;
+  private manualTransactionDepth = 0;
+  private readonly transactionStorage = new AsyncLocalStorage<Neo4jTransactionContext>();
   private readonly crud: CypherCrud;
   private readonly databaseName?: string;
 
@@ -185,232 +243,253 @@ export class Neo4jGraphDB implements GraphDB {
     });
   }
 
-  async initSchema(systemName = "default-system"): Promise<void> {
+  async initSchema(_systemName = "default-system"): Promise<void> {
+    const constraints = await this.query<Neo4jConstraintRow>(
+      "SHOW CONSTRAINTS YIELD name, labelsOrTypes, properties, type RETURN name, labelsOrTypes, properties, type"
+    );
+    const publicLabels = new Set<string>(PUBLIC_GRAPH_NODE_LABELS);
+    for (const constraint of constraints) {
+      const labels = Array.isArray(constraint.labelsOrTypes) ? constraint.labelsOrTypes : [];
+      const properties = Array.isArray(constraint.properties) ? constraint.properties : [];
+      if (typeof constraint.name !== "string" || labels.length !== 1 || properties.length !== 1) continue;
+      if (!publicLabels.has(String(labels[0])) || properties[0] !== "id") continue;
+      if (typeof constraint.type === "string" && !constraint.type.includes("UNIQUE")) continue;
+      await this.query(`DROP CONSTRAINT ${neo4jIdentifier(constraint.name)} IF EXISTS`);
+    }
     for (const statement of CONSTRAINT_STATEMENTS) {
       await this.query(statement);
     }
     for (const statement of INDEX_STATEMENTS) {
       await this.query(statement);
     }
-    await this.query("MERGE (s:System {id: $id}) ON CREATE SET s.name = $name, s.summary = '' ON MATCH SET s.name = $name;", { id: systemId, name: systemName });
   }
 
-  async upsertRepo(repo: RepoNode): Promise<void> {
-    await this.crud.upsertRepo(repo);
+  async upsertSystem(systemName: string, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.upsertSystem(systemName, scope);
   }
 
-  async updateRepoSummary(repoIdValue: string, summary: string): Promise<void> {
-    await this.crud.updateRepoSummary(repoIdValue, summary);
+  async upsertRepo(repo: RepoNode, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.upsertRepo(repo, scope);
   }
 
-  async updateSystemSummary(summary: string): Promise<void> {
-    await this.crud.updateSystemSummary(summary);
+  async updateRepoSummary(repoIdValue: string, summary: string, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.updateRepoSummary(repoIdValue, summary, scope);
   }
 
-  async upsertFile(file: FileNode): Promise<void> {
-    await this.crud.upsertFile(file);
+  async updateSystemSummary(summary: string, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.updateSystemSummary(summary, scope);
   }
 
-  async upsertFilesBatch(files: FileNode[]): Promise<void> {
-    await this.crud.upsertFilesBatch(files);
+  async upsertFile(file: FileNode, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.upsertFile(file, scope);
   }
 
-  async upsertCode(code: CodeSymbol): Promise<void> {
-    await this.crud.upsertCode(code);
+  async upsertFilesBatch(files: FileNode[], scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.upsertFilesBatch(files, scope);
   }
 
-  async upsertCodeBatch(codes: CodeSymbol[]): Promise<void> {
-    await this.crud.upsertCodeBatch(codes);
+  async upsertCode(code: CodeSymbol, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.upsertCode(code, scope);
   }
 
-  async upsertSection(section: DocSection): Promise<void> {
-    await this.crud.upsertSection(section);
+  async upsertCodeBatch(codes: CodeSymbol[], scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.upsertCodeBatch(codes, scope);
   }
 
-  async upsertEntity(entity: EntityNode): Promise<void> {
-    await this.crud.upsertEntity(entity);
+  async upsertSection(section: DocSection, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.upsertSection(section, scope);
   }
 
-  async upsertOperation(operation: OperationNode): Promise<void> {
-    await this.crud.upsertOperation(operation);
+  async upsertEntity(entity: EntityNode, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.upsertEntity(entity, scope);
   }
 
-  async upsertWorkflow(workflow: WorkflowNode): Promise<void> {
-    await this.crud.upsertWorkflow(workflow);
+  async upsertOperation(operation: OperationNode, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.upsertOperation(operation, scope);
   }
 
-  async upsertContract(contract: ContractNode): Promise<void> {
-    await this.crud.upsertContract(contract);
+  async upsertWorkflow(workflow: WorkflowNode, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.upsertWorkflow(workflow, scope);
   }
 
-  async upsertEvidence(evidence: EvidenceNode): Promise<void> {
-    await this.crud.upsertEvidence(evidence);
+  async upsertContract(contract: ContractNode, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.upsertContract(contract, scope);
   }
 
-  async addRepoContract(edge: RepoContractEdge): Promise<void> {
-    await this.crud.addRepoContract(edge);
+  async upsertEvidence(evidence: EvidenceNode, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.upsertEvidence(evidence, scope);
   }
 
-  async addRepoDependency(edge: RepoDependencyEdge): Promise<void> {
-    await this.crud.addRepoDependency(edge);
+  async addRepoContract(edge: RepoContractEdge, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.addRepoContract(edge, scope);
   }
 
-  async addRepoDependenciesBatch(edges: RepoDependencyEdge[]): Promise<void> {
-    await this.crud.addRepoDependenciesBatch(edges);
+  async addRepoDependency(edge: RepoDependencyEdge, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.addRepoDependency(edge, scope);
   }
 
-  async addPackageUsage(edge: PackageUsageEdge): Promise<void> {
-    await this.query(
-      "MATCH (r:Repo {id: $repoId}), (c:Contract {id: $packageContractId}) MERGE (r)-[u:USES_PACKAGE {packageName: $packageName, evidenceId: $evidenceId}]->(c) SET u.raw = $raw, u.confidence = $confidence, u.batchId = $batchId, u.active = $active;",
-      { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, GraphValue>
-    );
+  async addRepoDependenciesBatch(edges: RepoDependencyEdge[], scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.addRepoDependenciesBatch(edges, scope);
   }
 
-  async addContractEntity(edge: ContractEntityEdge): Promise<void> {
-    await this.crud.addContractEntity(edge);
+  async addPackageUsage(edge: PackageUsageEdge, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.addPackageUsage(edge, scope);
   }
 
-  async addOperationRepo(edge: OperationRepoEdge): Promise<void> {
-    await this.crud.addOperationRepo(edge);
+  async addContractEntity(edge: ContractEntityEdge, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.addContractEntity(edge, scope);
   }
 
-  async addWorkflowOperation(edge: WorkflowOperationEdge): Promise<void> {
-    await this.crud.addWorkflowOperation(edge);
+  async addOperationRepo(edge: OperationRepoEdge, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.addOperationRepo(edge, scope);
   }
 
-  async upsertContractSpec(spec: ContractSpecNode): Promise<void> {
-    await this.crud.upsertContractSpec(spec);
+  async addWorkflowOperation(edge: WorkflowOperationEdge, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.addWorkflowOperation(edge, scope);
   }
 
-  async addHasSpec(edge: ContractSpecEdge): Promise<void> {
-    await this.crud.addHasSpec(edge);
+  async upsertContractSpec(spec: ContractSpecNode, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.upsertContractSpec(spec, scope);
   }
 
-  async addSemanticRelation(edge: SemanticRelationEdge): Promise<void> {
-    await this.crud.addSemanticRelation(edge);
+  async addHasSpec(edge: ContractSpecEdge, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.addHasSpec(edge, scope);
   }
 
-  async addSemanticRelationsBatch(edges: SemanticRelationEdge[]): Promise<void> {
-    await this.crud.addSemanticRelationsBatch(edges);
+  async addSemanticRelation(edge: SemanticRelationEdge, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.addSemanticRelation(edge, scope);
   }
 
-  async addContractEvidence(contractIdValue: string, evidenceIdValue: string): Promise<void> {
-    await this.crud.addContractEvidence(contractIdValue, evidenceIdValue);
+  async addSemanticRelationsBatch(edges: SemanticRelationEdge[], scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.addSemanticRelationsBatch(edges, scope);
   }
 
-  async addRepoEvidence(repoIdValue: string, evidenceIdValue: string): Promise<void> {
-    await this.crud.addRepoEvidence(repoIdValue, evidenceIdValue);
+  async clearSemanticRelationsForSpecs(specIds: string[], scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.clearSemanticRelationsForSpecs(specIds, scope);
   }
 
-  async addContains(fromId: string, toId: string): Promise<void> {
-    await this.crud.addContains(fromId, toId);
+  async addContractEvidence(contractIdValue: string, evidenceIdValue: string, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.addContractEvidence(contractIdValue, evidenceIdValue, scope);
   }
 
-  async addImport(edge: ImportEdge): Promise<void> {
-    await this.crud.addImport(edge);
+  async addRepoEvidence(repoIdValue: string, evidenceIdValue: string, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.addRepoEvidence(repoIdValue, evidenceIdValue, scope);
   }
 
-  async addImportsBatch(edges: ImportEdge[]): Promise<void> {
-    await this.crud.addImportsBatch(edges);
+  async addContains(fromId: string, toId: string, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.addContains(fromId, toId, scope);
   }
 
-  async addCall(edge: CallEdge): Promise<void> {
-    await this.crud.addCall(edge);
+  async addImport(edge: ImportEdge, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.addImport(edge, scope);
   }
 
-  async addCallsBatch(edges: CallEdge[]): Promise<void> {
-    await this.crud.addCallsBatch(edges);
+  async addImportsBatch(edges: ImportEdge[], scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.addImportsBatch(edges, scope);
   }
 
-  async addMention(codeIdValue: string, entityIdValue: string, confidence: number): Promise<void> {
-    await this.crud.addMention(codeIdValue, entityIdValue, confidence);
+  async addCall(edge: CallEdge, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.addCall(edge, scope);
   }
 
-  async addSectionMention(sectionIdValue: string, entityIdValue: string, confidence: number): Promise<void> {
-    await this.crud.addSectionMention(sectionIdValue, entityIdValue, confidence);
+  async addCallsBatch(edges: CallEdge[], scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.addCallsBatch(edges, scope);
   }
 
-  async addSectionDescribesRepo(sectionIdValue: string, repoIdValue: string): Promise<void> {
-    await this.crud.addSectionDescribesRepo(sectionIdValue, repoIdValue);
+  async addMention(codeIdValue: string, entityIdValue: string, confidence: number, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.addMention(codeIdValue, entityIdValue, confidence, scope);
   }
 
-  async addSectionDocumentsCode(sectionIdValue: string, codeIdValue: string, confidence: number): Promise<void> {
-    await this.crud.addSectionDocumentsCode(sectionIdValue, codeIdValue, confidence);
+  async addSectionMention(sectionIdValue: string, entityIdValue: string, confidence: number, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.addSectionMention(sectionIdValue, entityIdValue, confidence, scope);
   }
 
-  async addSectionReferencesFile(sectionIdValue: string, fileIdValue: string, raw: string): Promise<void> {
-    await this.crud.addSectionReferencesFile(sectionIdValue, fileIdValue, raw);
+  async addSectionDescribesRepo(sectionIdValue: string, repoIdValue: string, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.addSectionDescribesRepo(sectionIdValue, repoIdValue, scope);
   }
 
-  async clearRepoDependencies(repoIds?: string[]): Promise<void> {
-    await this.crud.clearRepoDependencies(repoIds);
+  async addSectionDocumentsCode(sectionIdValue: string, codeIdValue: string, confidence: number, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.addSectionDocumentsCode(sectionIdValue, codeIdValue, confidence, scope);
   }
 
-  async clearRepoIndexedArtifacts(repoId: string): Promise<void> {
+  async addSectionReferencesFile(sectionIdValue: string, fileIdValue: string, raw: string, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.addSectionReferencesFile(sectionIdValue, fileIdValue, raw, scope);
+  }
+
+  async clearRepoDependencies(repoIds: string[] | undefined, scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.clearRepoDependencies(repoIds, scope);
+  }
+
+  async clearRepoDependenciesForContracts(contractIds: string[], scope: PublicGraphGenerationScope): Promise<void> {
+    await this.crud.clearRepoDependenciesForContracts(contractIds, scope);
+  }
+
+  async clearRepoIndexedArtifacts(repoId: string, scope: PublicGraphGenerationScope): Promise<void> {
     // Uses a single transaction to ensure atomicity — partial cleanup would leave
     // orphaned relationships. Other write methods use independent queries because
     // they are idempotent MERGEs that can safely be retried.
-    const statements = [
-      "MATCH (:Repo {id: $repoId})-[r:OWNS_PACKAGE]->(:Contract) DELETE r;",
-      "MATCH (:Repo {id: $repoId})-[r:PRODUCES]->(:Contract) DELETE r;",
-      "MATCH (:Repo {id: $repoId})-[r:CONSUMES]->(:Contract) DELETE r;",
-      "MATCH (:Repo {id: $repoId})-[r:SHARES_CONTRACT]->(:Contract) DELETE r;",
-      "MATCH (:Repo {id: $repoId})-[r:PARTICIPATES_IN]->(:Operation) DELETE r;",
-      "MATCH (:Repo {id: $repoId})-[r:USES_PACKAGE]->(:Contract) DELETE r;",
-      "MATCH (:Repo {id: $repoId})-[r:DEPENDS_ON]->(:Repo) DELETE r;",
-      "MATCH (:Repo)-[r:DEPENDS_ON]->(:Repo {id: $repoId}) DELETE r;",
-      "MATCH (:Repo {id: $repoId})-[r:HAS_EVIDENCE]->(:Evidence) DELETE r;",
-      "MATCH (:Contract)-[r:HAS_EVIDENCE]->(e:Evidence) WHERE e.repoId = $repoId DELETE r;",
-      "MATCH (:Contract)-[r:CONTRACT_MENTIONS]->(:Entity), (e:Evidence) WHERE r.evidenceId = e.id AND e.repoId = $repoId DELETE r;",
-      "MATCH (:Workflow)-[r:WORKFLOW_STEP]->(:Operation), (e:Evidence) WHERE r.evidenceId = e.id AND e.repoId = $repoId DELETE r;",
-      "MATCH (f:File)-[r:IMPORTS]->(:File) WHERE f.repoId = $repoId DELETE r;",
-      "MATCH (:File)-[r:IMPORTS]->(f:File) WHERE f.repoId = $repoId DELETE r;",
-      "MATCH (c:Code)-[r:CALLS]->(:Code) WHERE c.repoId = $repoId DELETE r;",
-      "MATCH (:Code)-[r:CALLS]->(c:Code) WHERE c.repoId = $repoId DELETE r;",
-      "MATCH (c:Code)-[r:MENTIONS]->(:Entity) WHERE c.repoId = $repoId DELETE r;",
-      "MATCH (s:Section)-[r:MENTIONS]->(:Entity) WHERE s.repoId = $repoId DELETE r;",
-      "MATCH (s:Section)-[r:DESCRIBES]->(:Repo) WHERE s.repoId = $repoId DELETE r;",
-      "MATCH (s:Section)-[r:DOCUMENTS]->(:Code) WHERE s.repoId = $repoId DELETE r;",
-      "MATCH (:Section)-[r:DOCUMENTS]->(c:Code) WHERE c.repoId = $repoId DELETE r;",
-      "MATCH (s:Section)-[r:REFERENCES]->(:File) WHERE s.repoId = $repoId DELETE r;",
-      "MATCH (:Section)-[r:REFERENCES]->(f:File) WHERE f.repoId = $repoId DELETE r;",
-      "MATCH (:System)-[r:CONTAINS]->(:Repo {id: $repoId}) DELETE r;",
-      "MATCH (:Repo {id: $repoId})-[r:CONTAINS]->(:File) DELETE r;",
-      "MATCH (:File)-[r:CONTAINS]->(c:Code) WHERE c.repoId = $repoId DELETE r;",
-      "MATCH (:File)-[r:CONTAINS]->(s:Section) WHERE s.repoId = $repoId DELETE r;",
-      "MATCH (e:Evidence) WHERE e.repoId = $repoId DELETE e;",
-      "MATCH (c:Code) WHERE c.repoId = $repoId DELETE c;",
-      "MATCH (s:Section) WHERE s.repoId = $repoId DELETE s;",
-      "MATCH (f:File) WHERE f.repoId = $repoId DELETE f;"
-    ];
-    const session = this.getSession();
-    try {
-      await session.executeWrite(async (tx) => {
-        for (const statement of statements) {
-          await tx.run(statement, { repoId });
-        }
-      });
-    } finally {
-      await session.close();
-    }
+    const params: Record<string, GraphValue> = { ...publicRelationshipScopeParams(scope), repoId };
+    await withTransaction(this, async () => {
+      const evidenceRows = await this.query<{ id: string }>(
+        "MATCH (e:Evidence) WHERE e.workspaceId = $workspaceId AND e.generation = $generation AND e.repoId = $repoId RETURN e.id AS id;",
+        params
+      );
+      const evidenceIds = evidenceRows.map((row) => row.id);
+      const cleanupParams: Record<string, GraphValue> = evidenceIds.length > 0
+        ? { ...params, evidenceIds }
+        : params;
+      const evidenceCondition = evidenceIds.length > 0 ? " OR r.evidenceId IN $evidenceIds" : "";
+      await this.query(
+        "MATCH (a)-[r]->(b) WHERE r.workspaceId = $workspaceId AND r.generation = $generation " +
+        "AND a.workspaceId = $workspaceId AND a.generation = $generation " +
+        "AND b.workspaceId = $workspaceId AND b.generation = $generation " +
+        `AND (a.id = $repoId OR b.id = $repoId OR a.repoId = $repoId OR b.repoId = $repoId${evidenceCondition}) DELETE r;`,
+        cleanupParams
+      );
+      for (const label of ["Evidence", "Code", "Section", "File", "ContractSpec"]) {
+        await this.query(
+          `MATCH (n:${label}) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.repoId = $repoId DELETE n;`,
+          params
+        );
+      }
+    });
+  }
+
+  async deletePublicGraphGeneration(scope: PublicGraphGenerationScope): Promise<void> {
+    await this.transaction(async () => {
+      const states = await this.query<{ activeGeneration?: string; pendingGeneration?: string }>(
+        "MATCH (s:SchemaGenerationState {id: $id}) SET s.protocolNonce=$nonce RETURN s.activeGeneration AS activeGeneration, s.pendingGeneration AS pendingGeneration",
+        { id: `schema-generation-state:${scope.workspaceId}`, nonce: `public-cleanup:${scope.generation}` }
+      );
+      if (states[0]?.activeGeneration === scope.generation) {
+        throw new Error(`Refusing to delete active public graph generation ${scope.generation}.`);
+      }
+      if (states[0]?.pendingGeneration === scope.generation) {
+        throw new Error(`Refusing to delete reserved pending public graph generation ${scope.generation}.`);
+      }
+      await assertNoLivePublicGraphReadLeases(this, scope);
+      await deletePublicGraphGeneration(this, scope);
+    });
   }
 
   async beginGraphWriteBatch(journal: Omit<GraphWriteBatchJournal, "status" | "updatedAt"> & { updatedAt?: string }): Promise<void> {
     const updatedAt = journal.updatedAt ?? journal.startedAt;
     await this.query(
-      "MERGE (b:GraphWriteBatch {id: $id}) ON CREATE SET b.batchId=$batchId, b.repoIds=$repoIds, b.repoNames=$repoNames, b.writerMode=$writerMode, b.atomicityMode=$atomicityMode, b.workspaceId=$workspaceId, b.status=$status, b.startedAt=$startedAt, b.updatedAt=$updatedAt, b.completedStage=$completedStage, b.error=$error ON MATCH SET b.batchId=$batchId, b.repoIds=$repoIds, b.repoNames=$repoNames, b.writerMode=$writerMode, b.atomicityMode=$atomicityMode, b.workspaceId=$workspaceId, b.status=$status, b.startedAt=$startedAt, b.updatedAt=$updatedAt, b.completedStage=$completedStage, b.error=$error;",
+      "MERGE (b:GraphWriteBatch {id: $id}) ON CREATE SET b.batchId=$batchId, b.generation=$generation, b.parentGeneration=$parentGeneration, b.repoIds=$repoIds, b.repoNames=$repoNames, b.writerMode=$writerMode, b.atomicityMode=$atomicityMode, b.workspaceId=$workspaceId, b.status=$status, b.startedAt=$startedAt, b.updatedAt=$updatedAt, b.completedStage=$completedStage, b.error=$error ON MATCH SET b.batchId=$batchId, b.generation=$generation, b.parentGeneration=$parentGeneration, b.repoIds=$repoIds, b.repoNames=$repoNames, b.writerMode=$writerMode, b.atomicityMode=$atomicityMode, b.workspaceId=$workspaceId, b.status=$status, b.startedAt=$startedAt, b.updatedAt=$updatedAt, b.completedStage=$completedStage, b.error=$error;",
       {
         id: `graph-write:${journal.batchId}`,
         batchId: journal.batchId,
+        generation: journal.generation,
+        parentGeneration: journal.parentGeneration ?? "",
         repoIds: JSON.stringify(journal.repoIds),
         repoNames: JSON.stringify(journal.repoNames),
         writerMode: journal.writerMode,
         atomicityMode: journal.atomicityMode,
-        workspaceId: journal.workspaceId ?? "",
+        workspaceId: journal.workspaceId,
         status: "started",
         startedAt: journal.startedAt,
         updatedAt,
-        completedStage: journal.completedStage ?? "begin",
+        completedStage: journal.completedStage ?? "pending-created",
         error: journal.error ?? ""
       }
     );
@@ -436,9 +515,11 @@ export class Neo4jGraphDB implements GraphDB {
     );
   }
 
-  async recoverIncompleteGraphWriteBatches(input: { repoIds?: string[]; updatedAt: string; cleanupBatch?: (journal: GraphWriteBatchJournal) => Promise<void> }): Promise<GraphWriteBatchJournal[]> {
+  async recoverIncompleteGraphWriteBatches(input: { repoIds?: string[]; workspaceId?: string; generation?: string; updatedAt: string; cleanupBatch?: (journal: GraphWriteBatchJournal) => Promise<void> }): Promise<GraphWriteBatchJournal[]> {
     const rows = await this.query<{
       batchId: string;
+      generation: string;
+      parentGeneration?: string | null;
       repoIds: string;
       repoNames: string;
       writerMode: string;
@@ -450,11 +531,13 @@ export class Neo4jGraphDB implements GraphDB {
       completedStage: string;
       error: string;
     }>(
-      "MATCH (b:GraphWriteBatch) WHERE b.status = 'started' OR b.status = 'awaiting-cleanup' RETURN b.batchId AS batchId, b.repoIds AS repoIds, b.repoNames AS repoNames, b.writerMode AS writerMode, b.atomicityMode AS atomicityMode, b.workspaceId AS workspaceId, b.status AS status, b.startedAt AS startedAt, b.updatedAt AS updatedAt, b.completedStage AS completedStage, b.error AS error;"
+      "MATCH (b:GraphWriteBatch) WHERE b.status = 'started' OR b.status = 'awaiting-cleanup' RETURN b.batchId AS batchId, b.generation AS generation, b.parentGeneration AS parentGeneration, b.repoIds AS repoIds, b.repoNames AS repoNames, b.writerMode AS writerMode, b.atomicityMode AS atomicityMode, b.workspaceId AS workspaceId, b.status AS status, b.startedAt AS startedAt, b.updatedAt AS updatedAt, b.completedStage AS completedStage, b.error AS error ORDER BY b.updatedAt DESC, b.startedAt DESC, b.batchId DESC;"
     );
     const repoFilter = input.repoIds && input.repoIds.length > 0 ? new Set(input.repoIds) : undefined;
     const journals = rows
       .map((row) => decodeJournalRow(row))
+      .filter((journal) => !input.workspaceId || journal.workspaceId === input.workspaceId)
+      .filter((journal) => !input.generation || journal.generation === input.generation)
       .filter((journal) => !repoFilter || journal.repoIds.some((repoId) => repoFilter.has(repoId)));
     for (const journal of journals) {
       const cleanupErrors: string[] = [];
@@ -463,7 +546,7 @@ export class Neo4jGraphDB implements GraphDB {
       } catch (error) {
         cleanupErrors.push(`graph: ${error instanceof Error ? error.message : String(error)}`);
       }
-      if (journal.workspaceId && !input.cleanupBatch) {
+      if (!input.cleanupBatch) {
         cleanupErrors.push("lexical: cleanup callback is required for a workspace-scoped journal");
       } else {
         try {
@@ -482,86 +565,114 @@ export class Neo4jGraphDB implements GraphDB {
         });
         throw new Error(`Failed to recover graph write batch ${journal.batchId}: ${cleanupErrors.join("; ")}`);
       }
-      await this.query(
-        "MATCH (b:GraphWriteBatch {id: $id}) SET b.status=$status, b.updatedAt=$updatedAt, b.completedStage=$completedStage, b.error=$error;",
-        {
-          id: `graph-write:${journal.batchId}`,
-          status: "recovered",
+      try {
+        await this.query(
+          "MATCH (b:GraphWriteBatch {id: $id}) SET b.status=$status, b.updatedAt=$updatedAt, b.completedStage=$completedStage, b.error=$error;",
+          {
+            id: `graph-write:${journal.batchId}`,
+            status: "recovered",
+            updatedAt: input.updatedAt,
+            completedStage: "recovered-cleanup",
+            error: journal.error ?? ""
+          }
+        );
+      } catch (error) {
+        const message = `graph journal finalization: ${error instanceof Error ? error.message : String(error)}`;
+        await this.failGraphWriteBatch({
+          batchId: journal.batchId,
           updatedAt: input.updatedAt,
-          completedStage: "recovered-cleanup",
-          error: journal.error ?? ""
-        }
-      );
+          error: message,
+          completedStage: "recovery-cleanup-failed",
+          awaitingCleanup: true
+        });
+        throw new Error(`Failed to recover graph write batch ${journal.batchId}: ${message}`);
+      }
     }
     return journals;
   }
 
   async cleanupGraphWriteBatch(batchId: string): Promise<void> {
-    const params = { batchId, active: false };
-    for (const table of ["File", "Code", "Section", "Evidence", "ContractSpec"]) {
-      await this.query(`MATCH (n:${table}) WHERE n.batchId = $batchId SET n.active = $active;`, params);
-    }
-    for (const rel of ["IMPORTS", "CALLS", "OWNS_PACKAGE", "PRODUCES", "CONSUMES", "SHARES_CONTRACT", "CONTRACT_MENTIONS", "PARTICIPATES_IN", "WORKFLOW_STEP", "USES_PACKAGE", "DEPENDS_ON", "HAS_SPEC", "SEMANTIC_REL"]) {
-      await this.query(`MATCH ()-[r:${rel}]->() WHERE r.batchId = $batchId SET r.active = $active;`, params);
-    }
+    await this.transaction(async () => {
+      const rows = await this.query<{ workspaceId: string; generation: string; status: GraphWriteBatchStatus }>(
+        "MATCH (b:GraphWriteBatch {id: $id}) RETURN b.workspaceId AS workspaceId, b.generation AS generation, b.status AS status;",
+        { id: `graph-write:${batchId}` }
+      );
+      const row = rows[0];
+      if (!row) throw new Error(`Missing graph write journal for batch ${batchId}.`);
+      if (row.status === "committed") {
+        throw new Error(`Refusing to clean committed graph write batch ${batchId}.`);
+      }
+      const activeRows = await this.query<{ activeGeneration?: string; pendingGeneration?: string }>(
+        "MATCH (s:SchemaGenerationState) WHERE s.workspaceId = $workspaceId SET s.protocolNonce=$nonce RETURN s.activeGeneration AS activeGeneration, s.pendingGeneration AS pendingGeneration",
+        { workspaceId: row.workspaceId, nonce: `graph-cleanup:${batchId}` }
+      );
+      if (activeRows.some((state) => state.activeGeneration === row.generation)) {
+        throw new Error(`Refusing to clean active public graph generation ${row.generation}.`);
+      }
+      if (activeRows.some((state) => state.pendingGeneration === row.generation)) {
+        throw new Error(`Refusing to clean reserved pending public graph generation ${row.generation}.`);
+      }
+      await this.deletePublicGraphGeneration({ workspaceId: row.workspaceId, generation: row.generation });
+    });
   }
 
-  async markRepoArtifactsStale(input: { repoId: string; activeFileIds: string[]; batchId: string; indexedAt: string }): Promise<number> {
+  async markRepoArtifactsStale(input: { repoId: string; activeFileIds: string[]; batchId: string; indexedAt: string }, scope: PublicGraphGenerationScope): Promise<number> {
+    const scopeParams = publicRelationshipScopeParams(scope);
     const staleRows = input.activeFileIds.length === 0
       ? await this.query<{ id: string }>(
-        "MATCH (f:File) WHERE f.repoId = $repoId AND (f.active IS NULL OR f.active = true) RETURN f.id AS id;",
-        { repoId: input.repoId }
+        "MATCH (f:File) WHERE f.workspaceId = $workspaceId AND f.generation = $generation AND f.repoId = $repoId AND (f.active IS NULL OR f.active = true) RETURN f.id AS id;",
+        { ...scopeParams, repoId: input.repoId }
       )
       : await this.query<{ id: string }>(
-        "MATCH (f:File) WHERE f.repoId = $repoId AND NOT (f.id IN $activeFileIds) AND (f.active IS NULL OR f.active = true) RETURN f.id AS id;",
-        { repoId: input.repoId, activeFileIds: input.activeFileIds }
+        "MATCH (f:File) WHERE f.workspaceId = $workspaceId AND f.generation = $generation AND f.repoId = $repoId AND NOT (f.id IN $activeFileIds) AND (f.active IS NULL OR f.active = true) RETURN f.id AS id;",
+        { ...scopeParams, repoId: input.repoId, activeFileIds: input.activeFileIds }
       );
     const staleFileIds = staleRows.map((row) => row.id);
 
     const evidenceRows = input.activeFileIds.length === 0
       ? await this.query<{ id: string }>(
-        "MATCH (e:Evidence) WHERE e.repoId = $repoId AND (e.active IS NULL OR e.active = true) RETURN e.id AS id;",
-        { repoId: input.repoId }
+        "MATCH (e:Evidence) WHERE e.workspaceId = $workspaceId AND e.generation = $generation AND e.repoId = $repoId AND (e.active IS NULL OR e.active = true) RETURN e.id AS id;",
+        { ...scopeParams, repoId: input.repoId }
       )
       : await this.query<{ id: string }>(
-        "MATCH (e:Evidence) WHERE e.repoId = $repoId AND NOT (e.fileId IN $activeFileIds) AND (e.active IS NULL OR e.active = true) RETURN e.id AS id;",
-        { repoId: input.repoId, activeFileIds: input.activeFileIds }
+        "MATCH (e:Evidence) WHERE e.workspaceId = $workspaceId AND e.generation = $generation AND e.repoId = $repoId AND NOT (e.fileId IN $activeFileIds) AND (e.active IS NULL OR e.active = true) RETURN e.id AS id;",
+        { ...scopeParams, repoId: input.repoId, activeFileIds: input.activeFileIds }
       );
     const staleEvidenceIds = evidenceRows.map((row) => row.id);
 
     if (staleFileIds.length === 0 && staleEvidenceIds.length === 0) return 0;
 
     await withTransaction(this, async () => {
-      const batchParams = { staleFileIds, batchId: input.batchId, staleIndexedAt: input.indexedAt, active: false };
+      const batchParams = { ...scopeParams, staleFileIds, batchId: input.batchId, staleIndexedAt: input.indexedAt, active: false };
 
       if (staleFileIds.length > 0) {
         // Batch-update File, Code, Section, Evidence nodes
-        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (f:File) WHERE f.id = staleFileId SET f.active = $active, f.batchId = $batchId, f.indexedAt = $staleIndexedAt;", batchParams);
-        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (c:Code) WHERE c.fileId = staleFileId SET c.active = $active, c.batchId = $batchId, c.indexedAt = $staleIndexedAt;", batchParams);
-        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (s:Section) WHERE s.fileId = staleFileId SET s.active = $active, s.batchId = $batchId, s.indexedAt = $staleIndexedAt;", batchParams);
-        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (e:Evidence) WHERE e.fileId = staleFileId SET e.active = $active, e.batchId = $batchId, e.indexedAt = $staleIndexedAt;", batchParams);
+        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (f:File) WHERE f.workspaceId = $workspaceId AND f.generation = $generation AND f.id = staleFileId SET f.active = $active, f.batchId = $batchId, f.indexedAt = $staleIndexedAt;", batchParams);
+        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (c:Code) WHERE c.workspaceId = $workspaceId AND c.generation = $generation AND c.fileId = staleFileId SET c.active = $active, c.batchId = $batchId, c.indexedAt = $staleIndexedAt;", batchParams);
+        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (s:Section) WHERE s.workspaceId = $workspaceId AND s.generation = $generation AND s.fileId = staleFileId SET s.active = $active, s.batchId = $batchId, s.indexedAt = $staleIndexedAt;", batchParams);
+        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (e:Evidence) WHERE e.workspaceId = $workspaceId AND e.generation = $generation AND e.fileId = staleFileId SET e.active = $active, e.batchId = $batchId, e.indexedAt = $staleIndexedAt;", batchParams);
 
         // Batch-update relationships tied to stale file IDs
-        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (a:File)-[r:IMPORTS]->(b:File) WHERE a.id = staleFileId OR b.id = staleFileId SET r.active = $active, r.batchId = $batchId;", batchParams);
-        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (a:Code)-[r:CALLS]->(b:Code) WHERE a.fileId = staleFileId OR b.fileId = staleFileId SET r.active = $active, r.batchId = $batchId;", batchParams);
+        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (a:File)-[r:IMPORTS]->(b:File) WHERE r.workspaceId = $workspaceId AND r.generation = $generation AND (a.id = staleFileId OR b.id = staleFileId) SET r.active = $active, r.batchId = $batchId;", batchParams);
+        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (a:Code)-[r:CALLS]->(b:Code) WHERE r.workspaceId = $workspaceId AND r.generation = $generation AND (a.fileId = staleFileId OR b.fileId = staleFileId) SET r.active = $active, r.batchId = $batchId;", batchParams);
         const relTypes = ALL_EVIDENCE_REL_TYPES.join("|");
-        await this.query(`UNWIND $staleFileIds AS staleFileId MATCH ()-[r:${relTypes}]->(), (e:Evidence) WHERE r.evidenceId = e.id AND e.fileId = staleFileId SET r.active = $active, r.batchId = $batchId;`, batchParams);
-        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (cs:ContractSpec) WHERE cs.fileId = staleFileId SET cs.active = $active, cs.batchId = $batchId;", batchParams);
-        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (cs:ContractSpec)-[r:SEMANTIC_REL]->() WHERE cs.fileId = staleFileId SET r.active = $active, r.batchId = $batchId;", batchParams);
-        await this.query("UNWIND $staleFileIds AS staleFileId MATCH ()-[r:SEMANTIC_REL]->(cs:ContractSpec) WHERE cs.fileId = staleFileId SET r.active = $active, r.batchId = $batchId;", batchParams);
+        await this.query(`UNWIND $staleFileIds AS staleFileId MATCH ()-[r:${relTypes}]->(), (e:Evidence) WHERE r.workspaceId = $workspaceId AND r.generation = $generation AND e.workspaceId = $workspaceId AND e.generation = $generation AND r.evidenceId = e.id AND e.fileId = staleFileId SET r.active = $active, r.batchId = $batchId;`, batchParams);
+        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (cs:ContractSpec) WHERE cs.workspaceId = $workspaceId AND cs.generation = $generation AND cs.fileId = staleFileId SET cs.active = $active, cs.batchId = $batchId;", batchParams);
+        await this.query("UNWIND $staleFileIds AS staleFileId MATCH (cs:ContractSpec)-[r:SEMANTIC_REL]->() WHERE r.workspaceId = $workspaceId AND r.generation = $generation AND cs.fileId = staleFileId SET r.active = $active, r.batchId = $batchId;", batchParams);
+        await this.query("UNWIND $staleFileIds AS staleFileId MATCH ()-[r:SEMANTIC_REL]->(cs:ContractSpec) WHERE r.workspaceId = $workspaceId AND r.generation = $generation AND cs.fileId = staleFileId SET r.active = $active, r.batchId = $batchId;", batchParams);
       }
 
       if (staleEvidenceIds.length > 0) {
-        const evidenceBatchParams = { staleEvidenceIds, batchId: input.batchId, active: false };
-        await this.query("UNWIND $staleEvidenceIds AS evidenceId MATCH (e:Evidence) WHERE e.id = evidenceId SET e.active = $active, e.batchId = $batchId;", evidenceBatchParams);
+        const evidenceBatchParams = { ...scopeParams, staleEvidenceIds, batchId: input.batchId, active: false };
+        await this.query("UNWIND $staleEvidenceIds AS evidenceId MATCH (e:Evidence) WHERE e.workspaceId = $workspaceId AND e.generation = $generation AND e.id = evidenceId SET e.active = $active, e.batchId = $batchId;", evidenceBatchParams);
         const relTypes = ALL_EVIDENCE_REL_TYPES.join("|");
-        await this.query(`UNWIND $staleEvidenceIds AS evidenceId MATCH ()-[r:${relTypes}]->() WHERE r.evidenceId = evidenceId SET r.active = $active, r.batchId = $batchId;`, evidenceBatchParams);
+        await this.query(`UNWIND $staleEvidenceIds AS evidenceId MATCH ()-[r:${relTypes}]->() WHERE r.workspaceId = $workspaceId AND r.generation = $generation AND r.evidenceId = evidenceId SET r.active = $active, r.batchId = $batchId;`, evidenceBatchParams);
       }
 
       if (input.activeFileIds.length === 0) {
         await this.query(
-          "MATCH (a:Repo)-[r:DEPENDS_ON]->(b:Repo) WHERE a.id = $repoId OR b.id = $repoId SET r.active = $active, r.batchId = $batchId;",
-          { repoId: input.repoId, batchId: input.batchId, active: false }
+          "MATCH (a:Repo)-[r:DEPENDS_ON]->(b:Repo) WHERE r.workspaceId = $workspaceId AND r.generation = $generation AND (a.id = $repoId OR b.id = $repoId) SET r.active = $active, r.batchId = $batchId;",
+          { ...scopeParams, repoId: input.repoId, batchId: input.batchId, active: false }
         );
       }
     });
@@ -582,31 +693,44 @@ export class Neo4jGraphDB implements GraphDB {
     );
   }
 
-  async knownFileHashes(repoIdValue: string): Promise<Map<string, string>> {
-    return this.crud.knownFileHashes(repoIdValue);
+  async knownFileHashes(repoIdValue: string, scope: PublicGraphGenerationScope): Promise<Map<string, string>> {
+    return this.crud.knownFileHashes(repoIdValue, scope);
   }
 
-  async repoCount(): Promise<number> {
-    return this.crud.repoCount();
+  async repoCount(scope: PublicGraphGenerationScope): Promise<number> {
+    return this.crud.repoCount(scope);
   }
 
-  async listRepos(): Promise<RepoNode[]> {
-    return this.crud.listRepos();
+  async listRepos(scope: PublicGraphGenerationScope): Promise<RepoNode[]> {
+    return this.crud.listRepos(scope);
   }
 
   async listActiveAliasOverrides(): Promise<ActiveAliasOverride[]> {
     return this.crud.listActiveAliasOverrides();
   }
 
-  async rejectEvidence(input: { evidenceId: string; reason: string }): Promise<void> {
+  async rejectEvidence(input: { evidenceId: string; reason: string }, scope: PublicGraphGenerationScope): Promise<void> {
     const createdAt = new Date().toISOString();
     // All three steps in a single transaction to ensure atomicity — partial
     // execution would leave evidence active while its relationships are gone.
     const session = this.getSession();
     try {
       await session.executeWrite(async (tx) => {
+        const stateResult = await tx.run(
+          "MATCH (s:SchemaGenerationState {id: $id}) SET s.protocolNonce=$nonce RETURN s.activeGeneration AS activeGeneration, s.pendingGeneration AS pendingGeneration",
+          toNeo4jParams({
+            id: `schema-generation-state:${scope.workspaceId}`,
+            nonce: `reject-evidence:${input.evidenceId}`
+          })
+        );
+        const state = stateResult.records[0];
+        const activeGeneration = state?.get("activeGeneration");
+        const pendingGeneration = state?.get("pendingGeneration");
+        if (activeGeneration !== scope.generation || (typeof pendingGeneration === "string" && pendingGeneration)) {
+          throw new Error("Evidence feedback cannot mutate a stale snapshot or run while a workspace generation is pending.");
+        }
         const baseParams = toNeo4jParams({
-          id: `feedback:${input.evidenceId}:reject`,
+          id: `feedback:${scope.workspaceId}:${scope.generation}:${input.evidenceId}:reject`,
           evidenceId: input.evidenceId,
           action: "reject",
           reason: input.reason,
@@ -616,10 +740,14 @@ export class Neo4jGraphDB implements GraphDB {
           "MERGE (f:RelationFeedback {id: $id}) ON CREATE SET f.evidenceId=$evidenceId, f.action=$action, f.reason=$reason, f.createdAt=$createdAt ON MATCH SET f.action=$action, f.reason=$reason, f.createdAt=$createdAt;",
           baseParams
         );
-        const evParams = toNeo4jParams({ evidenceId: input.evidenceId });
-        await tx.run("MATCH (e:Evidence) WHERE e.id = $evidenceId SET e.active = false;", evParams);
+        const evParams = toNeo4jParams({
+          ...publicRelationshipScopeParams(scope),
+          storageId: publicNodeStorageId(scope.generation, input.evidenceId),
+          evidenceId: input.evidenceId
+        });
+        await tx.run("MATCH (e:Evidence {storageId: $storageId}) SET e.active = false;", evParams);
         for (const rel of REJECT_EVIDENCE_REL_TYPES) {
-          await tx.run(`MATCH ()-[r:${rel}]->() WHERE r.evidenceId = $evidenceId SET r.active = false;`, evParams);
+          await tx.run(`MATCH ()-[r:${rel}]->() WHERE r.workspaceId = $workspaceId AND r.generation = $generation AND r.evidenceId = $evidenceId SET r.active = false;`, evParams);
         }
       });
     } finally {
@@ -635,10 +763,10 @@ export class Neo4jGraphDB implements GraphDB {
     );
   }
 
-  async listContracts(options: { limit?: number; kind?: ContractKind; repo?: string; direction?: "outgoing" | "incoming" } = {}): Promise<ContractSummaryRow[]> {
+  async listContracts(scope: PublicGraphGenerationScope, options: { limit?: number; kind?: ContractKind; repo?: string; direction?: "outgoing" | "incoming" } = {}): Promise<ContractSummaryRow[]> {
     const limit = options.limit ?? 100;
-    const conditions: string[] = [];
-    const params: Record<string, GraphValue> = { limit };
+    const conditions: string[] = ["c.workspaceId = $workspaceId", "c.generation = $generation"];
+    const params: Record<string, GraphValue> = { ...publicRelationshipScopeParams(scope), limit };
     if (options.kind) params.kind = options.kind;
 
     if (options.kind) {
@@ -649,19 +777,19 @@ export class Neo4jGraphDB implements GraphDB {
       params.repoId = options.repo;
       if (options.direction === "outgoing") {
         conditions.push(
-          "(EXISTS { MATCH (r:Repo)-[p:PRODUCES]->(c) WHERE r.id = $repoId AND (p.active IS NULL OR p.active = true) }" +
-          " OR EXISTS { MATCH (r:Repo)-[o:OWNS_PACKAGE]->(c) WHERE r.id = $repoId AND (o.active IS NULL OR o.active = true) })"
+          "(EXISTS { MATCH (r:Repo)-[p:PRODUCES]->(c) WHERE r.workspaceId = $workspaceId AND r.generation = $generation AND r.id = $repoId AND p.workspaceId = $workspaceId AND p.generation = $generation AND (p.active IS NULL OR p.active = true) }" +
+          " OR EXISTS { MATCH (r:Repo)-[o:OWNS_PACKAGE]->(c) WHERE r.workspaceId = $workspaceId AND r.generation = $generation AND r.id = $repoId AND o.workspaceId = $workspaceId AND o.generation = $generation AND (o.active IS NULL OR o.active = true) })"
         );
       } else if (options.direction === "incoming") {
         conditions.push(
-          "EXISTS { MATCH (r:Repo)-[u:CONSUMES]->(c) WHERE r.id = $repoId AND (u.active IS NULL OR u.active = true) }"
+          "EXISTS { MATCH (r:Repo)-[u:CONSUMES]->(c) WHERE r.workspaceId = $workspaceId AND r.generation = $generation AND r.id = $repoId AND u.workspaceId = $workspaceId AND u.generation = $generation AND (u.active IS NULL OR u.active = true) }"
         );
       } else {
         conditions.push(
-          "(EXISTS { MATCH (r:Repo)-[p:PRODUCES]->(c) WHERE r.id = $repoId AND (p.active IS NULL OR p.active = true) }" +
-          " OR EXISTS { MATCH (r:Repo)-[o:OWNS_PACKAGE]->(c) WHERE r.id = $repoId AND (o.active IS NULL OR o.active = true) }" +
-          " OR EXISTS { MATCH (r:Repo)-[u:CONSUMES]->(c) WHERE r.id = $repoId AND (u.active IS NULL OR u.active = true) }" +
-          " OR EXISTS { MATCH (r:Repo)-[s:SHARES_CONTRACT]->(c) WHERE r.id = $repoId AND (s.active IS NULL OR s.active = true) })"
+          "(EXISTS { MATCH (r:Repo)-[p:PRODUCES]->(c) WHERE r.workspaceId = $workspaceId AND r.generation = $generation AND r.id = $repoId AND p.workspaceId = $workspaceId AND p.generation = $generation AND (p.active IS NULL OR p.active = true) }" +
+          " OR EXISTS { MATCH (r:Repo)-[o:OWNS_PACKAGE]->(c) WHERE r.workspaceId = $workspaceId AND r.generation = $generation AND r.id = $repoId AND o.workspaceId = $workspaceId AND o.generation = $generation AND (o.active IS NULL OR o.active = true) }" +
+          " OR EXISTS { MATCH (r:Repo)-[u:CONSUMES]->(c) WHERE r.workspaceId = $workspaceId AND r.generation = $generation AND r.id = $repoId AND u.workspaceId = $workspaceId AND u.generation = $generation AND (u.active IS NULL OR u.active = true) }" +
+          " OR EXISTS { MATCH (r:Repo)-[s:SHARES_CONTRACT]->(c) WHERE r.workspaceId = $workspaceId AND r.generation = $generation AND r.id = $repoId AND s.workspaceId = $workspaceId AND s.generation = $generation AND (s.active IS NULL OR s.active = true) })"
         );
       }
     }
@@ -672,10 +800,10 @@ export class Neo4jGraphDB implements GraphDB {
       `MATCH (c:Contract)
        ${whereClause}
        RETURN c.kind AS kind, c.key AS key, c.name AS name,
-         COUNT { MATCH (:Repo)-[p:PRODUCES]->(c) WHERE p.active IS NULL OR p.active = true }
-         + COUNT { MATCH (:Repo)-[o:OWNS_PACKAGE]->(c) WHERE o.active IS NULL OR o.active = true } AS producers,
-         COUNT { MATCH (:Repo)-[u:CONSUMES]->(c) WHERE u.active IS NULL OR u.active = true } AS consumers,
-         COUNT { MATCH (:Repo)-[s:SHARES_CONTRACT]->(c) WHERE s.active IS NULL OR s.active = true } AS shared
+         COUNT { MATCH (:Repo)-[p:PRODUCES]->(c) WHERE p.workspaceId = $workspaceId AND p.generation = $generation AND (p.active IS NULL OR p.active = true) }
+         + COUNT { MATCH (:Repo)-[o:OWNS_PACKAGE]->(c) WHERE o.workspaceId = $workspaceId AND o.generation = $generation AND (o.active IS NULL OR o.active = true) } AS producers,
+         COUNT { MATCH (:Repo)-[u:CONSUMES]->(c) WHERE u.workspaceId = $workspaceId AND u.generation = $generation AND (u.active IS NULL OR u.active = true) } AS consumers,
+         COUNT { MATCH (:Repo)-[s:SHARES_CONTRACT]->(c) WHERE s.workspaceId = $workspaceId AND s.generation = $generation AND (s.active IS NULL OR s.active = true) } AS shared
        ORDER BY c.kind, c.key
        LIMIT toInteger($limit);`,
       params
@@ -683,20 +811,21 @@ export class Neo4jGraphDB implements GraphDB {
   }
 
   async query<T = Record<string, GraphValue>>(cypher: string, params?: Record<string, GraphValue>): Promise<T[]> {
-    if (this.activeTx) {
+    const activeTransaction = this.activeTransaction();
+    if (activeTransaction) {
       let result;
       try {
-        result = await this.activeTx.run(cypher, toNeo4jParams(params));
+        result = await activeTransaction.run(cypher, toNeo4jParams(params));
       } catch (error) {
         const kind = classifyNeo4jQueryError(error);
         if (!kind) throw error;
         throw new GraphDatabaseOperationalError({ cause: error, kind });
       }
-      return result.records.map((record: any) => recordToPlain(record) as T);
+      return result.records.map((record) => recordToPlain(record) as T);
     }
     // Non-transactional path: each query gets its own session with the
-    // correct access mode.  High-volume write paths use withTransaction
-    // (activeTx) so the per-query session overhead only affects ad-hoc
+    // correct access mode. High-volume write paths use an async-context-bound
+    // transaction, so the per-query session overhead only affects ad-hoc
     // reads like stats(), listRepos(), etc.
     const mode = neo4jQueryAccessMode(cypher);
     const session = this.getSession(mode);
@@ -709,63 +838,289 @@ export class Neo4jGraphDB implements GraphDB {
         if (!kind) throw error;
         throw new GraphDatabaseOperationalError({ cause: error, kind });
       }
-      return result.records.map((record: any) => recordToPlain(record) as T);
+      return result.records.map((record) => recordToPlain(record) as T);
     } finally {
       await session.close();
     }
   }
 
+  async transaction<T>(fn: () => Promise<T>): Promise<T> {
+    const existing = this.transactionStorage.getStore();
+    if (existing) {
+      existing.depth++;
+      try {
+        return await fn();
+      } finally {
+        existing.depth--;
+      }
+    }
+
+    const session = this.getSession();
+    const transaction = session.beginTransaction();
+    const context: Neo4jTransactionContext = { session, transaction, depth: 1 };
+    try {
+      const result = await this.transactionStorage.run(context, fn);
+      await transaction.commit();
+      return result;
+    } catch (error) {
+      try {
+        await transaction.rollback();
+      } catch {}
+      throw error;
+    } finally {
+      await session.close();
+    }
+  }
+
+  async readTransaction<T>(fn: () => Promise<T>): Promise<T> {
+    const existing = this.transactionStorage.getStore();
+    if (existing) {
+      existing.depth++;
+      try {
+        return await fn();
+      } finally {
+        existing.depth--;
+      }
+    }
+
+    const session = this.getSession("READ");
+    const transaction = session.beginTransaction();
+    const context: Neo4jTransactionContext = { session, transaction, depth: 1 };
+    try {
+      const result = await this.transactionStorage.run(context, fn);
+      await transaction.commit();
+      return result;
+    } catch (error) {
+      try {
+        await transaction.rollback();
+      } catch {}
+      throw error;
+    } finally {
+      await session.close();
+    }
+  }
+
+  async applyIncrementalIndexMutation<T>(
+    request: Readonly<IncrementalIndexCommitRequest>,
+    apply: () => Promise<T>
+  ): Promise<T> {
+    validateIncrementalIndexCommitRequest(request);
+    const stateId = `schema-generation-state:${request.workspaceId}`;
+
+    return this.transaction(async () => {
+      const lockNonce = `incremental-commit:${request.nextRevision}:${randomUUID()}`;
+      const stateRows = await this.query<IncrementalCommitStateRow>(
+        "MATCH (s:SchemaGenerationState {id: $stateId}) " +
+        "SET s.protocolNonce=$lockNonce " +
+        "RETURN s.activeGeneration AS activeGeneration, s.activeRevision AS activeRevision, " +
+        "s.pendingGeneration AS pendingGeneration, s.pendingRevision AS pendingRevision, " +
+        "s.pendingParentGeneration AS pendingParentGeneration, " +
+        "s.pendingParentRevision AS pendingParentRevision, s.pendingLeaseUntil AS pendingLeaseUntil;",
+        { stateId, lockNonce }
+      );
+      const state = stateRows[0];
+      if (!state) {
+        throw new Error(`Incremental index commit has no generation state for workspace ${request.workspaceId}.`);
+      }
+      const leaseUntil = optionalString(state.pendingLeaseUntil);
+      const leaseTimestamp = Date.parse(leaseUntil);
+      const reservationMatches =
+        optionalString(state.activeGeneration) === request.expectedActiveGeneration &&
+        optionalString(state.activeRevision) === request.expectedActiveRevision &&
+        optionalString(state.pendingGeneration) === "" &&
+        optionalString(state.pendingRevision) === request.nextRevision &&
+        optionalString(state.pendingParentGeneration) === request.expectedActiveGeneration &&
+        optionalString(state.pendingParentRevision) === request.expectedActiveRevision;
+      if (!reservationMatches) {
+        throw new Error(
+          `Incremental index revision ${request.nextRevision} lost its workspace reservation or active parent.`
+        );
+      }
+      if (!Number.isFinite(leaseTimestamp) || leaseTimestamp <= Date.now()) {
+        throw new Error(`Incremental index revision ${request.nextRevision} has an expired workspace reservation.`);
+      }
+
+      // The callback contains only the already-prepared graph, schema, and
+      // lexical delta. AsyncLocalStorage keeps all nested provider calls on
+      // this same transaction, so any callback failure rolls the delta back.
+      const result = await apply();
+      const statsRows = await this.query<{ revision?: GraphValue }>(
+        "MATCH (s:PublicGraphStats {id: $statsId}) " +
+        "WHERE s.workspaceId=$workspaceId AND s.generation=$generation AND s.revision=$nextRevision " +
+        "RETURN s.revision AS revision;",
+        {
+          statsId: publicGraphStatsId({
+            workspaceId: request.workspaceId,
+            generation: request.expectedActiveGeneration
+          }),
+          workspaceId: request.workspaceId,
+          generation: request.expectedActiveGeneration,
+          nextRevision: request.nextRevision
+        }
+      );
+      if (statsRows.length !== 1 || optionalString(statsRows[0]?.revision) !== request.nextRevision) {
+        throw new Error(
+          `Incremental index revision ${request.nextRevision} did not publish matching public graph stats metadata.`
+        );
+      }
+      const updatedAt = new Date().toISOString();
+      const generationRows = await this.query<{ id?: GraphValue }>(
+        "MATCH (g:SchemaGeneration {id: $generation}) " +
+        "WHERE g.workspaceId=$workspaceId AND g.status='active' " +
+        "SET g.activeRevision=$nextRevision, g.schemaIndexVersion=$schemaIndexVersion, " +
+        "g.lexicalProjectionVersion=$lexicalProjectionVersion, g.updatedAt=$updatedAt " +
+        "RETURN g.id AS id;",
+        {
+          generation: request.expectedActiveGeneration,
+          workspaceId: request.workspaceId,
+          nextRevision: request.nextRevision,
+          schemaIndexVersion: request.schemaIndexVersion,
+          lexicalProjectionVersion: request.lexicalProjectionVersion,
+          updatedAt
+        }
+      );
+      if (generationRows.length !== 1) {
+        throw new Error(
+          `Incremental index commit cannot update active generation ${request.expectedActiveGeneration}.`
+        );
+      }
+
+      const committedRows = await this.query<{ activeRevision?: GraphValue }>(
+        "MATCH (s:SchemaGenerationState {id: $stateId}) " +
+        "WHERE s.activeGeneration=$expectedActiveGeneration " +
+        "AND s.activeRevision=$expectedActiveRevision AND s.pendingGeneration='' " +
+        "AND s.pendingRevision=$nextRevision " +
+        "AND s.pendingParentGeneration=$expectedActiveGeneration " +
+        "AND s.pendingParentRevision=$expectedActiveRevision " +
+        "AND s.pendingLeaseUntil=$pendingLeaseUntil " +
+        "SET s.activeRevision=$nextRevision, s.pendingRevision='', " +
+        "s.pendingParentGeneration='', s.pendingParentRevision='', s.pendingLeaseUntil='', " +
+        "s.schemaIndexVersion=$schemaIndexVersion, " +
+        "s.lexicalProjectionVersion=$lexicalProjectionVersion, s.protocolNonce=$lockNonce " +
+        "RETURN s.activeRevision AS activeRevision;",
+        {
+          stateId,
+          expectedActiveGeneration: request.expectedActiveGeneration,
+          expectedActiveRevision: request.expectedActiveRevision,
+          nextRevision: request.nextRevision,
+          pendingLeaseUntil: leaseUntil,
+          schemaIndexVersion: request.schemaIndexVersion,
+          lexicalProjectionVersion: request.lexicalProjectionVersion,
+          lockNonce
+        }
+      );
+      if (committedRows.length !== 1 || optionalString(committedRows[0]?.activeRevision) !== request.nextRevision) {
+        throw new Error(`Incremental index revision ${request.nextRevision} failed its final compare-and-swap.`);
+      }
+      return result;
+    });
+  }
+
   async beginTransaction(): Promise<void> {
-    if (this.activeTx) {
-      this.txDepth++;
+    const managed = this.transactionStorage.getStore();
+    if (managed) {
+      managed.depth++;
       return;
     }
-    this.activeSession = this.getSession();
-    this.activeTx = this.activeSession.beginTransaction();
-    this.txDepth = 1;
+    if (this.manualTransaction) {
+      this.manualTransactionDepth++;
+      return;
+    }
+    this.manualSession = this.getSession();
+    this.manualTransaction = this.manualSession.beginTransaction();
+    this.manualTransactionDepth = 1;
   }
 
   async commitTransaction(): Promise<void> {
-    if (!this.activeTx) {
+    const managed = this.transactionStorage.getStore();
+    if (managed) {
+      managed.depth--;
+      return;
+    }
+    if (!this.manualTransaction) {
       throw new Error("No transaction in progress");
     }
-    this.txDepth--;
-    if (this.txDepth > 0) return;
+    this.manualTransactionDepth--;
+    if (this.manualTransactionDepth > 0) return;
+    const transaction = this.manualTransaction;
+    const session = this.manualSession;
+    this.manualTransaction = null;
+    this.manualSession = null;
     try {
-      await this.activeTx.commit();
+      await transaction.commit();
     } finally {
-      this.activeTx = null;
-      if (this.activeSession) {
-        await this.activeSession.close();
-        this.activeSession = null;
-      }
+      await session?.close();
     }
   }
 
   async rollbackTransaction(): Promise<void> {
-    if (!this.activeTx) {
+    const managed = this.transactionStorage.getStore();
+    if (managed) {
+      managed.depth = 0;
+      await managed.transaction.rollback();
       return;
     }
+    if (!this.manualTransaction) {
+      return;
+    }
+    const transaction = this.manualTransaction;
+    const session = this.manualSession;
+    this.manualTransaction = null;
+    this.manualSession = null;
+    this.manualTransactionDepth = 0;
     try {
-      await this.activeTx.rollback();
+      await transaction.rollback();
     } finally {
-      this.activeTx = null;
-      this.txDepth = 0;
-      if (this.activeSession) {
-        await this.activeSession.close();
-        this.activeSession = null;
-      }
+      await session?.close();
     }
   }
 
-  async stats(): Promise<Stats> {
-    return this.crud.stats();
+  async readPublicGraphStats(scope: PublicGraphGenerationScope): Promise<PublicGraphStatsSnapshot | undefined> {
+    return this.crud.readPublicGraphStats(scope);
+  }
+
+  async computePublicGraphStats(scope: PublicGraphGenerationScope): Promise<Stats> {
+    return this.crud.computePublicGraphStats(scope);
+  }
+
+  async initializePublicGraphStats(
+    scope: PublicGraphGenerationScope,
+    revision: string,
+    stats: Readonly<Stats>
+  ): Promise<void> {
+    await this.crud.initializePublicGraphStats(scope, revision, stats);
+  }
+
+  async applyPublicGraphStatsDelta(
+    scope: PublicGraphGenerationScope,
+    update: PublicGraphStatsUpdate
+  ): Promise<Stats> {
+    return this.crud.applyPublicGraphStatsDelta(scope, update);
+  }
+
+  async stats(scope: PublicGraphGenerationScope): Promise<Stats> {
+    return this.crud.stats(scope);
   }
 
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    if (this.manualTransaction) {
+      const transaction = this.manualTransaction;
+      const session = this.manualSession;
+      this.manualTransaction = null;
+      this.manualSession = null;
+      this.manualTransactionDepth = 0;
+      try {
+        await transaction.rollback();
+      } catch {}
+      await session?.close();
+    }
     await this.driver.close();
+  }
+
+  private activeTransaction(): Neo4jTransaction | undefined {
+    return this.transactionStorage.getStore()?.transaction ?? this.manualTransaction ?? undefined;
   }
 }
 
@@ -781,6 +1136,8 @@ export function decodeList(value: string | null | undefined): string[] {
 
 export function decodeJournalRow(row: {
   batchId: string;
+  generation: string;
+  parentGeneration?: string | null;
   repoIds: string;
   repoNames: string;
   writerMode: string;
@@ -794,11 +1151,13 @@ export function decodeJournalRow(row: {
 }): GraphWriteBatchJournal {
   return {
     batchId: row.batchId,
+    generation: row.generation,
+    parentGeneration: row.parentGeneration || undefined,
     repoIds: decodeList(row.repoIds),
     repoNames: decodeList(row.repoNames),
     writerMode: row.writerMode,
     atomicityMode: row.atomicityMode,
-    workspaceId: row.workspaceId || undefined,
+    workspaceId: row.workspaceId ?? "",
     status: row.status,
     startedAt: row.startedAt,
     updatedAt: row.updatedAt,

@@ -26,10 +26,11 @@ describe("Golden Corpus", () => {
     const report = evaluateGoldenCorpus(facts, goldenRepos, goldenExpectations);
 
     expect(report.contracts.falseNegative, formatGoldenEvaluationReport(report)).toEqual([]);
+    expect(report.contracts.falsePositive, formatGoldenEvaluationReport(report)).toEqual([]);
     expect(report.participants.falseNegative, formatGoldenEvaluationReport(report)).toEqual([]);
     expect(report.dependencies.falseNegative, formatGoldenEvaluationReport(report)).toEqual([]);
     expect(report.absentContracts.violations, formatGoldenEvaluationReport(report)).toEqual([]);
-    expect(report.contracts.precision).toBe(1);
+    expect(report.contracts.precision, formatGoldenEvaluationReport(report)).toBe(1);
     expect(report.contracts.recall).toBe(1);
     expect(report.participants.precision).toBe(1);
     expect(report.participants.recall).toBe(1);

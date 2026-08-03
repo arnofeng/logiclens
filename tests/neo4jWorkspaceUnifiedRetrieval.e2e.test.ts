@@ -16,6 +16,7 @@ import {
   type LexicalDocument,
 } from "../src/core/retrieval/types.js";
 import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
+import { SchemaGenerationStore } from "../src/core/schema/generationStore.js";
 import { planQuestion } from "../src/features/ask/planner.js";
 import { Neo4jGraphDB } from "../src/adapters/graph-db/neo4j/Neo4jGraphDB.js";
 import {
@@ -86,6 +87,8 @@ function transactionFixture(suffix: string, marker: string, variant: string): {
 
 async function graphAndDocuments(
   workspaceId: string,
+  generation: string,
+  systemName: string,
   suffix: string,
   marker: string,
   variant: string,
@@ -94,6 +97,9 @@ async function graphAndDocuments(
   const { repo, file } = transactionFixture(suffix, marker, variant);
   const facts = await buildGraphFactsBatch({
     batchId,
+    workspaceId,
+    generation,
+    systemName,
     indexedAt: "2026-07-21T00:00:00.000Z",
     repos: [repo],
     parsedFiles: [file],
@@ -127,8 +133,15 @@ describe("Neo4j workspace unified retrieval cloud release", () => {
     const systemName = `neo4j-unified-${suffix}`;
     const workspaceId = deriveWorkspaceId(systemName);
     const transactionWorkspaceId = `workspace:transaction:${suffix}`;
+    const transactionGeneration = `schema-generation:${transactionWorkspaceId}:committed`;
+    const transactionSystemName = `neo4j-transaction-${suffix}`;
+    const foreignWorkspaceId = `${transactionWorkspaceId}:foreign`;
+    const foreignGeneration = `schema-generation:${foreignWorkspaceId}:fixture`;
     const rollbackWorkspaceId = `workspace:rollback:${suffix}`;
+    const rollbackGeneration = `schema-generation:${rollbackWorkspaceId}:fixture`;
+    const rollbackSystemName = `neo4j-rollback-${suffix}`;
     const guardWorkspaceId = `workspace:cleanup-guard:${randomUUID()}`;
+    const guardGeneration = `schema-generation:${guardWorkspaceId}:fixture`;
     const querySpy = vi.spyOn(Neo4jGraphDB.prototype, "query");
     let client: AppClient | undefined;
     let writer: Neo4jGraphDB | undefined;
@@ -237,39 +250,64 @@ describe("Neo4j workspace unified retrieval cloud release", () => {
       expect(fullTextIndexes[0]?.options.indexConfig["fulltext.eventually_consistent"]).toBe(false);
       const constraints = await observer.query<{ name: string }>(
         "SHOW CONSTRAINTS YIELD name WHERE name IN $names RETURN name ORDER BY name",
-        { names: ["lexical_document_id", "lexical_metadata_key", "lexical_workspace_stats_id"] },
+        {
+          names: [
+            "lexical_document_storage_id",
+            "lexical_generation_batch_id",
+            "lexical_generation_stats_id",
+            "lexical_metadata_key"
+          ]
+        },
       );
       expect(constraints.map(({ name }) => name)).toEqual([
-        "lexical_document_id",
+        "lexical_document_storage_id",
+        "lexical_generation_batch_id",
+        "lexical_generation_stats_id",
         "lexical_metadata_key",
-        "lexical_workspace_stats_id",
       ]);
 
       const committed = await graphAndDocuments(
         transactionWorkspaceId,
+        transactionGeneration,
+        transactionSystemName,
         suffix,
         `committedmarker${suffix}`,
         "Committed",
         `batch:committed:${suffix}`,
       );
       await writer.beginTransaction();
-      await writer.upsertRepo(committed.repo);
+      await writer.upsertRepo(committed.repo, {
+        workspaceId: transactionWorkspaceId,
+        generation: transactionGeneration
+      });
       await writeGraphFactsBatch(writer, {
         batchId: `batch:committed:${suffix}`,
+        workspaceId: transactionWorkspaceId,
+        generation: transactionGeneration,
+        systemName: transactionSystemName,
         repos: [committed.repo],
         parsedFiles: [committed.file],
-      }, { semantic: false });
-      await store.upsertDocuments(committed.documents);
+      }, {
+        semantic: false,
+        workspaceId: transactionWorkspaceId,
+        generation: transactionGeneration,
+        systemName: transactionSystemName
+      });
+      await store.upsertDocuments({
+        workspaceId: transactionWorkspaceId,
+        generation: transactionGeneration,
+        documents: committed.documents
+      });
       expect(await observer.query("MATCH (r:Repo {id: $repoId}) RETURN r.id", { repoId: committed.repo.id })).toEqual([]);
       let callsBefore = nativeFullTextCalls(querySpy);
-      expect(await observerStore.search({ workspaceId: transactionWorkspaceId, text: `committedmarker${suffix}` }, { topK: 10 })).toEqual([]);
+      expect(await observerStore.search({ workspaceId: transactionWorkspaceId, generation: transactionGeneration, text: `committedmarker${suffix}` }, { topK: 10 })).toEqual([]);
       expect(nativeFullTextCalls(querySpy) - callsBefore).toBe(1);
       await writer.commitTransaction();
 
       expect(await observer.query("MATCH (r:Repo {id: $repoId}) RETURN r.id", { repoId: committed.repo.id })).toHaveLength(1);
       callsBefore = nativeFullTextCalls(querySpy);
       const committedHits = await observerStore.search(
-        { workspaceId: transactionWorkspaceId, text: `committedmarker${suffix}` },
+        { workspaceId: transactionWorkspaceId, generation: transactionGeneration, text: `committedmarker${suffix}` },
         { topK: 10 },
       );
       expect(nativeFullTextCalls(querySpy) - callsBefore).toBe(1);
@@ -279,13 +317,21 @@ describe("Neo4j workspace unified retrieval cloud release", () => {
       const inactive = { ...committed.documents[0]!, id: `lexical:inactive:${suffix}`, active: false };
       const foreign = rehomeDocument(
         committed.documents[0]!,
-        `${transactionWorkspaceId}:foreign`,
+        foreignWorkspaceId,
         `lexical:foreign:${suffix}`,
       );
-      await store.upsertDocuments([inactive]);
-      await store.upsertDocuments([foreign]);
+      await store.upsertDocuments({
+        workspaceId: transactionWorkspaceId,
+        generation: transactionGeneration,
+        documents: [inactive]
+      });
+      await store.upsertDocuments({
+        workspaceId: foreignWorkspaceId,
+        generation: foreignGeneration,
+        documents: [foreign]
+      });
       const filtered = await observerStore.search(
-        { workspaceId: transactionWorkspaceId, text: `committedmarker${suffix}` },
+        { workspaceId: transactionWorkspaceId, generation: transactionGeneration, text: `committedmarker${suffix}` },
         { topK: 50 },
       );
       expect(filtered.some((hit) => hit.documentId === inactive.id || hit.documentId === foreign.id)).toBe(false);
@@ -293,6 +339,8 @@ describe("Neo4j workspace unified retrieval cloud release", () => {
       const beforeRollbackIds = committedHits.map((hit) => hit.documentId).sort();
       const rolledBack = await graphAndDocuments(
         rollbackWorkspaceId,
+        rollbackGeneration,
+        rollbackSystemName,
         suffix,
         `rollbackmarker${suffix}`,
         "RolledBack",
@@ -300,13 +348,28 @@ describe("Neo4j workspace unified retrieval cloud release", () => {
       );
       await writer.beginTransaction();
       try {
-        await writer.upsertRepo(rolledBack.repo);
+        await writer.upsertRepo(rolledBack.repo, {
+          workspaceId: rollbackWorkspaceId,
+          generation: rollbackGeneration
+        });
         await writeGraphFactsBatch(writer, {
           batchId: `batch:rollback:${suffix}`,
+          workspaceId: rollbackWorkspaceId,
+          generation: rollbackGeneration,
+          systemName: rollbackSystemName,
           repos: [rolledBack.repo],
           parsedFiles: [rolledBack.file],
-        }, { semantic: false });
-        await store.upsertDocuments(rolledBack.documents);
+        }, {
+          semantic: false,
+          workspaceId: rollbackWorkspaceId,
+          generation: rollbackGeneration,
+          systemName: rollbackSystemName
+        });
+        await store.upsertDocuments({
+          workspaceId: rollbackWorkspaceId,
+          generation: rollbackGeneration,
+          documents: rolledBack.documents
+        });
         throw new Error("injected transaction failure");
       } catch (error) {
         await writer.rollbackTransaction();
@@ -314,10 +377,10 @@ describe("Neo4j workspace unified retrieval cloud release", () => {
       }
       expect(await observer.query("MATCH (r:Repo {id: $repoId}) RETURN r.id", { repoId: rolledBack.repo.id })).toEqual([]);
       callsBefore = nativeFullTextCalls(querySpy);
-      expect(await observerStore.search({ workspaceId: rollbackWorkspaceId, text: `rollbackmarker${suffix}` }, { topK: 10 })).toEqual([]);
+      expect(await observerStore.search({ workspaceId: rollbackWorkspaceId, generation: rollbackGeneration, text: `rollbackmarker${suffix}` }, { topK: 10 })).toEqual([]);
       expect(nativeFullTextCalls(querySpy) - callsBefore).toBe(1);
       expect((await observerStore.search(
-        { workspaceId: transactionWorkspaceId, text: `committedmarker${suffix}` },
+        { workspaceId: transactionWorkspaceId, generation: transactionGeneration, text: `committedmarker${suffix}` },
         { topK: 10 },
       )).map((hit) => hit.documentId).sort()).toEqual(beforeRollbackIds);
 
@@ -362,7 +425,10 @@ describe("Neo4j workspace unified retrieval cloud release", () => {
       expect(nativeFullTextCalls(querySpy) - callsBefore).toBe(1);
       expect(second).toEqual(first);
 
-      const health = await observerStore.health(workspaceId);
+      const activeGeneration = await new SchemaGenerationStore(observer, workspaceId).activeGeneration();
+      expect(activeGeneration).toBeDefined();
+      if (!activeGeneration) throw new Error(`No active generation was committed for ${workspaceId}.`);
+      const health = await observerStore.health({ workspaceId, generation: activeGeneration });
       expect(health).toMatchObject({
         providerVersion: expect.stringMatching(/^\d+\.\d+/u),
         projectionSchemaVersion: LEXICAL_PROJECTION_SCHEMA_VERSION,
@@ -373,13 +439,17 @@ describe("Neo4j workspace unified retrieval cloud release", () => {
       expect(health.metrics.indexSizeBytes).toBeGreaterThan(0);
 
       const guard = rehomeDocument(committed.documents[0]!, guardWorkspaceId, `lexical:guard:${suffix}`);
-      await store.upsertDocuments([guard]);
+      await store.upsertDocuments({
+        workspaceId: guardWorkspaceId,
+        generation: guardGeneration,
+        documents: [guard]
+      });
       guardCreated = true;
     } catch (error) {
       testFailure = error;
     }
 
-    const scopedWorkspaces = [workspaceId, transactionWorkspaceId, `${transactionWorkspaceId}:foreign`, rollbackWorkspaceId];
+    const scopedWorkspaces = [workspaceId, transactionWorkspaceId, foreignWorkspaceId, rollbackWorkspaceId];
     const cleanupSteps = [
       ...(client ? [{ name: "close public client", run: () => client!.close() }] : []),
       ...(observer && initializationStarted ? [

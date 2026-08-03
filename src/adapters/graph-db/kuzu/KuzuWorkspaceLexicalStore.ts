@@ -3,10 +3,18 @@ import os from "node:os";
 import path from "node:path";
 import {
   WorkspaceLexicalStoreError,
+  type InitializeLexicalGenerationRequest,
   type CleanupBatchRequest,
+  type DeleteDocumentsRequest,
+  type DocumentIdsForSourcesRequest,
+  type IncrementalLexicalMutationRequest,
+  type LexicalGenerationRequest,
   type LoadDocumentsRequest,
   type ReconcileRepoDocumentsRequest,
   type ReconcileRepoFileDocumentsRequest,
+  type ReplaceSourceDocumentsRequest,
+  type StageLexicalBatchRequest,
+  type UpsertDocumentsRequest,
   type WorkspaceLexicalStore,
   type WorkspaceLexicalStoreErrorCode,
   type WorkspaceLexicalStoreErrorContext
@@ -25,6 +33,7 @@ import {
   type LexicalSearchOptions
 } from "../../../core/retrieval/types.js";
 import type { GraphValue } from "../../../core/graph-model/db.js";
+import { assertNoLivePublicGraphReadLeases } from "../../../core/graph-model/readSnapshot.js";
 import { encodeCsvValue, type CsvScalar } from "../../../core/graph-model/csvStaging.js";
 import { brandedTempDirPrefix, getBrandedEnv } from "../../../shared/branding.js";
 import { KuzuGraphDB } from "./KuzuGraphDB.js";
@@ -35,13 +44,14 @@ export const KUZU_LEXICAL_STATS_TABLE = "LexicalWorkspaceStats";
 export const KUZU_WORKSPACE_FTS_INDEX = "workspace_lexical";
 export const KUZU_MINIMUM_FTS_VERSION = "0.11.3";
 export const KUZU_MAXIMUM_FTS_VERSION_EXCLUSIVE = "0.12.0";
-export const KUZU_LEXICAL_STATS_SCHEMA_VERSION = "1";
+export const KUZU_LEXICAL_STATS_SCHEMA_VERSION = "3";
 
 const PROJECTION_METADATA_KEY = "projectionSchemaVersion";
 const TOKENIZER_METADATA_KEY = "tokenizerVersion";
 const STATS_METADATA_KEY = "lexicalStatsSchemaVersion";
 const INCOMPLETE_STATS_METADATA_VALUE = "incomplete";
 const EXPECTED_FTS_PROPERTIES = ["ftsText"] as const;
+const KUZU_LEXICAL_WRITE_CHUNK_SIZE = 500;
 const COPY_SAFE_TOKEN = /^[\p{L}\p{M}\p{N}._/-]+$/u;
 const QUERY_STOP_WORDS = new Set([
   "a", "an", "and", "are", "declared", "defined", "does", "find", "for", "http", "is", "of",
@@ -49,6 +59,8 @@ const QUERY_STOP_WORDS = new Set([
 ]);
 
 const DOCUMENT_COLUMNS = [
+  ["documentId", "STRING"],
+  ["generation", "STRING"],
   ["canonicalId", "STRING"],
   ["workspaceId", "STRING"],
   ["repoId", "STRING"],
@@ -66,8 +78,8 @@ const DOCUMENT_COLUMNS = [
   ["ftsText", "STRING"],
   ["ftsSizeBytes", "INT64"]
 ] as const;
-const DOCUMENT_LOAD_COLUMNS = [["id", "STRING"], ...DOCUMENT_COLUMNS] as const;
-const DOCUMENT_COLUMN_NAMES = ["id", ...DOCUMENT_COLUMNS.map(([name]) => name)].join(", ");
+const DOCUMENT_LOAD_COLUMNS = [["storageId", "STRING"], ...DOCUMENT_COLUMNS] as const;
+const DOCUMENT_COLUMN_NAMES = ["storageId", ...DOCUMENT_COLUMNS.map(([name]) => name)].join(", ");
 const DOCUMENT_LOAD_BINDINGS = DOCUMENT_LOAD_COLUMNS
   .map(([name, type], index) => `CAST(COLUMN${index} AS ${type}) AS ${name}`)
   .join(", ");
@@ -87,12 +99,15 @@ type IndexRow = {
 type MetadataRow = { key: string; value: string };
 type VersionRow = { version: string };
 type WorkspaceStatsRow = {
+  id?: string;
   workspaceId: string;
+  generation: string;
+  revision: string;
   documentCount: number | bigint;
   indexSizeBytes: number | bigint;
 };
 type ExistingDocumentStateRow = {
-  id: string;
+  storageId: string;
   workspaceId: string;
   active: boolean;
   ftsSizeBytes: number | bigint | null;
@@ -102,7 +117,9 @@ type DeactivationStatsRow = {
   indexSizeBytes: number | bigint | null;
 };
 type DocumentRow = {
-  id: string;
+  storageId: string;
+  documentId: string;
+  generation: string;
   canonicalId: string;
   workspaceId: string;
   repoId: string;
@@ -129,26 +146,43 @@ type SearchRow = {
   score: number;
 };
 
+type StoredDocument = {
+  storageId: string;
+  generation: string;
+  document: LexicalDocument;
+};
+
 export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
-  constructor(readonly db: KuzuGraphDB) {}
+  constructor(readonly db: KuzuGraphDB) {
+    db.retainNativeHandleOnClose();
+  }
 
   async ensureSchema(): Promise<void> {
     const context = { operation: "ensureSchema" } as const;
     try {
       await this.db.query("LOAD EXTENSION FTS;");
+      if (await this.hasCurrentSchema()) return;
       const tables = await this.tableNames();
       if (!tables.has(KUZU_LEXICAL_DOCUMENT_TABLE)) {
         await this.db.query(
           "CREATE NODE TABLE LexicalDocument(" +
-          "id STRING, canonicalId STRING, workspaceId STRING, repoId STRING, kind STRING, " +
+          "storageId STRING, documentId STRING, generation STRING, canonicalId STRING, workspaceId STRING, repoId STRING, kind STRING, " +
           "title STRING, qualifiedName STRING, path STRING, searchableText STRING, tokens STRING[], " +
           "active BOOL, sourceHash STRING, batchId STRING, renderRef STRING, fileId STRING, ftsText STRING, " +
-          "ftsSizeBytes INT64, PRIMARY KEY(id));"
+          "ftsSizeBytes INT64, PRIMARY KEY(storageId));"
         );
       } else {
+        await this.migrateDocumentPrimaryKey();
         await this.ensureDocumentColumns();
         await this.db.query(
           "MATCH (n:LexicalDocument) WHERE n.ftsText IS NULL SET n.ftsText = n.searchableText;"
+        );
+        await this.db.query(
+          "MATCH (n:LexicalDocument) WHERE n.documentId IS NULL SET n.documentId = n.storageId;"
+        );
+        await this.db.query(
+          "MATCH (n:LexicalDocument) WHERE n.generation IS NULL SET n.generation = $generation;",
+          { generation: "legacy" }
         );
       }
 
@@ -166,8 +200,14 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
         // O(1), deterministic, and does not mislabel total database storage.
         await this.db.query(
           "CREATE NODE TABLE LexicalWorkspaceStats(" +
-          "workspaceId STRING, documentCount INT64, indexSizeBytes INT64, PRIMARY KEY(workspaceId));"
+          "id STRING, workspaceId STRING, generation STRING, revision STRING, " +
+          "documentCount INT64, indexSizeBytes INT64, PRIMARY KEY(id));"
         );
+      } else {
+        await this.migrateStatsPrimaryKey();
+      }
+      if (!tables.has("LexicalGenerationBatch")) {
+        await this.db.query("CREATE NODE TABLE LexicalGenerationBatch(id STRING, workspaceId STRING, generation STRING, batchId STRING, PRIMARY KEY(id));");
       }
 
       // This is deliberately checked on every initialization. ALTER TABLE can
@@ -218,86 +258,231 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
     }
   }
 
-  async upsertDocuments(documents: readonly LexicalDocument[]): Promise<void> {
-    if (documents.length === 0) return;
+  async initializeGeneration(request: Readonly<InitializeLexicalGenerationRequest>): Promise<void> {
+    const context = { operation: "initializeGeneration", workspaceId: request.workspaceId, generation: request.generation } as const;
+    try {
+      validateGenerationRequest(request);
+      await this.db.transaction(async () => {
+        await this.assertGenerationNotActive(request, { allowReservedPending: true });
+        await this.deleteGenerationRows(request);
+      });
+      await this.replaceGenerationStats(request.workspaceId, request.generation, request.generation, 0, 0);
+    } catch (error) {
+      throw wrap("write_failed", context, error);
+    }
+  }
+
+  async deleteGeneration(request: Readonly<LexicalGenerationRequest>): Promise<void> {
+    const context = { operation: "deleteGeneration", workspaceId: request.workspaceId, generation: request.generation } as const;
+    try {
+      validateGenerationRequest(request);
+      await this.db.transaction(async () => {
+        await this.assertGenerationNotActive(request);
+        await this.deleteGenerationRows(request);
+      });
+    } catch (error) {
+      throw wrap("cleanup_failed", context, error);
+    }
+  }
+
+  async deleteDocuments(request: Readonly<DeleteDocumentsRequest>): Promise<void> {
+    const context = {
+      operation: "deleteDocuments",
+      workspaceId: request.workspaceId,
+      generation: request.generation
+    } as const;
+    try {
+      validateGenerationRequest(request);
+      const documentIds = uniqueStrings(request.documentIds, "documentIds");
+      if (documentIds.length === 0) return;
+      await this.db.transaction(async () => {
+        const rows = await this.db.query<DeactivationStatsRow>(
+          "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation " +
+          "AND n.documentId IN $documentIds AND n.active = true " +
+          "RETURN count(*) AS documentCount, sum(n.ftsSizeBytes) AS indexSizeBytes;",
+          { workspaceId: request.workspaceId, generation: request.generation, documentIds }
+        );
+        await this.db.query(
+          "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation " +
+          "AND n.documentId IN $documentIds DELETE n;",
+          { workspaceId: request.workspaceId, generation: request.generation, documentIds }
+        );
+        await this.adjustGenerationStats(
+          request.workspaceId,
+          request.generation,
+          -numeric(rows[0]?.documentCount),
+          -numeric(rows[0]?.indexSizeBytes)
+        );
+      });
+    } catch (error) {
+      throw wrap("write_failed", context, error);
+    }
+  }
+
+  async applyIncrementalMutation(request: Readonly<IncrementalLexicalMutationRequest>): Promise<void> {
+    const context: WorkspaceLexicalStoreErrorContext = {
+      operation: "applyIncrementalMutation",
+      workspaceId: request.workspaceId,
+      generation: request.generation,
+      batchId: request.upsertDocuments[0]?.batchId
+    };
+    try {
+      validateGenerationRequest(request);
+      validateBoundary(request.expectedRevision, "expectedRevision");
+      validateBoundary(request.nextRevision, "nextRevision");
+      if (request.expectedRevision === request.nextRevision) {
+        throw new TypeError("Incremental lexical mutation must advance its revision.");
+      }
+      const validated = request.upsertDocuments.length > 0
+        ? validateDocuments(request.upsertDocuments)
+        : [];
+      if (validated[0] && validated[0].workspaceId !== request.workspaceId) {
+        throw new TypeError("Incremental lexical upsert workspace does not match its generation request.");
+      }
+      const activeUpserts = validated.filter((document) => document.active);
+      const upsertIds = new Set(activeUpserts.map((document) => document.id));
+      const deleteDocumentIds = uniqueStrings([
+        ...request.deleteDocumentIds,
+        ...validated.filter((document) => !document.active).map((document) => document.id)
+      ], "deleteDocumentIds").filter((documentId) => !upsertIds.has(documentId));
+      const stored = activeUpserts.map((document) => storedDocument(document, request.generation));
+      const deleteStorageIds = deleteDocumentIds.map((documentId) =>
+        storageId(request.workspaceId, request.generation, documentId));
+      const affectedStorageIds = [...new Set([
+        ...deleteStorageIds,
+        ...stored.map((document) => document.storageId)
+      ])].sort(compareText);
+      const existingRows = affectedStorageIds.length > 0
+        ? await this.db.query<ExistingDocumentStateRow>(
+          "MATCH (n:LexicalDocument) WHERE n.storageId IN $storageIds " +
+          "RETURN n.storageId AS storageId, n.workspaceId AS workspaceId, n.active AS active, n.ftsSizeBytes AS ftsSizeBytes;",
+          { storageIds: affectedStorageIds }
+        )
+        : [];
+      const existing = new Map(existingRows.map((row) => [row.storageId, row]));
+      for (const row of existingRows) {
+        if (row.workspaceId !== request.workspaceId) {
+          throw new TypeError(`Lexical physical document belongs to a different workspace: ${row.storageId}.`);
+        }
+      }
+
+      let documentCountDelta = 0;
+      let indexSizeBytesDelta = 0;
+      for (const physicalId of deleteStorageIds) {
+        const previous = existing.get(physicalId);
+        if (!previous?.active) continue;
+        documentCountDelta -= 1;
+        indexSizeBytesDelta -= numeric(previous.ftsSizeBytes);
+      }
+      for (const item of stored) {
+        const previous = existing.get(item.storageId);
+        documentCountDelta += 1 - Number(previous?.active ?? false);
+        indexSizeBytesDelta += ftsSizeBytes(item.document)
+          - (previous?.active ? numeric(previous.ftsSizeBytes) : 0);
+      }
+
+      if (deleteStorageIds.length > 0) {
+        writeLexicalTrace(`incremental delete documents=${deleteStorageIds.length}`);
+        await this.db.query(
+          "MATCH (n:LexicalDocument) WHERE n.storageId IN $storageIds DELETE n;",
+          { storageIds: deleteStorageIds }
+        );
+      }
+      writeLexicalTrace(`incremental upsert documents=${stored.length}`);
+      for (const item of stored) await this.mergeStoredDocument(item);
+      writeLexicalTrace(`incremental stats documentDelta=${documentCountDelta} byteDelta=${indexSizeBytesDelta}`);
+      await this.applyExactStatsDelta(
+        request.workspaceId,
+        request.generation,
+        request.expectedRevision,
+        request.nextRevision,
+        documentCountDelta,
+        indexSizeBytesDelta
+      );
+      writeLexicalTrace("incremental complete");
+    } catch (error) {
+      throw wrap("write_failed", context, error);
+    }
+  }
+
+  async upsertDocuments(request: Readonly<UpsertDocumentsRequest>): Promise<void> {
+    const { documents } = request;
     const context: WorkspaceLexicalStoreErrorContext = {
       operation: "upsertDocuments",
-      workspaceId: documents[0]?.workspaceId,
+      workspaceId: request.workspaceId,
+      generation: request.generation,
       batchId: documents[0]?.batchId
     };
     try {
+      validateGenerationRequest(request);
+      if (documents.length === 0) return;
       const validationStarted = Date.now();
       const unique = validateDocuments(documents);
+      if (unique[0]?.workspaceId !== request.workspaceId) {
+        throw new TypeError("Lexical upsert workspace does not match its generation request.");
+      }
+      const stored = unique.map((document) => storedDocument(document, request.generation));
       writeLexicalTrace(`validate documents=${unique.length} duration=${Date.now() - validationStarted}ms`);
-      await this.db.transaction(async () => {
-        const lookupStarted = Date.now();
-        const existingRows = await this.db.query<ExistingDocumentStateRow>(
-          "MATCH (n:LexicalDocument) WHERE n.id IN $documentIds " +
-          "RETURN n.id AS id, n.workspaceId AS workspaceId, n.active AS active, n.ftsSizeBytes AS ftsSizeBytes;",
-          { documentIds: unique.map((document) => document.id) }
-        );
-        const countRows = await this.db.query<{ count: number | bigint }>(
-          "MATCH (n:LexicalDocument) RETURN count(*) AS count;"
-        );
-        const storedDocumentCount = numeric(countRows[0]?.count);
-        writeLexicalTrace(`existing lookup documents=${unique.length} existing=${existingRows.length} stored=${storedDocumentCount} duration=${Date.now() - lookupStarted}ms`);
-        const existing = new Map(existingRows.map((row) => [row.id, row]));
-        let documentCountDelta = 0;
-        let indexSizeBytesDelta = 0;
-        // Kuzu 0.11.3 COPY is dramatically faster for an empty lexical table,
-        // but repeated COPY appends can collide in the FTS extension's
-        // auxiliary serial keys. Keep the fast path intentionally scoped to
-        // the initial workspace import.
-        const csvEligible = unique.every(hasCopySafeTokens);
-        const copyEligible = storedDocumentCount === 0 && existingRows.length === 0 && csvEligible;
-        const appendLoadEligible = storedDocumentCount > 0 && existingRows.length === 0 && csvEligible;
-        if (copyEligible) {
-          for (const document of unique) {
-            if (!document.active) continue;
-            documentCountDelta += 1;
-            indexSizeBytesDelta += ftsSizeBytes(document);
-          }
-          await copyNewDocuments(this.db, unique);
-        } else if (appendLoadEligible) {
-          for (const document of unique) {
-            if (!document.active) continue;
-            documentCountDelta += 1;
-            indexSizeBytesDelta += ftsSizeBytes(document);
-          }
-          await appendLoadNewDocuments(this.db, unique);
-        } else {
-          const mergeStarted = Date.now();
-          for (const document of unique) {
-            const previous = existing.get(document.id);
-            if (previous && previous.workspaceId !== document.workspaceId) {
-              throw new TypeError(`Document id cannot move between workspaces: ${document.id}.`);
-            }
-            const previousCount = previous?.active ? 1 : 0;
-            const previousBytes = previous?.active ? numeric(previous.ftsSizeBytes) : 0;
-            const nextBytes = document.active ? ftsSizeBytes(document) : 0;
-            documentCountDelta += (document.active ? 1 : 0) - previousCount;
-            indexSizeBytesDelta += nextBytes - previousBytes;
-            await this.db.query(
-              "MERGE (n:LexicalDocument {id: $id}) " +
-              "SET n.canonicalId = $canonicalId, n.workspaceId = $workspaceId, n.repoId = $repoId, " +
-              "n.kind = $kind, n.title = $title, n.qualifiedName = $qualifiedName, n.path = $path, " +
-              "n.searchableText = $searchableText, n.tokens = $tokens, n.active = $active, " +
-              "n.sourceHash = $sourceHash, n.batchId = $batchId, n.renderRef = $renderRef, n.fileId = $fileId, " +
-              "n.ftsText = $ftsText, n.ftsSizeBytes = $ftsSizeBytes;",
-              documentParameters(document)
-            );
-          }
-          const reason = existingRows.length > 0
-            ? "existing-documents"
-            : !csvEligible
-              ? "unsafe-token"
-              : "nonempty-store";
-          writeLexicalTrace(`writer=merge documents=${unique.length} duration=${Date.now() - mergeStarted}ms reason=${reason}`);
+      const lookupStarted = Date.now();
+      const existingRows = await this.db.query<ExistingDocumentStateRow>(
+        "MATCH (n:LexicalDocument) WHERE n.storageId IN $storageIds " +
+        "RETURN n.storageId AS storageId, n.workspaceId AS workspaceId, n.active AS active, n.ftsSizeBytes AS ftsSizeBytes;",
+        { storageIds: stored.map((item) => item.storageId) }
+      );
+      const countRows = await this.db.query<{ count: number | bigint }>(
+        "MATCH (n:LexicalDocument) RETURN count(*) AS count;"
+      );
+      const storedDocumentCount = numeric(countRows[0]?.count);
+      writeLexicalTrace(`existing lookup documents=${unique.length} existing=${existingRows.length} stored=${storedDocumentCount} duration=${Date.now() - lookupStarted}ms`);
+      const existing = new Map(existingRows.map((row) => [row.storageId, row]));
+      let documentCountDelta = 0;
+      let indexSizeBytesDelta = 0;
+      // Kuzu 0.11.3 COPY is dramatically faster for an empty lexical table,
+      // but repeated COPY appends can collide in the FTS extension's
+      // auxiliary serial keys. Keep the fast path intentionally scoped to
+      // the initial workspace import.
+      const csvEligible = unique.every(hasCopySafeTokens);
+      const copyEligible = storedDocumentCount === 0 && existingRows.length === 0 && csvEligible;
+      const appendLoadEligible = storedDocumentCount > 0 && existingRows.length === 0 && csvEligible;
+      if (copyEligible) {
+        for (const document of unique) {
+          if (!document.active) continue;
+          documentCountDelta += 1;
+          indexSizeBytesDelta += ftsSizeBytes(document);
         }
-        const statsStarted = Date.now();
-        await this.adjustWorkspaceStats(unique[0]!.workspaceId, documentCountDelta, indexSizeBytesDelta);
-        writeLexicalTrace(`stats documentDelta=${documentCountDelta} byteDelta=${indexSizeBytesDelta} duration=${Date.now() - statsStarted}ms`);
-      });
+        await copyNewDocuments(this.db, stored);
+      } else if (appendLoadEligible) {
+        for (const document of unique) {
+          if (!document.active) continue;
+          documentCountDelta += 1;
+          indexSizeBytesDelta += ftsSizeBytes(document);
+        }
+        await appendLoadNewDocuments(this.db, stored);
+      } else {
+        const mergeStarted = Date.now();
+        for (const item of stored) {
+          const { document } = item;
+          const previous = existing.get(item.storageId);
+          if (previous && previous.workspaceId !== document.workspaceId) {
+            throw new TypeError(`Document id cannot move between workspaces: ${document.id}.`);
+          }
+          const previousCount = previous?.active ? 1 : 0;
+          const previousBytes = previous?.active ? numeric(previous.ftsSizeBytes) : 0;
+          const nextBytes = document.active ? ftsSizeBytes(document) : 0;
+          documentCountDelta += (document.active ? 1 : 0) - previousCount;
+          indexSizeBytesDelta += nextBytes - previousBytes;
+        }
+        await this.mergeStoredDocuments(stored);
+        const reason = existingRows.length > 0
+          ? "existing-documents"
+          : !csvEligible
+            ? "unsafe-token"
+            : "nonempty-store";
+        writeLexicalTrace(`writer=merge documents=${unique.length} duration=${Date.now() - mergeStarted}ms reason=${reason}`);
+      }
+      const statsStarted = Date.now();
+      await this.adjustGenerationStats(request.workspaceId, request.generation, documentCountDelta, indexSizeBytesDelta);
+      writeLexicalTrace(`stats documentDelta=${documentCountDelta} byteDelta=${indexSizeBytesDelta} duration=${Date.now() - statsStarted}ms`);
     } catch (error) {
       throw wrap("write_failed", context, error);
     }
@@ -307,34 +492,38 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
     const context = {
       operation: "reconcileRepoDocuments",
       workspaceId: request.workspaceId,
+      generation: request.generation,
       repoId: request.repoId,
       batchId: request.batchId
     } as const;
     try {
       validateBoundary(request.workspaceId, "workspaceId");
+      validateBoundary(request.generation, "generation");
       validateBoundary(request.repoId, "repoId");
       validateBoundary(request.batchId, "batchId");
       const activeDocumentIds = uniqueStrings(request.activeDocumentIds, "activeDocumentIds");
-      const idPredicate = activeDocumentIds.length === 0 ? "" : " AND NOT (n.id IN $activeDocumentIds)";
+      const idPredicate = activeDocumentIds.length === 0 ? "" : " AND NOT (n.documentId IN $activeDocumentIds)";
       const params: Record<string, GraphValue> = {
         workspaceId: request.workspaceId,
+        generation: request.generation,
         repoId: request.repoId
       };
       if (activeDocumentIds.length > 0) params.activeDocumentIds = activeDocumentIds;
       await this.db.transaction(async () => {
         const deactivated = await this.db.query<DeactivationStatsRow>(
           "MATCH (n:LexicalDocument) " +
-          `WHERE n.workspaceId = $workspaceId AND n.repoId = $repoId AND n.active = true${idPredicate} ` +
+          `WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.repoId = $repoId AND n.active = true${idPredicate} ` +
           "RETURN count(*) AS documentCount, sum(n.ftsSizeBytes) AS indexSizeBytes;",
           params
         );
         await this.db.query(
           "MATCH (n:LexicalDocument) " +
-          `WHERE n.workspaceId = $workspaceId AND n.repoId = $repoId${idPredicate} SET n.active = false;`,
+          `WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.repoId = $repoId${idPredicate} SET n.active = false;`,
           params
         );
-        await this.adjustWorkspaceStats(
+        await this.adjustGenerationStats(
           request.workspaceId,
+          request.generation,
           -numeric(deactivated[0]?.documentCount),
           -numeric(deactivated[0]?.indexSizeBytes)
         );
@@ -345,35 +534,74 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
   }
 
   async reconcileRepoFileDocuments(request: Readonly<ReconcileRepoFileDocumentsRequest>): Promise<void> {
-    const context = { operation: "reconcileRepoDocuments", workspaceId: request.workspaceId, repoId: request.repoId, batchId: request.batchId } as const;
+    const context = { operation: "reconcileRepoFileDocuments", workspaceId: request.workspaceId, generation: request.generation, repoId: request.repoId, batchId: request.batchId } as const;
     try {
+      validateBoundary(request.generation, "generation");
       const activeFileIds = uniqueStrings(request.activeFileIds, "activeFileIds");
       const staleCondition = activeFileIds.length === 0 ? "" : " AND NOT (n.fileId IN $activeFileIds)";
-      const reconcileParams: Record<string, GraphValue> = { workspaceId: request.workspaceId, repoId: request.repoId };
+      const reconcileParams: Record<string, GraphValue> = { workspaceId: request.workspaceId, generation: request.generation, repoId: request.repoId };
       if (activeFileIds.length > 0) reconcileParams.activeFileIds = activeFileIds;
       await this.db.transaction(async () => {
         const rows = await this.db.query<DeactivationStatsRow>(
-          "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.repoId = $repoId AND n.active = true AND n.fileId IS NOT NULL" + staleCondition + " RETURN count(*) AS documentCount, sum(n.ftsSizeBytes) AS indexSizeBytes;",
+          "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.repoId = $repoId AND n.active = true AND n.fileId IS NOT NULL" + staleCondition + " RETURN count(*) AS documentCount, sum(n.ftsSizeBytes) AS indexSizeBytes;",
           reconcileParams
         );
         await this.db.query(
-          "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.repoId = $repoId AND n.active = true AND n.fileId IS NOT NULL" + staleCondition + " SET n.active = false, n.batchId = $batchId;",
+          "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.repoId = $repoId AND n.active = true AND n.fileId IS NOT NULL" + staleCondition + " SET n.active = false, n.batchId = $batchId;",
           { ...reconcileParams, batchId: request.batchId }
         );
-        await this.adjustWorkspaceStats(request.workspaceId, -numeric(rows[0]?.documentCount), -numeric(rows[0]?.indexSizeBytes));
+        await this.adjustGenerationStats(request.workspaceId, request.generation, -numeric(rows[0]?.documentCount), -numeric(rows[0]?.indexSizeBytes));
+      });
+    } catch (error) { throw wrap("reconcile_failed", context, error); }
+  }
+
+  async stageBatch(request: Readonly<StageLexicalBatchRequest>): Promise<void> {
+    validateGenerationRequest(request);
+    await this.db.transaction(async () => {
+      await this.db.query(
+        "MERGE (b:LexicalGenerationBatch {id: $id}) SET b.workspaceId=$workspaceId, b.generation=$generation, b.batchId=$batchId;",
+        { id: batchMarkerId(request.workspaceId, request.batchId), workspaceId: request.workspaceId, generation: request.generation, batchId: request.batchId }
+      );
+    });
+  }
+
+  async commitBatch(request: Readonly<CleanupBatchRequest>): Promise<void> {
+    await this.db.transaction(async () => {
+      await this.db.query("MATCH (b:LexicalGenerationBatch) WHERE b.workspaceId=$workspaceId AND b.batchId=$batchId DELETE b;", request);
+    });
+  }
+
+  async replaceSourceDocuments(request: Readonly<ReplaceSourceDocumentsRequest>): Promise<void> {
+    const context = { operation: "replaceSourceDocuments", workspaceId: request.workspaceId, generation: request.generation, repoId: request.repoId, batchId: request.batchId } as const;
+    try {
+      validateBoundary(request.generation, "generation");
+      const touchedFileIds = uniqueStrings(request.touchedFileIds, "touchedFileIds");
+      const activeDocumentIds = uniqueStrings(request.activeDocumentIds, "activeDocumentIds");
+      if (touchedFileIds.length === 0) return;
+      await this.db.transaction(async () => {
+        const matchParams = { workspaceId: request.workspaceId, generation: request.generation, repoId: request.repoId, touchedFileIds, activeDocumentIds };
+        const rows = await this.db.query<DeactivationStatsRow>(
+          "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.repoId = $repoId AND n.active = true AND n.fileId IN $touchedFileIds AND NOT (n.documentId IN $activeDocumentIds) RETURN count(*) AS documentCount, sum(n.ftsSizeBytes) AS indexSizeBytes;",
+          matchParams
+        );
+        await this.db.query(
+          "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.repoId = $repoId AND n.active = true AND n.fileId IN $touchedFileIds AND NOT (n.documentId IN $activeDocumentIds) SET n.active = false, n.batchId = $batchId;",
+          { ...matchParams, batchId: request.batchId }
+        );
+        await this.adjustGenerationStats(request.workspaceId, request.generation, -numeric(rows[0]?.documentCount), -numeric(rows[0]?.indexSizeBytes));
       });
     } catch (error) { throw wrap("reconcile_failed", context, error); }
   }
 
   private async migrateFileIds(): Promise<void> {
-    const rows = await this.db.query<Pick<DocumentRow, "id" | "workspaceId" | "repoId" | "kind" | "canonicalId" | "renderRef" | "fileId">>(
-      "MATCH (n:LexicalDocument) WHERE n.fileId IS NULL RETURN n.id AS id, n.workspaceId AS workspaceId, n.repoId AS repoId, n.kind AS kind, n.canonicalId AS canonicalId, n.renderRef AS renderRef, n.fileId AS fileId;"
+    const rows = await this.db.query<Pick<DocumentRow, "storageId" | "workspaceId" | "repoId" | "kind" | "canonicalId" | "renderRef" | "fileId">>(
+      "MATCH (n:LexicalDocument) WHERE n.fileId IS NULL RETURN n.storageId AS storageId, n.workspaceId AS workspaceId, n.repoId AS repoId, n.kind AS kind, n.canonicalId AS canonicalId, n.renderRef AS renderRef, n.fileId AS fileId;"
     );
-    const migrated = rows.map((row) => ({ id: row.id, fileId: fileIdFromIdentity(row) }))
-      .filter((row): row is { id: string; fileId: string } => row.fileId !== null);
+    const migrated = rows.map((row) => ({ storageId: row.storageId, fileId: fileIdFromIdentity(row) }))
+      .filter((row): row is { storageId: string; fileId: string } => row.fileId !== null);
     await this.db.transaction(async () => {
       for (const row of migrated) {
-        await this.db.query("MATCH (n:LexicalDocument {id: $id}) SET n.fileId = $fileId;", row);
+        await this.db.query("MATCH (n:LexicalDocument {storageId: $storageId}) SET n.fileId = $fileId;", row);
       }
     });
   }
@@ -387,23 +615,10 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
     try {
       validateBoundary(request.workspaceId, "workspaceId");
       validateBoundary(request.batchId, "batchId");
-      const params = { workspaceId: request.workspaceId, batchId: request.batchId };
       await this.db.transaction(async () => {
-        const deactivated = await this.db.query<DeactivationStatsRow>(
-          "MATCH (n:LexicalDocument) " +
-          "WHERE n.workspaceId = $workspaceId AND n.batchId = $batchId AND n.active = true " +
-          "RETURN count(*) AS documentCount, sum(n.ftsSizeBytes) AS indexSizeBytes;",
-          params
-        );
         await this.db.query(
-          "MATCH (n:LexicalDocument) " +
-          "WHERE n.workspaceId = $workspaceId AND n.batchId = $batchId SET n.active = false;",
-          params
-        );
-        await this.adjustWorkspaceStats(
-          request.workspaceId,
-          -numeric(deactivated[0]?.documentCount),
-          -numeric(deactivated[0]?.indexSizeBytes)
+          "MATCH (b:LexicalGenerationBatch) WHERE b.workspaceId=$workspaceId AND b.batchId=$batchId DELETE b;",
+          request
         );
       });
     } catch (error) {
@@ -418,6 +633,7 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
     const context = { operation: "search", workspaceId: query.workspaceId } as const;
     try {
       validateBoundary(query.workspaceId, "workspaceId");
+      validateBoundary(query.generation, "generation");
       if (!Number.isSafeInteger(options.topK) || options.topK <= 0) {
         throw new TypeError("topK must be a positive safe integer.");
       }
@@ -425,11 +641,11 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
       if (!ftsQuery) return [];
       const rows = await this.db.query<SearchRow>(
         "CALL QUERY_FTS_INDEX('LexicalDocument', 'workspace_lexical', $text) " +
-        "WHERE node.workspaceId = $workspaceId AND node.active = true " +
-        "RETURN node.canonicalId AS canonicalId, node.id AS documentId, node.repoId AS repoId, " +
+        "WHERE node.workspaceId = $workspaceId AND node.generation = $generation AND node.active = true " +
+        "RETURN node.canonicalId AS canonicalId, node.documentId AS documentId, node.repoId AS repoId, " +
         "node.kind AS kind, node.renderRef AS renderRef, score " +
         "ORDER BY score DESC, documentId ASC LIMIT $topK;",
-        { text: ftsQuery, workspaceId: query.workspaceId, topK: options.topK }
+        { text: ftsQuery, workspaceId: query.workspaceId, generation: query.generation, topK: options.topK }
       );
       return rows.map((row, index) => ({
         canonicalId: row.canonicalId,
@@ -449,12 +665,13 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
     const context = { operation: "loadDocuments", workspaceId: request.workspaceId } as const;
     try {
       validateBoundary(request.workspaceId, "workspaceId");
+      validateBoundary(request.generation, "generation");
       const documentIds = uniqueStrings(request.documentIds, "documentIds");
       if (documentIds.length === 0) return [];
       const rows = await this.db.query<DocumentRow>(
-        "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.id IN $documentIds " +
-        documentReturnClause() + " ORDER BY n.id;",
-        { workspaceId: request.workspaceId, documentIds }
+        "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.documentId IN $documentIds " +
+        documentReturnClause() + " ORDER BY n.documentId;",
+        { workspaceId: request.workspaceId, generation: request.generation, documentIds }
       );
       return rows.map(documentFromRow);
     } catch (error) {
@@ -462,10 +679,44 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
     }
   }
 
-  async health(workspaceId: string): Promise<LexicalIndexHealth> {
-    const context = { operation: "health", workspaceId } as const;
+  async pendingHealth(request: Readonly<LexicalGenerationRequest>): Promise<LexicalIndexHealth> {
+    return this.generationHealth(request, "pendingHealth");
+  }
+
+  async documentIdsForSources(request: Readonly<DocumentIdsForSourcesRequest>): Promise<readonly string[]> {
+    const context: WorkspaceLexicalStoreErrorContext = {
+      operation: "documentIdsForSources",
+      workspaceId: request.workspaceId,
+      repoId: request.repoId,
+      generation: request.generation
+    };
+    try {
+      validateGenerationRequest(request);
+      validateBoundary(request.repoId, "repoId");
+      const fileIds = uniqueStrings(request.fileIds, "fileIds");
+      if (fileIds.length === 0) return [];
+      const rows = await this.db.query<{ documentId: string }>(
+        "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation " +
+        "AND n.repoId = $repoId AND n.active = true AND n.fileId IN $fileIds " +
+        "RETURN n.documentId AS documentId ORDER BY n.documentId;",
+        { workspaceId: request.workspaceId, generation: request.generation, repoId: request.repoId, fileIds }
+      );
+      return [...new Set(rows.map((row) => row.documentId))].sort(compareText);
+    } catch (error) {
+      throw wrap("load_failed", context, error);
+    }
+  }
+
+  async health(request: Readonly<LexicalGenerationRequest>): Promise<LexicalIndexHealth> {
+    return this.generationHealth(request, "health");
+  }
+
+  private async generationHealth(request: Readonly<LexicalGenerationRequest>, operation: "health" | "pendingHealth"): Promise<LexicalIndexHealth> {
+    const { workspaceId, generation } = request;
+    const context = { operation, workspaceId, generation } as const;
     try {
       validateBoundary(workspaceId, "workspaceId");
+      validateBoundary(generation, "generation");
       const reasons: string[] = [];
       const versionRows = await this.db.query<VersionRow>("CALL DB_VERSION() RETURN version;");
       const tables = await this.tableNames();
@@ -514,13 +765,21 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
       let documentCount = 0;
       let indexSizeBytes = 0;
       if (hasStats) {
+        const revision = await this.resolveStatsRevision(request, operation);
         const statsRows = await this.db.query<WorkspaceStatsRow>(
-          "MATCH (s:LexicalWorkspaceStats {workspaceId: $workspaceId}) " +
-          "RETURN s.workspaceId AS workspaceId, s.documentCount AS documentCount, s.indexSizeBytes AS indexSizeBytes;",
-          { workspaceId }
+          "MATCH (s:LexicalWorkspaceStats {id: $id}) " +
+          "RETURN s.workspaceId AS workspaceId, s.generation AS generation, s.revision AS revision, " +
+          "s.documentCount AS documentCount, s.indexSizeBytes AS indexSizeBytes;",
+          { id: generationStatsId(workspaceId, generation, revision) }
         );
-        documentCount = numeric(statsRows[0]?.documentCount);
-        indexSizeBytes = numeric(statsRows[0]?.indexSizeBytes);
+        const stats = statsRows[0];
+        if (!stats || stats.workspaceId !== workspaceId || stats.generation !== generation
+          || stats.revision !== revision) {
+          reasons.push("lexical_stats_revision_missing");
+        } else {
+          documentCount = numeric(stats.documentCount);
+          indexSizeBytes = numeric(stats.indexSizeBytes);
+        }
       }
 
       return {
@@ -555,6 +814,85 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
     return rows[0]?.value;
   }
 
+  /** Current clean-cut schemas never run row backfills during ordinary startup. */
+  private async hasCurrentSchema(): Promise<boolean> {
+    const tables = await this.tableNames();
+    if (![KUZU_LEXICAL_DOCUMENT_TABLE, KUZU_LEXICAL_METADATA_TABLE, KUZU_LEXICAL_STATS_TABLE, "LexicalGenerationBatch"]
+      .every((table) => tables.has(table))) return false;
+    const metadata = await this.db.query<MetadataRow>(
+      "MATCH (m:LexicalMetadata) RETURN m.key AS key, m.value AS value ORDER BY key;"
+    );
+    const values = new Map(metadata.map((entry) => [entry.key, entry.value]));
+    if (values.get(PROJECTION_METADATA_KEY) !== LEXICAL_PROJECTION_SCHEMA_VERSION
+      || values.get(TOKENIZER_METADATA_KEY) !== TOKENIZER_VERSION
+      || values.get(STATS_METADATA_KEY) !== KUZU_LEXICAL_STATS_SCHEMA_VERSION) return false;
+    const columns = await this.db.query<ColumnRow>(
+      `CALL table_info('${KUZU_LEXICAL_DOCUMENT_TABLE}') RETURN name;`
+    );
+    const names = new Set(columns.map((column) => column.name));
+    if (!DOCUMENT_LOAD_COLUMNS.every(([name]) => names.has(name))) return false;
+    const statsColumns = await this.db.query<ColumnRow>(
+      `CALL table_info('${KUZU_LEXICAL_STATS_TABLE}') RETURN name;`
+    );
+    const statsNames = new Set(statsColumns.map((column) => column.name));
+    if (!["id", "workspaceId", "generation", "revision", "documentCount", "indexSizeBytes"]
+      .every((name) => statsNames.has(name))) return false;
+    const lexicalIndexes = (await this.indexRows()).filter((index) =>
+      index.table_name === KUZU_LEXICAL_DOCUMENT_TABLE && index.index_type === "FTS"
+    );
+    return lexicalIndexes.length === 1
+      && lexicalIndexes[0]?.index_name === KUZU_WORKSPACE_FTS_INDEX
+      && lexicalIndexes[0].extension_loaded
+      && sameStrings(lexicalIndexes[0].property_names, EXPECTED_FTS_PROPERTIES);
+  }
+
+  private async migrateDocumentPrimaryKey(): Promise<void> {
+    const columns = await this.db.query<ColumnRow>("CALL table_info('LexicalDocument') RETURN name;");
+    const existing = new Set(columns.map((column) => column.name));
+    if (!existing.has("storageId") && existing.has("id")) {
+      await this.db.query("ALTER TABLE LexicalDocument RENAME id TO storageId;");
+    }
+  }
+
+  private async resolveStatsRevision(
+    request: Readonly<LexicalGenerationRequest>,
+    operation: "health" | "pendingHealth"
+  ): Promise<string> {
+    if (request.revision !== undefined) {
+      validateBoundary(request.revision, "revision");
+      return request.revision;
+    }
+    if (operation === "pendingHealth") return request.generation;
+    if (!(await this.tableNames()).has("SchemaGenerationState")) return request.generation;
+    const rows = await this.db.query<{ activeGeneration?: GraphValue; activeRevision?: GraphValue }>(
+      "MATCH (s:SchemaGenerationState {id: $id}) " +
+      "RETURN s.activeGeneration AS activeGeneration, s.activeRevision AS activeRevision;",
+      { id: `schema-generation-state:${request.workspaceId}` }
+    );
+    const row = rows[0];
+    return row?.activeGeneration === request.generation
+      && typeof row.activeRevision === "string"
+      && row.activeRevision.length > 0
+      ? row.activeRevision
+      : request.generation;
+  }
+
+  private async migrateStatsPrimaryKey(): Promise<void> {
+    const columns = await this.db.query<ColumnRow>("CALL table_info('LexicalWorkspaceStats') RETURN name;");
+    const existing = new Set(columns.map((column) => column.name));
+    if (!existing.has("id") && existing.has("workspaceId")) {
+      await this.db.query("ALTER TABLE LexicalWorkspaceStats RENAME workspaceId TO id;");
+      existing.delete("workspaceId");
+      existing.add("id");
+    }
+    if (!existing.has("workspaceId")) await this.db.query("ALTER TABLE LexicalWorkspaceStats ADD workspaceId STRING;");
+    if (!existing.has("generation")) await this.db.query("ALTER TABLE LexicalWorkspaceStats ADD generation STRING;");
+    if (!existing.has("revision")) await this.db.query("ALTER TABLE LexicalWorkspaceStats ADD revision STRING;");
+    await this.db.query("MATCH (s:LexicalWorkspaceStats) WHERE s.workspaceId IS NULL SET s.workspaceId = s.id;");
+    await this.db.query("MATCH (s:LexicalWorkspaceStats) WHERE s.generation IS NULL SET s.generation = $generation;", { generation: "legacy" });
+    await this.db.query("MATCH (s:LexicalWorkspaceStats) WHERE s.revision IS NULL SET s.revision = s.generation;");
+  }
+
   private async ensureDocumentColumns(): Promise<void> {
     const columns = await this.db.query<ColumnRow>("CALL table_info('LexicalDocument') RETURN name;");
     const existing = new Set(columns.map((column) => column.name));
@@ -566,16 +904,16 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
   }
 
   private async migrateFtsSizes(): Promise<void> {
-    const rows = await this.db.query<{ id: string; ftsText: string | null }>(
-      "MATCH (n:LexicalDocument) WHERE n.ftsSizeBytes IS NULL RETURN n.id AS id, n.ftsText AS ftsText ORDER BY n.id;"
+    const rows = await this.db.query<{ storageId: string; ftsText: string | null }>(
+      "MATCH (n:LexicalDocument) WHERE n.ftsSizeBytes IS NULL RETURN n.storageId AS storageId, n.ftsText AS ftsText ORDER BY n.storageId;"
     );
     if (rows.length === 0) return;
     await this.markStatsIncomplete();
     await this.db.transaction(async () => {
       for (const row of rows) {
         await this.db.query(
-          "MATCH (n:LexicalDocument {id: $id}) SET n.ftsSizeBytes = $ftsSizeBytes;",
-          { id: row.id, ftsSizeBytes: Buffer.byteLength(row.ftsText ?? "", "utf8") }
+          "MATCH (n:LexicalDocument {storageId: $storageId}) SET n.ftsSizeBytes = $ftsSizeBytes;",
+          { storageId: row.storageId, ftsSizeBytes: Buffer.byteLength(row.ftsText ?? "", "utf8") }
         );
       }
     });
@@ -593,15 +931,18 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
       await this.db.query("MATCH (s:LexicalWorkspaceStats) DELETE s;");
       const rows = await this.db.query<WorkspaceStatsRow>(
         "MATCH (n:LexicalDocument) WHERE n.active = true " +
-        "RETURN n.workspaceId AS workspaceId, count(*) AS documentCount, " +
-        "sum(n.ftsSizeBytes) AS indexSizeBytes ORDER BY workspaceId;"
+        "RETURN n.workspaceId AS workspaceId, n.generation AS generation, count(*) AS documentCount, " +
+        "sum(n.ftsSizeBytes) AS indexSizeBytes ORDER BY workspaceId, generation;"
       );
       for (const row of rows) {
         await this.db.query(
-          "CREATE (:LexicalWorkspaceStats {workspaceId: $workspaceId, " +
+          "CREATE (:LexicalWorkspaceStats {id: $id, workspaceId: $workspaceId, generation: $generation, revision: $revision, " +
           "documentCount: $documentCount, indexSizeBytes: $indexSizeBytes});",
           {
+            id: generationStatsId(row.workspaceId, row.generation, row.generation),
             workspaceId: row.workspaceId,
+            generation: row.generation,
+            revision: row.generation,
             documentCount: numeric(row.documentCount),
             indexSizeBytes: numeric(row.indexSizeBytes)
           }
@@ -614,17 +955,148 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
     });
   }
 
-  private async adjustWorkspaceStats(
+  private async adjustGenerationStats(
     workspaceId: string,
+    generation: string,
     documentCountDelta: number,
     indexSizeBytesDelta: number
   ): Promise<void> {
     await this.db.query(
-      "MERGE (s:LexicalWorkspaceStats {workspaceId: $workspaceId}) " +
-      "ON CREATE SET s.documentCount = 0, s.indexSizeBytes = 0 " +
+      "MERGE (s:LexicalWorkspaceStats {id: $id}) " +
+      "ON CREATE SET s.workspaceId = $workspaceId, s.generation = $generation, s.revision = $revision, " +
+      "s.documentCount = 0, s.indexSizeBytes = 0 " +
       "SET s.documentCount = s.documentCount + $documentCountDelta, " +
       "s.indexSizeBytes = s.indexSizeBytes + $indexSizeBytesDelta;",
-      { workspaceId, documentCountDelta, indexSizeBytesDelta }
+      {
+        id: generationStatsId(workspaceId, generation, generation),
+        workspaceId,
+        generation,
+        revision: generation,
+        documentCountDelta,
+        indexSizeBytesDelta
+      }
+    );
+  }
+
+  private async applyExactStatsDelta(
+    workspaceId: string,
+    generation: string,
+    expectedRevision: string,
+    nextRevision: string,
+    documentCountDelta: number,
+    indexSizeBytesDelta: number
+  ): Promise<void> {
+    const rows = await this.db.query<WorkspaceStatsRow>(
+      "MATCH (s:LexicalWorkspaceStats {id: $id}) " +
+      "RETURN s.id AS id, s.workspaceId AS workspaceId, s.generation AS generation, s.revision AS revision, " +
+      "s.documentCount AS documentCount, s.indexSizeBytes AS indexSizeBytes;",
+      { id: generationStatsId(workspaceId, generation, expectedRevision) }
+    );
+    const current = rows[0];
+    if (!current || current.workspaceId !== workspaceId || current.generation !== generation
+      || current.revision !== expectedRevision) {
+      throw new TypeError(`Missing lexical statistics for active revision ${expectedRevision}.`);
+    }
+    const documentCount = numeric(current.documentCount) + documentCountDelta;
+    const indexSizeBytes = numeric(current.indexSizeBytes) + indexSizeBytesDelta;
+    if (!Number.isSafeInteger(documentCount) || documentCount < 0
+      || !Number.isSafeInteger(indexSizeBytes) || indexSizeBytes < 0) {
+      throw new TypeError(`Incremental lexical statistics underflow for generation ${generation}.`);
+    }
+    const nextId = generationStatsId(workspaceId, generation, nextRevision);
+    const existingNext = await this.db.query<{ id: string }>(
+      "MATCH (s:LexicalWorkspaceStats {id: $id}) RETURN s.id AS id;",
+      { id: nextId }
+    );
+    if (existingNext.length > 0) {
+      throw new Error(`Lexical statistics revision ${nextRevision} already exists.`);
+    }
+    await this.db.query(
+      "MERGE (s:LexicalWorkspaceStats {id: $id}) " +
+      "ON CREATE SET s.workspaceId=$workspaceId, s.generation=$generation, s.revision=$revision, " +
+      "s.documentCount=$documentCount, s.indexSizeBytes=$indexSizeBytes;",
+      {
+        id: nextId,
+        workspaceId,
+        generation,
+        revision: nextRevision,
+        documentCount,
+        indexSizeBytes
+      }
+    );
+  }
+
+  private async replaceGenerationStats(
+    workspaceId: string,
+    generation: string,
+    revision: string,
+    documentCount: number,
+    indexSizeBytes: number
+  ): Promise<void> {
+    await this.db.query(
+      "MERGE (s:LexicalWorkspaceStats {id: $id}) SET s.workspaceId=$workspaceId, s.generation=$generation, " +
+      "s.revision=$revision, s.documentCount=$documentCount, s.indexSizeBytes=$indexSizeBytes;",
+      { id: generationStatsId(workspaceId, generation, revision), workspaceId, generation, revision, documentCount, indexSizeBytes }
+    );
+  }
+
+  private async deleteGenerationRows(request: Readonly<LexicalGenerationRequest>): Promise<void> {
+    const generation = { workspaceId: request.workspaceId, generation: request.generation };
+    await this.db.query(
+      "MATCH (b:LexicalGenerationBatch) WHERE b.workspaceId=$workspaceId AND b.generation=$generation DELETE b;",
+      generation
+    );
+    await this.db.query(
+      "MATCH (n:LexicalDocument) WHERE n.workspaceId=$workspaceId AND n.generation=$generation DELETE n;",
+      generation
+    );
+    await this.db.query(
+      "MATCH (s:LexicalWorkspaceStats) WHERE s.workspaceId=$workspaceId AND s.generation=$generation DELETE s;",
+      generation
+    );
+  }
+
+  private async assertGenerationNotActive(
+    request: Readonly<LexicalGenerationRequest>,
+    options: { allowReservedPending?: boolean } = {}
+  ): Promise<void> {
+    if (!(await this.tableNames()).has("SchemaGenerationState")) return;
+    const rows = await this.db.query<{ activeGeneration?: GraphValue; pendingGeneration?: GraphValue }>(
+      "MATCH (s:SchemaGenerationState {id: $id}) SET s.protocolNonce=$nonce RETURN s.activeGeneration AS activeGeneration, s.pendingGeneration AS pendingGeneration;",
+      { id: `schema-generation-state:${request.workspaceId}`, nonce: `lexical-cleanup:${request.generation}` }
+    );
+    if (rows[0]?.activeGeneration === request.generation) {
+      throw new TypeError(`Cannot delete active lexical generation ${request.generation}.`);
+    }
+    if (rows[0]?.pendingGeneration === request.generation && !options.allowReservedPending) {
+      throw new TypeError(`Cannot delete reserved pending lexical generation ${request.generation}.`);
+    }
+    if (typeof rows[0]?.pendingGeneration === "string" && rows[0].pendingGeneration
+      && rows[0].pendingGeneration !== request.generation) {
+      throw new TypeError(`Cannot initialize lexical generation ${request.generation} while ${rows[0].pendingGeneration} is reserved.`);
+    }
+    if (!options.allowReservedPending) {
+      await assertNoLivePublicGraphReadLeases(this.db, request);
+    }
+  }
+
+  private async mergeStoredDocuments(documents: readonly StoredDocument[]): Promise<void> {
+    for (let offset = 0; offset < documents.length; offset += KUZU_LEXICAL_WRITE_CHUNK_SIZE) {
+      const chunk = documents.slice(offset, offset + KUZU_LEXICAL_WRITE_CHUNK_SIZE);
+      await this.db.transaction(async () => {
+        for (const document of chunk) await this.mergeStoredDocument(document);
+      });
+    }
+  }
+
+  private async mergeStoredDocument(item: StoredDocument): Promise<void> {
+    await this.db.query(
+      "MERGE (n:LexicalDocument {storageId: $storageId}) " +
+      "SET n.documentId=$documentId, n.generation=$generation, n.canonicalId=$canonicalId, n.workspaceId=$workspaceId, " +
+      "n.repoId=$repoId, n.kind=$kind, n.title=$title, n.qualifiedName=$qualifiedName, n.path=$path, " +
+      "n.searchableText=$searchableText, n.tokens=$tokens, n.active=$active, n.sourceHash=$sourceHash, " +
+      "n.batchId=$batchId, n.renderRef=$renderRef, n.fileId=$fileId, n.ftsText=$ftsText, n.ftsSizeBytes=$ftsSizeBytes;",
+      storedDocumentParameters(item)
     );
   }
 
@@ -653,7 +1125,7 @@ export class KuzuWorkspaceLexicalStore implements WorkspaceLexicalStore {
   }
 }
 
-async function copyNewDocuments(db: KuzuGraphDB, documents: readonly LexicalDocument[]): Promise<void> {
+async function copyNewDocuments(db: KuzuGraphDB, documents: readonly StoredDocument[]): Promise<void> {
   await withStagedDocuments("lexical-copy", documents, async (filePath, stageDurationMs) => {
     const copyStarted = Date.now();
     await db.query(`COPY LexicalDocument (${DOCUMENT_COLUMN_NAMES}) FROM "${toKuzuPath(filePath)}" (PARALLEL=false);`);
@@ -661,12 +1133,12 @@ async function copyNewDocuments(db: KuzuGraphDB, documents: readonly LexicalDocu
   });
 }
 
-async function appendLoadNewDocuments(db: KuzuGraphDB, documents: readonly LexicalDocument[]): Promise<void> {
+async function appendLoadNewDocuments(db: KuzuGraphDB, documents: readonly StoredDocument[]): Promise<void> {
   await withStagedDocuments("lexical-append-load", documents, async (filePath, stageDurationMs) => {
     const loadStarted = Date.now();
     await db.query(
       `LOAD FROM "${toKuzuPath(filePath)}" (PARALLEL=false) WITH ${DOCUMENT_LOAD_BINDINGS} ` +
-      `MERGE (n:LexicalDocument {id: id}) SET ${DOCUMENT_LOAD_SET};`
+      `MERGE (n:LexicalDocument {storageId: storageId}) SET ${DOCUMENT_LOAD_SET};`
     );
     writeLexicalTrace(`writer=append-load documents=${documents.length} stage=${stageDurationMs}ms load=${Date.now() - loadStarted}ms`);
   });
@@ -674,7 +1146,7 @@ async function appendLoadNewDocuments(db: KuzuGraphDB, documents: readonly Lexic
 
 async function withStagedDocuments(
   prefix: string,
-  documents: readonly LexicalDocument[],
+  documents: readonly StoredDocument[],
   write: (filePath: string, stageDurationMs: number) => Promise<void>
 ): Promise<void> {
   const stagingStarted = Date.now();
@@ -689,10 +1161,13 @@ async function withStagedDocuments(
   }
 }
 
-function documentCsvRow(document: LexicalDocument): CsvScalar[] {
+function documentCsvRow(item: StoredDocument): CsvScalar[] {
+  const { document } = item;
   const ftsText = indexedText(document);
   return [
+    item.storageId,
     document.id,
+    item.generation,
     document.canonicalId,
     document.workspaceId,
     document.repoId,
@@ -756,6 +1231,31 @@ function validateDocuments(documents: readonly LexicalDocument[]): LexicalDocume
   return [...byId.values()].sort((left, right) => compareText(left.id, right.id));
 }
 
+function validateGenerationRequest(request: Readonly<LexicalGenerationRequest>): void {
+  validateBoundary(request.workspaceId, "workspaceId");
+  validateBoundary(request.generation, "generation");
+}
+
+function storageId(workspaceId: string, generation: string, documentId: string): string {
+  return `lexical-storage:${JSON.stringify([workspaceId, generation, documentId])}`;
+}
+
+function storedDocument(document: LexicalDocument, generation: string): StoredDocument {
+  return {
+    storageId: storageId(document.workspaceId, generation, document.id),
+    generation,
+    document
+  };
+}
+
+function generationStatsId(workspaceId: string, generation: string, revision: string): string {
+  return `lexical-stats:${JSON.stringify([workspaceId, generation, revision])}`;
+}
+
+function batchMarkerId(workspaceId: string, batchId: string): string {
+  return `lexical-batch:${JSON.stringify([workspaceId, batchId])}`;
+}
+
 function ftsQueryText(text: string): string {
   const tokens = tokenizeLexicalText(text).filter((token) => !QUERY_STOP_WORDS.has(token));
   if (/[._/-]/u.test(text)) {
@@ -767,10 +1267,13 @@ function ftsQueryText(text: string): string {
   return tokens.join(" ");
 }
 
-function documentParameters(document: LexicalDocument): Record<string, GraphValue> {
+function storedDocumentParameters(item: StoredDocument): Record<string, GraphValue> {
+  const { document } = item;
   const ftsText = indexedText(document);
   return {
-    id: document.id,
+    storageId: item.storageId,
+    documentId: document.id,
+    generation: item.generation,
     canonicalId: document.canonicalId,
     workspaceId: document.workspaceId,
     repoId: document.repoId,
@@ -811,15 +1314,16 @@ function ftsSizeBytes(document: LexicalDocument): number {
 }
 
 function documentReturnClause(): string {
-  return "RETURN n.id AS id, n.canonicalId AS canonicalId, n.workspaceId AS workspaceId, " +
+  return "RETURN n.storageId AS storageId, n.documentId AS documentId, n.generation AS generation, n.canonicalId AS canonicalId, n.workspaceId AS workspaceId, " +
     "n.repoId AS repoId, n.kind AS kind, n.title AS title, n.qualifiedName AS qualifiedName, " +
     "n.path AS path, n.searchableText AS searchableText, n.tokens AS tokens, n.active AS active, " +
-    "n.sourceHash AS sourceHash, n.batchId AS batchId, n.renderRef AS renderRef";
+    "n.sourceHash AS sourceHash, n.batchId AS batchId, n.renderRef AS renderRef, " +
+    "n.fileId AS fileId, n.ftsText AS ftsText, n.ftsSizeBytes AS ftsSizeBytes";
 }
 
 function documentFromRow(row: DocumentRow): LexicalDocument {
   return {
-    id: row.id,
+    id: row.documentId,
     canonicalId: row.canonicalId,
     workspaceId: row.workspaceId,
     repoId: row.repoId,

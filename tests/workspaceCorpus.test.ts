@@ -6,6 +6,9 @@ import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { QUALITY_GATE_CORPUS, QUALITY_GATE_CORPUS_IDS, WORKSPACE_CORPUS } from "./retrieval/workspaceCorpus.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "workspace-unified-retrieval");
+const FIXTURE_WORKSPACE_ID = "workspace:corpus-fixture";
+const FIXTURE_GENERATION = "schema-generation:workspace-corpus:fixture";
+const FIXTURE_SYSTEM_NAME = "workspace-corpus-fixture";
 const sources = [
   ["repo:api", "src/contracts/orders.ts", "typescript", "api"], ["repo:api", "src/routes/orders.go", "go", "api"],
   ["repo:catalog", "docs/zh-CN/inventory.md", "markdown", "catalog"], ["repo:catalog", "src/CatalogItemDTO.ts", "typescript", "catalog"], ["repo:worker", "src/handlers/orderCreated.ts", "typescript", "worker"]
@@ -40,7 +43,15 @@ describe("workspace retrieval corpus", () => {
   it("derives every expected identity from parsed and normalized fixture facts", async () => {
     const parsedFiles = await Promise.all(sources.map(([repoId, relativePath, language, repo]) => parseSourceFile({ repoId, relativePath, language, absolutePath: path.join(root, repo, relativePath) })));
     const repos = ["api", "catalog", "worker"].map((name) => ({ id: `repo:${name}`, name, path: path.join(root, name), remoteUrl: "", branch: "", commitSha: "", language: "", indexedAt: "" }));
-    const facts = await buildGraphFactsBatch({ batchId: "fixture", repos, parsedFiles, semantic: false });
+    const facts = await buildGraphFactsBatch({
+      batchId: "fixture",
+      workspaceId: FIXTURE_WORKSPACE_ID,
+      generation: FIXTURE_GENERATION,
+      systemName: FIXTURE_SYSTEM_NAME,
+      repos,
+      parsedFiles,
+      semantic: false
+    });
     expect(facts.contracts).toContainEqual(expect.objectContaining({ kind: "schema" }));
     const evidence = new Map([...facts.files, ...facts.sections, ...facts.code, ...facts.contracts].map((fact) => [fact.id, JSON.stringify(fact)]));
     const missing = WORKSPACE_CORPUS.filter((entry) => entry.answerable).flatMap((entry) => entry.expectedCanonicalIds.filter((id) => !evidence.has(id)));

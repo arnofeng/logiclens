@@ -1,6 +1,7 @@
 import type { GraphDB } from "../../core/graph-model/db.js";
 import { listLowConfidenceRelations, listProducerContracts } from "../../core/graph-model/queries.js";
 import { PROBABLE_CONFIDENCE_THRESHOLD } from "../../shared/confidence.js";
+import { withPublicGraphReadSnapshot, withPublicGraphWriteSnapshot, type PublicGraphReadSnapshot } from "../../core/graph-model/readSnapshot.js";
 
 export type LowConfidenceRelation = {
   evidenceId: string;
@@ -27,11 +28,16 @@ export type QualityAudit = {
   conflicts: ConflictingContract[];
 };
 
-export async function auditRelationQuality(db: GraphDB, options: { minConfidence?: number; limit?: number } = {}): Promise<QualityAudit> {
+export async function auditRelationQuality(db: GraphDB, workspaceId: string, options: { minConfidence?: number; limit?: number } = {}, pinnedSnapshot?: PublicGraphReadSnapshot): Promise<QualityAudit> {
+  if (!pinnedSnapshot) {
+    return withPublicGraphReadSnapshot(db, workspaceId, (snapshot) =>
+      auditRelationQuality(db, workspaceId, options, snapshot));
+  }
+  const snapshot = pinnedSnapshot;
   const minConfidence = options.minConfidence ?? PROBABLE_CONFIDENCE_THRESHOLD;
   const limit = options.limit ?? 50;
-  const lowConfidence = await listLowConfidenceRelations(db, { minConfidence, limit });
-  const producerRows = await listProducerContracts(db);
+  const lowConfidence = await listLowConfidenceRelations(db, snapshot, { minConfidence, limit });
+  const producerRows = await listProducerContracts(db, snapshot);
   const producerGroups = new Map<string, Set<string>>();
   for (const row of producerRows) {
     const key = `${row.contractKind}:${row.contractKey}`;
@@ -50,8 +56,8 @@ export async function auditRelationQuality(db: GraphDB, options: { minConfidence
   return { lowConfidence: lowConfidence.slice(0, limit), conflicts };
 }
 
-export async function rejectEvidence(db: GraphDB, input: { evidenceId: string; reason: string }): Promise<void> {
-  return db.rejectEvidence(input);
+export async function rejectEvidence(db: GraphDB, workspaceId: string, input: { evidenceId: string; reason: string }): Promise<void> {
+  return withPublicGraphWriteSnapshot(db, workspaceId, (snapshot) => db.rejectEvidence(input, snapshot));
 }
 
 export async function upsertAliasOverride(db: GraphDB, input: { alias: string; targetRepoId: string; reason: string }): Promise<void> {

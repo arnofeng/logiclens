@@ -10,6 +10,7 @@ import { emptyRouteResult, successfulRouteResult, type RetrieverRouteResult } fr
 
 export type WorkspaceLexicalRetrieverOptions = Readonly<{
   workspaceId: string;
+  generation: string;
   enabled?: boolean;
   health?: LexicalIndexHealth;
   repoRoots?: readonly string[];
@@ -66,7 +67,10 @@ export async function retrieveWorkspaceLexical(
 
   let health: LexicalIndexHealth;
   try {
-    health = options.health ?? await store.health(options.workspaceId);
+    health = options.health ?? await store.health({
+      workspaceId: options.workspaceId,
+      generation: options.generation
+    });
   } catch (error) {
     if (!(error instanceof WorkspaceLexicalStoreError)) throw error;
     return emptyRouteResult("lexical", "failed", "health-check-failed");
@@ -82,7 +86,7 @@ export async function retrieveWorkspaceLexical(
   if (limit === 0) return successfulRouteResult("lexical", [], [], 0);
   try {
     const hits = (await store.search(
-      { workspaceId: options.workspaceId, text },
+      { workspaceId: options.workspaceId, generation: options.generation, text },
       { topK: limit }
     )).slice(0, limit);
     const candidates = verifiedLexicalCandidates(

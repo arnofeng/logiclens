@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { makeTestSchema } from "./helpers/schemaModel.js";
 import { analyzeSemanticImpact, getImpactedSpecId } from "../src/core/contracts/impact/semanticImpact.js";
 import { canonicalDubboContractKey, canonicalHttpContractKey } from "../src/core/contracts/apiPath.js";
 import { serializeSpec } from "../src/core/contracts/spec.js";
@@ -13,12 +14,7 @@ function schemaSpec(id: string, repo: string, name: string): ContractSpecNode {
     fileId: `file:${repo}:src/${name}.ts`,
     evidenceId: `ev:${id}`,
     canonicalKey: name,
-    specJson: serializeSpec({
-      kind: "schema",
-      name,
-      language: "typescript",
-      fields: [{ name: "id", type: "string", optional: false }]
-    }),
+    specJson: serializeSpec(makeTestSchema({ name, language: "typescript", repoId: `repo:${repo}`, fields: [{ name: "id", type: "string", optional: false }] })),
     confidence: 0.95
   };
 }

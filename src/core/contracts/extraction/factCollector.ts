@@ -22,6 +22,7 @@ import type {
   ContractSpecEdge,
   SemanticRelationEdge
 } from "../../parsing/types.js";
+import type { SchemaDeclarationCandidate } from "../../schema/model.js";
 
 export interface PackageUsageEntry {
   repoId: string;
@@ -49,4 +50,5 @@ export interface FactCollector {
   addContractSpec(node: ContractSpecNode): void;
   addContractSpecEdge(edge: ContractSpecEdge): void;
   addSemanticRelation(edge: SemanticRelationEdge): void;
+  addSchemaDeclaration(candidate: SchemaDeclarationCandidate): void;
 }

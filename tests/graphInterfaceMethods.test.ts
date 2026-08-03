@@ -5,7 +5,8 @@ import type { RepoNode, ParsedGraphFile } from "../src/core/parsing/types.js";
 // Mock external dependencies used by upsertParsedFiles
 vi.mock("../src/core/graph-model/facts.js", () => ({
   buildGraphFactsBatch: vi.fn().mockResolvedValue({
-    batchId: "test", indexedAt: "2026-06-22T00:00:00.000Z",
+    batchId: "test", workspaceId: "workspace:test", generation: "generation:test",
+    systemName: "test-system", indexedAt: "2026-06-22T00:00:00.000Z",
     repos: [], parsedFiles: [],
     files: [], code: [], sections: [], entities: [], operations: [], workflows: [],
     contracts: [], evidence: [], contains: [], imports: [], calls: [], mentions: [],
@@ -39,23 +40,31 @@ const parsedA: ParsedGraphFile = {
   hash: "h1", loc: 10, symbols: [], imports: [], calls: []
 };
 
+const upsertOptions = {
+  semantic: true,
+  workspaceId: "workspace:test",
+  generation: "generation:test",
+  systemName: "test-system"
+};
+
 function createMockDb(overrides: Partial<GraphDB> = {}): GraphDB {
   return {
-    initSchema: vi.fn(), upsertRepo: vi.fn(), updateRepoSummary: vi.fn(),
-    updateSystemSummary: vi.fn(), upsertFile: vi.fn(), upsertCode: vi.fn(),
+    initSchema: vi.fn(), upsertSystem: vi.fn(), upsertRepo: vi.fn(), updateRepoSummary: vi.fn(),
+    updateSystemSummary: vi.fn(), upsertFile: vi.fn(), upsertFilesBatch: vi.fn(), upsertCode: vi.fn(), upsertCodeBatch: vi.fn(),
     upsertSection: vi.fn(), upsertEntity: vi.fn(), upsertOperation: vi.fn(),
     upsertWorkflow: vi.fn(), upsertContract: vi.fn(), upsertEvidence: vi.fn(),
     addRepoContract: vi.fn(), addRepoDependency: vi.fn(), addRepoDependenciesBatch: vi.fn(),
     addPackageUsage: vi.fn(), addContractEntity: vi.fn(), addOperationRepo: vi.fn(),
     addWorkflowOperation: vi.fn(), upsertContractSpec: vi.fn(), addHasSpec: vi.fn(),
-    addSemanticRelation: vi.fn(), addSemanticRelationsBatch: vi.fn(), addContractEvidence: vi.fn(), addRepoEvidence: vi.fn(),
-    addContains: vi.fn(), addImport: vi.fn(), addCall: vi.fn(), addMention: vi.fn(),
+    addSemanticRelation: vi.fn(), addSemanticRelationsBatch: vi.fn(), clearSemanticRelationsForSpecs: vi.fn(), addContractEvidence: vi.fn(), addRepoEvidence: vi.fn(),
+    addContains: vi.fn(), addImport: vi.fn(), addImportsBatch: vi.fn(), addCall: vi.fn(), addCallsBatch: vi.fn(), addMention: vi.fn(),
     addSectionMention: vi.fn(), addSectionDescribesRepo: vi.fn(),
     addSectionDocumentsCode: vi.fn(), addSectionReferencesFile: vi.fn(),
-    clearRepoDependencies: vi.fn(), clearRepoIndexedArtifacts: vi.fn(),
+    clearRepoDependencies: vi.fn(), clearRepoDependenciesForContracts: vi.fn(), clearRepoIndexedArtifacts: vi.fn(),
     beginGraphWriteBatch: vi.fn(), commitGraphWriteBatch: vi.fn(),
     failGraphWriteBatch: vi.fn(), updateGraphWriteBatch: vi.fn(), recoverIncompleteGraphWriteBatches: vi.fn(),
     cleanupGraphWriteBatch: vi.fn(), markRepoArtifactsStale: vi.fn(),
+    deletePublicGraphGeneration: vi.fn(),
     upsertIndexState: vi.fn(), knownFileHashes: vi.fn(), repoCount: vi.fn(),
     listRepos: vi.fn().mockResolvedValue([]),
     listActiveAliasOverrides: vi.fn().mockResolvedValue([]),
@@ -78,7 +87,7 @@ describe("listActiveAliasOverrides integration in upsertParsedFiles", () => {
       listActiveAliasOverrides: vi.fn().mockResolvedValue(overrides)
     });
 
-    await upsertParsedFiles(db, [], true, [repoA]);
+    await upsertParsedFiles(db, [], upsertOptions, [repoA]);
 
     expect(db.listActiveAliasOverrides).toHaveBeenCalledOnce();
     expect(buildGraphFactsBatch).toHaveBeenCalledWith(
@@ -91,7 +100,7 @@ describe("listActiveAliasOverrides integration in upsertParsedFiles", () => {
       listActiveAliasOverrides: vi.fn().mockResolvedValue([])
     });
 
-    await upsertParsedFiles(db, [], true, [repoA]);
+    await upsertParsedFiles(db, [], upsertOptions, [repoA]);
 
     expect(buildGraphFactsBatch).toHaveBeenCalledWith(
       expect.objectContaining({ aliasOverrides: [] })
@@ -117,9 +126,12 @@ describe("listRepos fallback in upsertParsedFiles", () => {
       listRepos: vi.fn().mockResolvedValue([repoA, repoB])
     });
 
-    await upsertParsedFiles(db, [parsedA], true);
+    await upsertParsedFiles(db, [parsedA], upsertOptions);
 
-    expect(db.listRepos).toHaveBeenCalledOnce();
+    expect(db.listRepos).toHaveBeenCalledWith({
+      workspaceId: upsertOptions.workspaceId,
+      generation: upsertOptions.generation
+    });
     expect(buildGraphFactsBatch).toHaveBeenCalledWith(
       expect.objectContaining({ repos: [repoA] })
     );
@@ -129,7 +141,7 @@ describe("listRepos fallback in upsertParsedFiles", () => {
     const listRepos = vi.fn().mockResolvedValue([repoA, repoB]);
     const db = createMockDb({ listRepos });
 
-    await upsertParsedFiles(db, [parsedA], true, [repoA]);
+    await upsertParsedFiles(db, [parsedA], upsertOptions, [repoA]);
 
     expect(listRepos).not.toHaveBeenCalled();
   });

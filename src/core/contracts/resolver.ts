@@ -18,9 +18,8 @@ export interface ResolveSemanticRelationsInput {
   /** Repo→Contract role edges (producer/consumer/owner/shared). */
   repoContracts: RepoContractEdge[];
   /**
-   * Semantic relations already produced by extractors (e.g. pending
-   * USES_SCHEMA edges with placeholder IDs). The schema resolver reads
-   * these to resolve `schema-ref:` references.
+   * Semantic relations already produced by extractors. Only the legacy Java
+   * schema path may still contain pending `schema-ref:` placeholder IDs.
    */
   existingSemanticRelations: SemanticRelationEdge[];
 }

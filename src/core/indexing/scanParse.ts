@@ -7,6 +7,7 @@ import { hashText } from "../../shared/hash.js";
 import { fileId } from "../../shared/path.js";
 import type { AppConfig } from "../../config/schema.js";
 import { runIndexPhase } from "./phases.js";
+import type { PublicGraphGenerationScope } from "../graph-model/publicGraphGeneration.js";
 
 type ParseProgress = {
   tick(label?: string): void;
@@ -20,6 +21,10 @@ export type ScanParseRepoResult = {
   // All currently present source file ids, including unchanged files skipped
   // by changed-only mode. Stale marking depends on this complete active set.
   activeFileIds: string[];
+  // Stable logical IDs that existed in the pinned active revision but no
+  // longer exist in the scanned source tree. An empty set is still meaningful
+  // for no-op detection and avoids querying internal facts during staging.
+  removedFileIds: string[];
   filesScanned: number;
   filesChanged: number;
 };
@@ -28,8 +33,8 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function knownFileHashes(db: GraphDB, repoId: string): Promise<Map<string, string>> {
-  return db.knownFileHashes(repoId);
+async function knownFileHashes(db: GraphDB, repoId: string, scope: PublicGraphGenerationScope): Promise<Map<string, string>> {
+  return db.knownFileHashes(repoId, scope);
 }
 
 export async function scanAndParseRepo(input: {
@@ -37,9 +42,11 @@ export async function scanAndParseRepo(input: {
   repo: RepoNode;
   config: AppConfig;
   changedOnly?: boolean;
+  trackRemovedFiles?: boolean;
   maxFiles?: number;
   additionalIndexFiles?: readonly string[];
   activePluginSourceGlobs?: readonly string[];
+  publicGraphScope?: PublicGraphGenerationScope;
   createProgressBar: (label: string, total: number) => ParseProgress;
 }): Promise<ScanParseRepoResult> {
   const { db, repo, config, changedOnly, createProgressBar } = input;
@@ -55,7 +62,13 @@ export async function scanAndParseRepo(input: {
   const parseProgress = createProgressBar(`Files ${repo.name}`, scannedFiles.length);
   // Known hashes are only needed for changed-only runs. Full imports parse
   // every scanned file and leave stale handling to later phases.
-  const known = changedOnly && db ? await knownFileHashes(db, repo.id) : new Map<string, string>();
+  const needsKnownFiles = Boolean(changedOnly || input.trackRemovedFiles);
+  if (needsKnownFiles && db && !input.publicGraphScope) {
+    throw new Error("Changed-only indexing requires an active public graph generation.");
+  }
+  const known = needsKnownFiles && db && input.publicGraphScope
+    ? await knownFileHashes(db, repo.id, input.publicGraphScope)
+    : new Map<string, string>();
   const parsedFiles: ParsedGraphFile[] = [];
   const activeFileIds: string[] = [];
 
@@ -97,11 +110,16 @@ export async function scanAndParseRepo(input: {
   }
 
   parseProgress.complete();
+  const activeFileIdSet = new Set(activeFileIds);
+  const removedFileIds = [...known.keys()]
+    .filter((knownFileId) => !activeFileIdSet.has(knownFileId))
+    .sort((left, right) => left.localeCompare(right));
   return {
     repo,
     scannedFiles,
     parsedFiles,
     activeFileIds,
+    removedFileIds,
     filesScanned: scannedFiles.length,
     filesChanged: parsedFiles.length
   };

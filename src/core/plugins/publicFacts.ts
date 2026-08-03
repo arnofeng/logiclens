@@ -1,5 +1,5 @@
 import type { ContractRole, SemanticRelationKind } from "../parsing/types.js";
-import type { GrpcStreaming, SchemaFieldSpec } from "../contracts/spec.js";
+import type { GrpcStreaming, SchemaFieldSpec, TypeDeclarationIdentity } from "../contracts/spec.js";
 import type { EventBroker } from "../contracts/event.js";
 
 export type PublicConfidence = "exact" | "probable" | "heuristic" | number;
@@ -36,9 +36,9 @@ export type PublicSchemaFact = {
   repoId: string;
   fileId?: string;
   filePath: string;
-  name: string;
-  language: string;
-  fields: SchemaFieldSpec[];
+  declaration: TypeDeclarationIdentity;
+  displayName: string;
+  shape: { kind: "object"; fields: SchemaFieldSpec[] } | { kind: "enum"; values: string[] };
   sourceSymbolId?: string;
   evidence: PublicEvidence;
 };

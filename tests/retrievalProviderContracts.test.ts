@@ -4,11 +4,17 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   WorkspaceLexicalStoreError,
   type CleanupBatchRequest,
+  type InitializeLexicalGenerationRequest,
+  type DeleteDocumentsRequest,
+  type DocumentIdsForSourcesRequest,
   type GraphProviderCapabilities,
+  type IncrementalLexicalMutationRequest,
   type LoadDocumentsRequest,
+  type LexicalGenerationRequest,
   type NativeLexicalCapabilities,
   type ReconcileRepoDocumentsRequest,
   type ReconcileRepoFileDocumentsRequest,
+  type UpsertDocumentsRequest,
   type WorkspaceLexicalStore,
   type WorkspaceLexicalStoreErrorCode,
   type WorkspaceLexicalStoreErrorContext
@@ -24,8 +30,20 @@ import type {
 const fakeStore: WorkspaceLexicalStore = {
   async ensureSchema(): Promise<void> {},
   async commitVersions(): Promise<void> {},
-  async upsertDocuments(documents: readonly LexicalDocument[]): Promise<void> {
-    void documents;
+  async initializeGeneration(request: Readonly<InitializeLexicalGenerationRequest>): Promise<void> {
+    void request;
+  },
+  async deleteGeneration(request: Readonly<LexicalGenerationRequest>): Promise<void> {
+    void request;
+  },
+  async upsertDocuments(request: Readonly<UpsertDocumentsRequest>): Promise<void> {
+    void request;
+  },
+  async deleteDocuments(request: Readonly<DeleteDocumentsRequest>): Promise<void> {
+    void request;
+  },
+  async applyIncrementalMutation(request: Readonly<IncrementalLexicalMutationRequest>): Promise<void> {
+    void request;
   },
   async reconcileRepoDocuments(request: Readonly<ReconcileRepoDocumentsRequest>): Promise<void> {
     void request;
@@ -48,12 +66,19 @@ const fakeStore: WorkspaceLexicalStore = {
     void request;
     return [];
   },
-  async health(workspaceId: string): Promise<LexicalIndexHealth> {
+  async pendingHealth(request: Readonly<LexicalGenerationRequest>): Promise<LexicalIndexHealth> {
+    return this.health(request);
+  },
+  async documentIdsForSources(request: Readonly<DocumentIdsForSourcesRequest>): Promise<readonly string[]> {
+    void request;
+    return [];
+  },
+  async health(request: Readonly<LexicalGenerationRequest>): Promise<LexicalIndexHealth> {
     return {
       providerVersion: "fake-1",
       projectionSchemaVersion: "1",
       tokenizerVersion: "1",
-      status: workspaceId ? "healthy" : "unavailable",
+      status: request.workspaceId && request.generation ? "healthy" : "unavailable",
       reasons: [],
       metrics: { documentCount: 0, indexSizeBytes: 0 }
     };
@@ -64,8 +89,20 @@ describe("workspace lexical provider contracts", () => {
   it("defines exact method parameters and Promise return types", () => {
     expectTypeOf<Parameters<WorkspaceLexicalStore["ensureSchema"]>>().toEqualTypeOf<[]>();
     expectTypeOf<Parameters<WorkspaceLexicalStore["commitVersions"]>>().toEqualTypeOf<[]>();
+    expectTypeOf<Parameters<WorkspaceLexicalStore["initializeGeneration"]>>().toEqualTypeOf<[
+      Readonly<InitializeLexicalGenerationRequest>
+    ]>();
+    expectTypeOf<Parameters<WorkspaceLexicalStore["deleteGeneration"]>>().toEqualTypeOf<[
+      Readonly<LexicalGenerationRequest>
+    ]>();
     expectTypeOf<Parameters<WorkspaceLexicalStore["upsertDocuments"]>>().toEqualTypeOf<[
-      readonly LexicalDocument[]
+      Readonly<UpsertDocumentsRequest>
+    ]>();
+    expectTypeOf<Parameters<WorkspaceLexicalStore["deleteDocuments"]>>().toEqualTypeOf<[
+      Readonly<DeleteDocumentsRequest>
+    ]>();
+    expectTypeOf<Parameters<WorkspaceLexicalStore["applyIncrementalMutation"]>>().toEqualTypeOf<[
+      Readonly<IncrementalLexicalMutationRequest>
     ]>();
     expectTypeOf<Parameters<WorkspaceLexicalStore["reconcileRepoDocuments"]>>().toEqualTypeOf<[
       Readonly<ReconcileRepoDocumentsRequest>
@@ -83,16 +120,30 @@ describe("workspace lexical provider contracts", () => {
     expectTypeOf<Parameters<WorkspaceLexicalStore["loadDocuments"]>>().toEqualTypeOf<[
       Readonly<LoadDocumentsRequest>
     ]>();
-    expectTypeOf<Parameters<WorkspaceLexicalStore["health"]>>().toEqualTypeOf<[string]>();
+    expectTypeOf<Parameters<WorkspaceLexicalStore["documentIdsForSources"]>>().toEqualTypeOf<[
+      Readonly<DocumentIdsForSourcesRequest>
+    ]>();
+    expectTypeOf<Parameters<WorkspaceLexicalStore["pendingHealth"]>>().toEqualTypeOf<[
+      Readonly<LexicalGenerationRequest>
+    ]>();
+    expectTypeOf<Parameters<WorkspaceLexicalStore["health"]>>().toEqualTypeOf<[
+      Readonly<LexicalGenerationRequest>
+    ]>();
 
     expectTypeOf<ReturnType<WorkspaceLexicalStore["ensureSchema"]>>().toEqualTypeOf<Promise<void>>();
     expectTypeOf<ReturnType<WorkspaceLexicalStore["commitVersions"]>>().toEqualTypeOf<Promise<void>>();
+    expectTypeOf<ReturnType<WorkspaceLexicalStore["initializeGeneration"]>>().toEqualTypeOf<Promise<void>>();
+    expectTypeOf<ReturnType<WorkspaceLexicalStore["deleteGeneration"]>>().toEqualTypeOf<Promise<void>>();
     expectTypeOf<ReturnType<WorkspaceLexicalStore["upsertDocuments"]>>().toEqualTypeOf<Promise<void>>();
+    expectTypeOf<ReturnType<WorkspaceLexicalStore["deleteDocuments"]>>().toEqualTypeOf<Promise<void>>();
+    expectTypeOf<ReturnType<WorkspaceLexicalStore["applyIncrementalMutation"]>>().toEqualTypeOf<Promise<void>>();
     expectTypeOf<ReturnType<WorkspaceLexicalStore["reconcileRepoDocuments"]>>().toEqualTypeOf<Promise<void>>();
     expectTypeOf<ReturnType<WorkspaceLexicalStore["reconcileRepoFileDocuments"]>>().toEqualTypeOf<Promise<void>>();
     expectTypeOf<ReturnType<WorkspaceLexicalStore["cleanupBatch"]>>().toEqualTypeOf<Promise<void>>();
     expectTypeOf<ReturnType<WorkspaceLexicalStore["search"]>>().toEqualTypeOf<Promise<readonly LexicalHit[]>>();
     expectTypeOf<ReturnType<WorkspaceLexicalStore["loadDocuments"]>>().toEqualTypeOf<Promise<readonly LexicalDocument[]>>();
+    expectTypeOf<ReturnType<WorkspaceLexicalStore["documentIdsForSources"]>>().toEqualTypeOf<Promise<readonly string[]>>();
+    expectTypeOf<ReturnType<WorkspaceLexicalStore["pendingHealth"]>>().toEqualTypeOf<Promise<LexicalIndexHealth>>();
     expectTypeOf<ReturnType<WorkspaceLexicalStore["health"]>>().toEqualTypeOf<Promise<LexicalIndexHealth>>();
     expectTypeOf(fakeStore).toMatchTypeOf<WorkspaceLexicalStore>();
   });
@@ -100,7 +151,11 @@ describe("workspace lexical provider contracts", () => {
   it("keeps collection inputs readonly", () => {
     expectTypeOf<ReconcileRepoDocumentsRequest["activeDocumentIds"]>().toEqualTypeOf<readonly string[]>();
     expectTypeOf<LoadDocumentsRequest["documentIds"]>().toEqualTypeOf<readonly string[]>();
-    expectTypeOf<Parameters<WorkspaceLexicalStore["upsertDocuments"]>[0]>().toEqualTypeOf<readonly LexicalDocument[]>();
+    expectTypeOf<UpsertDocumentsRequest["documents"]>().toEqualTypeOf<readonly LexicalDocument[]>();
+    expectTypeOf<DeleteDocumentsRequest["documentIds"]>().toEqualTypeOf<readonly string[]>();
+    expectTypeOf<IncrementalLexicalMutationRequest["deleteDocumentIds"]>().toEqualTypeOf<readonly string[]>();
+    expectTypeOf<IncrementalLexicalMutationRequest["upsertDocuments"]>().toEqualTypeOf<readonly LexicalDocument[]>();
+    expectTypeOf<DocumentIdsForSourcesRequest["fileIds"]>().toEqualTypeOf<readonly string[]>();
   });
 
   it("keeps capability fields exhaustive", () => {

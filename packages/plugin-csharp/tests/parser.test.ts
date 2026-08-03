@@ -23,10 +23,10 @@ describe("C# parser facts", () => {
     expect(result.symbols?.every((symbol) => symbol.source && symbol.signature && symbol.startLine <= symbol.endLine)).toBe(true);
     expect(result.symbols?.some((symbol) => "id" in symbol)).toBe(false);
     expect(result.imports).toEqual([
-      expect.objectContaining({ module: "System.Collections.Generic.List<string>", raw: expect.stringContaining("global using") }),
-      expect.objectContaining({ module: "SimpleNamespace", raw: "using SimpleAlias = SimpleNamespace;" }),
-      expect.objectContaining({ module: "System.Math", raw: expect.stringContaining("using static") }),
-      expect.objectContaining({ module: "Plain.Project.Services" })
+      expect.objectContaining({ module: "System.Collections.Generic.List<string>", importKind: "alias", alias: "GlobalAlias", raw: expect.stringContaining("global using") }),
+      expect.objectContaining({ module: "SimpleNamespace", importKind: "alias", alias: "SimpleAlias", raw: "using SimpleAlias = SimpleNamespace;" }),
+      expect.objectContaining({ module: "System.Math", importKind: "static", raw: expect.stringContaining("using static") }),
+      expect.objectContaining({ module: "Plain.Project.Services", importKind: "namespace" })
     ]);
     expect(result.calls).toEqual(expect.arrayContaining([
       expect.objectContaining({ calleeName: "Create", receiver: "Factory", argsCount: 2, callerSymbolName: expect.stringContaining("Local") }),

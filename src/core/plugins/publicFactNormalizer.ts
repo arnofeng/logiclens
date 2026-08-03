@@ -5,6 +5,7 @@ import type { ContractNode, ContractRole } from "../parsing/types.js";
 import { apiPathParams, apiPathTemplate, contract, evidence, grpcContract, httpApiContract, operationVerb, pushContractEvidence, toBusinessEntityName } from "../contracts/extraction/builtin/shared.js";
 import type { FactCollector } from "../contracts/extraction/factCollector.js";
 import type { PublicConfidence, PublicContractFact, PublicEvidence } from "./publicFacts.js";
+import { createSchemaSpec, stableFactId } from "../schema/model.js";
 
 export function normalizePublicFacts(facts: readonly PublicContractFact[], collector: FactCollector): void {
   for (const fact of facts) {
@@ -63,15 +64,10 @@ function emitHttpEndpoint(fact: Extract<PublicContractFact, { kind: "httpEndpoin
 }
 
 function emitSchema(fact: Extract<PublicContractFact, { kind: "schema" }>, collector: FactCollector): void {
-  const contractNode = contract("schema", fact.name);
+  const contractNode = contract("schema", fact.declaration.canonicalName);
   const evidenceNode = toEvidenceNode({ ...fact.evidence, repoId: fact.repoId, fileId: fact.fileId, filePath: fact.filePath });
   pushContractEvidence(collector, fact.repoId, contractNode, "shared", evidenceNode);
-  const spec: SchemaSpec = {
-    kind: "schema",
-    name: fact.name,
-    language: fact.language,
-    fields: fact.fields
-  };
+  const spec: SchemaSpec = createSchemaSpec({ declaration: fact.declaration, displayName: fact.displayName, shape: fact.shape });
   pushSpec(collector, fact, contractNode.id, contractNode.key, spec, evidenceNode.id, evidenceNode.confidence);
 }
 
@@ -124,7 +120,7 @@ function emitPackageUsage(fact: Extract<PublicContractFact, { kind: "packageUsag
 
 function pushSpec(
   collector: FactCollector,
-  fact: { repoId: string; fileId?: string; filePath: string; sourceSymbolId?: string },
+  fact: { repoId: string; fileId?: string; filePath: string; sourceSymbolId?: string; evidence: { rule: string; raw: string } },
   contractId: string,
   canonicalKey: string,
   spec: ContractSpec,
@@ -135,7 +131,19 @@ function pushSpec(
   pathTemplate?: string,
   eventTopic?: string
 ): void {
-  const specId = `spec:${normalizeName(`${contractId}:${evidenceIdValue}`)}`;
+  const specId = spec.kind === "schema" ? spec.id : stableFactId("spec", {
+    repoId: fact.repoId,
+    contractId,
+    canonicalKey,
+    kind: spec.kind,
+    framework: framework ?? "",
+    sourceSignature: stableFactId("source-signature", {
+      fileId: fact.fileId ?? fileId(fact.repoId, fact.filePath),
+      sourceSymbolId: fact.sourceSymbolId?.replace(/:\d+$/u, "") ?? "",
+      rule: fact.evidence.rule,
+      raw: fact.evidence.raw
+    })
+  });
   collector.addContractSpec({
     id: specId,
     contractId,

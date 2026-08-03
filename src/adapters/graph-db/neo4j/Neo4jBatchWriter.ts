@@ -3,6 +3,11 @@ import type { GraphFactsBatch } from "../../../core/graph-model/facts.js";
 import { systemId } from "../../../core/graph-model/schema.js";
 import type { ProgressReporter } from "../../../shared/progress.js";
 import { chunk } from "../../../shared/chunk.js";
+import {
+  publicNodeStorageId,
+  type PublicGraphGenerationScope
+} from "../../../core/graph-model/publicGraphGeneration.js";
+import { collapseSemanticRelations } from "../../../core/contracts/extraction/dedup.js";
 
 /** Maximum rows per UNWIND batch to avoid excessive memory / transaction size. */
 const BATCH_SIZE = 5000;
@@ -36,14 +41,19 @@ interface NodeTableSpec {
 function nodeSpecs(facts: GraphFactsBatch): NodeTableSpec[] {
   return [
     {
+      label: "System",
+      props: ["name", "summary"],
+      facts: [{ id: systemId, name: facts.systemName, summary: "" }],
+    },
+    {
       label: "Repo",
       props: ["name", "path", "remoteUrl", "branch", "commitSha", "language", "indexedAt", "summary"],
       facts: facts.repos.map((r) => ({ id: r.id, name: r.name, path: r.path, remoteUrl: r.remoteUrl, branch: r.branch, commitSha: r.commitSha, language: r.language, indexedAt: r.indexedAt, summary: r.summary ?? "" })),
     },
     {
       label: "File",
-      props: ["repoId", "path", "language", "hash", "loc", "batchId", "indexedAt", "active"],
-      facts: facts.files.map((f) => ({ id: f.id, repoId: f.repoId, path: f.path, language: f.language, hash: f.hash, loc: f.loc, batchId: f.batchId ?? "", indexedAt: f.indexedAt ?? "", active: f.active ?? true })),
+      props: ["repoId", "path", "directory", "language", "hash", "loc", "batchId", "indexedAt", "active"],
+      facts: facts.files.map((f) => ({ id: f.id, repoId: f.repoId, path: f.path, directory: f.directory, language: f.language, hash: f.hash, loc: f.loc, batchId: f.batchId ?? "", indexedAt: f.indexedAt ?? "", active: f.active ?? true })),
     },
     {
       label: "Code",
@@ -93,13 +103,24 @@ async function writeNodeTable(
   label: string,
   props: string[],
   rows: Record<string, unknown>[],
+  scope: PublicGraphGenerationScope,
 ): Promise<void> {
   if (rows.length === 0) return;
-  const setClause = props.map((p) => `n.${p} = row.${p}`).join(", ");
+  const setClause = ["id", "workspaceId", "generation", ...props]
+    .map((p) => `n.${p} = row.${p}`).join(", ");
   await forEachChunk(rows, async (chunkRows) => {
+    const scopedRows = chunkRows.map((row) => {
+      if (typeof row.id !== "string") throw new TypeError(`${label} batch row is missing a logical ID.`);
+      return {
+        ...row,
+        storageId: publicNodeStorageId(scope.generation, row.id),
+        workspaceId: scope.workspaceId,
+        generation: scope.generation
+      };
+    });
     await db.query(
-      `UNWIND $batch AS row MERGE (n:${label} {id: row.id}) ON CREATE SET ${setClause} ON MATCH SET ${setClause};`,
-      { batch: chunkRows as unknown as import("../../../core/graph-model/db.js").GraphValue },
+      `UNWIND $batch AS row MERGE (n:${label} {storageId: row.storageId}) SET ${setClause};`,
+      { batch: scopedRows as unknown as import("../../../core/graph-model/db.js").GraphValue },
     );
   });
 }
@@ -243,9 +264,9 @@ function relationSpecs(facts: GraphFactsBatch): RelationSpec[] {
       label: "SEMANTIC_REL",
       fromLabel: "ContractSpec",
       toLabel: "ContractSpec",
-      mergeProps: ["kind", "evidenceId"],
-      setProps: ["reason", "confidence", "batchId", "active"],
-      rows: facts.semanticRelations.map((e) => ({ fromId: e.fromSpecId, toId: e.toSpecId, kind: e.kind, evidenceId: e.evidenceId, reason: e.reason, confidence: e.confidence, batchId: e.batchId ?? "", active: e.active ?? true })),
+      mergeProps: ["kind"],
+      setProps: ["evidenceId", "reason", "confidence", "batchId", "active"],
+      rows: collapseSemanticRelations(facts.semanticRelations).map((e) => ({ fromId: e.fromSpecId, toId: e.toSpecId, kind: e.kind, evidenceId: e.evidenceId, reason: e.reason, confidence: e.confidence, batchId: e.batchId ?? "", active: e.active ?? true })),
     },
   ];
 }
@@ -253,20 +274,33 @@ function relationSpecs(facts: GraphFactsBatch): RelationSpec[] {
 async function writeRelationTable(
   db: GraphDB,
   spec: RelationSpec,
+  scope: PublicGraphGenerationScope,
 ): Promise<void> {
   if (spec.rows.length === 0) return;
   const mergeClause = spec.mergeProps.length > 0
     ? `{${spec.mergeProps.map((p) => `${p}: row.${p}`).join(", ")}}`
     : "";
-  const setClause = spec.setProps.length > 0
-    ? ` SET ${spec.setProps.map((p) => `r.${p} = row.${p}`).join(", ")}`
-    : "";
+  const setClause = ` SET r.workspaceId = row.workspaceId, r.generation = row.generation${
+    spec.setProps.length > 0 ? `, ${spec.setProps.map((p) => `r.${p} = row.${p}`).join(", ")}` : ""
+  }`;
   await forEachChunk(spec.rows, async (chunkRows) => {
+    const scopedRows = chunkRows.map((row) => {
+      if (typeof row.fromId !== "string" || typeof row.toId !== "string") {
+        throw new TypeError(`${spec.label} batch row is missing a logical endpoint ID.`);
+      }
+      return {
+        ...row,
+        fromStorageId: publicNodeStorageId(scope.generation, row.fromId),
+        toStorageId: publicNodeStorageId(scope.generation, row.toId),
+        workspaceId: scope.workspaceId,
+        generation: scope.generation
+      };
+    });
     await db.query(
       `UNWIND $batch AS row ` +
-      `MATCH (a:${spec.fromLabel} {id: row.fromId}), (b:${spec.toLabel} {id: row.toId}) ` +
+      `MATCH (a:${spec.fromLabel} {storageId: row.fromStorageId}), (b:${spec.toLabel} {storageId: row.toStorageId}) ` +
       `MERGE (a)-[r:${spec.label}${mergeClause}]->(b)${setClause};`,
-      { batch: chunkRows as unknown as import("../../../core/graph-model/db.js").GraphValue },
+      { batch: scopedRows as unknown as import("../../../core/graph-model/db.js").GraphValue },
     );
   });
 }
@@ -339,17 +373,30 @@ function pairSpecs(facts: GraphFactsBatch): PairSpec[] {
 async function writePairTable(
   db: GraphDB,
   spec: PairSpec,
+  scope: PublicGraphGenerationScope,
 ): Promise<void> {
   if (spec.rows.length === 0) return;
-  const setClause = spec.setProps && spec.setProps.length > 0
-    ? ` SET ${spec.setProps.map((p) => `r.${p} = row.${p}`).join(", ")}`
-    : "";
+  const setClause = ` SET r.workspaceId = row.workspaceId, r.generation = row.generation${
+    spec.setProps && spec.setProps.length > 0 ? `, ${spec.setProps.map((p) => `r.${p} = row.${p}`).join(", ")}` : ""
+  }`;
   await forEachChunk(spec.rows, async (chunkRows) => {
+    const scopedRows = chunkRows.map((row) => {
+      if (typeof row.fromId !== "string" || typeof row.toId !== "string") {
+        throw new TypeError(`${spec.label} pair row is missing a logical endpoint ID.`);
+      }
+      return {
+        ...row,
+        fromStorageId: publicNodeStorageId(scope.generation, row.fromId),
+        toStorageId: publicNodeStorageId(scope.generation, row.toId),
+        workspaceId: scope.workspaceId,
+        generation: scope.generation
+      };
+    });
     await db.query(
       `UNWIND $batch AS row ` +
-      `MATCH (a:${spec.fromLabel} {id: row.fromId}), (b:${spec.toLabel} {id: row.toId}) ` +
+      `MATCH (a:${spec.fromLabel} {storageId: row.fromStorageId}), (b:${spec.toLabel} {storageId: row.toStorageId}) ` +
       `MERGE (a)-[r:${spec.label}]->(b)${setClause};`,
-      { batch: chunkRows as unknown as import("../../../core/graph-model/db.js").GraphValue },
+      { batch: scopedRows as unknown as import("../../../core/graph-model/db.js").GraphValue },
     );
   });
 }
@@ -367,6 +414,7 @@ export async function writeGraphFactsWithNeo4jBatch(
   options: Neo4jBatchWriteOptions = {},
 ): Promise<void> {
   const progress = options.progress;
+  const scope = { workspaceId: facts.workspaceId, generation: facts.generation };
 
   const nodeTables = nodeSpecs(facts).filter((s) => s.facts.length > 0);
   const pairTables = pairSpecs(facts).filter((s) => s.rows.length > 0);
@@ -381,19 +429,19 @@ export async function writeGraphFactsWithNeo4jBatch(
 
   // Phase 1: nodes (with label suffix for clarity)
   for (const spec of nodeTables) {
-    await writeNodeTable(db, spec.label, spec.props, spec.facts);
+    await writeNodeTable(db, spec.label, spec.props, spec.facts, scope);
     report(`upsert ${spec.label}`);
   }
 
   // Phase 2: pair edges (CONTAINS, MENTIONS, HAS_EVIDENCE)
   for (const spec of pairTables) {
-    await writePairTable(db, spec);
+    await writePairTable(db, spec, scope);
     report(`merge ${spec.label} ${spec.fromLabel}→${spec.toLabel}`);
   }
 
   // Phase 3: relation edges with merge keys
   for (const spec of relTables) {
-    await writeRelationTable(db, spec);
+    await writeRelationTable(db, spec, scope);
     report(`merge ${spec.label}`);
   }
 }

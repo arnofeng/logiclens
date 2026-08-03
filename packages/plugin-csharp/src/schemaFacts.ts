@@ -3,9 +3,11 @@ import type {
   PluginFileView,
   PluginHttpEndpointFact,
   PluginPostExtractContext,
+  PluginCanonicalTypeExpression,
   PluginSchemaFact,
   PluginSchemaField,
-  PluginSymbolView
+  PluginSymbolView,
+  PluginTypeExpression
 } from "@repohelix/plugin-sdk";
 import { csharpParseBufferSize } from "./parseBuffer.js";
 
@@ -31,19 +33,18 @@ type Candidate = {
   node: SyntaxNode;
   name: string;
   qualifiedName: string;
+  resolutionScopeId: string;
   fields: PluginSchemaField[];
   sourceSymbolId?: string;
   reasons: string[];
 };
 
 const DECLARATIONS = new Set(["record_declaration", "class_declaration", "struct_declaration"]);
-const NAME_SUFFIX = /(?:DTO|Dto|Request|Response|Payload|Contract|Model)$/;
 const TYPE_ATTRIBUTES = new Set(["DataContract", "JsonSerializable", "Serializable", "JsonObject", "MessagePackObject"]);
 const SERIALIZED_MEMBER_ATTRIBUTES = new Set(["JsonPropertyName", "JsonInclude", "JsonRequired", "DataMember"]);
 const REQUIRED_ATTRIBUTES = new Set(["JsonRequired", "Required"]);
 const COLLECTIONS = new Set(["IEnumerable", "ICollection", "IList", "IReadOnlyCollection", "IReadOnlyList", "List", "Collection", "HashSet", "ISet"]);
 const DICTIONARIES = new Set(["Dictionary", "IDictionary", "IReadOnlyDictionary", "SortedDictionary"]);
-const WRAPPERS = new Set(["Task", "ValueTask", "ActionResult", "Results", "Ok", "Created", "ObjectResult"]);
 const PRIMITIVES: Record<string, string> = {
   string: "string", char: "string", bool: "boolean", byte: "integer", sbyte: "integer", short: "integer",
   ushort: "integer", int: "integer", uint: "integer", long: "integer", ulong: "integer", float: "number",
@@ -139,7 +140,7 @@ function splitGeneric(value: string): { base: string; args: string[] } | undefin
   return { base: value.slice(0, start).trim().replace(/^global::/, ""), args };
 }
 
-function normalizeType(raw: string): { type: string; nullable: boolean } {
+function normalizeType(raw: string, file?: PluginFileView, declaredCanonicalNames: ReadonlySet<string> = new Set()): { type: string; nullable: boolean } {
   let value = raw.trim().replace(/\s+/g, " ").replace(/^global::/, "");
   let nullable = false;
   if (value.endsWith("?")) { nullable = true; value = value.slice(0, -1).trim(); }
@@ -151,20 +152,27 @@ function normalizeType(raw: string): { type: string; nullable: boolean } {
   if (generic) {
     const base = generic.base.replace(/^.*\./, "");
     if (base === "Nullable" && generic.args[0]) {
-      const inner = normalizeType(generic.args[0]);
+      const inner = normalizeType(generic.args[0], file, declaredCanonicalNames);
       return { type: inner.type, nullable: true };
     }
-    if (COLLECTIONS.has(base) && generic.args[0]) return { type: `array<${nestedType(generic.args[0])}>`, nullable };
-    if (DICTIONARIES.has(base) && generic.args.length === 2) {
-      return { type: `dictionary<${nestedType(generic.args[0]!)},${nestedType(generic.args[1]!)}>`, nullable };
+    const userType = file && endpointReferenceCandidates(generic.base, file, declaredCanonicalNames)
+      .some((candidate) => declaredCanonicalNames.has(candidate));
+    if (!userType && COLLECTIONS.has(base) && generic.args[0]) {
+      return { type: `array<${nestedType(generic.args[0], file, declaredCanonicalNames)}>`, nullable };
     }
-    return { type: `${generic.base}<${generic.args.map(nestedType).join(",")}>`, nullable };
+    if (!userType && DICTIONARIES.has(base) && generic.args.length === 2) {
+      return {
+        type: `dictionary<${nestedType(generic.args[0]!, file, declaredCanonicalNames)},${nestedType(generic.args[1]!, file, declaredCanonicalNames)}>`,
+        nullable
+      };
+    }
+    return { type: `${generic.base}<${generic.args.map((argument) => nestedType(argument, file, declaredCanonicalNames)).join(",")}>`, nullable };
   }
   return { type: PRIMITIVES[value] ?? value, nullable };
 }
 
-function nestedType(raw: string): string {
-  const normalized = normalizeType(raw);
+function nestedType(raw: string, file?: PluginFileView, declaredCanonicalNames: ReadonlySet<string> = new Set()): string {
+  const normalized = normalizeType(raw, file, declaredCanonicalNames);
   return `${normalized.type}${normalized.nullable ? "?" : ""}`;
 }
 
@@ -175,7 +183,14 @@ function serializedName(node: SyntaxNode, fallback: string): string {
   return (json && attributeString(json)) || (data && (namedAttributeString(data, "Name") ?? attributeString(data))) || fallback;
 }
 
-function fieldFor(node: SyntaxNode, fieldName: string, rawType: string, defaulted: boolean): PluginSchemaField | undefined {
+function fieldFor(
+  node: SyntaxNode,
+  file: PluginFileView,
+  fieldName: string,
+  rawType: string,
+  defaulted: boolean,
+  declaredCanonicalNames: ReadonlySet<string>
+): PluginSchemaField | undefined {
   const attrs = attributes(node);
   if (attrs.some((attribute) => {
     const attrName = attributeName(attribute);
@@ -184,19 +199,64 @@ function fieldFor(node: SyntaxNode, fieldName: string, rawType: string, defaulte
     const condition = namedAttributeValue(attribute, "Condition")?.replace(/^.*\./, "");
     return condition === undefined || condition === "Always";
   })) return undefined;
-  const normalized = normalizeType(rawType);
+  const normalized = normalizeType(rawType, file, declaredCanonicalNames);
   const required = hasModifier(node, "required") || attrs.some((attribute) => REQUIRED_ATTRIBUTES.has(attributeName(attribute))
     || attributeName(attribute) === "DataMember" && namedAttributeValue(attribute, "IsRequired") === "true");
+  const typeExpression = pluginTypeExpression(normalized.type);
+  const canonical = canonicalPluginType(typeExpression);
   return {
-    name: serializedName(node, fieldName),
-    type: normalized.type,
+    sourceName: fieldName,
+    serializedName: serializedName(node, fieldName),
+    type: canonical
+      ? { kind: "resolved", expression: canonical }
+      : { kind: "unresolved", normalizedExpression: typeExpression, diagnosticId: `schema-diagnostic:csharp:${file.repoId}:${file.path}:${fieldName}:${normalized.type}` },
     optional: !required && (defaulted || normalized.nullable),
     nullable: normalized.nullable,
-    sourceLine: line(node)
+    sourceLocation: { fileId: file.fileId, line: line(node) }
   };
 }
 
-function fields(node: SyntaxNode): PluginSchemaField[] {
+function pluginTypeExpression(value: string): PluginTypeExpression {
+  const generic = splitGeneric(value);
+  if (generic) {
+    if (generic.base === "array" && generic.args[0]) return { kind: "array", element: pluginTypeExpression(generic.args[0]) };
+    if (generic.base === "dictionary" && generic.args[0] && generic.args[1]) {
+      return { kind: "map", key: pluginTypeExpression(generic.args[0]), value: pluginTypeExpression(generic.args[1]) };
+    }
+    return {
+      kind: "application",
+      target: { kind: "reference", name: generic.base },
+      arguments: generic.args.map(pluginTypeExpression)
+    };
+  }
+  return value.endsWith("?")
+    ? { kind: "nullable", inner: pluginTypeExpression(value.slice(0, -1)) }
+    : { kind: "reference", name: value };
+}
+
+function canonicalPluginType(expression: PluginTypeExpression): PluginCanonicalTypeExpression | undefined {
+  if (expression.kind === "reference") {
+    return new Set(Object.values(PRIMITIVES)).has(expression.name) || ["string", "boolean", "integer", "number", "object"].includes(expression.name)
+      ? { kind: "scalar", name: expression.name }
+      : undefined;
+  }
+  if (expression.kind === "array") {
+    const element = canonicalPluginType(expression.element);
+    return element ? { kind: "array", element } : undefined;
+  }
+  if (expression.kind === "map") {
+    const key = canonicalPluginType(expression.key);
+    const value = canonicalPluginType(expression.value);
+    return key && value ? { kind: "map", key, value } : undefined;
+  }
+  if (expression.kind === "nullable") {
+    const inner = canonicalPluginType(expression.inner);
+    return inner ? { kind: "nullable", inner } : undefined;
+  }
+  return undefined;
+}
+
+function fields(node: SyntaxNode, file: PluginFileView, declaredCanonicalNames: ReadonlySet<string>): PluginSchemaField[] {
   const result: PluginSchemaField[] = [];
   const parameters = node.namedChildren.find((child) => child.type === "parameter_list");
   for (const parameter of parameters?.namedChildren ?? []) {
@@ -204,7 +264,7 @@ function fields(node: SyntaxNode): PluginSchemaField[] {
     const parameterName = name(parameter);
     const type = typeChild(parameter);
     if (parameterName && type) {
-      const field = fieldFor(parameter, parameterName, type.text, hasDefaultAfter(parameter, parameter.childForFieldName("name") ?? undefined));
+      const field = fieldFor(parameter, file, parameterName, type.text, hasDefaultAfter(parameter, parameter.childForFieldName("name") ?? undefined), declaredCanonicalNames);
       if (field) result.push(field);
     }
   }
@@ -217,7 +277,7 @@ function fields(node: SyntaxNode): PluginSchemaField[] {
       const getter = accessor?.namedChildren.find((child) => /\bget\b/.test(child.text));
       if (!memberName || !type || !accessor || !getter
         || getter.namedChildren.some((child) => child.type === "modifier" && ["private", "protected", "internal"].includes(child.text))) continue;
-      const field = fieldFor(member, memberName, type.text, hasDefaultAfter(member, accessor));
+      const field = fieldFor(member, file, memberName, type.text, hasDefaultAfter(member, accessor), declaredCanonicalNames);
       if (field) result.push(field);
     }
     if (member.type === "field_declaration" && hasModifier(member, "public") && !hasModifier(member, "static")) {
@@ -228,14 +288,14 @@ function fields(node: SyntaxNode): PluginSchemaField[] {
       for (const variable of declaration?.namedChildren.filter((child) => child.type === "variable_declarator") ?? []) {
         const memberName = name(variable) ?? variable.namedChildren[0]?.text;
         if (!memberName || !type) continue;
-        const field = fieldFor(member, memberName, type.text, hasDefaultAfter(variable, variable.childForFieldName("name") ?? variable.namedChildren[0]));
+        const field = fieldFor(member, file, memberName, type.text, hasDefaultAfter(variable, variable.childForFieldName("name") ?? variable.namedChildren[0]), declaredCanonicalNames);
         if (field) result.push(field);
       }
     }
   }
   const seen = new Set<string>();
-  return result.sort((a, b) => (a.sourceLine ?? 0) - (b.sourceLine ?? 0))
-    .filter((field) => !seen.has(field.name) && Boolean(seen.add(field.name)));
+  return result.sort((a, b) => (a.sourceLocation.line ?? 0) - (b.sourceLocation.line ?? 0))
+    .filter((field) => !seen.has(field.serializedName) && Boolean(seen.add(field.serializedName)));
 }
 
 function namespaceOf(node: SyntaxNode, fileNamespace: string): string {
@@ -254,6 +314,20 @@ function namespaceOf(node: SyntaxNode, fileNamespace: string): string {
   return [fileNamespace, ...parts].filter(Boolean).join(".");
 }
 
+function namespaceScopeOf(node: SyntaxNode, fileNamespace: string): string {
+  const parts: string[] = [];
+  let current = node.parent;
+  while (current) {
+    if (current.type === "namespace_declaration" || current.type === "file_scoped_namespace_declaration") {
+      const value = current.childForFieldName("name")?.text;
+      if (value) parts.unshift(value);
+    }
+    current = current.parent;
+  }
+  const namespace = parts.length > 0 ? parts.join(".") : fileNamespace;
+  return `namespace:${namespace || "<global>"}`;
+}
+
 function referencedNames(raw: string | undefined): Set<string> {
   const result = new Set<string>();
   if (!raw) return result;
@@ -262,9 +336,8 @@ function referencedNames(raw: string | undefined): Set<string> {
     while (clean.endsWith("[]")) clean = clean.slice(0, -2);
     const generic = splitGeneric(clean);
     if (generic) {
-      const base = generic.base.replace(/^.*\./, "");
       for (const arg of generic.args) visit(arg);
-      if (!WRAPPERS.has(base) && !COLLECTIONS.has(base) && !DICTIONARIES.has(base)) result.add(clean);
+      if (!(generic.base in PRIMITIVES)) result.add(generic.base);
       return;
     }
     if (!(clean in PRIMITIVES)) result.add(clean);
@@ -273,11 +346,60 @@ function referencedNames(raw: string | undefined): Set<string> {
   return result;
 }
 
+function sourceNamespace(source: string | undefined): string | undefined {
+  return source?.match(/^\s*namespace\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*(?:;|\{)/mu)?.[1];
+}
+
+function endpointReferenceCandidates(
+  reference: string,
+  file: PluginFileView | undefined,
+  declaredCanonicalNames: ReadonlySet<string>
+): string[] {
+  const clean = reference.replace(/^global::/u, "");
+  if (!file) return [clean];
+  for (const imported of file.imports) {
+    if (imported.importKind !== "alias" || !imported.alias) continue;
+    if (clean === imported.alias) return [imported.module];
+    if (clean.startsWith(`${imported.alias}.`)) return [`${imported.module}${clean.slice(imported.alias.length)}`];
+  }
+  if (clean.includes(".")) return [clean];
+  const namespace = sourceNamespace(file.source);
+  const local = namespace ? `${namespace}.${clean}` : clean;
+  if (declaredCanonicalNames.has(local)) return [local];
+  const imported = file.imports.flatMap((item) => {
+    if (item.importKind === "namespace") return [`${item.module}.${clean}`];
+    if (item.importKind === "static") return [`${item.module}.${clean}`];
+    return [];
+  }).filter((candidate) => declaredCanonicalNames.has(candidate));
+  if (imported.length > 0) return [...new Set(imported)].sort();
+  return [local];
+}
+
+function expressionReferences(expression: PluginTypeExpression): string[] {
+  switch (expression.kind) {
+    case "reference": return [expression.name];
+    case "application": return [...expressionReferences(expression.target), ...expression.arguments.flatMap(expressionReferences)];
+    case "array": return expressionReferences(expression.element);
+    case "map": return [...expressionReferences(expression.key), ...expressionReferences(expression.value)];
+    case "union":
+    case "intersection": return expression.members.flatMap(expressionReferences);
+    case "nullable": return expressionReferences(expression.inner);
+    case "wildcard": return expression.type ? expressionReferences(expression.type) : [];
+    case "variable":
+    case "literal":
+    case "opaque": return [];
+  }
+}
+
+function candidateFieldReferences(candidate: Candidate): string[] {
+  return candidate.fields.flatMap((field) => field.type.kind === "resolved" ? [] : expressionReferences(field.type.normalizedExpression));
+}
+
 function symbolId(symbols: readonly PluginSymbolView[], node: SyntaxNode, declarationName: string): string | undefined {
   return symbols.find((symbol) => symbol.name === declarationName && symbol.startLine === line(node))?.id;
 }
 
-async function candidates(file: PluginFileView, endpointRefs: Set<string>): Promise<Candidate[]> {
+async function candidates(file: PluginFileView, endpointRefs: Set<string>, declaredCanonicalNames: ReadonlySet<string>): Promise<Candidate[]> {
   if (!file.source) return [];
   const root = (await parser()).parse(file.source, undefined, { bufferSize: csharpParseBufferSize(file.source) }).rootNode;
   const fileNamespace = root.namedChildren.find((child) => child.type === "file_scoped_namespace_declaration")
@@ -292,16 +414,14 @@ async function candidates(file: PluginFileView, endpointRefs: Set<string>): Prom
     const reasons: string[] = [];
     if (endpointRefs.has(declarationName) || endpointRefs.has(qualifiedName)) reasons.push("http-body-type");
     if (attrNames.some((attribute) => TYPE_ATTRIBUTES.has(attribute))) reasons.push("serialization-attribute");
-    if (NAME_SUFFIX.test(declarationName)) reasons.push("dto-name");
-    if (!reasons.length) return;
-    result.push({ file, node, name: declarationName, qualifiedName, fields: fields(node),
+    result.push({ file, node, name: declarationName, qualifiedName, resolutionScopeId: namespaceScopeOf(node, fileNamespace), fields: fields(node, file, declaredCanonicalNames),
       sourceSymbolId: symbolId(file.symbols, node, declarationName), reasons });
   });
   return result;
 }
 
 function factKey(fact: Omit<PluginSchemaFact, "kind">): string {
-  return [fact.repoId, fact.filePath, fact.name, fact.sourceSymbolId ?? "", JSON.stringify(fact.fields)].join("\0");
+  return [fact.repoId, fact.filePath, fact.declaration.canonicalName, fact.sourceSymbolId ?? "", JSON.stringify(fact.shape)].join("\0");
 }
 
 export const csharpSchemaExtractor: FactExtractorPlugin = {
@@ -310,19 +430,50 @@ export const csharpSchemaExtractor: FactExtractorPlugin = {
   extract(): void {},
   async postExtract(context: PluginPostExtractContext): Promise<void> {
     const refsByRepo = new Map<string, Set<string>>();
+    const declarationsByRepo = new Map<string, Set<string>>();
+    for (const file of context.files.all()) {
+      for (const symbol of file.symbols) {
+        if (!DECLARATIONS.has(`${symbol.kind}_declaration`)) continue;
+        const names = declarationsByRepo.get(file.repoId) ?? new Set<string>();
+        names.add(symbol.qualifiedName);
+        declarationsByRepo.set(file.repoId, names);
+      }
+    }
     for (const endpoint of context.facts.httpEndpoints()) {
       const refs = refsByRepo.get(endpoint.repoId) ?? new Set<string>();
-      for (const value of [endpoint.requestBodyType, endpoint.responseBodyType]) for (const ref of referencedNames(value)) refs.add(ref);
+      const file = context.files.get(endpoint.repoId, endpoint.filePath);
+      const declarations = declarationsByRepo.get(endpoint.repoId) ?? new Set<string>();
+      for (const value of [endpoint.requestBodyType, endpoint.responseBodyType]) {
+        for (const ref of referencedNames(value)) {
+          for (const candidate of endpointReferenceCandidates(ref, file, declarations)) refs.add(candidate);
+        }
+      }
       refsByRepo.set(endpoint.repoId, refs);
     }
     const found: Candidate[] = [];
     for (const file of [...context.files.byLanguage("csharp")].sort((a, b) => a.path.localeCompare(b.path))) {
       try {
-        found.push(...await candidates(file, refsByRepo.get(file.repoId) ?? new Set()));
+        found.push(...await candidates(file, refsByRepo.get(file.repoId) ?? new Set(), declarationsByRepo.get(file.repoId) ?? new Set()));
       } catch { /* One malformed or unparsable file must not suppress other schema facts. */ }
+    }
+    let expanded = true;
+    while (expanded) {
+      expanded = false;
+      for (const source of found.filter((candidate) => candidate.reasons.length > 0)) {
+        const declarations = declarationsByRepo.get(source.file.repoId) ?? new Set<string>();
+        const referenced = new Set(candidateFieldReferences(source)
+          .flatMap((reference) => endpointReferenceCandidates(reference, source.file, declarations)));
+        for (const target of found) {
+          if (target.file.repoId !== source.file.repoId || !referenced.has(target.qualifiedName)
+            || target.reasons.includes("schema-field-type")) continue;
+          target.reasons.push("schema-field-type");
+          expanded = true;
+        }
+      }
     }
     const grouped = new Map<string, Candidate[]>();
     for (const candidate of found) {
+      if (candidate.reasons.length === 0) continue;
       const key = `${candidate.file.repoId}\0${candidate.qualifiedName}`;
       grouped.set(key, [...grouped.get(key) ?? [], candidate]);
     }
@@ -335,8 +486,10 @@ export const csharpSchemaExtractor: FactExtractorPlugin = {
       const reasons = [...new Set(declarations.flatMap((candidate) => candidate.reasons))].sort();
       const mergedFields = declarations.flatMap((candidate) => candidate.fields);
       const fieldNames = new Set<string>();
-      facts.push({ repoId: primary.file.repoId, filePath: primary.file.path, name: schemaName, language: "csharp",
-        fields: mergedFields.filter((field) => !fieldNames.has(field.name) && Boolean(fieldNames.add(field.name))),
+      facts.push({ repoId: primary.file.repoId, filePath: primary.file.path,
+        declaration: { languageId: "csharp", repoId: primary.file.repoId, resolutionScopeId: primary.resolutionScopeId, canonicalName: primary.qualifiedName },
+        displayName: schemaName,
+        shape: { kind: "object", fields: mergedFields.filter((field) => !fieldNames.has(field.serializedName) && Boolean(fieldNames.add(field.serializedName))) },
         sourceSymbolId: primary.sourceSymbolId,
         evidence: { filePath: primary.file.path, line: line(primary.node), raw: primary.node.text,
           rule: `csharp-schema:${reasons.join("+")}`, confidence: "exact" } });

@@ -2,11 +2,13 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { objectSchemaFields } from "./helpers/schemaModel.js";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { protoExtractor } from "../src/core/contracts/extraction/builtin/protoExtractor.js";
 import { repoId } from "../src/shared/path.js";
 import { resolveSchemaRelations } from "../src/core/contracts/matching/schemaResolver.js";
 import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
+import { reconcileNonJavaSchemaFacts } from "../src/core/contracts/extraction/nonJavaSchemaReconciler.js";
 import type { GrpcMethodSpec, SchemaSpec } from "../src/core/contracts/spec.js";
 
 async function extract(source: string): Promise<ExtractorFactBundle> {
@@ -34,11 +36,13 @@ async function extract(source: string): Promise<ExtractorFactBundle> {
     language: "proto"
   });
 
-  const bundle = await protoExtractor.extract({
+  const extracted = await protoExtractor.extract({
     repos: [repo],
     parsedFiles: [parsed],
     repoResolver: () => repo
   });
+  const reconciled = reconcileNonJavaSchemaFacts(extracted.contractSpecs, extracted.semanticRelations, [], { sourceFiles: [parsed] });
+  const bundle = { ...extracted, contractSpecs: reconciled.contractSpecs, semanticRelations: reconciled.semanticRelations };
 
   await fs.rm(dir, { recursive: true, force: true });
   return bundle;
@@ -110,22 +114,22 @@ describe("Protobuf Extractor", () => {
     expect(reqSchemaSpecRow).toBeDefined();
     const reqSchemaSpec = JSON.parse(reqSchemaSpecRow!.specJson) as SchemaSpec;
     expect(reqSchemaSpec.kind).toBe("schema");
-    expect(reqSchemaSpec.name).toBe("acme.order.v1.CreateOrderRequest");
-    expect(reqSchemaSpec.language).toBe("proto");
-    expect(reqSchemaSpec.fields).toHaveLength(3);
+    expect(reqSchemaSpec.displayName).toBe("acme.order.v1.CreateOrderRequest");
+    expect(reqSchemaSpec.languageId).toBe("proto");
+    expect(objectSchemaFields(reqSchemaSpec)).toHaveLength(3);
 
     // Fields check
-    const userIdField = reqSchemaSpec.fields.find((f) => f.name === "user_id");
+    const userIdField = objectSchemaFields(reqSchemaSpec).find((f) => f.name === "user_id");
     expect(userIdField).toBeDefined();
     expect(userIdField!.type).toBe("string");
 
-    const itemsField = reqSchemaSpec.fields.find((f) => f.name === "items");
+    const itemsField = objectSchemaFields(reqSchemaSpec).find((f) => f.name === "items");
     expect(itemsField).toBeDefined();
     expect(itemsField!.type).toBe("array<string>");
 
-    const metadataField = reqSchemaSpec.fields.find((f) => f.name === "metadata");
+    const metadataField = objectSchemaFields(reqSchemaSpec).find((f) => f.name === "metadata");
     expect(metadataField).toBeDefined();
-    expect(metadataField!.type).toBe("map");
+    expect(metadataField!.type).toBe("map<string,string>");
 
     // Nested messages check
     const innerSchemaContract = bundle.contracts.find((c) => c.key === "acme.order.v1.outer.inner");
@@ -133,7 +137,7 @@ describe("Protobuf Extractor", () => {
     const innerSchemaSpecRow = bundle.contractSpecs.find((s) => s.contractId === innerSchemaContract!.id);
     expect(innerSchemaSpecRow).toBeDefined();
     const innerSchemaSpec = JSON.parse(innerSchemaSpecRow!.specJson) as SchemaSpec;
-    expect(innerSchemaSpec.fields[0]!.name).toBe("value");
+    expect(objectSchemaFields(innerSchemaSpec)[0]!.name).toBe("value");
 
     // --- Relation Resolution ---
     // Match the extracted specs into semantic relations
@@ -149,7 +153,7 @@ describe("Protobuf Extractor", () => {
       confidence: s.confidence
     })) as any;
 
-    const resolvedRelations = resolveSchemaRelations(mockDbSpecs, new Map(), []);
+    const resolvedRelations = bundle.semanticRelations;
     
     // Check REQUEST_SCHEMA edge from CreateOrder to CreateOrderRequest
     const reqEdge = resolvedRelations.find(
@@ -166,5 +170,103 @@ describe("Protobuf Extractor", () => {
     );
     expect(respEdge).toBeDefined();
     expect(respEdge!.toSpecId).toBe(orderSchemaSpecRow!.id);
+  });
+
+  it("resolves RPC request and response messages declared in another file of the same package", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "test-proto-cross-file-"));
+    try {
+      const id = repoId("proto-cross-file");
+      const sources = new Map([
+        ["protos/service.proto", `
+          syntax = "proto3";
+          package acme.orders.v1;
+          import "models.proto";
+          service Orders { rpc Create (CreateRequest) returns (CreateResponse); }
+        `],
+        ["protos/models.proto", `
+          syntax = "proto3";
+          package acme.orders.v1;
+          message CreateRequest { string id = 1; }
+          message CreateResponse { string id = 1; }
+        `]
+      ]);
+      const parsed = [];
+      for (const [relativePath, source] of sources) {
+        const absolutePath = path.join(directory, relativePath);
+        await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+        await fs.writeFile(absolutePath, source, "utf8");
+        parsed.push(await parseSourceFile({ repoId: id, absolutePath, relativePath, language: "proto" }));
+      }
+      const repo = { id, name: "proto-cross-file", path: directory, remoteUrl: "", branch: "", commitSha: "", language: "proto", indexedAt: "now" };
+      const extracted = await protoExtractor.extract({ repos: [repo], parsedFiles: parsed, repoResolver: () => repo });
+      const serviceFile = parsed.find((file) => file.path === "protos/service.proto");
+      expect(serviceFile && "imports" in serviceFile ? serviceFile.imports : []).toEqual([
+        expect.objectContaining({ module: "models.proto", importKind: "module" })
+      ]);
+      const reconciled = reconcileNonJavaSchemaFacts(extracted.contractSpecs, extracted.semanticRelations, [], { sourceFiles: parsed });
+      const grpcNode = reconciled.contractSpecs.find((node) => {
+        const spec = JSON.parse(node.specJson) as { kind?: string };
+        return spec.kind === "grpc-method";
+      });
+      const schemas = reconciled.contractSpecs.filter((node) => node.specKind === "schema")
+        .map((node) => JSON.parse(node.specJson) as SchemaSpec);
+      const request = schemas.find((schema) => schema.displayName === "acme.orders.v1.CreateRequest");
+      const response = schemas.find((schema) => schema.displayName === "acme.orders.v1.CreateResponse");
+      expect(request?.declaration.resolutionScopeId).toBe("package:acme.orders.v1");
+      expect(response?.declaration.resolutionScopeId).toBe("package:acme.orders.v1");
+      expect(reconciled.semanticRelations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ fromSpecId: grpcNode?.id, toSpecId: request?.id, kind: "REQUEST_SCHEMA" }),
+        expect.objectContaining({ fromSpecId: grpcNode?.id, toSpecId: response?.id, kind: "RESPONSE_SCHEMA" })
+      ]));
+      expect(reconciled.internal.diagnostics.filter((diagnostic) => diagnostic.ownerSpecId === grpcNode?.id)).toHaveLength(0);
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves source-root imports plus relative and absolute protobuf type names in another package", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "test-proto-import-package-"));
+    try {
+      const id = repoId("proto-import-package");
+      const sources = new Map([
+        ["api/service.proto", `
+          syntax = "proto3";
+          package acme.api;
+          import "models/types.proto";
+          service Api { rpc Create (models.CreateRequest) returns (.acme.models.CreateResponse); }
+        `],
+        ["models/types.proto", `
+          syntax = "proto3";
+          package acme.models;
+          message CreateRequest { string id = 1; }
+          message CreateResponse { string id = 1; }
+        `]
+      ]);
+      const parsed = [];
+      for (const [relativePath, source] of sources) {
+        const absolutePath = path.join(directory, relativePath);
+        await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+        await fs.writeFile(absolutePath, source, "utf8");
+        parsed.push(await parseSourceFile({ repoId: id, absolutePath, relativePath, language: "proto" }));
+      }
+      const repo = { id, name: "proto-import-package", path: directory, remoteUrl: "", branch: "", commitSha: "", language: "proto", indexedAt: "now" };
+      const extracted = await protoExtractor.extract({ repos: [repo], parsedFiles: parsed, repoResolver: () => repo });
+      const reconciled = reconcileNonJavaSchemaFacts(extracted.contractSpecs, extracted.semanticRelations, [], { sourceFiles: parsed });
+      const grpcNode = reconciled.contractSpecs.find((node) => node.specKind === "grpc-method")!;
+      const grpc = JSON.parse(grpcNode.specJson) as GrpcMethodSpec;
+      expect(grpc.requestType).toBe("models.CreateRequest");
+      expect(grpc.responseType).toBe("acme.models.CreateResponse");
+      const schemas = reconciled.contractSpecs.filter((node) => node.specKind === "schema")
+        .map((node) => JSON.parse(node.specJson) as SchemaSpec);
+      const request = schemas.find((schema) => schema.declaration.canonicalName === "acme.models.CreateRequest");
+      const response = schemas.find((schema) => schema.declaration.canonicalName === "acme.models.CreateResponse");
+      expect(reconciled.semanticRelations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ fromSpecId: grpcNode.id, toSpecId: request?.id, kind: "REQUEST_SCHEMA" }),
+        expect.objectContaining({ fromSpecId: grpcNode.id, toSpecId: response?.id, kind: "RESPONSE_SCHEMA" })
+      ]));
+      expect(reconciled.internal.diagnostics.filter((diagnostic) => diagnostic.ownerSpecId === grpcNode.id)).toHaveLength(0);
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
   });
 });

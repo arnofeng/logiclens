@@ -12,6 +12,7 @@ import type {
   ImportEdge,
   OperationNode,
   OperationRepoEdge,
+  PackageUsageEdge,
   RepoContractEdge,
   RepoDependencyEdge,
   RepoNode,
@@ -21,75 +22,415 @@ import type {
 } from "../parsing/types.js";
 import { chunk } from "../../shared/chunk.js";
 import { systemId } from "./schema.js";
-import type { ActiveAliasOverride, GraphValue, GraphWriteAtomicityMode, GraphWriteBatchStatus, Stats } from "./db.js";
+import type {
+  ActiveAliasOverride,
+  GraphValue,
+  GraphWriteAtomicityMode,
+  GraphWriteBatchStatus,
+  PublicGraphStatsUpdate,
+  PublicGraphStatsSnapshot,
+  Stats,
+  StatsDelta
+} from "./db.js";
+import {
+  publicNodeStorageId,
+  publicNodeStorageParams,
+  publicGraphStatsId,
+  publicRelationshipScopeParams,
+  type PublicGraphGenerationScope,
+  type PublicGraphNodeLabel
+} from "./publicGraphGeneration.js";
+import { collapseSemanticRelations } from "../contracts/extraction/dedup.js";
 
 const BATCH_SIZE = 5000;
+const STAT_FIELDS = [
+  "repos",
+  "files",
+  "codeNodes",
+  "sectionNodes",
+  "callEdges",
+  "importEdges",
+  "entities"
+] as const satisfies readonly (keyof Stats)[];
 
 export type CypherExecutor = {
-  query<T = Record<string, GraphValue>>(cypher: string, params?: Record<string, GraphValue>): Promise<T[]>;
+  query<T = Record<string, GraphValue>>(
+    cypher: string,
+    params?: Record<string, GraphValue>
+  ): Promise<T[]>;
 };
 
 export type CypherCrud = ReturnType<typeof createCypherCrud>;
 
+type RelationWrite = {
+  relationshipType: string;
+  fromLabel: PublicGraphNodeLabel;
+  toLabel: PublicGraphNodeLabel;
+  fromId: string;
+  toId: string;
+  mergeProperties?: Record<string, GraphValue>;
+  setProperties?: Record<string, GraphValue>;
+};
+
+function asGraphProperties(value: object): Record<string, GraphValue> {
+  return value as unknown as Record<string, GraphValue>;
+}
+
+function propertyAssignments(variable: string, properties: readonly string[]): string {
+  return properties.map((property) => `${variable}.${property} = row.${property}`).join(", ");
+}
+
 export function createCypherCrud(executor: CypherExecutor) {
   const query = executor.query.bind(executor);
 
-  async function addContains(fromId: string, toId: string): Promise<void> {
-    const cypher = fromId.startsWith("system:")
-      ? "MATCH (a:System {id: $fromId}), (b:Repo {id: $toId}) MERGE (a)-[:CONTAINS]->(b);"
+  function requireNonNegativeSafeInteger(value: number, label: string): number {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new TypeError(`${label} must be a non-negative safe integer.`);
+    }
+    return value;
+  }
+
+  function validateStats(stats: Readonly<Stats>, label: string): Stats {
+    return Object.fromEntries(STAT_FIELDS.map((field) => [
+      field,
+      requireNonNegativeSafeInteger(stats[field], `${label} ${field}`)
+    ])) as Stats;
+  }
+
+  function validateStatsDelta(delta: Readonly<StatsDelta>): StatsDelta {
+    return Object.fromEntries(STAT_FIELDS.map((field) => {
+      const value = delta[field];
+      if (!Number.isSafeInteger(value)) {
+        throw new TypeError(`Public graph stats delta ${field} must be a safe integer.`);
+      }
+      return [field, value];
+    })) as StatsDelta;
+  }
+
+  function statsParams(scope: PublicGraphGenerationScope): Record<string, GraphValue> {
+    return {
+      ...publicRelationshipScopeParams(scope),
+      statsId: publicGraphStatsId(scope)
+    };
+  }
+
+  async function readPublicGraphStats(scope: PublicGraphGenerationScope): Promise<PublicGraphStatsSnapshot | undefined> {
+    const rows = await query<PublicGraphStatsSnapshot>(
+      "MATCH (s:PublicGraphStats {id: $statsId}) " +
+      "WHERE s.workspaceId = $workspaceId AND s.generation = $generation " +
+      "RETURN s.revision AS revision, s.repos AS repos, s.files AS files, " +
+      "s.codeNodes AS codeNodes, s.sectionNodes AS sectionNodes, s.callEdges AS callEdges, " +
+      "s.importEdges AS importEdges, s.entities AS entities;",
+      statsParams(scope)
+    );
+    const row = rows[0];
+    if (!row) return undefined;
+    if (typeof row.revision !== "string" || !row.revision.trim()) {
+      throw new Error("Stored public graph stats revision is missing; run a clean full reindex.");
+    }
+    return { ...validateStats({
+      repos: Number(row.repos),
+      files: Number(row.files),
+      codeNodes: Number(row.codeNodes),
+      sectionNodes: Number(row.sectionNodes),
+      callEdges: Number(row.callEdges),
+      importEdges: Number(row.importEdges),
+      entities: Number(row.entities)
+    }, "Stored public graph stats"), revision: row.revision };
+  }
+
+  async function computePublicGraphStats(scope: PublicGraphGenerationScope): Promise<Stats> {
+    const nodeCount = async (label: PublicGraphNodeLabel, active: boolean): Promise<number> => {
+      const rows = await query<{ count: number }>(
+        `MATCH (n:${label}) WHERE n.workspaceId = $workspaceId AND n.generation = $generation${active ? " AND (n.active IS NULL OR n.active = true)" : ""} RETURN count(n) AS count;`,
+        publicRelationshipScopeParams(scope)
+      );
+      return Number(rows[0]?.count ?? 0);
+    };
+    const edgeCount = async (from: PublicGraphNodeLabel, relationshipType: string, to: PublicGraphNodeLabel): Promise<number> => {
+      const rows = await query<{ count: number }>(
+        `MATCH (a:${from})-[r:${relationshipType}]->(b:${to}) WHERE a.workspaceId = $workspaceId AND a.generation = $generation AND b.workspaceId = $workspaceId AND b.generation = $generation AND r.workspaceId = $workspaceId AND r.generation = $generation AND (r.active IS NULL OR r.active = true) RETURN count(r) AS count;`,
+        publicRelationshipScopeParams(scope)
+      );
+      return Number(rows[0]?.count ?? 0);
+    };
+    const [repos, files, codeNodes, sectionNodes, callEdges, importEdges, entities] = await Promise.all([
+      nodeCount("Repo", false),
+      nodeCount("File", true),
+      nodeCount("Code", true),
+      nodeCount("Section", true),
+      edgeCount("Code", "CALLS", "Code"),
+      edgeCount("File", "IMPORTS", "File"),
+      nodeCount("Entity", false)
+    ]);
+    return validateStats({ repos, files, codeNodes, sectionNodes, callEdges, importEdges, entities }, "Computed public graph stats");
+  }
+
+  async function initializePublicGraphStats(
+    scope: PublicGraphGenerationScope,
+    revision: string,
+    input: Readonly<Stats>
+  ): Promise<void> {
+    if (!revision.trim()) throw new TypeError("Public graph stats revision must be non-empty.");
+    const stats = validateStats(input, "Public graph stats");
+    await query(
+      "MERGE (s:PublicGraphStats {id: $statsId}) " +
+      "SET s.workspaceId = $workspaceId, s.generation = $generation, s.revision = $revision, " +
+      "s.repos = $repos, s.files = $files, s.codeNodes = $codeNodes, " +
+      "s.sectionNodes = $sectionNodes, s.callEdges = $callEdges, " +
+      "s.importEdges = $importEdges, s.entities = $entities, s.updatedAt = $updatedAt;",
+      { ...statsParams(scope), ...stats, revision, updatedAt: new Date().toISOString() }
+    );
+  }
+
+  async function applyPublicGraphStatsDelta(
+    scope: PublicGraphGenerationScope,
+    update: PublicGraphStatsUpdate
+  ): Promise<Stats> {
+    if (!update.expectedRevision.trim() || !update.nextRevision.trim()) {
+      throw new TypeError("Public graph stats revisions must be non-empty.");
+    }
+    if (update.expectedRevision === update.nextRevision) {
+      throw new TypeError("Public graph stats update must advance to a distinct revision.");
+    }
+    const currentRows = await query<(Stats & { revision: string })>(
+      "MATCH (s:PublicGraphStats {id: $statsId}) " +
+      "WHERE s.workspaceId = $workspaceId AND s.generation = $generation " +
+      "RETURN s.revision AS revision, s.repos AS repos, s.files AS files, " +
+      "s.codeNodes AS codeNodes, s.sectionNodes AS sectionNodes, s.callEdges AS callEdges, " +
+      "s.importEdges AS importEdges, s.entities AS entities;",
+      statsParams(scope)
+    );
+    const row = currentRows[0];
+    if (!row || row.revision !== update.expectedRevision) {
+      const actual = row?.revision ?? "missing";
+      throw new Error(
+        `Public graph stats revision ${actual} does not match incremental parent ${update.expectedRevision}; ` +
+        "clean generated graph/internal/lexical artifacts and run a full reindex."
+      );
+    }
+    const current = validateStats({
+      repos: Number(row.repos),
+      files: Number(row.files),
+      codeNodes: Number(row.codeNodes),
+      sectionNodes: Number(row.sectionNodes),
+      callEdges: Number(row.callEdges),
+      importEdges: Number(row.importEdges),
+      entities: Number(row.entities)
+    }, "Stored public graph stats");
+    const delta = validateStatsDelta(update.delta);
+    const next = Object.fromEntries(STAT_FIELDS.map((field) => [
+      field,
+      requireNonNegativeSafeInteger(current[field] + delta[field], `Next public graph stats ${field}`)
+    ])) as Stats;
+    const updated = await query<{ revision: string }>(
+      "MATCH (s:PublicGraphStats {id: $statsId}) " +
+      "WHERE s.workspaceId = $workspaceId AND s.generation = $generation AND s.revision = $expectedRevision " +
+      "SET s.revision = $nextRevision, s.repos = $repos, s.files = $files, " +
+      "s.codeNodes = $codeNodes, s.sectionNodes = $sectionNodes, s.callEdges = $callEdges, " +
+      "s.importEdges = $importEdges, s.entities = $entities, s.updatedAt = $updatedAt " +
+      "RETURN s.revision AS revision;",
+      {
+        ...statsParams(scope),
+        ...next,
+        expectedRevision: update.expectedRevision,
+        nextRevision: update.nextRevision,
+        updatedAt: new Date().toISOString()
+      }
+    );
+    if (updated[0]?.revision !== update.nextRevision) {
+      throw new Error("Public graph stats revision changed during incremental publication; retry from the active revision.");
+    }
+    return next;
+  }
+
+  async function upsertNode(
+    label: PublicGraphNodeLabel,
+    id: string,
+    properties: Record<string, GraphValue>,
+    scope: PublicGraphGenerationScope,
+    preserveOnMatch: readonly string[] = []
+  ): Promise<void> {
+    const row = { ...publicNodeStorageParams(scope, id), ...properties };
+    const names = Object.keys(row).filter((name) => name !== "storageId");
+    const createSet = propertyAssignments("n", names);
+    const matchNames = names.filter((name) => !preserveOnMatch.includes(name));
+    const matchSet = propertyAssignments("n", matchNames);
+    await query(
+      `WITH $row AS row MERGE (n:${label} {storageId: row.storageId}) ` +
+      `ON CREATE SET ${createSet} ` +
+      (matchSet ? `ON MATCH SET ${matchSet};` : ";"),
+      { row }
+    );
+  }
+
+  async function upsertNodes(
+    label: PublicGraphNodeLabel,
+    rows: Array<{ id: string; properties: Record<string, GraphValue> }>,
+    scope: PublicGraphGenerationScope
+  ): Promise<void> {
+    for (const items of chunk(rows, BATCH_SIZE)) {
+      const batch = items.map((item) => ({
+        ...publicNodeStorageParams(scope, item.id),
+        ...item.properties
+      }));
+      const properties = Object.keys(batch[0] ?? {}).filter((name) => name !== "storageId");
+      await query(
+        `UNWIND $batch AS row MERGE (n:${label} {storageId: row.storageId}) ` +
+        `SET ${propertyAssignments("n", properties)};`,
+        { batch }
+      );
+    }
+  }
+
+  async function writeRelation(
+    relation: RelationWrite,
+    scope: PublicGraphGenerationScope
+  ): Promise<void> {
+    const mergeProperties = relation.mergeProperties ?? {};
+    const setProperties = relation.setProperties ?? {};
+    const params: Record<string, GraphValue> = {
+      fromStorageId: publicNodeStorageId(scope.generation, relation.fromId),
+      toStorageId: publicNodeStorageId(scope.generation, relation.toId),
+      ...publicRelationshipScopeParams(scope),
+      ...mergeProperties,
+      ...setProperties
+    };
+    const mergeMap = Object.keys(mergeProperties)
+      .map((property) => `${property}: $${property}`)
+      .join(", ");
+    const assignments = [
+      "r.workspaceId = $workspaceId",
+      "r.generation = $generation",
+      ...Object.keys(setProperties).map((property) => `r.${property} = $${property}`)
+    ].join(", ");
+    await query(
+      `MATCH (a:${relation.fromLabel} {storageId: $fromStorageId}), ` +
+      `(b:${relation.toLabel} {storageId: $toStorageId}) ` +
+      `MERGE (a)-[r:${relation.relationshipType}${mergeMap ? ` {${mergeMap}}` : ""}]->(b) ` +
+      `SET ${assignments};`,
+      params
+    );
+  }
+
+  async function writeRelations(
+    relation: Omit<RelationWrite, "fromId" | "toId" | "mergeProperties" | "setProperties"> & {
+      rows: Array<{
+        fromId: string;
+        toId: string;
+        mergeProperties?: Record<string, GraphValue>;
+        setProperties?: Record<string, GraphValue>;
+      }>;
+      mergePropertyNames?: readonly string[];
+      setPropertyNames?: readonly string[];
+    },
+    scope: PublicGraphGenerationScope
+  ): Promise<void> {
+    for (const items of chunk(relation.rows, BATCH_SIZE)) {
+      const batch = items.map((item) => ({
+        fromStorageId: publicNodeStorageId(scope.generation, item.fromId),
+        toStorageId: publicNodeStorageId(scope.generation, item.toId),
+        ...publicRelationshipScopeParams(scope),
+        ...(item.mergeProperties ?? {}),
+        ...(item.setProperties ?? {})
+      }));
+      const mergeMap = (relation.mergePropertyNames ?? [])
+        .map((property) => `${property}: row.${property}`)
+        .join(", ");
+      const assignments = [
+        "r.workspaceId = row.workspaceId",
+        "r.generation = row.generation",
+        ...(relation.setPropertyNames ?? []).map((property) => `r.${property} = row.${property}`)
+      ].join(", ");
+      await query(
+        `UNWIND $batch AS row ` +
+        `MATCH (a:${relation.fromLabel} {storageId: row.fromStorageId}), ` +
+        `(b:${relation.toLabel} {storageId: row.toStorageId}) ` +
+        `MERGE (a)-[r:${relation.relationshipType}${mergeMap ? ` {${mergeMap}}` : ""}]->(b) ` +
+        `SET ${assignments};`,
+        { batch }
+      );
+    }
+  }
+
+  async function addContains(
+    fromId: string,
+    toId: string,
+    scope: PublicGraphGenerationScope
+  ): Promise<void> {
+    const labels = fromId.startsWith("system:")
+      ? { fromLabel: "System" as const, toLabel: "Repo" as const }
       : fromId.startsWith("repo:")
-        ? "MATCH (a:Repo {id: $fromId}), (b:File {id: $toId}) MERGE (a)-[:CONTAINS]->(b);"
+        ? { fromLabel: "Repo" as const, toLabel: "File" as const }
         : toId.startsWith("section:")
-          ? "MATCH (a:File {id: $fromId}), (b:Section {id: $toId}) MERGE (a)-[:CONTAINS]->(b);"
-          : "MATCH (a:File {id: $fromId}), (b:Code {id: $toId}) MERGE (a)-[:CONTAINS]->(b);";
-    await query(cypher, { fromId, toId });
+          ? { fromLabel: "File" as const, toLabel: "Section" as const }
+          : { fromLabel: "File" as const, toLabel: "Code" as const };
+    await writeRelation({ relationshipType: "CONTAINS", ...labels, fromId, toId }, scope);
   }
 
   return {
-    async upsertRepo(repo: RepoNode): Promise<void> {
+    async upsertSystem(systemName: string, scope: PublicGraphGenerationScope): Promise<void> {
+      await upsertNode("System", systemId, { name: systemName, summary: "" }, scope, ["summary"]);
+    },
+
+    async upsertRepo(repo: RepoNode, scope: PublicGraphGenerationScope): Promise<void> {
+      await upsertNode("Repo", repo.id, {
+        name: repo.name,
+        path: repo.path,
+        remoteUrl: repo.remoteUrl,
+        branch: repo.branch,
+        commitSha: repo.commitSha,
+        language: repo.language,
+        indexedAt: repo.indexedAt,
+        summary: repo.summary ?? ""
+      }, scope, ["summary"]);
+      await addContains(systemId, repo.id, scope);
+    },
+
+    async updateRepoSummary(repoId: string, summary: string, scope: PublicGraphGenerationScope): Promise<void> {
       await query(
-        // NOTE: ON MATCH intentionally omits r.summary — summary is managed
-        // separately via updateRepoSummary().
-        "MERGE (r:Repo {id: $id}) ON CREATE SET r.name=$name, r.path=$path, r.remoteUrl=$remoteUrl, r.branch=$branch, r.commitSha=$commitSha, r.language=$language, r.indexedAt=$indexedAt, r.summary=$summary ON MATCH SET r.name=$name, r.path=$path, r.remoteUrl=$remoteUrl, r.branch=$branch, r.commitSha=$commitSha, r.language=$language, r.indexedAt=$indexedAt;",
-        { ...repo, summary: repo.summary ?? "" } as unknown as Record<string, GraphValue>
+        "MATCH (r:Repo {storageId: $storageId}) SET r.summary = $summary;",
+        { storageId: publicNodeStorageId(scope.generation, repoId), summary }
       );
-      await addContains(systemId, repo.id);
     },
 
-    async updateRepoSummary(repoIdValue: string, summary: string): Promise<void> {
-      await query("MATCH (r:Repo {id: $repoId}) SET r.summary = $summary;", { repoId: repoIdValue, summary });
-    },
-
-    async updateSystemSummary(summary: string): Promise<void> {
-      await query("MATCH (s:System {id: $id}) SET s.summary = $summary;", { id: systemId, summary });
-    },
-
-    async upsertFile(file: FileNode): Promise<void> {
+    async updateSystemSummary(summary: string, scope: PublicGraphGenerationScope): Promise<void> {
       await query(
-        "MERGE (f:File {id: $id}) ON CREATE SET f.repoId=$repoId, f.path=$path, f.language=$language, f.hash=$hash, f.loc=$loc, f.batchId=$batchId, f.indexedAt=$indexedAt, f.active=$active ON MATCH SET f.repoId=$repoId, f.path=$path, f.language=$language, f.hash=$hash, f.loc=$loc, f.batchId=$batchId, f.indexedAt=$indexedAt, f.active=$active;",
-        { ...file, batchId: file.batchId ?? "", indexedAt: file.indexedAt ?? "", active: file.active ?? true } as unknown as Record<string, GraphValue>
+        "MATCH (s:System {storageId: $storageId}) SET s.summary = $summary;",
+        { storageId: publicNodeStorageId(scope.generation, systemId), summary }
       );
     },
 
-    async upsertFilesBatch(files: FileNode[]): Promise<void> {
-      for (const items of chunk(files, BATCH_SIZE)) {
-        const params = items.map((f) => ({
-          id: f.id, repoId: f.repoId, path: f.path, language: f.language,
-          hash: f.hash, loc: f.loc, batchId: f.batchId ?? "", indexedAt: f.indexedAt ?? "", active: f.active ?? true
-        }));
-        await query(
-          "UNWIND $batch AS row " +
-          "MERGE (f:File {id: row.id}) " +
-          "ON CREATE SET f.repoId=row.repoId, f.path=row.path, f.language=row.language, f.hash=row.hash, f.loc=row.loc, f.batchId=row.batchId, f.indexedAt=row.indexedAt, f.active=row.active " +
-          "ON MATCH SET f.repoId=row.repoId, f.path=row.path, f.language=row.language, f.hash=row.hash, f.loc=row.loc, f.batchId=row.batchId, f.indexedAt=row.indexedAt, f.active=row.active;",
-          { batch: params as unknown as GraphValue }
-        );
-      }
+    async upsertFile(file: FileNode, scope: PublicGraphGenerationScope): Promise<void> {
+      await upsertNode("File", file.id, {
+        repoId: file.repoId,
+        path: file.path,
+        directory: file.directory,
+        language: file.language,
+        hash: file.hash,
+        loc: file.loc,
+        batchId: file.batchId ?? "",
+        indexedAt: file.indexedAt ?? "",
+        active: file.active ?? true
+      }, scope);
     },
 
-    async upsertCode(code: CodeSymbol): Promise<void> {
-      const params = {
-        id: code.id,
+    async upsertFilesBatch(files: FileNode[], scope: PublicGraphGenerationScope): Promise<void> {
+      await upsertNodes("File", files.map((file) => ({ id: file.id, properties: {
+        repoId: file.repoId,
+        path: file.path,
+        directory: file.directory,
+        language: file.language,
+        hash: file.hash,
+        loc: file.loc,
+        batchId: file.batchId ?? "",
+        indexedAt: file.indexedAt ?? "",
+        active: file.active ?? true
+      } })), scope);
+    },
+
+    async upsertCode(code: CodeSymbol, scope: PublicGraphGenerationScope): Promise<void> {
+      await upsertNode("Code", code.id, {
         repoId: code.repoId,
         fileId: code.fileId,
         kind: code.kind,
@@ -103,34 +444,29 @@ export function createCypherCrud(executor: CypherExecutor) {
         batchId: code.batchId ?? "",
         indexedAt: code.indexedAt ?? "",
         active: code.active ?? true
-      };
-      await query(
-        "MERGE (c:Code {id: $id}) ON CREATE SET c.repoId=$repoId, c.fileId=$fileId, c.kind=$kind, c.name=$name, c.qualifiedName=$qualifiedName, c.startLine=$startLine, c.endLine=$endLine, c.signature=$signature, c.summary=$summary, c.hash=$hash, c.batchId=$batchId, c.indexedAt=$indexedAt, c.active=$active ON MATCH SET c.repoId=$repoId, c.fileId=$fileId, c.kind=$kind, c.name=$name, c.qualifiedName=$qualifiedName, c.startLine=$startLine, c.endLine=$endLine, c.signature=$signature, c.summary=$summary, c.hash=$hash, c.batchId=$batchId, c.indexedAt=$indexedAt, c.active=$active;",
-        params as unknown as Record<string, GraphValue>
-      );
+      }, scope);
     },
 
-    async upsertCodeBatch(codes: CodeSymbol[]): Promise<void> {
-      for (const items of chunk(codes, BATCH_SIZE)) {
-        const params = items.map((c) => ({
-          id: c.id, repoId: c.repoId, fileId: c.fileId, kind: c.kind,
-          name: c.name, qualifiedName: c.qualifiedName, startLine: c.startLine,
-          endLine: c.endLine, signature: c.signature, summary: c.summary ?? "",
-          hash: c.hash, batchId: c.batchId ?? "", indexedAt: c.indexedAt ?? "", active: c.active ?? true
-        }));
-        await query(
-          "UNWIND $batch AS row " +
-          "MERGE (c:Code {id: row.id}) " +
-          "ON CREATE SET c.repoId=row.repoId, c.fileId=row.fileId, c.kind=row.kind, c.name=row.name, c.qualifiedName=row.qualifiedName, c.startLine=row.startLine, c.endLine=row.endLine, c.signature=row.signature, c.summary=row.summary, c.hash=row.hash, c.batchId=row.batchId, c.indexedAt=row.indexedAt, c.active=row.active " +
-          "ON MATCH SET c.repoId=row.repoId, c.fileId=row.fileId, c.kind=row.kind, c.name=row.name, c.qualifiedName=row.qualifiedName, c.startLine=row.startLine, c.endLine=row.endLine, c.signature=row.signature, c.summary=row.summary, c.hash=row.hash, c.batchId=row.batchId, c.indexedAt=row.indexedAt, c.active=row.active;",
-          { batch: params as unknown as GraphValue }
-        );
-      }
+    async upsertCodeBatch(codes: CodeSymbol[], scope: PublicGraphGenerationScope): Promise<void> {
+      await upsertNodes("Code", codes.map((code) => ({ id: code.id, properties: {
+        repoId: code.repoId,
+        fileId: code.fileId,
+        kind: code.kind,
+        name: code.name,
+        qualifiedName: code.qualifiedName,
+        startLine: code.startLine,
+        endLine: code.endLine,
+        signature: code.signature,
+        summary: code.summary ?? "",
+        hash: code.hash,
+        batchId: code.batchId ?? "",
+        indexedAt: code.indexedAt ?? "",
+        active: code.active ?? true
+      } })), scope);
     },
 
-    async upsertSection(section: DocSection): Promise<void> {
-      const params = {
-        id: section.id,
+    async upsertSection(section: DocSection, scope: PublicGraphGenerationScope): Promise<void> {
+      await upsertNode("Section", section.id, {
         repoId: section.repoId,
         fileId: section.fileId,
         heading: section.heading,
@@ -143,231 +479,364 @@ export function createCypherCrud(executor: CypherExecutor) {
         batchId: section.batchId ?? "",
         indexedAt: section.indexedAt ?? "",
         active: section.active ?? true
-      };
-      await query(
-        "MERGE (s:Section {id: $id}) ON CREATE SET s.repoId=$repoId, s.fileId=$fileId, s.heading=$heading, s.level=$level, s.startLine=$startLine, s.endLine=$endLine, s.text=$text, s.summary=$summary, s.hash=$hash, s.batchId=$batchId, s.indexedAt=$indexedAt, s.active=$active ON MATCH SET s.repoId=$repoId, s.fileId=$fileId, s.heading=$heading, s.level=$level, s.startLine=$startLine, s.endLine=$endLine, s.text=$text, s.summary=$summary, s.hash=$hash, s.batchId=$batchId, s.indexedAt=$indexedAt, s.active=$active;",
-        params as unknown as Record<string, GraphValue>
-      );
+      }, scope);
     },
 
-    async upsertEntity(entity: EntityNode): Promise<void> {
-      await query(
-        "MERGE (e:Entity {id: $id}) ON CREATE SET e.name=$name, e.kind=$kind, e.description=$description ON MATCH SET e.name=$name, e.kind=$kind, e.description=$description;",
-        entity as unknown as Record<string, GraphValue>
-      );
+    async upsertEntity(entity: EntityNode, scope: PublicGraphGenerationScope): Promise<void> {
+      await upsertNode("Entity", entity.id, asGraphProperties(entity), scope);
     },
 
-    async upsertOperation(operation: OperationNode): Promise<void> {
-      await query(
-        "MERGE (o:Operation {id: $id}) ON CREATE SET o.verb=$verb, o.entityName=$entityName, o.description=$description ON MATCH SET o.verb=$verb, o.entityName=$entityName, o.description=$description;",
-        operation as unknown as Record<string, GraphValue>
-      );
+    async upsertOperation(operation: OperationNode, scope: PublicGraphGenerationScope): Promise<void> {
+      await upsertNode("Operation", operation.id, asGraphProperties(operation), scope);
     },
 
-    async upsertWorkflow(workflow: WorkflowNode): Promise<void> {
-      await query(
-        "MERGE (w:Workflow {id: $id}) ON CREATE SET w.name=$name, w.description=$description ON MATCH SET w.name=$name, w.description=$description;",
-        workflow as unknown as Record<string, GraphValue>
-      );
+    async upsertWorkflow(workflow: WorkflowNode, scope: PublicGraphGenerationScope): Promise<void> {
+      await upsertNode("Workflow", workflow.id, asGraphProperties(workflow), scope);
     },
 
-    async upsertContract(contract: ContractNode): Promise<void> {
-      await query(
-        "MERGE (c:Contract {id: $id}) ON CREATE SET c.kind=$kind, c.key=$key, c.name=$name, c.description=$description ON MATCH SET c.kind=$kind, c.key=$key, c.name=$name, c.description=$description;",
-        contract as unknown as Record<string, GraphValue>
-      );
+    async upsertContract(contract: ContractNode, scope: PublicGraphGenerationScope): Promise<void> {
+      await upsertNode("Contract", contract.id, asGraphProperties(contract), scope);
     },
 
-    async upsertEvidence(evidence: EvidenceNode): Promise<void> {
-      await query(
-        "MERGE (e:Evidence {id: $id}) ON CREATE SET e.repoId=$repoId, e.fileId=$fileId, e.filePath=$filePath, e.line=$line, e.raw=$raw, e.rule=$rule, e.confidence=$confidence, e.batchId=$batchId, e.indexedAt=$indexedAt, e.active=$active ON MATCH SET e.repoId=$repoId, e.fileId=$fileId, e.filePath=$filePath, e.line=$line, e.raw=$raw, e.rule=$rule, e.confidence=$confidence, e.batchId=$batchId, e.indexedAt=$indexedAt, e.active=$active;",
-        { ...evidence, batchId: evidence.batchId ?? "", indexedAt: evidence.indexedAt ?? "", active: evidence.active ?? true } as unknown as Record<string, GraphValue>
-      );
+    async upsertEvidence(evidence: EvidenceNode, scope: PublicGraphGenerationScope): Promise<void> {
+      await upsertNode("Evidence", evidence.id, {
+        ...asGraphProperties(evidence),
+        batchId: evidence.batchId ?? "",
+        indexedAt: evidence.indexedAt ?? "",
+        active: evidence.active ?? true
+      }, scope);
     },
 
-    async addRepoContract(edge: RepoContractEdge): Promise<void> {
-      const rel = edge.role === "owner" ? "OWNS_PACKAGE" : edge.role === "producer" ? "PRODUCES" : edge.role === "consumer" ? "CONSUMES" : "SHARES_CONTRACT";
-      await query(
-        `MATCH (r:Repo {id: $repoId}), (c:Contract {id: $contractId}) MERGE (r)-[rel:${rel} {evidenceId: $evidenceId}]->(c) SET rel.confidence = $confidence, rel.batchId = $batchId, rel.active = $active;`,
-        { repoId: edge.repoId, contractId: edge.contractId, evidenceId: edge.evidenceId, confidence: edge.confidence, batchId: edge.batchId ?? "", active: edge.active ?? true }
-      );
+    async addRepoContract(edge: RepoContractEdge, scope: PublicGraphGenerationScope): Promise<void> {
+      const relationshipType = edge.role === "owner"
+        ? "OWNS_PACKAGE"
+        : edge.role === "producer"
+          ? "PRODUCES"
+          : edge.role === "consumer"
+            ? "CONSUMES"
+            : "SHARES_CONTRACT";
+      await writeRelation({
+        relationshipType,
+        fromLabel: "Repo",
+        toLabel: "Contract",
+        fromId: edge.repoId,
+        toId: edge.contractId,
+        mergeProperties: { evidenceId: edge.evidenceId },
+        setProperties: {
+          confidence: edge.confidence,
+          batchId: edge.batchId ?? "",
+          active: edge.active ?? true
+        }
+      }, scope);
     },
 
-    async addRepoDependency(edge: RepoDependencyEdge): Promise<void> {
-      await query(
-        "MATCH (a:Repo {id: $fromRepoId}), (b:Repo {id: $toRepoId}) MERGE (a)-[r:DEPENDS_ON {dependencyType: $dependencyType, sourceContractId: $sourceContractId, targetContractId: $targetContractId, evidenceId: $evidenceId}]->(b) SET r.raw = $raw, r.confidence = $confidence, r.batchId = $batchId, r.active = $active;",
-        { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, GraphValue>
-      );
-    },
-
-    async addRepoDependenciesBatch(edges: RepoDependencyEdge[]): Promise<void> {
-      for (const items of chunk(edges, BATCH_SIZE)) {
-        const params = items.map((edge) => ({
-          fromRepoId: edge.fromRepoId,
-          toRepoId: edge.toRepoId,
+    async addRepoDependency(edge: RepoDependencyEdge, scope: PublicGraphGenerationScope): Promise<void> {
+      await writeRelation({
+        relationshipType: "DEPENDS_ON",
+        fromLabel: "Repo",
+        toLabel: "Repo",
+        fromId: edge.fromRepoId,
+        toId: edge.toRepoId,
+        mergeProperties: {
           dependencyType: edge.dependencyType,
           sourceContractId: edge.sourceContractId,
           targetContractId: edge.targetContractId,
-          evidenceId: edge.evidenceId,
+          evidenceId: edge.evidenceId
+        },
+        setProperties: {
           raw: edge.raw,
           confidence: edge.confidence,
           batchId: edge.batchId ?? "",
           active: edge.active ?? true
-        }));
-        await query(
-          "UNWIND $batch AS edge " +
-          "MATCH (a:Repo {id: edge.fromRepoId}), (b:Repo {id: edge.toRepoId}) " +
-          "MERGE (a)-[r:DEPENDS_ON {dependencyType: edge.dependencyType, sourceContractId: edge.sourceContractId, targetContractId: edge.targetContractId, evidenceId: edge.evidenceId}]->(b) " +
-          "SET r.raw = edge.raw, r.confidence = edge.confidence, r.batchId = edge.batchId, r.active = edge.active;",
-          { batch: params as unknown as GraphValue }
-        );
-      }
+        }
+      }, scope);
     },
 
-    async addContractEntity(edge: ContractEntityEdge): Promise<void> {
-      await query(
-        "MATCH (c:Contract {id: $contractId}), (e:Entity {id: $entityId}) MERGE (c)-[r:CONTRACT_MENTIONS {evidenceId: $evidenceId}]->(e) SET r.confidence = $confidence, r.batchId = $batchId, r.active = $active;",
-        { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, GraphValue>
-      );
+    async addRepoDependenciesBatch(edges: RepoDependencyEdge[], scope: PublicGraphGenerationScope): Promise<void> {
+      await writeRelations({
+        relationshipType: "DEPENDS_ON",
+        fromLabel: "Repo",
+        toLabel: "Repo",
+        mergePropertyNames: ["dependencyType", "sourceContractId", "targetContractId", "evidenceId"],
+        setPropertyNames: ["raw", "confidence", "batchId", "active"],
+        rows: edges.map((edge) => ({
+          fromId: edge.fromRepoId,
+          toId: edge.toRepoId,
+          mergeProperties: {
+            dependencyType: edge.dependencyType,
+            sourceContractId: edge.sourceContractId,
+            targetContractId: edge.targetContractId,
+            evidenceId: edge.evidenceId
+          },
+          setProperties: {
+            raw: edge.raw,
+            confidence: edge.confidence,
+            batchId: edge.batchId ?? "",
+            active: edge.active ?? true
+          }
+        }))
+      }, scope);
     },
 
-    async addOperationRepo(edge: OperationRepoEdge): Promise<void> {
-      await query(
-        "MATCH (r:Repo {id: $repoId}), (o:Operation {id: $operationId}) MERGE (r)-[p:PARTICIPATES_IN {role: $role, evidenceId: $evidenceId}]->(o) SET p.confidence = $confidence, p.batchId = $batchId, p.active = $active;",
-        { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, GraphValue>
-      );
+    async addPackageUsage(edge: PackageUsageEdge, scope: PublicGraphGenerationScope): Promise<void> {
+      await writeRelation({
+        relationshipType: "USES_PACKAGE",
+        fromLabel: "Repo",
+        toLabel: "Contract",
+        fromId: edge.repoId,
+        toId: edge.packageContractId,
+        mergeProperties: {
+          packageName: edge.packageName,
+          evidenceId: edge.evidenceId,
+          raw: edge.raw
+        },
+        setProperties: {
+          confidence: edge.confidence,
+          batchId: edge.batchId ?? "",
+          active: edge.active ?? true
+        }
+      }, scope);
     },
 
-    async addWorkflowOperation(edge: WorkflowOperationEdge): Promise<void> {
-      await query(
-        "MATCH (w:Workflow {id: $workflowId}), (o:Operation {id: $operationId}) MERGE (w)-[s:WORKFLOW_STEP {step: $step, evidenceId: $evidenceId}]->(o) SET s.confidence = $confidence, s.batchId = $batchId, s.active = $active;",
-        { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, GraphValue>
-      );
+    async addContractEntity(edge: ContractEntityEdge, scope: PublicGraphGenerationScope): Promise<void> {
+      await writeRelation({
+        relationshipType: "CONTRACT_MENTIONS",
+        fromLabel: "Contract",
+        toLabel: "Entity",
+        fromId: edge.contractId,
+        toId: edge.entityId,
+        mergeProperties: { evidenceId: edge.evidenceId },
+        setProperties: { confidence: edge.confidence, batchId: edge.batchId ?? "", active: edge.active ?? true }
+      }, scope);
     },
 
-    async upsertContractSpec(spec: ContractSpecNode): Promise<void> {
-      await query(
-        "MERGE (s:ContractSpec {id: $id}) ON CREATE SET s.contractId=$contractId, s.specKind=$specKind, s.repoId=$repoId, s.fileId=$fileId, s.evidenceId=$evidenceId, s.sourceSymbolId=$sourceSymbolId, s.canonicalKey=$canonicalKey, s.httpMethod=$httpMethod, s.pathTemplate=$pathTemplate, s.eventTopic=$eventTopic, s.framework=$framework, s.version=$version, s.specJson=$specJson, s.confidence=$confidence, s.batchId=$batchId, s.indexedAt=$indexedAt, s.active=$active ON MATCH SET s.contractId=$contractId, s.specKind=$specKind, s.repoId=$repoId, s.fileId=$fileId, s.evidenceId=$evidenceId, s.sourceSymbolId=$sourceSymbolId, s.canonicalKey=$canonicalKey, s.httpMethod=$httpMethod, s.pathTemplate=$pathTemplate, s.eventTopic=$eventTopic, s.framework=$framework, s.version=$version, s.specJson=$specJson, s.confidence=$confidence, s.batchId=$batchId, s.indexedAt=$indexedAt, s.active=$active;",
-        { ...spec, sourceSymbolId: spec.sourceSymbolId ?? "", httpMethod: spec.httpMethod ?? "", pathTemplate: spec.pathTemplate ?? "", eventTopic: spec.eventTopic ?? "", framework: spec.framework ?? "", version: spec.version ?? "", batchId: spec.batchId ?? "", indexedAt: spec.indexedAt ?? "", active: spec.active ?? true } as unknown as Record<string, GraphValue>
-      );
+    async addOperationRepo(edge: OperationRepoEdge, scope: PublicGraphGenerationScope): Promise<void> {
+      await writeRelation({
+        relationshipType: "PARTICIPATES_IN",
+        fromLabel: "Repo",
+        toLabel: "Operation",
+        fromId: edge.repoId,
+        toId: edge.operationId,
+        mergeProperties: { role: edge.role, evidenceId: edge.evidenceId },
+        setProperties: { confidence: edge.confidence, batchId: edge.batchId ?? "", active: edge.active ?? true }
+      }, scope);
     },
 
-    async addHasSpec(edge: ContractSpecEdge): Promise<void> {
-      await query(
-        "MATCH (c:Contract {id: $contractId}), (s:ContractSpec {id: $specId}) MERGE (c)-[r:HAS_SPEC {evidenceId: $evidenceId}]->(s) SET r.confidence = $confidence, r.batchId = $batchId, r.active = $active;",
-        { contractId: edge.contractId, specId: edge.specId, evidenceId: edge.evidenceId, confidence: edge.confidence, batchId: edge.batchId ?? "", active: edge.active ?? true }
-      );
+    async addWorkflowOperation(edge: WorkflowOperationEdge, scope: PublicGraphGenerationScope): Promise<void> {
+      await writeRelation({
+        relationshipType: "WORKFLOW_STEP",
+        fromLabel: "Workflow",
+        toLabel: "Operation",
+        fromId: edge.workflowId,
+        toId: edge.operationId,
+        mergeProperties: { step: edge.step, evidenceId: edge.evidenceId },
+        setProperties: { confidence: edge.confidence, batchId: edge.batchId ?? "", active: edge.active ?? true }
+      }, scope);
     },
 
-    async addSemanticRelation(edge: SemanticRelationEdge): Promise<void> {
-      await query(
-        "MATCH (a:ContractSpec {id: $fromSpecId}), (b:ContractSpec {id: $toSpecId}) MERGE (a)-[r:SEMANTIC_REL {kind: $kind, evidenceId: $evidenceId}]->(b) SET r.reason = $reason, r.confidence = $confidence, r.batchId = $batchId, r.active = $active;",
-        { fromSpecId: edge.fromSpecId, toSpecId: edge.toSpecId, kind: edge.kind, evidenceId: edge.evidenceId, reason: edge.reason, confidence: edge.confidence, batchId: edge.batchId ?? "", active: edge.active ?? true }
-      );
+    async upsertContractSpec(spec: ContractSpecNode, scope: PublicGraphGenerationScope): Promise<void> {
+      await upsertNode("ContractSpec", spec.id, {
+        ...asGraphProperties(spec),
+        sourceSymbolId: spec.sourceSymbolId ?? "",
+        httpMethod: spec.httpMethod ?? "",
+        pathTemplate: spec.pathTemplate ?? "",
+        eventTopic: spec.eventTopic ?? "",
+        framework: spec.framework ?? "",
+        version: spec.version ?? "",
+        batchId: spec.batchId ?? "",
+        indexedAt: spec.indexedAt ?? "",
+        active: spec.active ?? true
+      }, scope);
     },
 
-    async addSemanticRelationsBatch(edges: SemanticRelationEdge[]): Promise<void> {
-      for (const items of chunk(edges, BATCH_SIZE)) {
-        const params = items.map((edge) => ({
-          fromSpecId: edge.fromSpecId,
-          toSpecId: edge.toSpecId,
-          kind: edge.kind,
+    async addHasSpec(edge: ContractSpecEdge, scope: PublicGraphGenerationScope): Promise<void> {
+      await writeRelation({
+        relationshipType: "HAS_SPEC",
+        fromLabel: "Contract",
+        toLabel: "ContractSpec",
+        fromId: edge.contractId,
+        toId: edge.specId,
+        mergeProperties: { evidenceId: edge.evidenceId },
+        setProperties: { confidence: edge.confidence, batchId: edge.batchId ?? "", active: edge.active ?? true }
+      }, scope);
+    },
+
+    async addSemanticRelation(edge: SemanticRelationEdge, scope: PublicGraphGenerationScope): Promise<void> {
+      await writeRelation({
+        relationshipType: "SEMANTIC_REL",
+        fromLabel: "ContractSpec",
+        toLabel: "ContractSpec",
+        fromId: edge.fromSpecId,
+        toId: edge.toSpecId,
+        mergeProperties: { kind: edge.kind },
+        setProperties: {
           evidenceId: edge.evidenceId,
           reason: edge.reason,
           confidence: edge.confidence,
           batchId: edge.batchId ?? "",
           active: edge.active ?? true
-        }));
-        await query(
-          "UNWIND $batch AS edge " +
-          "MATCH (a:ContractSpec {id: edge.fromSpecId}), (b:ContractSpec {id: edge.toSpecId}) " +
-          "MERGE (a)-[r:SEMANTIC_REL {kind: edge.kind, evidenceId: edge.evidenceId}]->(b) " +
-          "SET r.reason = edge.reason, r.confidence = edge.confidence, r.batchId = edge.batchId, r.active = edge.active;",
-          { batch: params as unknown as GraphValue }
-        );
-      }
+        }
+      }, scope);
     },
 
-    async addContractEvidence(contractIdValue: string, evidenceIdValue: string): Promise<void> {
-      await query("MATCH (c:Contract {id: $contractId}), (e:Evidence {id: $evidenceId}) MERGE (c)-[:HAS_EVIDENCE]->(e);", { contractId: contractIdValue, evidenceId: evidenceIdValue });
+    async addSemanticRelationsBatch(edges: SemanticRelationEdge[], scope: PublicGraphGenerationScope): Promise<void> {
+      const logicalRelations = collapseSemanticRelations(edges);
+      await writeRelations({
+        relationshipType: "SEMANTIC_REL",
+        fromLabel: "ContractSpec",
+        toLabel: "ContractSpec",
+        mergePropertyNames: ["kind"],
+        setPropertyNames: ["evidenceId", "reason", "confidence", "batchId", "active"],
+        rows: logicalRelations.map((edge) => ({
+          fromId: edge.fromSpecId,
+          toId: edge.toSpecId,
+          mergeProperties: { kind: edge.kind },
+          setProperties: {
+            evidenceId: edge.evidenceId,
+            reason: edge.reason,
+            confidence: edge.confidence,
+            batchId: edge.batchId ?? "",
+            active: edge.active ?? true
+          }
+        }))
+      }, scope);
     },
 
-    async addRepoEvidence(repoIdValue: string, evidenceIdValue: string): Promise<void> {
-      await query("MATCH (r:Repo {id: $repoId}), (e:Evidence {id: $evidenceId}) MERGE (r)-[:HAS_EVIDENCE]->(e);", { repoId: repoIdValue, evidenceId: evidenceIdValue });
+    async clearSemanticRelationsForSpecs(specIds: string[], scope: PublicGraphGenerationScope): Promise<void> {
+      if (specIds.length === 0) return;
+      await query(
+        `MATCH (a:ContractSpec)-[r:SEMANTIC_REL]->(b:ContractSpec)
+         WHERE a.workspaceId = $workspaceId AND a.generation = $generation
+           AND b.workspaceId = $workspaceId AND b.generation = $generation
+           AND r.workspaceId = $workspaceId AND r.generation = $generation
+           AND (a.id IN $specIds OR b.id IN $specIds)
+         DELETE r;`,
+        { ...publicRelationshipScopeParams(scope), specIds }
+      );
+    },
+
+    async addContractEvidence(contractId: string, evidenceId: string, scope: PublicGraphGenerationScope): Promise<void> {
+      await writeRelation({ relationshipType: "HAS_EVIDENCE", fromLabel: "Contract", toLabel: "Evidence", fromId: contractId, toId: evidenceId }, scope);
+    },
+
+    async addRepoEvidence(repoId: string, evidenceId: string, scope: PublicGraphGenerationScope): Promise<void> {
+      await writeRelation({ relationshipType: "HAS_EVIDENCE", fromLabel: "Repo", toLabel: "Evidence", fromId: repoId, toId: evidenceId }, scope);
     },
 
     addContains,
 
-    async addImport(edge: ImportEdge): Promise<void> {
-      await query("MATCH (a:File {id: $fromFileId}), (b:File {id: $toFileId}) MERGE (a)-[r:IMPORTS {module: $module}]->(b) SET r.raw = $raw, r.batchId = $batchId, r.active = $active;", { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, GraphValue>);
+    async addImport(edge: ImportEdge, scope: PublicGraphGenerationScope): Promise<void> {
+      await writeRelation({
+        relationshipType: "IMPORTS",
+        fromLabel: "File",
+        toLabel: "File",
+        fromId: edge.fromFileId,
+        toId: edge.toFileId,
+        mergeProperties: { module: edge.module },
+        setProperties: { raw: edge.raw, batchId: edge.batchId ?? "", active: edge.active ?? true }
+      }, scope);
     },
 
-    async addImportsBatch(edges: ImportEdge[]): Promise<void> {
-      for (const items of chunk(edges, BATCH_SIZE)) {
-        const params = items.map((e) => ({
-          fromFileId: e.fromFileId, toFileId: e.toFileId, module: e.module,
-          raw: e.raw, batchId: e.batchId ?? "", active: e.active ?? true
-        }));
-        await query(
-          "UNWIND $batch AS row " +
-          "MATCH (a:File {id: row.fromFileId}), (b:File {id: row.toFileId}) " +
-          "MERGE (a)-[r:IMPORTS {module: row.module}]->(b) " +
-          "SET r.raw = row.raw, r.batchId = row.batchId, r.active = row.active;",
-          { batch: params as unknown as GraphValue }
-        );
-      }
+    async addImportsBatch(edges: ImportEdge[], scope: PublicGraphGenerationScope): Promise<void> {
+      await writeRelations({
+        relationshipType: "IMPORTS",
+        fromLabel: "File",
+        toLabel: "File",
+        mergePropertyNames: ["module"],
+        setPropertyNames: ["raw", "batchId", "active"],
+        rows: edges.map((edge) => ({
+          fromId: edge.fromFileId,
+          toId: edge.toFileId,
+          mergeProperties: { module: edge.module },
+          setProperties: { raw: edge.raw, batchId: edge.batchId ?? "", active: edge.active ?? true }
+        }))
+      }, scope);
     },
 
-    async addCall(edge: CallEdge): Promise<void> {
-      await query("MATCH (a:Code {id: $fromCodeId}), (b:Code {id: $toCodeId}) MERGE (a)-[r:CALLS {raw: $raw}]->(b) SET r.confidence = $confidence, r.resolution = $resolution, r.batchId = $batchId, r.active = $active;", { ...edge, batchId: edge.batchId ?? "", active: edge.active ?? true } as unknown as Record<string, GraphValue>);
+    async addCall(edge: CallEdge, scope: PublicGraphGenerationScope): Promise<void> {
+      await writeRelation({
+        relationshipType: "CALLS",
+        fromLabel: "Code",
+        toLabel: "Code",
+        fromId: edge.fromCodeId,
+        toId: edge.toCodeId,
+        mergeProperties: { raw: edge.raw },
+        setProperties: {
+          confidence: edge.confidence,
+          resolution: edge.resolution ?? "",
+          batchId: edge.batchId ?? "",
+          active: edge.active ?? true
+        }
+      }, scope);
     },
 
-    async addCallsBatch(edges: CallEdge[]): Promise<void> {
-      for (const items of chunk(edges, BATCH_SIZE)) {
-        const params = items.map((e) => ({
-          fromCodeId: e.fromCodeId, toCodeId: e.toCodeId, raw: e.raw,
-          confidence: e.confidence, resolution: e.resolution ?? "",
-          batchId: e.batchId ?? "", active: e.active ?? true
-        }));
-        await query(
-          "UNWIND $batch AS row " +
-          "MATCH (a:Code {id: row.fromCodeId}), (b:Code {id: row.toCodeId}) " +
-          "MERGE (a)-[r:CALLS {raw: row.raw}]->(b) " +
-          "SET r.confidence = row.confidence, r.resolution = row.resolution, r.batchId = row.batchId, r.active = row.active;",
-          { batch: params as unknown as GraphValue }
-        );
-      }
+    async addCallsBatch(edges: CallEdge[], scope: PublicGraphGenerationScope): Promise<void> {
+      await writeRelations({
+        relationshipType: "CALLS",
+        fromLabel: "Code",
+        toLabel: "Code",
+        mergePropertyNames: ["raw"],
+        setPropertyNames: ["confidence", "resolution", "batchId", "active"],
+        rows: edges.map((edge) => ({
+          fromId: edge.fromCodeId,
+          toId: edge.toCodeId,
+          mergeProperties: { raw: edge.raw },
+          setProperties: {
+            confidence: edge.confidence,
+            resolution: edge.resolution ?? "",
+            batchId: edge.batchId ?? "",
+            active: edge.active ?? true
+          }
+        }))
+      }, scope);
     },
 
-    async addMention(codeIdValue: string, entityIdValue: string, confidence: number): Promise<void> {
-      await query("MATCH (c:Code {id: $codeId}), (e:Entity {id: $entityId}) MERGE (c)-[r:MENTIONS {confidence: $confidence}]->(e);", { codeId: codeIdValue, entityId: entityIdValue, confidence });
+    async addMention(codeId: string, entityId: string, confidence: number, scope: PublicGraphGenerationScope): Promise<void> {
+      await writeRelation({ relationshipType: "MENTIONS", fromLabel: "Code", toLabel: "Entity", fromId: codeId, toId: entityId, mergeProperties: { confidence } }, scope);
     },
 
-    async addSectionMention(sectionIdValue: string, entityIdValue: string, confidence: number): Promise<void> {
-      await query("MATCH (s:Section {id: $sectionId}), (e:Entity {id: $entityId}) MERGE (s)-[r:MENTIONS {confidence: $confidence}]->(e);", { sectionId: sectionIdValue, entityId: entityIdValue, confidence });
+    async addSectionMention(sectionId: string, entityId: string, confidence: number, scope: PublicGraphGenerationScope): Promise<void> {
+      await writeRelation({ relationshipType: "MENTIONS", fromLabel: "Section", toLabel: "Entity", fromId: sectionId, toId: entityId, mergeProperties: { confidence } }, scope);
     },
 
-    async addSectionDescribesRepo(sectionIdValue: string, repoIdValue: string): Promise<void> {
-      await query("MATCH (s:Section {id: $sectionId}), (r:Repo {id: $repoId}) MERGE (s)-[:DESCRIBES]->(r);", { sectionId: sectionIdValue, repoId: repoIdValue });
+    async addSectionDescribesRepo(sectionId: string, repoId: string, scope: PublicGraphGenerationScope): Promise<void> {
+      await writeRelation({ relationshipType: "DESCRIBES", fromLabel: "Section", toLabel: "Repo", fromId: sectionId, toId: repoId }, scope);
     },
 
-    async addSectionDocumentsCode(sectionIdValue: string, codeIdValue: string, confidence: number): Promise<void> {
-      await query("MATCH (s:Section {id: $sectionId}), (c:Code {id: $codeId}) MERGE (s)-[r:DOCUMENTS {confidence: $confidence}]->(c);", { sectionId: sectionIdValue, codeId: codeIdValue, confidence });
+    async addSectionDocumentsCode(sectionId: string, codeId: string, confidence: number, scope: PublicGraphGenerationScope): Promise<void> {
+      await writeRelation({ relationshipType: "DOCUMENTS", fromLabel: "Section", toLabel: "Code", fromId: sectionId, toId: codeId, setProperties: { confidence } }, scope);
     },
 
-    async addSectionReferencesFile(sectionIdValue: string, fileIdValue: string, raw: string): Promise<void> {
-      await query("MATCH (s:Section {id: $sectionId}), (f:File {id: $fileId}) MERGE (s)-[r:REFERENCES {raw: $raw}]->(f);", { sectionId: sectionIdValue, fileId: fileIdValue, raw });
+    async addSectionReferencesFile(sectionId: string, fileId: string, raw: string, scope: PublicGraphGenerationScope): Promise<void> {
+      await writeRelation({ relationshipType: "REFERENCES", fromLabel: "Section", toLabel: "File", fromId: sectionId, toId: fileId, mergeProperties: { raw } }, scope);
     },
 
-    async clearRepoDependencies(repoIds?: string[]): Promise<void> {
+    async clearRepoDependencies(repoIds: string[] | undefined, scope: PublicGraphGenerationScope): Promise<void> {
+      const scoped = "a.workspaceId = $workspaceId AND a.generation = $generation AND b.workspaceId = $workspaceId AND b.generation = $generation AND r.workspaceId = $workspaceId AND r.generation = $generation";
       if (repoIds && repoIds.length > 0) {
         await query(
-          "MATCH (a:Repo)-[r:DEPENDS_ON]->(b:Repo) WHERE a.id IN $repoIds OR b.id IN $repoIds DELETE r;",
-          { repoIds }
+          `MATCH (a:Repo)-[r:DEPENDS_ON]->(b:Repo) WHERE ${scoped} AND (a.id IN $repoIds OR b.id IN $repoIds) DELETE r;`,
+          { ...publicRelationshipScopeParams(scope), repoIds }
         );
         return;
       }
-      await query("MATCH (:Repo)-[r:DEPENDS_ON]->(:Repo) DELETE r;");
+      await query(
+        `MATCH (a:Repo)-[r:DEPENDS_ON]->(b:Repo) WHERE ${scoped} DELETE r;`,
+        publicRelationshipScopeParams(scope)
+      );
+    },
+
+    async clearRepoDependenciesForContracts(contractIds: string[], scope: PublicGraphGenerationScope): Promise<void> {
+      if (contractIds.length === 0) return;
+      await query(
+        `MATCH (a:Repo)-[r:DEPENDS_ON]->(b:Repo)
+         WHERE a.workspaceId = $workspaceId AND a.generation = $generation
+           AND b.workspaceId = $workspaceId AND b.generation = $generation
+           AND r.workspaceId = $workspaceId AND r.generation = $generation
+           AND (r.sourceContractId IN $contractIds OR r.targetContractId IN $contractIds)
+         DELETE r;`,
+        { ...publicRelationshipScopeParams(scope), contractIds }
+      );
     },
 
     async upsertIndexState(state: { repoId: string; repoName: string; lastBatchId: string; lastIndexedAt: string; lastCommitSha: string; filesScanned: number; filesChanged: number; filesStale: number; status: string; error?: string; graphWriteAtomicity?: GraphWriteAtomicityMode; graphWriteStatus?: GraphWriteBatchStatus; lexicalDocumentCount?: number; lexicalIndexSizeBytes?: number; lexicalProjectionSchemaVersion?: string; lexicalTokenizerVersion?: string; lexicalIndexStatus?: string; lexicalProjectionDurationMs?: number; lexicalWriteDurationMs?: number }): Promise<void> {
@@ -377,22 +846,26 @@ export function createCypherCrud(executor: CypherExecutor) {
       );
     },
 
-    async knownFileHashes(repoIdValue: string): Promise<Map<string, string>> {
+    async knownFileHashes(repoId: string, scope: PublicGraphGenerationScope): Promise<Map<string, string>> {
       const rows = await query<{ id: string; hash: string }>(
-        "MATCH (f:File) WHERE f.repoId = $repoId RETURN f.id AS id, f.hash AS hash;",
-        { repoId: repoIdValue }
+        "MATCH (f:File) WHERE f.workspaceId = $workspaceId AND f.generation = $generation AND f.repoId = $repoId RETURN f.id AS id, f.hash AS hash;",
+        { ...publicRelationshipScopeParams(scope), repoId }
       );
       return new Map(rows.map((row) => [row.id, row.hash]));
     },
 
-    async repoCount(): Promise<number> {
-      const rows = await query<{ count: number }>("MATCH (r:Repo) RETURN count(r) AS count;");
+    async repoCount(scope: PublicGraphGenerationScope): Promise<number> {
+      const rows = await query<{ count: number }>(
+        "MATCH (r:Repo) WHERE r.workspaceId = $workspaceId AND r.generation = $generation RETURN count(r) AS count;",
+        publicRelationshipScopeParams(scope)
+      );
       return Number(rows[0]?.count ?? 0);
     },
 
-    async listRepos(): Promise<RepoNode[]> {
+    async listRepos(scope: PublicGraphGenerationScope): Promise<RepoNode[]> {
       return query<RepoNode>(
-        "MATCH (r:Repo) RETURN r.id AS id, r.name AS name, r.path AS path, r.remoteUrl AS remoteUrl, r.branch AS branch, r.commitSha AS commitSha, r.language AS language, r.indexedAt AS indexedAt, r.summary AS summary;"
+        "MATCH (r:Repo) WHERE r.workspaceId = $workspaceId AND r.generation = $generation RETURN r.id AS id, r.name AS name, r.path AS path, r.remoteUrl AS remoteUrl, r.branch AS branch, r.commitSha AS commitSha, r.language AS language, r.indexedAt AS indexedAt, r.summary AS summary;",
+        publicRelationshipScopeParams(scope)
       );
     },
 
@@ -402,25 +875,19 @@ export function createCypherCrud(executor: CypherExecutor) {
       );
     },
 
-    async stats(): Promise<Stats> {
-      const [repos, files, codeNodes, sectionNodes, callEdges, importEdges, entities] = await Promise.all([
-        query<{ count: number }>("MATCH (n:Repo) RETURN count(n) AS count;"),
-        query<{ count: number }>("MATCH (n:File) WHERE n.active IS NULL OR n.active = true RETURN count(n) AS count;"),
-        query<{ count: number }>("MATCH (n:Code) WHERE n.active IS NULL OR n.active = true RETURN count(n) AS count;"),
-        query<{ count: number }>("MATCH (n:Section) WHERE n.active IS NULL OR n.active = true RETURN count(n) AS count;"),
-        query<{ count: number }>("MATCH (:Code)-[r:CALLS]->(:Code) WHERE r.active IS NULL OR r.active = true RETURN count(r) AS count;"),
-        query<{ count: number }>("MATCH (:File)-[r:IMPORTS]->(:File) WHERE r.active IS NULL OR r.active = true RETURN count(r) AS count;"),
-        query<{ count: number }>("MATCH (n:Entity) RETURN count(n) AS count;")
-      ]);
-      return {
-        repos: Number(repos[0]?.count ?? 0),
-        files: Number(files[0]?.count ?? 0),
-        codeNodes: Number(codeNodes[0]?.count ?? 0),
-        sectionNodes: Number(sectionNodes[0]?.count ?? 0),
-        callEdges: Number(callEdges[0]?.count ?? 0),
-        importEdges: Number(importEdges[0]?.count ?? 0),
-        entities: Number(entities[0]?.count ?? 0)
-      };
+    readPublicGraphStats,
+    computePublicGraphStats,
+    initializePublicGraphStats,
+    applyPublicGraphStatsDelta,
+
+    async stats(scope: PublicGraphGenerationScope): Promise<Stats> {
+      const stored = await readPublicGraphStats(scope);
+      if (!stored) {
+        throw new Error(
+          "Public graph stats metadata is missing; clean generated graph/internal/lexical artifacts and run a full reindex."
+        );
+      }
+      return stored;
     }
   };
 }

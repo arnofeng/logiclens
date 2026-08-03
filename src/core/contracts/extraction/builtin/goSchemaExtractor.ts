@@ -2,30 +2,25 @@ import { compatExtractor } from "./compat.js";
 import type Parser from "tree-sitter";
 import type { FactCollector } from "../factCollector.js";
 import type { ParsedFile } from "../../../parsing/types.js";
-import type { SchemaFieldSpec, SchemaSpec } from "../../spec.js";
+import type { SchemaFieldSpec } from "../../spec.js";
 import { normalizePrimitiveType } from "../../spec.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
-import {
-  classifySharedContract,
-  contract,
-  evidence,
-  parsedCodeFiles,
-  pushContractEvidence,
-  pushContractSpec,
-  toBusinessEntityName, } from "./shared.js";
+import { parsedCodeFiles } from "./shared.js";
 import {
   parseSourceAst,
   walkSourceAst
 } from "./sourceAstUtils.js";
-import { entityId } from "../../../../shared/path.js";
+import { schemaFieldFromNormalized, typeExpressionFromNormalized } from "../../../schema/model.js";
+import { canonicalResolutionScopeIdForFile } from "../../../schema/sourceScopes.js";
 
 /**
- * Go Schema Extractor â€?extracts field-level schema information from Go struct
- * definitions whose type name matches DTO / Schema naming conventions.
+ * Go Schema Extractor indexes field-level declaration candidates from structs.
+ * It does not publish isolated structs as SchemaSpecs; typed contract roots
+ * drive public materialization in the shared reconciliation engine.
  *
  * Struct field extraction handles:
  *  - Basic types: `string`, `int`, `float64`, `bool`, etc.
- *  - Pointer types: `*string` â†?nullable
+ *  - Pointer types: `*string` éˆ«?nullable
  *  - Slice types: `[]string`, `[]OrderItem`
  *  - Map types: `map[string]interface{}`
  *  - Embedded structs (field_identifier omitted): recorded by their type name
@@ -35,7 +30,14 @@ import { entityId } from "../../../../shared/path.js";
 export const goSchemaExtractor = compatExtractor({
   name: "builtin:go-schema",
   languages: ["go"],
-  extract(context, collector: FactCollector) {
+  async extract(context, collector: FactCollector) {
+
+    const scopeIds = new Map<string, string>();
+    for (const file of parsedCodeFiles(context.parsedFiles)) {
+      if (file.language !== "go") continue;
+      const repo = context.repos.find((candidate) => candidate.id === file.repoId);
+      scopeIds.set(file.fileId, await canonicalResolutionScopeIdForFile(file, repo?.path));
+    }
 
     for (const file of parsedCodeFiles(context.parsedFiles)) {
       if (file.language !== "go") continue;
@@ -50,79 +52,31 @@ export const goSchemaExtractor = compatExtractor({
         if (!nameNode) return;
         const typeName = nameNode.text;
 
-        const sharedKind = classifySharedContract(typeName, "struct");
-        if (sharedKind !== "schema" && sharedKind !== "dto") return;
-
         const structType = node.namedChildren.find(
           (c) => c.type === "struct_type"
         );
         if (!structType) return;
 
         const fields = extractStructFields(structType, file);
-        if (fields.length === 0) return;
+        const baseTypes = extractEmbeddedTypeExpressions(structType);
+        const typeParameters = extractGoTypeParameters(node, typeName);
 
-        const schemaSpec: SchemaSpec = {
-          kind: "schema",
-          name: typeName,
-          language: "go",
-          fields
-        };
-
-        const schemaContract = contract(sharedKind, typeName, `${sharedKind.toUpperCase()} ${typeName}`);
-        const evidenceNode = evidence({
-          repoId: file.repoId,
+        collector.addSchemaDeclaration({
+          declaration: { languageId: "go", repoId: file.repoId, resolutionScopeId: scopeIds.get(file.fileId)!, canonicalName: typeName },
+          displayName: typeName,
+          typeParameters,
+          shape: { kind: "object", fields, baseTypes },
           fileId: file.fileId,
           filePath: file.path,
-          line: node.startPosition.row + 1,
-          raw: node.text.slice(0, 160),
-          rule: "go-schema-fields",
-          confidence: confidenceFor("heuristic-schema-fields")
-        });
-
-        pushContractEvidence(collector, file.repoId, schemaContract, "shared", evidenceNode);
-
-        pushContractSpec({
-          collector,
-          contractNode: schemaContract,
-          spec: schemaSpec,
-          repoId: file.repoId,
-          fileId: file.fileId,
-          evidenceNode,
-          sourceSymbolId: undefined, // Go type_spec nodes are not captured as symbols
           framework: "go-struct",
-          version: undefined
+          evidence: {
+            line: node.startPosition.row + 1,
+            raw: node.text.slice(0, 160),
+            rule: "go-schema-declaration",
+            confidence: confidenceFor("heuristic-schema-fields")
+          }
         });
 
-        const entityName = toBusinessEntityName(schemaContract);
-        if (entityName) {
-          collector.addEntity({
-            id: entityId(entityName),
-            name: entityName,
-            kind: "domain",
-            description: "Domain entity inferred from cross-repo contracts"
-          });
-          collector.addContractEntity({
-            contractId: schemaContract.id,
-            entityId: entityId(entityName),
-            evidenceId: evidenceNode.id,
-            confidence: evidenceNode.confidence
-          });
-        }
-
-        // For each embedded struct, emit a USES_SCHEMA placeholder so impact
-        // analysis can traverse from the composing struct to the embedded one.
-        // Resolved by schemaResolver once the full batch is available (mirrors
-        // the Java `extends` / TS utility-type handling).
-        for (const base of extractEmbeddedTypeNames(structType)) {
-          collector.addSemanticRelation({
-            fromSpecId: `spec:${schemaContract.id}:pending`,
-            toSpecId: `schema-ref:${base}`,
-            kind: "USES_SCHEMA",
-            evidenceId: evidenceNode.id,
-            reason: `Go struct embeds ${base}`,
-            confidence: confidenceFor("heuristic-generic-type-param")
-          });
-        }
       });
     }
 
@@ -146,7 +100,7 @@ function extractStructFields(
   const fields: SchemaFieldSpec[] = [];
   for (const child of fieldList.namedChildren) {
     if (child.type !== "field_declaration") continue;
-    const parsed = parseGoField(child);
+    const parsed = parseGoField(child, _file);
     if (parsed) fields.push(...parsed);
   }
 
@@ -156,11 +110,11 @@ function extractStructFields(
 /**
  * Parses a single Go `field_declaration` into one or more `SchemaFieldSpec`s.
  * A single Go field line can declare multiple names sharing the same type:
- *   `X, Y int` â†?two fields
- *   `Name string` â†?one field
- *   `ID string \`json:"id"\`` â†?one field (tag ignored)
+ *   `X, Y int` éˆ«?two fields
+ *   `Name string` éˆ«?one field
+ *   `ID string \`json:"id"\`` éˆ«?one field (tag ignored)
  */
-function parseGoField(node: Parser.SyntaxNode): SchemaFieldSpec[] | undefined {
+function parseGoField(node: Parser.SyntaxNode, file: ParsedFile): SchemaFieldSpec[] | undefined {
   // Collect field_identifiers (Go allows `a, b int` syntax)
   const identifiers: string[] = [];
   let typeNode: Parser.SyntaxNode | undefined;
@@ -173,7 +127,7 @@ function parseGoField(node: Parser.SyntaxNode): SchemaFieldSpec[] | undefined {
     } else if (isGoTypeNode(child.type)) {
       // Embedded struct or the type of the preceding identifiers
       if (identifiers.length === 0) {
-        // Embedded field â€?use the type name as the field name
+        // Embedded field éˆ¥?use the type name as the field name
         identifiers.push(child.text);
       }
       typeNode = child;
@@ -197,52 +151,42 @@ function parseGoField(node: Parser.SyntaxNode): SchemaFieldSpec[] | undefined {
   const rawType = typeNode ? goTypeText(typeNode) : "interface{}";
   const normalized = normalizePrimitiveType("go", rawType);
 
-  return identifiers.map((name) => ({
-    name,
-    type: normalized,
+  return identifiers.map((name) => schemaFieldFromNormalized({
+    languageId: "go",
+    repoId: file.repoId,
+    fileId: file.fileId,
+    sourceName: name,
+    normalizedType: normalized,
     optional: false,
-    nullable: normalized.endsWith("?") ? true : undefined,
-    sourceLine: node.startPosition.row + 1
+    nullable: normalized.endsWith("?"),
+    line: node.startPosition.row + 1
   }));
 }
 
 /**
- * Returns the type names of a struct's embedded fields â€?`field_declaration`s
+ * Returns the type names of a struct's embedded fields éˆ¥?`field_declaration`s
  * that carry a type but no `field_identifier`. Pointer (`*Base`), qualified
  * (`pkg.Base`) and generic (`Base[T]`) embeds are reduced to the bare type
  * name so they match the simple schema names indexed by the resolver.
  */
-function extractEmbeddedTypeNames(structType: Parser.SyntaxNode): string[] {
+function extractEmbeddedTypeExpressions(structType: Parser.SyntaxNode): ReturnType<typeof typeExpressionFromNormalized>[] {
   const fieldList = structType.namedChildren.find(
     (c) => c.type === "field_declaration_list"
   );
   if (!fieldList) return [];
 
-  const names: string[] = [];
+  const expressions: ReturnType<typeof typeExpressionFromNormalized>[] = [];
   for (const child of fieldList.namedChildren) {
     if (child.type !== "field_declaration") continue;
     // A named field (`Name string`) has a field_identifier; embedded fields do not.
     if (child.namedChildren.some((c) => c.type === "field_identifier")) continue;
-    const typeNode = child.namedChildren.find((c) => isGoTypeNode(c.type));
+    const typeNode = child.childForFieldName("type")
+      ?? child.namedChildren.find((candidate) => isGoTypeNode(candidate.type));
     if (!typeNode) continue;
-    const name = embeddedBaseName(typeNode);
-    if (name) names.push(name);
+    const rawType = child.text.replace(/`[^`]*`\s*$/su, "").trim() || goTypeText(typeNode);
+    expressions.push(typeExpressionFromNormalized(normalizePrimitiveType("go", rawType), "go"));
   }
-  return names;
-}
-
-/** Unwraps pointer/qualified/generic wrappers to the bare embedded type name. */
-function embeddedBaseName(node: Parser.SyntaxNode): string | undefined {
-  if (node.type === "type_identifier") return node.text;
-  if (node.type === "pointer_type") {
-    const inner = node.namedChild(0);
-    return inner ? embeddedBaseName(inner) : undefined;
-  }
-  if (node.type === "qualified_type" || node.type === "generic_type") {
-    const id = node.namedChildren.find((c) => c.type === "type_identifier");
-    return id?.text;
-  }
-  return undefined;
+  return expressions;
 }
 
 function isGoTypeNode(type: string): boolean {
@@ -256,6 +200,18 @@ function isGoTypeNode(type: string): boolean {
     type === "interface_type" ||
     type === "qualified_type" ||
     type === "generic_type";
+}
+
+function extractGoTypeParameters(typeSpec: Parser.SyntaxNode, typeName: string): string[] {
+  const header = typeSpec.text.slice(0, Math.max(0, typeSpec.text.indexOf("struct")));
+  const start = header.indexOf("[", header.indexOf(typeName) + typeName.length);
+  if (start < 0) return [];
+  const end = header.lastIndexOf("]");
+  if (end <= start) return [];
+  return header.slice(start + 1, end).split(",").flatMap((part) => {
+    const name = part.trim().match(/^([A-Za-z_]\w*)/u)?.[1];
+    return name ? [name] : [];
+  });
 }
 
 /**

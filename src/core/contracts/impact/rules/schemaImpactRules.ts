@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import type { ContractSpecNode, SemanticRelationKind } from "../../../parsing/types.js";
-import { deserializeSpec, type SchemaSpec, type SchemaFieldSpec } from "../../spec.js";
+import { deserializeSpec, schemaFields, schemaFieldTypeName, type SchemaSpec, type SchemaFieldSpec } from "../../spec.js";
 import { findFieldReferences } from "../fieldSearch.js";
 import type { ChangeIntent, ImpactItem, ImpactSeverity, ImpactAnalysisOptions } from "../types.js";
 
@@ -25,7 +25,7 @@ export function classifySchemaTargetChange(
 
   const fieldName = change.detail ?? "unknown field";
   // Check if the field is optional to adjust severity
-  const field = schemaSpec.fields.find((f) => f.name === fieldName);
+  const field = schemaFields(schemaSpec).find((f) => f.sourceName === fieldName || f.serializedName === fieldName);
   const severity: ImpactSeverity = field?.optional && change.changeType === "field-removed"
     ? "risky" : schemaFieldChangeSeverity(change.changeType);
 
@@ -34,10 +34,10 @@ export function classifySchemaTargetChange(
     filePath: spec.fileId,
     specId: spec.id,
     severity,
-    symbol: `${schemaSpec.name}.${fieldName}`,
+    symbol: `${schemaSpec.displayName}.${fieldName}`,
     relationKind: "IMPACTS",
-    description: `${change.changeType}: ${fieldName} in ${schemaSpec.name}`,
-    evidence: `schema: ${schemaSpec.name}.${fieldName}${field ? ` (${field.type}${field.optional ? ", optional" : ""})` : ""}`,
+    description: `${change.changeType}: ${fieldName} in ${schemaSpec.displayName}`,
+    evidence: `schema: ${schemaSpec.displayName}.${fieldName}${field ? ` (${schemaFieldTypeName(field)}${field.optional ? ", optional" : ""})` : ""}`,
     confidence: spec.confidence,
   };
 }
@@ -74,9 +74,9 @@ export function assessSchemaFieldChange(
   if (!fieldName) return [];
 
   // Find the specific field in the schema (for evidence)
-  const field = schemaSpec.fields.find((f) => f.name === fieldName);
+  const field = schemaFields(schemaSpec).find((f) => f.sourceName === fieldName || f.serializedName === fieldName);
   const fieldEvidence = field
-    ? `${field.name}: ${field.type}${field.optional ? " (optional)" : ""}`
+    ? `${field.serializedName}: ${schemaFieldTypeName(field)}${field.optional ? " (optional)" : ""}`
     : `${fieldName} (not found in schema fields)`;
 
   const base = {
@@ -104,8 +104,8 @@ export function assessSchemaFieldChange(
             ...base,
             severity,
             filePath: dependentSpec.fileId,
-            symbol: `${schemaSpec.name}.${fieldName}`,
-            description: formatDescription(change.changeType, fieldName, schemaSpec.name, dependentSpec.repoId),
+            symbol: `${schemaSpec.displayName}.${fieldName}`,
+            description: formatDescription(change.changeType, fieldName, schemaSpec.displayName, dependentSpec.repoId),
             evidence: ref.raw,
             line: ref.line,
           });
@@ -120,8 +120,8 @@ export function assessSchemaFieldChange(
     ...base,
     severity,
     filePath: dependentSpec.fileId,
-    symbol: `${schemaSpec.name}.${fieldName}`,
-    description: formatDescription(change.changeType, fieldName, schemaSpec.name, dependentSpec.repoId),
+    symbol: `${schemaSpec.displayName}.${fieldName}`,
+    description: formatDescription(change.changeType, fieldName, schemaSpec.displayName, dependentSpec.repoId),
     evidence: fieldEvidence,
   });
 

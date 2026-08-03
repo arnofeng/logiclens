@@ -13,19 +13,21 @@ import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import type { ContractKind, ContractRole, RepoDependencyEdge, RepoNode } from "../src/core/parsing/types.js";
 import { repoId } from "../src/shared/path.js";
 
+const scope = { workspaceId: "workspace:relation-rebuild", generation: "generation:relation-rebuild" } as const;
+
 function repo(name: string): RepoNode {
   return { id: repoId(name), name, path: path.resolve("tests/fixtures", name), remoteUrl: "", branch: "", commitSha: "", language: "typescript", indexedAt: new Date().toISOString() };
 }
 
 async function addParticipant(db: KuzuGraphDB, input: { repo: RepoNode; contractId: string; kind: ContractKind; key: string; role: ContractRole; evidenceId: string; rule?: string }): Promise<void> {
-  await db.upsertRepo(input.repo);
+  await db.upsertRepo(input.repo, scope);
   await db.upsertContract({
     id: input.contractId,
     kind: input.kind,
     key: input.key,
     name: input.key,
     description: `${input.kind} ${input.key}`
-  });
+  }, scope);
   await db.upsertEvidence({
     id: input.evidenceId,
     repoId: input.repo.id,
@@ -38,7 +40,7 @@ async function addParticipant(db: KuzuGraphDB, input: { repo: RepoNode; contract
     batchId: "batch:test",
     indexedAt: new Date().toISOString(),
     active: true
-  });
+  }, scope);
   await db.addRepoContract({
     repoId: input.repo.id,
     contractId: input.contractId,
@@ -47,16 +49,20 @@ async function addParticipant(db: KuzuGraphDB, input: { repo: RepoNode; contract
     confidence: 0.9,
     batchId: "batch:test",
     active: true
-  });
-  await db.addContractEvidence(input.contractId, input.evidenceId);
-  await db.addRepoEvidence(input.repo.id, input.evidenceId);
+  }, scope);
+  await db.addContractEvidence(input.contractId, input.evidenceId, scope);
+  await db.addRepoEvidence(input.repo.id, input.evidenceId, scope);
 }
 
 async function dependencyRows(db: KuzuGraphDB): Promise<{ fromRepo: string; toRepo: string; dependencyType: string; evidenceId: string }[]> {
   return db.query<{ fromRepo: string; toRepo: string; dependencyType: string; evidenceId: string }>(
     `MATCH (from:Repo)-[d:DEPENDS_ON]->(to:Repo)
+     WHERE from.workspaceId = $workspaceId AND from.generation = $generation
+       AND to.workspaceId = $workspaceId AND to.generation = $generation
+       AND d.workspaceId = $workspaceId AND d.generation = $generation
      RETURN from.name AS fromRepo, to.name AS toRepo, d.dependencyType AS dependencyType, d.evidenceId AS evidenceId
-     ORDER BY fromRepo, toRepo, dependencyType, evidenceId;`
+     ORDER BY fromRepo, toRepo, dependencyType, evidenceId;`,
+    scope
   );
 }
 
@@ -68,31 +74,37 @@ describe("relation rebuild", () => {
       await db.initSchema("rebuild-test");
       const repoA = { id: repoId("service-a"), name: "service-a", path: path.resolve("tests/fixtures/service-a"), remoteUrl: "", branch: "", commitSha: "", language: "typescript", indexedAt: new Date().toISOString() };
       const repoB = { id: repoId("service-b"), name: "service-b", path: path.resolve("tests/fixtures/service-b"), remoteUrl: "", branch: "", commitSha: "", language: "typescript", indexedAt: new Date().toISOString() };
-      await db.upsertRepo(repoA);
-      await db.upsertRepo(repoB);
+      await db.upsertRepo(repoA, scope);
+      await db.upsertRepo(repoB, scope);
 
       const parsedA = await Promise.all([
         parseSourceFile({ repoId: repoA.id, absolutePath: path.resolve("tests/fixtures/service-a/src/OrderController.ts"), relativePath: "src/OrderController.ts", language: "typescript" }),
         parseSourceFile({ repoId: repoA.id, absolutePath: path.resolve("tests/fixtures/service-a/src/OrderService.ts"), relativePath: "src/OrderService.ts", language: "typescript" })
       ]);
-      await upsertParsedFiles(db, parsedA, { semantic: true }, [repoA]);
+      await upsertParsedFiles(db, parsedA, { semantic: true, ...scope, systemName: "rebuild-test" }, [repoA]);
 
       const parsedB = await Promise.all([
         parseSourceFile({ repoId: repoB.id, absolutePath: path.resolve("tests/fixtures/service-b/src/PaymentService.ts"), relativePath: "src/PaymentService.ts", language: "typescript" }),
         parseSourceFile({ repoId: repoB.id, absolutePath: path.resolve("tests/fixtures/service-b/src/events/OrderCreatedEvent.ts"), relativePath: "src/events/OrderCreatedEvent.ts", language: "typescript" })
       ]);
-      await upsertParsedFiles(db, parsedB, { semantic: true }, [repoB]);
+      await upsertParsedFiles(db, parsedB, { semantic: true, ...scope, systemName: "rebuild-test" }, [repoB]);
 
-      const before = await db.query<{ count: number }>("MATCH (:Repo)-[d:DEPENDS_ON]->(:Repo) RETURN count(d) AS count;");
+      const before = await db.query<{ count: number }>(
+        "MATCH (:Repo)-[d:DEPENDS_ON]->(:Repo) WHERE d.workspaceId = $workspaceId AND d.generation = $generation RETURN count(d) AS count;",
+        scope
+      );
       expect(Number(before[0]?.count ?? 0)).toBe(0);
 
-      const rebuilt = await rebuildRepoDependencies(db, { repoIds: [repoB.id] });
+      const rebuilt = await rebuildRepoDependencies(db, { repoIds: [repoB.id], scope });
       expect(rebuilt.length).toBeGreaterThan(0);
 
       const dependencies = await db.query<{ fromRepo: string; toRepo: string; dependencyType: string; evidenceRule: string }>(
         `MATCH (from:Repo)-[d:DEPENDS_ON]->(to:Repo), (e:Evidence)
-         WHERE d.evidenceId = e.id
-         RETURN from.name AS fromRepo, to.name AS toRepo, d.dependencyType AS dependencyType, e.rule AS evidenceRule;`
+         WHERE d.workspaceId = $workspaceId AND d.generation = $generation
+           AND e.workspaceId = $workspaceId AND e.generation = $generation
+           AND d.evidenceId = e.id
+         RETURN from.name AS fromRepo, to.name AS toRepo, d.dependencyType AS dependencyType, e.rule AS evidenceRule;`,
+        scope
       );
       expect(dependencies).toEqual(expect.arrayContaining([
         expect.objectContaining({ fromRepo: "service-b", toRepo: "service-a", dependencyType: "import", evidenceRule: "import-specifier-package-owner" }),
@@ -130,10 +142,10 @@ describe("relation rebuild", () => {
         batchId: "batch:unrelated",
         active: true
       };
-      await db.addRepoDependency(unrelatedDependency);
+      await db.addRepoDependency(unrelatedDependency, scope);
 
       const logs: string[] = [];
-      const rebuilt = await rebuildRepoDependencies(db, { repoIds: [consumer.id], batchId: "batch:targeted", logger: { log: (message) => logs.push(message) } });
+      const rebuilt = await rebuildRepoDependencies(db, { scope, repoIds: [consumer.id], batchId: "batch:targeted", logger: { log: (message) => logs.push(message) } });
       expect(rebuilt).toHaveLength(1);
       expect(logs[0]).toContain("Targeted dependency rebuild: repos=1 contracts=1 participants=2 dependencies=1");
 
@@ -153,8 +165,8 @@ describe("relation rebuild", () => {
       await db.initSchema("empty-target-rebuild-test");
       const empty = repo("empty");
       const producer = repo("producer");
-      await db.upsertRepo(empty);
-      await db.upsertRepo(producer);
+      await db.upsertRepo(empty, scope);
+      await db.upsertRepo(producer, scope);
       await db.addRepoDependency({
         fromRepoId: empty.id,
         toRepoId: producer.id,
@@ -166,10 +178,10 @@ describe("relation rebuild", () => {
         confidence: 0.1,
         batchId: "batch:stale",
         active: true
-      });
+      }, scope);
 
       const logs: string[] = [];
-      const rebuilt = await rebuildRepoDependencies(db, { repoIds: [empty.id], logger: { log: (message) => logs.push(message) } });
+      const rebuilt = await rebuildRepoDependencies(db, { scope, repoIds: [empty.id], logger: { log: (message) => logs.push(message) } });
       expect(rebuilt).toHaveLength(0);
       expect(logs[0]).toContain("Targeted dependency rebuild: repos=1 contracts=0 participants=0 dependencies=0");
       expect(await dependencyRows(db)).toHaveLength(0);
@@ -192,13 +204,13 @@ describe("relation rebuild", () => {
       await addParticipant(db, { repo: unrelatedA, contractId: "contract:package:unrelated", kind: "package", key: "unrelated-package", role: "consumer", evidenceId: "evidence:unrelated-consumer" });
       await addParticipant(db, { repo: unrelatedB, contractId: "contract:package:unrelated", kind: "package", key: "unrelated-package", role: "owner", evidenceId: "evidence:unrelated-owner" });
 
-      const targetParticipants = await loadContractParticipantsForRepos(db, [target.id]);
+      const targetParticipants = await loadContractParticipantsForRepos(db, [target.id], scope);
       expect(targetParticipants.map((participant) => participant.contractId)).toEqual(["contract:package:target"]);
 
-      const scopedParticipants = await loadContractParticipantsForContracts(db, [...new Set(targetParticipants.map((participant) => participant.contractId))]);
+      const scopedParticipants = await loadContractParticipantsForContracts(db, [...new Set(targetParticipants.map((participant) => participant.contractId))], scope);
       expect(scopedParticipants.map((participant) => participant.repoId).sort()).toEqual([target.id, targetPeer.id].sort());
 
-      const rebuilt = await rebuildRepoDependencies(db, { repoIds: [target.id] });
+      const rebuilt = await rebuildRepoDependencies(db, { scope, repoIds: [target.id] });
       expect(rebuilt).toEqual([
         expect.objectContaining({ fromRepoId: target.id, toRepoId: targetPeer.id, dependencyType: "package" })
       ]);

@@ -13,8 +13,10 @@ import type {
   PluginPostExtractContext,
   PluginRepoView,
   PluginSchemaField,
+  PluginTypeExpression,
   PluginSymbolView
 } from "@repohelix/plugin-sdk";
+export { PLUGIN_API_VERSION } from "@repohelix/plugin-sdk";
 import type { ContractExtractor, ExtractContext, FrameworkDetector, LanguageParser, PostExtractContext } from "../registries/types.js";
 import type { DetectedFramework } from "../frameworks/types.js";
 import type { ExtractedFacts } from "../contracts/extraction/contracts.js";
@@ -40,7 +42,7 @@ export function adaptFactExtractor(pluginExtractor: FactExtractorPlugin, scopeRe
         emit: createEmitApi(emitted)
       });
       return Promise.resolve(pluginExtractor.extract(pluginContext))
-        .then(() => normalizePublicFacts(toPublicFacts(emitted), collector));
+        .then(() => normalizePublicFacts(toPublicFacts(emitted, context.parsedFiles), collector));
     },
     postExtract: pluginExtractor.postExtract
       ? (context: PostExtractContext, collector: FactCollector) => {
@@ -54,7 +56,7 @@ export function adaptFactExtractor(pluginExtractor: FactExtractorPlugin, scopeRe
             facts: createFactView(context.mergedFacts, scopeRepoId)
           };
           return Promise.resolve(pluginExtractor.postExtract!(pluginContext))
-            .then(() => normalizePublicFacts(toPublicFacts(emitted), collector));
+            .then(() => normalizePublicFacts(toPublicFacts(emitted, context.parsedFiles), collector));
         }
       : undefined
   };
@@ -97,7 +99,12 @@ export function adaptLanguageParser(language: LanguagePlugin, scopeRepoId?: stri
         fileId: input.fileId,
         module: item.module,
         raw: item.raw,
-        line: item.line
+        line: item.line,
+        importKind: item.importKind,
+        alias: item.alias,
+        bindings: item.importKind === "alias" && item.alias
+          ? [{ localName: item.alias, importedName: item.module.split(".").at(-1), kind: "named" as const }]
+          : undefined
       }));
       const calls = (result.calls ?? []).map((item) => ({
         callerSymbolId: item.callerSymbolName ? symbolByName.get(item.callerSymbolName) : undefined,
@@ -251,14 +258,20 @@ function createFactView(facts: ExtractedFacts, scopeRepoId?: string): PluginFact
       }];
     }
     if (parsed.kind === "schema") {
-      const schema = parsed as { name?: string; language?: string; fields?: PluginSchemaField[] };
+      const schema = parsed as unknown as {
+        displayName: string;
+        languageId: string;
+        declaration: { languageId: string; repoId: string; resolutionScopeId: string; canonicalName: string };
+        identity: { declarationId: string };
+        shape: { kind: "object"; fields: PluginSchemaField[]; baseTypes?: PluginTypeExpression[] } | { kind: "enum"; values: string[] };
+      };
       return [{
         kind: "schema",
         repoId: spec.repoId,
         filePath: evidenceNode?.filePath ?? "",
-        name: schema.name ?? spec.canonicalKey,
-        language: schema.language ?? "",
-        fields: schema.fields ?? [],
+        declaration: schema.declaration,
+        displayName: schema.displayName,
+        shape: schema.shape,
         sourceSymbolId: spec.sourceSymbolId,
         evidence: baseEvidence
       }];
@@ -342,7 +355,9 @@ function toPluginFileView(file: ParsedFile): PluginFileView {
     filePath: file.path,
     module: item.module,
     raw: item.raw,
-    line: item.line
+    line: item.line,
+    importKind: item.importKind,
+    alias: item.alias
   }));
   const calls: PluginCallView[] = file.calls.map((item) => ({
     filePath: file.path,
@@ -353,6 +368,7 @@ function toPluginFileView(file: ParsedFile): PluginFileView {
   }));
   return {
     repoId: file.repoId,
+    fileId: file.fileId,
     path: file.path,
     language: file.language,
     source: file.source,
@@ -362,7 +378,12 @@ function toPluginFileView(file: ParsedFile): PluginFileView {
   };
 }
 
-function toPublicFacts(facts: readonly PluginContractFact[]): PublicContractFact[] {
+function toPublicFacts(
+  facts: readonly PluginContractFact[],
+  parsedFiles: readonly ParsedGraphFile[]
+): PublicContractFact[] {
+  const canonicalFiles = new Map(parsedFiles.map((file) => [`${file.repoId}\0${file.path}`, file.fileId]));
+  const canonicalFileIds = new Set(parsedFiles.map((file) => file.fileId));
   return facts.flatMap((fact): PublicContractFact[] => {
     if (fact.kind === "framework") return [];
     if (fact.kind === "semanticRelation") {
@@ -382,11 +403,26 @@ function toPublicFacts(facts: readonly PluginContractFact[]): PublicContractFact
         }
       }];
     }
+    const canonicalFileId = canonicalFiles.get(`${fact.repoId}\0${fact.filePath}`);
+    if (fact.kind === "schema" && fact.shape.kind === "object") {
+      if (!canonicalFileId) {
+        throw new Error(`Plugin emitted schema for unknown source ${fact.repoId}:${fact.filePath}.`);
+      }
+      for (const field of fact.shape.fields) {
+        if (!canonicalFileIds.has(field.sourceLocation.fileId)) {
+          throw new Error(
+            `Plugin schema field ${fact.declaration.canonicalName}.${field.sourceName} emitted non-canonical fileId ${field.sourceLocation.fileId}.`
+          );
+        }
+      }
+    }
     return [{
       ...fact,
+      ...(canonicalFileId ? { fileId: canonicalFileId } : {}),
       evidence: {
         ...fact.evidence,
         repoId: fact.repoId,
+        ...(canonicalFileId ? { fileId: canonicalFileId } : {}),
         filePath: fact.filePath
       }
     } as PublicContractFact];

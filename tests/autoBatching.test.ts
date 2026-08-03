@@ -10,7 +10,10 @@ describe("index auto batching", () => {
     registerGraphProvider("auto-batching-test", {
       factory: { open: async () => mockDb },
       capabilities: { nativeFullText: { scope: "workspace", updateConsistency: "synchronous", supportsFieldBoost: false, supportsPrefix: false } },
-      bindLexical: () => ({ ensureSchema: async () => {} } as WorkspaceLexicalStore)
+      bindLexical: () => ({
+        ensureSchema: async () => {},
+        initializeGeneration: async () => {}
+      } as unknown as WorkspaceLexicalStore)
     });
     const config = {
       ...defaultConfig(),
@@ -19,8 +22,9 @@ describe("index auto batching", () => {
       indexing: { ...defaultConfig().indexing, batchSize: 0 }
     };
     const mockDb = {
-      query: async () => [{ count: 0 }],
-      repoCount: async () => 0
+      query: async () => [],
+      repoCount: async () => 0,
+      recoverIncompleteGraphWriteBatches: async () => []
     } as any;
 
     let success = false;

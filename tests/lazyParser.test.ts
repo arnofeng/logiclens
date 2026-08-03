@@ -127,6 +127,9 @@ describe("lazy tree-sitter parsers", () => {
 
     expect(getLoadedLanguageGrammar("java")).toBeUndefined();
     const facts = await buildGraphFactsBatch({
+      workspaceId: "workspace:lazy-parser",
+      generation: "generation:lazy-parser",
+      systemName: "lazy-parser",
       batchId: "batch:preparsed-java",
       repos: [repo],
       parsedFiles: [parsed],

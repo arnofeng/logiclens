@@ -37,6 +37,7 @@ export type FileNode = {
   id: string;
   repoId: string;
   path: string;
+  directory: string;
   language: FileLanguage | string;
   hash: string;
   loc: number;
@@ -68,6 +69,8 @@ export type ImportRef = {
   module: string;
   raw: string;
   line: number;
+  importKind?: "module" | "namespace" | "alias" | "static";
+  alias?: string;
   resolvedFileId?: string;
   bindings?: ImportBinding[];
 };

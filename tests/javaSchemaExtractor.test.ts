@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { objectSchemaFields } from "./helpers/schemaModel.js";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { javaSchemaExtractor } from "../src/core/contracts/extraction/builtin/javaSchemaExtractor.js";
 import { repoId } from "../src/shared/path.js";
@@ -42,11 +43,11 @@ public class CreateOrderRequestDTO {
 }`);
     const spec = schemaSpecFromBundle(bundle, "createorderrequestdto");
     expect(spec).toBeDefined();
-    expect(spec!.fields).toHaveLength(3);
-    expect(spec!.fields[0]).toMatchObject({ name: "sku", type: "string" });
-    expect(spec!.fields[1]).toMatchObject({ name: "quantity", type: "number" });
-    expect(spec!.fields[2]).toMatchObject({ name: "price", type: "number" });
-    expect(spec!.language).toBe("java");
+    expect(objectSchemaFields(spec!)).toHaveLength(3);
+    expect(objectSchemaFields(spec!)[0]).toMatchObject({ name: "sku", type: "string" });
+    expect(objectSchemaFields(spec!)[1]).toMatchObject({ name: "quantity", type: "number" });
+    expect(objectSchemaFields(spec!)[2]).toMatchObject({ name: "price", type: "number" });
+    expect(spec!.languageId).toBe("java");
   });
 
   it("maps Java boxed types to normalized primitives", async () => {
@@ -64,8 +65,8 @@ public class TypeDemoDTO {
 }`);
     const spec = schemaSpecFromBundle(bundle, "typedemodto");
     expect(spec).toBeDefined();
-    expect(spec!.fields).toHaveLength(9);
-    const byName = Object.fromEntries(spec!.fields.map((f) => [f.name, f.type]));
+    expect(objectSchemaFields(spec!)).toHaveLength(9);
+    const byName = Object.fromEntries(objectSchemaFields(spec!).map((f) => [f.name, f.type]));
     expect(byName["count"]).toBe("number");
     expect(byName["timestamp"]).toBe("number");
     expect(byName["amount"]).toBe("number");
@@ -90,9 +91,9 @@ public class OrderDTO {
 }`);
     const spec = schemaSpecFromBundle(bundle, "orderdto");
     expect(spec).toBeDefined();
-    expect(spec!.fields).toHaveLength(2);
-    expect(spec!.fields[0]).toMatchObject({ name: "orderId", type: "string" });
-    expect(spec!.fields[1]).toMatchObject({ name: "itemCount", type: "number" });
+    expect(objectSchemaFields(spec!)).toHaveLength(2);
+    expect(objectSchemaFields(spec!)[0]).toMatchObject({ name: "orderId", type: "string" });
+    expect(objectSchemaFields(spec!)[1]).toMatchObject({ name: "itemCount", type: "number" });
 
     // Verify framework is recorded as "lombok"
     const specNode = bundle.contractSpecs.find(
@@ -104,7 +105,7 @@ public class OrderDTO {
 
   // -- Generic type wrappers -----------------------------------------------
 
-  it("handles Optional<T> — marks as nullable", async () => {
+  it("handles Optional<T> 鈥?marks as nullable", async () => {
     const bundle = await extract(`
 public class UserDTO {
     private String name;
@@ -113,11 +114,11 @@ public class UserDTO {
 }`);
     const spec = schemaSpecFromBundle(bundle, "userdto");
     expect(spec).toBeDefined();
-    expect(spec!.fields).toHaveLength(3);
-    const nickname = spec!.fields.find((f) => f.name === "nickname");
+    expect(objectSchemaFields(spec!)).toHaveLength(3);
+    const nickname = objectSchemaFields(spec!).find((f) => f.name === "nickname");
     expect(nickname).toBeDefined();
     expect(nickname!.type).toBe("string?");
-    const age = spec!.fields.find((f) => f.name === "age");
+    const age = objectSchemaFields(spec!).find((f) => f.name === "age");
     expect(age).toBeDefined();
     expect(age!.type).toBe("number?");
   });
@@ -131,11 +132,11 @@ public class OrderDTO {
 }`);
     const spec = schemaSpecFromBundle(bundle, "orderdto");
     expect(spec).toBeDefined();
-    const tags = spec!.fields.find((f) => f.name === "tags");
+    const tags = objectSchemaFields(spec!).find((f) => f.name === "tags");
     expect(tags!.type).toBe("array<string>");
-    const items = spec!.fields.find((f) => f.name === "items");
+    const items = objectSchemaFields(spec!).find((f) => f.name === "items");
     expect(items!.type).toBe("array<OrderItem>");
-    const quantities = spec!.fields.find((f) => f.name === "quantities");
+    const quantities = objectSchemaFields(spec!).find((f) => f.name === "quantities");
     expect(quantities!.type).toBe("array<number>");
   });
 
@@ -146,7 +147,7 @@ public class TagsDTO {
 }`);
     const spec = schemaSpecFromBundle(bundle, "tagsdto");
     expect(spec).toBeDefined();
-    expect(spec!.fields[0]!.type).toBe("array<string>");
+    expect(objectSchemaFields(spec!)[0]!.type).toBe("array<string>");
   });
 
   it("handles Map<K,V> as map type", async () => {
@@ -157,8 +158,10 @@ public class ConfigDTO {
 }`);
     const spec = schemaSpecFromBundle(bundle, "configdto");
     expect(spec).toBeDefined();
-    expect(spec!.fields[0]!.type).toBe("map");
-    expect(spec!.fields[1]!.type).toBe("map");
+    // JS-004 keeps map key/value IR lossless even on the temporarily retained
+    // Java extraction path; Java reachability itself remains deferred.
+    expect(objectSchemaFields(spec!)[0]!.type).toBe("map<string,string>");
+    expect(objectSchemaFields(spec!)[1]!.type).toBe("map<string,any>");
   });
 
   // -- Inheritance ---------------------------------------------------------
@@ -172,9 +175,9 @@ public class OrderResponseDTO extends BaseResponseDTO {
     const spec = schemaSpecFromBundle(bundle, "orderresponsedto");
     expect(spec).toBeDefined();
     // Only fields from this class, not from BaseResponseDTO
-    expect(spec!.fields).toHaveLength(2);
-    expect(spec!.fields[0]!.name).toBe("orderId");
-    expect(spec!.fields[1]!.name).toBe("status");
+    expect(objectSchemaFields(spec!)).toHaveLength(2);
+    expect(objectSchemaFields(spec!)[0]!.name).toBe("orderId");
+    expect(objectSchemaFields(spec!)[1]!.name).toBe("status");
 
     // Should have a USES_SCHEMA edge to BaseResponseDTO
     const rel = bundle.semanticRelations.find(
@@ -197,8 +200,8 @@ public class EntityDTO {
     const spec = schemaSpecFromBundle(bundle, "entitydto");
     expect(spec).toBeDefined();
     // Only "name" and "age" should be present
-    expect(spec!.fields).toHaveLength(2);
-    const names = spec!.fields.map((f) => f.name).sort();
+    expect(objectSchemaFields(spec!)).toHaveLength(2);
+    const names = objectSchemaFields(spec!).map((f) => f.name).sort();
     expect(names).toEqual(["age", "name"]);
   });
 

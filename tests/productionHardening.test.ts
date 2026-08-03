@@ -104,7 +104,7 @@ llm:
     const db = await KuzuGraphDB.open(path.join(cwd, "graph"));
     await db.initSchema("close-test");
     await db.close();
-    await expect(db.stats()).rejects.toThrow(/closed/);
+    await expect(db.stats({ workspaceId: "workspace:close-test", generation: "generation:close-test" })).rejects.toThrow(/closed/);
     await expect(db.close()).resolves.toBeUndefined();
   });
 });

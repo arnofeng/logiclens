@@ -75,21 +75,18 @@ export function inferBrokerFromCallee(receiver: string | undefined): EventBroker
   return "unknown";
 }
 
-function baseTypeName(node: Parser.SyntaxNode): string | undefined {
+function typeReferenceText(node: Parser.SyntaxNode): string | undefined {
   switch (node.type) {
     case "identifier":
     case "type_identifier":
     case "property_identifier":
-      return node.text;
-    case "generic_type": {
-      const name = node.childForFieldName("name") ?? node.namedChild(0);
-      return name ? baseTypeName(name) : undefined;
-    }
+    case "generic_type":
     case "member_expression":
-    case "nested_type_identifier": {
-      const segment = node.text.split(".").pop();
-      return segment || undefined;
-    }
+    case "nested_type_identifier":
+    case "array_type":
+    case "union_type":
+    case "intersection_type":
+      return node.text.trim() || undefined;
     default:
       return undefined;
   }
@@ -113,7 +110,7 @@ export function inferPayloadType(input: {
   if (input.typeArguments) {
     const typeNode = input.typeArguments.namedChild(0);
     if (typeNode) {
-      const name = baseTypeName(typeNode);
+      const name = typeReferenceText(typeNode);
       if (name) return name;
     }
   }
@@ -121,11 +118,11 @@ export function inferPayloadType(input: {
   if (!payloadArg) return undefined;
   if (payloadArg.type === "new_expression") {
     const ctor = payloadArg.childForFieldName("constructor");
-    return ctor ? baseTypeName(ctor) : undefined;
+    return ctor ? typeReferenceText(ctor) : undefined;
   }
   if (payloadArg.type === "as_expression") {
     const typeNode = payloadArg.namedChild(payloadArg.namedChildCount - 1);
-    return typeNode ? baseTypeName(typeNode) : undefined;
+    return typeNode ? typeReferenceText(typeNode) : undefined;
   }
   return undefined;
 }
@@ -148,5 +145,5 @@ export function inferPayloadFromHandler(handlerArg: Parser.SyntaxNode | undefine
   const typeAnnotation = firstParam.childForFieldName("type")
     ?? firstParam.namedChildren.find((child) => child.type === "type_annotation");
   const typeNode = typeAnnotation?.namedChild(0);
-  return typeNode ? baseTypeName(typeNode) : undefined;
+  return typeNode ? typeReferenceText(typeNode) : undefined;
 }

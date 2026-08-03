@@ -23,6 +23,7 @@ import type {
 } from "../../parsing/types.js";
 import type { FactCollector, PackageUsageEntry } from "./factCollector.js";
 import type { ExtractedFacts } from "./contracts.js";
+import type { SchemaDeclarationCandidate } from "../../schema/model.js";
 import {
   dedupById,
   dedupBy,
@@ -31,7 +32,7 @@ import {
   operationRepoDedupKey,
   packageUsageDedupKey,
   contractSpecEdgeDedupKey,
-  semanticRelationDedupKey
+  collapseSemanticRelations
 } from "./dedup.js";
 
 export class ExtractionBuilder implements FactCollector {
@@ -46,6 +47,7 @@ export class ExtractionBuilder implements FactCollector {
   private contractSpecs: ContractSpecNode[] = [];
   private contractSpecEdges: ContractSpecEdge[] = [];
   private semanticRelations: SemanticRelationEdge[] = [];
+  private schemaDeclarations: SchemaDeclarationCandidate[] = [];
 
   // -- FactCollector implementation ------------------------------------------
 
@@ -61,6 +63,7 @@ export class ExtractionBuilder implements FactCollector {
   addContractSpec(node: ContractSpecNode): void { this.contractSpecs.push(node); }
   addContractSpecEdge(edge: ContractSpecEdge): void { this.contractSpecEdges.push(edge); }
   addSemanticRelation(edge: SemanticRelationEdge): void { this.semanticRelations.push(edge); }
+  addSchemaDeclaration(candidate: SchemaDeclarationCandidate): void { this.schemaDeclarations.push(candidate); }
 
   // -- Deduplicate + return read-only view -----------------------------------
 
@@ -77,7 +80,8 @@ export class ExtractionBuilder implements FactCollector {
       packageUsages: dedupBy(this.packageUsages, packageUsageDedupKey),
       contractSpecs: dedupById(this.contractSpecs),
       contractSpecEdges: dedupBy(this.contractSpecEdges, contractSpecEdgeDedupKey),
-      semanticRelations: dedupBy(this.semanticRelations, semanticRelationDedupKey),
+      semanticRelations: collapseSemanticRelations(this.semanticRelations),
+      schemaDeclarations: dedupBy(this.schemaDeclarations, (candidate) => `${candidate.declaration.languageId}\0${candidate.declaration.repoId}\0${candidate.declaration.resolutionScopeId}\0${candidate.declaration.canonicalName}`),
     };
   }
 }

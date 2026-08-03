@@ -45,7 +45,7 @@ import {
   type NormalizedRetrieveOptions,
   type RetrieveOptions,
 } from "../../features/ask/options.js";
-import { rebuildRepoDependencies } from "../../core/graph-model/rebuildRelations.js";
+import { rebuildRepoDependenciesInNewGeneration } from "../../core/graph-model/rebuildGeneration.js";
 import { discoverGitRepos } from "../../core/workspace/repoDiscovery.js";
 import { toRepoNode } from "../../core/workspace/repoRegistry.js";
 import type { DiscoveredRepo } from "../../core/workspace/repoDiscovery.js";
@@ -59,6 +59,10 @@ import { FileWatcher, type PendingFile, type WatchOptions, type WatchStatus } fr
 import { shouldEnableWatcher } from "../../features/watch/policy.js";
 import { SingleProcessIndexQueue, type IndexQueueSource, type IndexQueueStatusSnapshot } from "../../core/indexing/scheduler.js";
 import { deriveWorkspaceId } from "../../core/workspace/identity.js";
+import {
+  tryWithPublicGraphReadSnapshot,
+  withPublicGraphReadSnapshot
+} from "../../core/graph-model/readSnapshot.js";
 
 /**
  * Represents the result of an impact analysis, including contract traces,
@@ -141,6 +145,7 @@ export class AppClient {
   private indexQueue = new SingleProcessIndexQueue();
   private planningContextPromise?: Promise<QueryPlanningContext>;
   private lexicalProviderGatePromise?: Promise<LexicalProviderGateResult>;
+  private lexicalProviderGateGeneration?: string;
   private readonly configuredPlanningContext?: QueryPlanningContext;
 
   constructor(options: ClientOptions, config: AppConfig) {
@@ -237,18 +242,20 @@ export class AppClient {
 
   private invalidateLexicalProviderGate(): void {
     this.lexicalProviderGatePromise = undefined;
+    this.lexicalProviderGateGeneration = undefined;
   }
 
-  private getLexicalProviderGate(refresh = false): Promise<LexicalProviderGateResult> {
+  private getLexicalProviderGate(generation: string, refresh = false): Promise<LexicalProviderGateResult> {
     if (this.closed) return Promise.reject(new Error("Client is closed"));
-    if (refresh) this.invalidateLexicalProviderGate();
+    if (refresh || this.lexicalProviderGateGeneration !== generation) this.invalidateLexicalProviderGate();
     if (!this.lexicalProviderGatePromise) {
       const promise = resolveLexicalProvider({
         db: () => this.getDb(),
         graphProvider: this.config.graph.provider,
         lexicalProvider: this.config.retrieval.lexical.provider,
         scope: this.config.retrieval.lexical.scope,
-        workspaceId: deriveWorkspaceId(this.config.systemName)
+        workspaceId: deriveWorkspaceId(this.config.systemName),
+        generation
       }).catch((error) => {
         if (this.lexicalProviderGatePromise === promise) {
           this.lexicalProviderGatePromise = undefined;
@@ -256,12 +263,29 @@ export class AppClient {
         throw error;
       });
       this.lexicalProviderGatePromise = promise;
+      this.lexicalProviderGateGeneration = generation;
     }
     return this.lexicalProviderGatePromise;
   }
 
   async getLexicalProviderStatus(options: { refresh?: boolean } = {}): Promise<LexicalProviderGateSummary> {
-    return summarizeLexicalProviderGate(await this.getLexicalProviderGate(options.refresh === true));
+    const db = await this.getDb();
+    const workspaceId = deriveWorkspaceId(this.config.systemName);
+    const summary = await tryWithPublicGraphReadSnapshot(db, workspaceId, async (snapshot) =>
+      summarizeLexicalProviderGate(
+        await this.getLexicalProviderGate(snapshot.generation, options.refresh === true)
+      ));
+    if (!summary) {
+      this.invalidateLexicalProviderGate();
+      const configuredProvider = this.config.retrieval.lexical.provider;
+      return Object.freeze({
+        configuredProvider,
+        effectiveProvider: configuredProvider === "auto" ? this.config.graph.provider : configuredProvider,
+        status: "unavailable",
+        reasonCodes: Object.freeze(["index_unavailable" as const])
+      });
+    }
+    return summary;
   }
 
   /**
@@ -389,7 +413,6 @@ export class AppClient {
    * @returns The number of rebuilt relationship edges.
    */
   async rebuildRelations(options?: { repo?: string; full?: boolean }): Promise<{ rebuiltCount: number }> {
-    const db = await this.getDb();
     const targetRepoIds = options?.full || !options?.repo
       ? undefined
       : this.config.repos.filter((repo) => repo.name === options.repo).map((repo) => toRepoNode(repo, this.cwd).id);
@@ -398,8 +421,28 @@ export class AppClient {
       throw new Error(`Unknown repo: ${options.repo}`);
     }
 
-    const dependencies = await rebuildRepoDependencies(db, { repoIds: targetRepoIds, logger: this.logger });
-    return { rebuiltCount: dependencies.length };
+    try {
+      return await this.indexQueue.enqueue({
+        source: "sdk",
+        label: options?.repo && !options.full
+          ? `rebuild-relations:${options.repo}`
+          : "rebuild-relations:workspace",
+        run: async () => {
+          const db = await this.getDb();
+          const lexicalStore = await this.resolveLexicalStore();
+          const dependencies = await rebuildRepoDependenciesInNewGeneration({
+            db,
+            lexicalStore,
+            workspaceId: deriveWorkspaceId(this.config.systemName),
+            repoIds: targetRepoIds,
+            logger: this.logger
+          });
+          return { rebuiltCount: dependencies.length };
+        }
+      });
+    } finally {
+      this.invalidateLexicalProviderGate();
+    }
   }
 
   /**
@@ -410,7 +453,7 @@ export class AppClient {
    */
   async stats(): Promise<Stats> {
     const db = await this.getDb();
-    return db.stats();
+    return withPublicGraphReadSnapshot(db, deriveWorkspaceId(this.config.systemName), (snapshot) => db.stats(snapshot));
   }
 
   /**
@@ -420,7 +463,7 @@ export class AppClient {
    */
   async listRepos(): Promise<RepoNode[]> {
     const db = await this.getDb();
-    return db.listRepos();
+    return withPublicGraphReadSnapshot(db, deriveWorkspaceId(this.config.systemName), (snapshot) => db.listRepos(snapshot));
   }
 
   /**
@@ -441,7 +484,8 @@ export class AppClient {
       throw new Error("target requires repo");
     }
     const db = await this.getDb();
-    return listDependencies(db, options);
+    return withPublicGraphReadSnapshot(db, deriveWorkspaceId(this.config.systemName), (snapshot) =>
+      listDependencies(db, snapshot, options));
   }
 
   /**
@@ -450,7 +494,8 @@ export class AppClient {
    */
   async unresolvedEvidence(options?: { limit?: number }): Promise<UnresolvedEvidenceRow[]> {
     const db = await this.getDb();
-    return listUnresolvedEvidence(db, options?.limit);
+    return withPublicGraphReadSnapshot(db, deriveWorkspaceId(this.config.systemName), (snapshot) =>
+      listUnresolvedEvidence(db, snapshot, options?.limit));
   }
 
   /**
@@ -471,7 +516,6 @@ export class AppClient {
     }
 
     const db = await this.getDb();
-
     const contractKinds = new Set(["package", "api", "event", "dto", "schema", "enum", "config"]);
     let parsedKind: any = undefined;
     if (options?.kind) {
@@ -481,12 +525,13 @@ export class AppClient {
       parsedKind = options.kind;
     }
 
-    return listContracts(db, {
-      kind: parsedKind,
-      limit: options?.limit,
-      repo: options?.repo,
-      direction: options?.direction as "outgoing" | "incoming" | undefined,
-    });
+    return withPublicGraphReadSnapshot(db, deriveWorkspaceId(this.config.systemName), (snapshot) =>
+      listContracts(db, snapshot, {
+        kind: parsedKind,
+        limit: options?.limit,
+        repo: options?.repo,
+        direction: options?.direction as "outgoing" | "incoming" | undefined,
+      }));
   }
 
   /**
@@ -498,48 +543,52 @@ export class AppClient {
    */
   async impact(target: string): Promise<ImpactResult> {
     const db = await this.getDb();
-    const semanticImpact = await this.semanticImpact(target);
-    const contractKinds = new Set(["package", "api", "event", "dto", "schema", "enum", "config"]);
-    const [kind, ...rest] = target.split(":");
-    const value = rest.join(":");
-    const isContract = contractKinds.has(kind) && value;
-    
-    const parsedContract = isContract ? { kind: kind as any, value } : undefined;
-    const contractTrace = parsedContract ? await traceContract(db, parsedContract.kind, parsedContract.value) : [];
-    const entityTrace = await traceEntity(db, target);
-    
-    const { findContractSourceSymbols, findImpact, findImpactSections, sectionsDocumentingCode } = await import("../../core/graph-model/queries.js");
-    const { callEdgesAround } = await import("../../core/graph-model/subgraph.js");
-    
-    let seeds: CodeSearchRow[] = [];
-    if (isContract && contractTrace.length > 0) {
-      const contractIds = [...new Set(contractTrace.map((row) => row.contractId))];
-      seeds = await findContractSourceSymbols(db, contractIds);
-    }
-    if (seeds.length === 0) {
-      seeds = await findImpact(db, target);
-    }
-    const directSections = await findImpactSections(db, target);
-    const documentedSections = await sectionsDocumentingCode(db, seeds.map((seed) => seed.codeId));
-    const sections = [...new Map([...directSections, ...documentedSections].map((section) => [section.sectionId, section])).values()];
-    const edges = await callEdgesAround(db, seeds.map((seed) => seed.codeId));
+    const workspaceId = deriveWorkspaceId(this.config.systemName);
+    return withPublicGraphReadSnapshot(db, workspaceId, async (snapshot) => {
+      const { analyzeSemanticImpactFromDB } = await import("../../core/contracts/impact/semanticImpact.js");
+      const semanticImpact = await analyzeSemanticImpactFromDB(target, db, workspaceId, {}, snapshot);
+      const contractKinds = new Set(["package", "api", "event", "dto", "schema", "enum", "config"]);
+      const [kind, ...rest] = target.split(":");
+      const value = rest.join(":");
+      const isContract = contractKinds.has(kind) && value;
 
-    const recommendedFiles = [...new Set([
-      ...seeds.map((seed) => `${seed.repoName}/${seed.filePath}`),
-      ...edges.flatMap((edge) => [edge.fromFile, edge.toFile]),
-      ...sections.map((section) => `${section.repoName}/${section.filePath}`)
-    ])];
+      const parsedContract = isContract ? { kind: kind as any, value } : undefined;
+      const contractTrace = parsedContract ? await traceContract(db, snapshot, parsedContract.kind, parsedContract.value) : [];
+      const entityTrace = await traceEntity(db, snapshot, target);
 
-    return {
-      symbolOrEntity: target,
-      semanticImpact: semanticImpact ?? undefined,
-      contractTrace,
-      entityTrace,
-      seeds,
-      edges,
-      sections,
-      recommendedFiles
-    };
+      const { findContractSourceSymbols, findImpact, findImpactSections, sectionsDocumentingCode } = await import("../../core/graph-model/queries.js");
+      const { callEdgesAround } = await import("../../core/graph-model/subgraph.js");
+
+      let seeds: CodeSearchRow[] = [];
+      if (isContract && contractTrace.length > 0) {
+        const contractIds = [...new Set(contractTrace.map((row) => row.contractId))];
+        seeds = await findContractSourceSymbols(db, snapshot, contractIds);
+      }
+      if (seeds.length === 0) {
+        seeds = await findImpact(db, snapshot, target);
+      }
+      const directSections = await findImpactSections(db, snapshot, target);
+      const documentedSections = await sectionsDocumentingCode(db, snapshot, seeds.map((seed) => seed.codeId));
+      const sections = [...new Map([...directSections, ...documentedSections].map((section) => [section.sectionId, section])).values()];
+      const edges = await callEdgesAround(db, snapshot, seeds.map((seed) => seed.codeId));
+
+      const recommendedFiles = [...new Set([
+        ...seeds.map((seed) => `${seed.repoName}/${seed.filePath}`),
+        ...edges.flatMap((edge) => [edge.fromFile, edge.toFile]),
+        ...sections.map((section) => `${section.repoName}/${section.filePath}`)
+      ])];
+
+      return {
+        symbolOrEntity: target,
+        semanticImpact: semanticImpact ?? undefined,
+        contractTrace,
+        entityTrace,
+        seeds,
+        edges,
+        sections,
+        recommendedFiles
+      };
+    });
   }
 
   /**
@@ -559,13 +608,14 @@ export class AppClient {
     maxHops?: number;
   }): Promise<import("../../core/contracts/impact/types.js").ImpactReport> {
     const db = await this.getDb();
-    const { analyzeImpactFromDB, traverseImpactSteps, findTargetSpecs } = await import("../../core/contracts/impact/impactEngine.js");
+    const { analyzeImpact, traverseImpactSteps, findTargetSpecs } = await import("../../core/contracts/impact/impactEngine.js");
     const { selectImpactRootIds } = await import("../../core/contracts/semanticRelations.js");
     const { normalizeSemanticTarget } = await import("../../core/contracts/targetNormalization.js");
     const { isKnownContractSpecNode } = await import("../../core/parsing/types.js");
 
-    // 1. Load all specs and relations from the shared graph query layer.
-    const { specs, relations } = await loadActiveSemanticGraph(db);
+    return withPublicGraphReadSnapshot(db, deriveWorkspaceId(this.config.systemName), async (snapshot) => {
+      // 1. Load all specs and relations from the shared graph query layer.
+      const { specs, relations } = await loadActiveSemanticGraph(db, snapshot);
 
     const specMap = new Map(specs.map((s) => [s.id, s]));
     const target = changeIntent.target;
@@ -628,9 +678,10 @@ export class AppClient {
       return fileContents.get(`${repoId}:${fileId}`);
     };
 
-    return analyzeImpactFromDB(change, db, {
-      maxHops: changeIntent.maxHops,
-      readFile
+      return analyzeImpact(change, specs, relations, {
+        maxHops: changeIntent.maxHops,
+        readFile
+      });
     });
   }
 
@@ -640,12 +691,14 @@ export class AppClient {
   ): Promise<SemanticImpactReport | null> {
     const db = await this.getDb();
     const { analyzeSemanticImpactFromDB } = await import("../../core/contracts/impact/semanticImpact.js");
-    return analyzeSemanticImpactFromDB(target, db, { maxHops: options?.maxHops });
+    const workspaceId = deriveWorkspaceId(this.config.systemName);
+    return analyzeSemanticImpactFromDB(target, db, workspaceId, { maxHops: options?.maxHops });
   }
 
   async hasCodeSymbolMatch(target: string): Promise<boolean> {
     const db = await this.getDb();
-    return hasCodeSymbolMatch(db, target);
+    return withPublicGraphReadSnapshot(db, deriveWorkspaceId(this.config.systemName), (snapshot) =>
+      hasCodeSymbolMatch(db, snapshot, target));
   }
 
   /**
@@ -660,18 +713,22 @@ export class AppClient {
   ): Promise<RetrievalResult> {
     const db = await this.getDb();
     const planningContext = await this.getQueryPlanningContext();
-    const lexicalProviderGate = await this.getLexicalProviderGate();
-    // Preserve a successfully bound store for delayed evidence loading even
-    // when the release gate disables lexical full-text search.
-    const lexicalStore = lexicalProviderGate.store;
-    return retrieveForQuestion(db, question, {
-      cwd: this.cwd,
-      config: this.config,
-      planningContext,
-      lexicalStore,
-      lexicalStoreUnavailable: !lexicalStore,
-      lexicalProviderGate,
-      retrieval,
+    const workspaceId = deriveWorkspaceId(this.config.systemName);
+    return withPublicGraphReadSnapshot(db, workspaceId, async (publicGraphSnapshot) => {
+      const lexicalProviderGate = await this.getLexicalProviderGate(publicGraphSnapshot.generation);
+      // Preserve a successfully bound store for delayed evidence loading even
+      // when the release gate disables lexical full-text search.
+      const lexicalStore = lexicalProviderGate.store;
+      return retrieveForQuestion(db, question, {
+        cwd: this.cwd,
+        config: this.config,
+        planningContext,
+        lexicalStore,
+        lexicalStoreUnavailable: !lexicalStore,
+        lexicalProviderGate,
+        publicGraphSnapshot,
+        retrieval,
+      });
     });
   }
 
@@ -811,7 +868,8 @@ export class AppClient {
   ): Promise<import("../../core/graph-model/queries.js").SemanticTraceRow[]> {
     const db = await this.getDb();
     const { semanticTrace } = await import("../../core/graph-model/queries.js");
-    return semanticTrace(db, specId, options?.direction ?? "both");
+    return withPublicGraphReadSnapshot(db, deriveWorkspaceId(this.config.systemName), (snapshot) =>
+      semanticTrace(db, snapshot, specId, options?.direction ?? "both"));
   }
 
   /**
@@ -835,7 +893,7 @@ export class AppClient {
   ): Promise<import("../../core/contracts/semanticTrace.js").SemanticTraceGraph> {
     const db = await this.getDb();
     const { traceSemanticGraphFromDB } = await import("../../core/contracts/semanticTrace.js");
-    return traceSemanticGraphFromDB(target, db, {
+    return traceSemanticGraphFromDB(target, db, deriveWorkspaceId(this.config.systemName), {
       maxHops: options?.maxHops,
       direction: options?.direction
     });
@@ -858,8 +916,10 @@ export class AppClient {
     const fromRepoId = repoId(fromRepo);
     const toRepoId = repoId(toRepo);
     const { explainSemanticRelationsBetweenRepos } = await import("../../core/graph-model/queries.js");
-    const relations = await explainSemanticRelationsBetweenRepos(db, fromRepoId, toRepoId);
-    return { fromRepo, toRepo, relations };
+    return withPublicGraphReadSnapshot(db, deriveWorkspaceId(this.config.systemName), async (snapshot) => {
+      const relations = await explainSemanticRelationsBetweenRepos(db, snapshot, fromRepoId, toRepoId);
+      return { fromRepo, toRepo, relations };
+    });
   }
 
   /**

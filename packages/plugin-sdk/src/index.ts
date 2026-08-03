@@ -1,4 +1,4 @@
-export const PLUGIN_API_VERSION = "1.0.0";
+export const PLUGIN_API_VERSION = "2.0.0";
 
 export type PluginCapability =
   | "language"
@@ -80,12 +80,42 @@ export type PluginAstFacts = {
 
 export type PluginAstFactExtractor = (input: PluginAstFactInput) => Promise<PluginAstFacts> | PluginAstFacts;
 
+export type PluginTypeExpression =
+  | { kind: "reference"; name: string }
+  | { kind: "application"; target: PluginTypeExpression; arguments: PluginTypeExpression[] }
+  | { kind: "array"; element: PluginTypeExpression }
+  | { kind: "map"; key: PluginTypeExpression; value: PluginTypeExpression }
+  | { kind: "union"; members: PluginTypeExpression[] }
+  | { kind: "intersection"; members: PluginTypeExpression[] }
+  | { kind: "variable"; name: string }
+  | { kind: "wildcard"; bound?: "extends" | "super"; type?: PluginTypeExpression }
+  | { kind: "nullable"; inner: PluginTypeExpression }
+  | { kind: "literal"; value: string }
+  | { kind: "opaque"; languageId: string; canonicalText: string };
+
+export type PluginCanonicalTypeExpression =
+  | { kind: "type-instance"; declarationId: string; arguments: PluginCanonicalTypeExpression[] }
+  | { kind: "scalar"; name: string }
+  | { kind: "array"; element: PluginCanonicalTypeExpression }
+  | { kind: "map"; key: PluginCanonicalTypeExpression; value: PluginCanonicalTypeExpression }
+  | { kind: "union"; members: PluginCanonicalTypeExpression[] }
+  | { kind: "intersection"; members: PluginCanonicalTypeExpression[] }
+  | { kind: "wildcard"; bound?: "extends" | "super"; type?: PluginCanonicalTypeExpression }
+  | { kind: "nullable"; inner: PluginCanonicalTypeExpression }
+  | { kind: "literal"; value: string };
+
+export type PluginSchemaFieldType =
+  | { kind: "resolved"; expression: PluginCanonicalTypeExpression }
+  | { kind: "external-symbol"; symbol: { languageId: string; canonicalName: string }; normalizedExpression: PluginTypeExpression; diagnosticId: string }
+  | { kind: "unresolved" | "ambiguous" | "unsupported"; normalizedExpression: PluginTypeExpression; diagnosticId: string };
+
 export type PluginSchemaField = {
-  name: string;
-  type: string;
+  sourceName: string;
+  serializedName: string;
+  type: PluginSchemaFieldType;
   optional: boolean;
-  nullable?: boolean;
-  sourceLine?: number;
+  nullable: boolean;
+  sourceLocation: { fileId: string; line?: number; column?: number };
 };
 
 export type PluginHttpEndpointFact = {
@@ -108,9 +138,14 @@ export type PluginSchemaFact = {
   kind: "schema";
   repoId: string;
   filePath: string;
-  name: string;
-  language: string;
-  fields: PluginSchemaField[];
+  declaration: {
+    languageId: string;
+    repoId: string;
+    resolutionScopeId: string;
+    canonicalName: string;
+  };
+  displayName: string;
+  shape: { kind: "object"; fields: PluginSchemaField[]; baseTypes?: PluginTypeExpression[] } | { kind: "enum"; values: string[] };
   sourceSymbolId?: string;
   evidence: PluginEvidenceInput;
 };
@@ -219,6 +254,8 @@ export type PluginImportView = {
   module: string;
   raw: string;
   line: number;
+  importKind?: "module" | "namespace" | "alias" | "static";
+  alias?: string;
 };
 
 export type PluginCallView = {
@@ -243,6 +280,8 @@ export type PluginParsedImport = {
   module: string;
   raw: string;
   line: number;
+  importKind?: "module" | "namespace" | "alias" | "static";
+  alias?: string;
 };
 
 export type PluginParsedCall = {
@@ -271,6 +310,7 @@ export type PluginParseResult = {
 
 export type PluginFileView = {
   repoId: string;
+  fileId: string;
   path: string;
   language: string;
   source?: string;

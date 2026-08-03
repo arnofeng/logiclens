@@ -10,7 +10,7 @@ import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
 import { candidatesFromCodeRows, candidatesFromContractRows, candidatesFromLexicalHits, createRetrievalCandidate } from "../src/features/ask/candidates.js";
 import { reciprocalRankFusion } from "../src/features/ask/fusion.js";
 import type { QueryPlan } from "../src/features/ask/planner.js";
-import { retrieveForQuestion } from "../src/features/ask/retrieve.js";
+import { retrieveForQuestion as retrieveForQuestionCore } from "../src/features/ask/retrieve.js";
 import { emptyRouteResult, RetrieverOperationalError, successfulRouteResult } from "../src/features/ask/retrievers/types.js";
 import { DEFAULT_RETRIEVE_OPTIONS } from "../src/features/ask/options.js";
 
@@ -18,6 +18,22 @@ const HEALTH: LexicalIndexHealth = {
   providerVersion: "test-1", projectionSchemaVersion: "1", tokenizerVersion: "1",
   status: "healthy", reasons: [], metrics: { documentCount: 2, indexSizeBytes: 20 }
 };
+const READ_SNAPSHOT = Object.freeze({
+  workspaceId: deriveWorkspaceId("default-system"),
+  generation: "generation:test",
+  revision: "generation:test"
+});
+
+function retrieveForQuestion(
+  db: GraphDB,
+  question: string,
+  options: Parameters<typeof retrieveForQuestionCore>[2] = {}
+): ReturnType<typeof retrieveForQuestionCore> {
+  return retrieveForQuestionCore(db, question, {
+    ...options,
+    publicGraphSnapshot: options.publicGraphSnapshot ?? READ_SNAPSHOT
+  });
+}
 
 function plan(): QueryPlan {
   return {
@@ -43,6 +59,7 @@ function candidate(route: "exact" | "lexical" | "graph", canonicalId: string) {
 function store(order: string[]): WorkspaceLexicalStore {
   return {
     health: vi.fn(async () => { order.push("lexical-health"); return HEALTH; }),
+    pendingHealth: vi.fn(async () => HEALTH),
     loadDocuments: vi.fn(async ({ workspaceId, documentIds }: { workspaceId: string; documentIds: readonly string[] }) => {
       order.push("source-loading");
       return documentIds.map((id): LexicalDocument => {
@@ -52,7 +69,8 @@ function store(order: string[]): WorkspaceLexicalStore {
         return { id, canonicalId, workspaceId, repoId: "repo:a", kind: "code", title: canonicalId, path: `src/${route}.ts`, searchableText: canonicalId, tokens: [], active: true, sourceHash: "hash", batchId: "batch", renderRef };
       });
     }),
-    search: vi.fn(), ensureSchema: vi.fn(), commitVersions: vi.fn(), upsertDocuments: vi.fn(),
+    search: vi.fn(), ensureSchema: vi.fn(), commitVersions: vi.fn(), initializeGeneration: vi.fn(),
+    deleteGeneration: vi.fn(), upsertDocuments: vi.fn(), deleteDocuments: vi.fn(),
     reconcileRepoDocuments: vi.fn(), reconcileRepoFileDocuments: vi.fn(), cleanupBatch: vi.fn()
   } as unknown as WorkspaceLexicalStore;
 }
@@ -343,6 +361,8 @@ describe("Ask retrieval orchestration", () => {
       lexicalProviderGate: {
         configuredProvider: "auto",
         effectiveProvider: "test",
+        workspaceId,
+        generation: READ_SNAPSHOT.generation,
         status: "unavailable",
         reason: "index_unhealthy",
         reasonCodes: ["index_unhealthy"],

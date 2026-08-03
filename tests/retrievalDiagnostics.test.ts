@@ -2,12 +2,18 @@ import { describe, expect, it, vi } from "vitest";
 import type { GraphDB } from "../src/core/graph-model/db.js";
 import type { WorkspaceLexicalStore } from "../src/core/retrieval/provider.js";
 import type { QueryPlan } from "../src/features/ask/planner.js";
+import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
 import { candidatesFromSemanticResults } from "../src/features/ask/candidates.js";
 import { determineRetrievalOutcome } from "../src/features/ask/diagnostics.js";
 import { retrieveForQuestion } from "../src/features/ask/retrieve.js";
 import { emptyRouteResult, successfulRouteResult } from "../src/features/ask/retrievers/types.js";
 
 const ROUTES = ["exact", "contract", "entity", "lexical", "graph", "semantic"] as const;
+const PUBLIC_GRAPH_SNAPSHOT = Object.freeze({
+  workspaceId: deriveWorkspaceId("default-system"),
+  generation: "generation:retrieval-diagnostics",
+  revision: "generation:retrieval-diagnostics"
+});
 function plan(): QueryPlan {
   return { kind: "general", terms: [], exactIdentifiers: [], paths: [], contractTargets: [], normalizedLexicalQuery: "orders", enabledRoutes: [...ROUTES], budgets: {
     exact: { limit: 1 }, contract: { limit: 1 }, entity: { limit: 1 }, lexical: { limit: 1 }, graph: { limit: 1 }, semantic: { limit: 1 }
@@ -23,6 +29,7 @@ describe("retrieval diagnostics", () => {
     }));
     const store = { health } as unknown as WorkspaceLexicalStore;
     const result = await retrieveForQuestion({} as GraphDB, "orders", {
+      publicGraphSnapshot: PUBLIC_GRAPH_SNAPSHOT,
       lexicalStore: store,
       config: { embedding: { provider: "off", level: "off" } } as never,
       dependencies: {
@@ -54,7 +61,7 @@ describe("retrieval diagnostics", () => {
     const lexicalResult = routeStatus === "disabled"
       ? emptyRouteResult("lexical", "disabled", "route-disabled")
       : emptyRouteResult("lexical", routeStatus, "test-status", { executed: routeStatus === "failed", queryCount: routeStatus === "failed" ? 1 : 0 });
-    const result = await retrieveForQuestion({} as GraphDB, "orders", { lexicalStore: { health: vi.fn(async () => ({
+    const result = await retrieveForQuestion({} as GraphDB, "orders", { publicGraphSnapshot: PUBLIC_GRAPH_SNAPSHOT, lexicalStore: { health: vi.fn(async () => ({
       providerVersion: "test", projectionSchemaVersion: "1", tokenizerVersion: "1", status: "healthy", reasons: [], metrics: { documentCount: 0, indexSizeBytes: 0 }
     })) } as unknown as WorkspaceLexicalStore, dependencies: {
       plan: () => routeStatus === "disabled" ? { ...plan(), enabledRoutes: plan().enabledRoutes.filter((route) => route !== "lexical") } : plan(),
@@ -99,6 +106,7 @@ describe("retrieval diagnostics", () => {
       })
     });
     const result = await retrieveForQuestion({} as GraphDB, "orders", {
+      publicGraphSnapshot: PUBLIC_GRAPH_SNAPSHOT,
       config: { embedding: { provider: "test", level: "file" } } as never,
       dependencies: {
         plan: () => plan(),

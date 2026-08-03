@@ -132,6 +132,9 @@ describe("Neo4j decodeJournalRow", () => {
   it("decodes a complete journal row", () => {
     const row = {
       batchId: "batch:1",
+      generation: "generation:1",
+      parentGeneration: "generation:0",
+      workspaceId: "workspace:test",
       repoIds: '["repo:a","repo:b"]',
       repoNames: '["service-a","service-b"]',
       writerMode: "merge",
@@ -144,6 +147,9 @@ describe("Neo4j decodeJournalRow", () => {
     };
     const result = decodeJournalRow(row);
     expect(result.batchId).toBe("batch:1");
+    expect(result.generation).toBe("generation:1");
+    expect(result.parentGeneration).toBe("generation:0");
+    expect(result.workspaceId).toBe("workspace:test");
     expect(result.repoIds).toEqual(["repo:a", "repo:b"]);
     expect(result.repoNames).toEqual(["service-a", "service-b"]);
     expect(result.writerMode).toBe("merge");
@@ -156,6 +162,8 @@ describe("Neo4j decodeJournalRow", () => {
   it("sets completedStage to undefined when empty", () => {
     const row = {
       batchId: "batch:2",
+      generation: "generation:2",
+      workspaceId: "workspace:test",
       repoIds: '["repo:a"]',
       repoNames: '["service-a"]',
       writerMode: "bulk-copy",
@@ -170,9 +178,11 @@ describe("Neo4j decodeJournalRow", () => {
     expect(result.completedStage).toBeUndefined();
   });
 
-  it("reads legacy journal rows without workspace identity", () => {
+  it("keeps generation ownership when there is no parent generation", () => {
     const result = decodeJournalRow({
-      batchId: "batch:legacy",
+      batchId: "batch:first-generation",
+      generation: "generation:first",
+      workspaceId: "workspace:test",
       repoIds: '["repo:a"]',
       repoNames: '["service-a"]',
       writerMode: "merge",
@@ -183,12 +193,16 @@ describe("Neo4j decodeJournalRow", () => {
       completedStage: "graph-written",
       error: ""
     });
-    expect(result.workspaceId).toBeUndefined();
+    expect(result.workspaceId).toBe("workspace:test");
+    expect(result.generation).toBe("generation:first");
+    expect(result.parentGeneration).toBeUndefined();
   });
 
   it("sets error to undefined when empty", () => {
     const row = {
       batchId: "batch:3",
+      generation: "generation:3",
+      workspaceId: "workspace:test",
       repoIds: '["repo:a"]',
       repoNames: '["service-a"]',
       writerMode: "merge",
@@ -206,6 +220,8 @@ describe("Neo4j decodeJournalRow", () => {
   it("preserves error when non-empty", () => {
     const row = {
       batchId: "batch:4",
+      generation: "generation:4",
+      workspaceId: "workspace:test",
       repoIds: '["repo:a"]',
       repoNames: '["service-a"]',
       writerMode: "merge",

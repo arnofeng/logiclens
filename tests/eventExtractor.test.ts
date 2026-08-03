@@ -11,6 +11,11 @@ import { writeGraphFactsWithMerge } from "../src/core/graph-model/upsert.js";
 import { repoId } from "../src/shared/path.js";
 import type { ExtractorFactBundle } from "../src/core/contracts/extraction/crossRepoContracts.js";
 
+const generationMetadata = {
+  workspaceId: "workspace:event-extractor",
+  generation: "generation:event-extractor",
+  systemName: "event-extractor"
+} as const;
 
 async function extractEvents(source: string): Promise<ExtractorFactBundle> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-event-unit-"));
@@ -211,6 +216,16 @@ describe("Event Extractor payload inference", () => {
     expect(JSON.parse(spec!.specJson).payloadType).toBe("OrderCreatedEvent");
   });
 
+  it("preserves qualified and recursively generic explicit payload types", async () => {
+    const qualified = await extractEvents(`eventBus.publish<models.Payload>("payload.created", buildPayload());`);
+    const qualifiedSpec = qualified.contractSpecs.find((spec) => spec.eventTopic === "payload.created");
+    expect(JSON.parse(qualifiedSpec!.specJson).payloadType).toBe("models.Payload");
+
+    const generic = await extractEvents(`eventBus.publish<Page<User>>("page.created", buildPayload());`);
+    const genericSpec = generic.contractSpecs.find((spec) => spec.eventTopic === "page.created");
+    expect(JSON.parse(genericSpec!.specJson).payloadType).toBe("Page<User>");
+  });
+
   it("resolves payload type from an 'as' assertion", async () => {
     const bundle = await extractEvents(`eventBus.publish("order.created", raw as OrderCreatedEvent);`);
     const spec = bundle.contractSpecs.find((s) => s.eventTopic === "order.created");
@@ -299,7 +314,7 @@ describe("Event Spec multi-language pipeline", () => {
         parsedFiles.push(await parseSourceFile({ repoId: repo.id, absolutePath: abs, relativePath: f.rel, language: f.lang as any }));
       }
 
-      const facts = await buildGraphFactsBatch({ batchId: "batch:event-multilang", repos: [repo], parsedFiles, semantic: false });
+      const facts = await buildGraphFactsBatch({ ...generationMetadata, batchId: "batch:event-multilang", repos: [repo], parsedFiles, semantic: false });
       const eventTopics = facts.contractSpecs.filter((s) => s.specKind === "event").map((s) => s.eventTopic);
       expect(eventTopics).toContain("py.order.created");
       expect(eventTopics).toContain("go.order.created");
@@ -336,6 +351,7 @@ describe("Event Spec end-to-end (2-B)", () => {
       const parsedConsumer = await parseSourceFile({ repoId: repo.id, absolutePath: consumerPath, relativePath: "consumer.ts", language: "typescript" });
 
       const facts = await buildGraphFactsBatch({
+        ...generationMetadata,
         batchId: "batch:event-e2e",
         repos: [repo],
         parsedFiles: [parsedPublisher, parsedConsumer],

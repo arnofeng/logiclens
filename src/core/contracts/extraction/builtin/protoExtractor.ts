@@ -6,6 +6,8 @@ import { pushGrpcContract, pushSchemaContract } from "./shared.js";
 import { normalizePrimitiveType, type SchemaFieldSpec } from "../../spec.js";
 import { codeId } from "../../../../shared/path.js";
 import { hashText } from "../../../../shared/hash.js";
+import { schemaFieldFromNormalized } from "../../../schema/model.js";
+import { resolutionScopeIdForFile } from "../../../schema/sourceScopes.js";
 
 // Helper to find the start line of a regex search in source lines
 function findStartLine(lines: string[], regex: RegExp): number {
@@ -67,6 +69,9 @@ export const protoExtractor = compatExtractor({
 
       const pkg = schema.package || "";
       const lines = file.source.split(/\r?\n/);
+      const canonicalProtoType = (raw: string): string => {
+        return raw.startsWith(".") ? raw.slice(1) : raw;
+      };
 
       // --- 1. Services and RPC Methods ---
       for (const service of (schema.services || []) as Service[]) {
@@ -118,8 +123,8 @@ export const protoExtractor = compatExtractor({
             service: service.name,
             method: method.name,
             package: pkg || undefined,
-            requestType: method.input_type,
-            responseType: method.output_type,
+            requestType: canonicalProtoType(method.input_type),
+            responseType: canonicalProtoType(method.output_type),
             streaming,
             framework: "proto"
           });
@@ -162,12 +167,16 @@ export const protoExtractor = compatExtractor({
               rawType = `repeated ${f.type}`;
             }
 
-            return {
-              name: f.name,
-              type: normalizePrimitiveType("proto", rawType),
+            return schemaFieldFromNormalized({
+              languageId: "proto",
+              repoId: file.repoId,
+              fileId: file.fileId,
+              sourceName: f.name,
+              normalizedType: normalizePrimitiveType("proto", rawType),
               optional: f.optional ?? false,
-              sourceLine: fieldLine
-            };
+              nullable: false,
+              line: fieldLine
+            });
           });
 
           pushSchemaContract({
@@ -179,7 +188,8 @@ export const protoExtractor = compatExtractor({
             fields,
             raw: msgRaw,
             rule: "proto-schema",
-            confidence: 1.0
+            confidence: 1.0,
+            resolutionScopeId: resolutionScopeIdForFile(file)
           });
 
           // Recursively process nested messages

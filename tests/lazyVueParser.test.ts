@@ -52,6 +52,9 @@ describe("lazy Vue parser delegates", () => {
         indexedAt: "now"
       };
       const facts = await buildGraphFactsBatch({
+        workspaceId: "workspace:lazy-vue-parser",
+        generation: "generation:lazy-vue-parser",
+        systemName: "lazy-vue-parser",
         batchId: "batch:lazy-vue-js",
         repos: [repo],
         parsedFiles: [parsedJs],

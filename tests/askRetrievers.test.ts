@@ -32,6 +32,15 @@ import { retrieveBoundedGraph } from "../src/features/ask/retrievers/graph.js";
 import { retrieveWorkspaceLexical } from "../src/features/ask/retrievers/lexical.js";
 import { retrieveOptionalSemantic } from "../src/features/ask/retrievers/semantic.js";
 
+const PUBLIC_SCOPE = {
+  workspaceId: "workspace:test",
+  generation: "generation:test"
+} as const;
+const PUBLIC_SNAPSHOT = {
+  ...PUBLIC_SCOPE,
+  revision: "generation:test"
+} as const;
+
 const ROUTES: RetrievalRoute[] = ["exact", "contract", "entity", "lexical", "graph", "semantic"];
 
 function plan(overrides: Partial<QueryPlan> = {}): QueryPlan {
@@ -64,7 +73,7 @@ function lexicalStore(input: {
   health?: LexicalIndexHealth;
   search?: (workspaceId: string, text: string, topK: number) => readonly LexicalHit[] | Promise<readonly LexicalHit[]>;
 } = {}): { store: WorkspaceLexicalStore; search: ReturnType<typeof vi.fn> } {
-  const search = vi.fn(async (query: { workspaceId: string; text: string }, options: { topK: number }) =>
+  const search = vi.fn(async (query: { workspaceId: string; generation: string; text: string }, options: { topK: number }) =>
     input.search?.(query.workspaceId, query.text, options.topK) ?? []);
   const store = {
     health: vi.fn(async () => input.health ?? HEALTHY),
@@ -76,12 +85,12 @@ function lexicalStore(input: {
 describe("workspace lexical retriever", () => {
   it("does not search when disabled, empty, unavailable, or unhealthy", async () => {
     const fake = lexicalStore();
-    expect((await retrieveWorkspaceLexical(fake.store, plan({ enabledRoutes: ["exact"] }), { workspaceId: "workspace:test" })).reason).toBe("route-disabled");
-    expect((await retrieveWorkspaceLexical(fake.store, plan(), { workspaceId: "workspace:test", enabled: false })).reason).toBe("route-disabled");
-    expect((await retrieveWorkspaceLexical(fake.store, plan({ normalizedLexicalQuery: "" }), { workspaceId: "workspace:test" })).reason).toBe("query-empty");
-    expect((await retrieveWorkspaceLexical(undefined, plan(), { workspaceId: "workspace:test" })).status).toBe("unavailable");
+    expect((await retrieveWorkspaceLexical(fake.store, plan({ enabledRoutes: ["exact"] }), PUBLIC_SNAPSHOT)).reason).toBe("route-disabled");
+    expect((await retrieveWorkspaceLexical(fake.store, plan(), { ...PUBLIC_SNAPSHOT, enabled: false })).reason).toBe("route-disabled");
+    expect((await retrieveWorkspaceLexical(fake.store, plan({ normalizedLexicalQuery: "" }), PUBLIC_SNAPSHOT)).reason).toBe("query-empty");
+    expect((await retrieveWorkspaceLexical(undefined, plan(), PUBLIC_SNAPSHOT)).status).toBe("unavailable");
     const unhealthy = lexicalStore({ health: { ...HEALTHY, status: "unhealthy", reasons: ["version-mismatch"] } });
-    expect((await retrieveWorkspaceLexical(unhealthy.store, plan(), { workspaceId: "workspace:test" })).reason).toBe("version-mismatch");
+    expect((await retrieveWorkspaceLexical(unhealthy.store, plan(), PUBLIC_SNAPSHOT)).reason).toBe("version-mismatch");
     expect(fake.search).not.toHaveBeenCalled();
     expect(unhealthy.search).not.toHaveBeenCalled();
   });
@@ -104,9 +113,9 @@ describe("workspace lexical retriever", () => {
     const result = await retrieveWorkspaceLexical(fake.store, plan({
       paths: ["src\\B.ts"],
       budgets: { ...plan().budgets, lexical: { limit: 2 } }
-    }), { workspaceId });
+    }), { workspaceId, generation: PUBLIC_SNAPSHOT.generation });
     expect(fake.search).toHaveBeenCalledTimes(1);
-    expect(fake.search).toHaveBeenCalledWith({ workspaceId, text: "orders" }, { topK: 2 });
+    expect(fake.search).toHaveBeenCalledWith({ workspaceId, generation: PUBLIC_SNAPSHOT.generation, text: "orders" }, { topK: 2 });
     expect(result.candidates.map((candidate) => candidate.repoId)).toEqual(["repo:b", "repo:a"]);
     expect(result.candidates[0]).toMatchObject({
       canonicalId: hits[0]!.canonicalId,
@@ -132,7 +141,7 @@ describe("workspace lexical retriever", () => {
     const result = await retrieveWorkspaceLexical(fake.store, plan({
       paths: ["api/src/contracts/orders.ts"],
       scopedPaths: [{ repoId: "repo:api", path: "src/contracts/orders.ts", raw: "api/src/contracts/orders.ts" }],
-    }), { workspaceId });
+    }), { workspaceId, generation: PUBLIC_SNAPSHOT.generation });
     expect(result.candidates[0]).toMatchObject({
       canonicalId: "file:repo:api:src/contracts/orders.ts",
       confidence: "exact",
@@ -155,7 +164,7 @@ describe("workspace lexical retriever", () => {
     }] });
     const result = await retrieveWorkspaceLexical(fake.store, plan({
       contractTargets: [{ kind: "event", value: "payment.failed" }],
-    }), { workspaceId });
+    }), { workspaceId, generation: PUBLIC_SNAPSHOT.generation });
     expect(result.candidates[0]).toMatchObject({ confidence: "discovery", matchReasons: ["full-text"] });
     const fused = reciprocalRankFusion(result.candidates);
     expect(selectCandidates(fused, { workspaceId }).selectedCandidates).toEqual([]);
@@ -163,9 +172,9 @@ describe("workspace lexical retriever", () => {
 
   it("returns structured provider failures but propagates unexpected errors", async () => {
     const expected = lexicalStore({ search: async () => { throw new WorkspaceLexicalStoreError("search_failed", { operation: "search" }); } });
-    await expect(retrieveWorkspaceLexical(expected.store, plan(), { workspaceId: "workspace:test" })).resolves.toMatchObject({ status: "failed", reason: "search-failed", queryCount: 1 });
+    await expect(retrieveWorkspaceLexical(expected.store, plan(), PUBLIC_SNAPSHOT)).resolves.toMatchObject({ status: "failed", reason: "search-failed", queryCount: 1 });
     const unexpected = lexicalStore({ search: async () => { throw new TypeError("corrupt hit"); } });
-    await expect(retrieveWorkspaceLexical(unexpected.store, plan(), { workspaceId: "workspace:test" })).rejects.toThrow("corrupt hit");
+    await expect(retrieveWorkspaceLexical(unexpected.store, plan(), PUBLIC_SNAPSHOT)).rejects.toThrow("corrupt hit");
   });
 });
 
@@ -225,11 +234,11 @@ describe("exact contract and entity retriever", () => {
       return [];
     }) } as unknown as GraphDB;
     const scopedPaths = [{ repoId: "repo:api", path: "src/contracts/orders.ts" }];
-    await findExactCode(db, { identifiers: [], paths: [], scopedPaths, limit: 5 });
-    await findSectionsAtExactPaths(db, [], 5, scopedPaths);
+    await findExactCode(db, PUBLIC_SNAPSHOT, { identifiers: [], paths: [], scopedPaths, limit: 5 });
+    await findSectionsAtExactPaths(db, PUBLIC_SNAPSHOT, [], 5, scopedPaths);
     for (const call of calls) {
       expect(call.sql).toContain("r.id = $scopedRepo0 AND f.path = $scopedPath0");
-      expect(call.params).toEqual({ scopedRepo0: "repo:api", scopedPath0: "src/contracts/orders.ts" });
+      expect(call.params).toEqual({ scopedRepo0: "repo:api", scopedPath0: "src/contracts/orders.ts", ...PUBLIC_SCOPE });
     }
   });
 
@@ -242,13 +251,13 @@ describe("exact contract and entity retriever", () => {
         return [];
       }
     } as unknown as GraphDB;
-    await findExactCode(db, { identifiers: ["createOrder"], paths: ["src/orders.ts"], limit: 3 });
-    await findSectionsAtExactPaths(db, ["docs/orders.md"], 2);
-    await traceContract(db, "api", "/orders", "POST");
-    const entities = await traceEntitiesExact(db, ["Order"], 1);
+    await findExactCode(db, PUBLIC_SNAPSHOT, { identifiers: ["createOrder"], paths: ["src/orders.ts"], limit: 3 });
+    await findSectionsAtExactPaths(db, PUBLIC_SNAPSHOT, ["docs/orders.md"], 2);
+    await traceContract(db, PUBLIC_SNAPSHOT, "api", "/orders", "POST");
+    const entities = await traceEntitiesExact(db, PUBLIC_SNAPSHOT, ["Order"], 1);
     expect(calls[0]?.sql).toContain("c.name IN $identifiers");
     expect(calls[0]?.sql).not.toContain("CONTAINS $term");
-    expect(calls[0]?.params).toEqual({ identifiers: ["createOrder"], paths: ["src/orders.ts"] });
+    expect(calls[0]?.params).toEqual({ identifiers: ["createOrder"], paths: ["src/orders.ts"], ...PUBLIC_SCOPE });
     expect(calls[1]?.sql).toContain("f.path IN $paths");
     const contractCall = calls.find(({ sql }) => sql.includes("c.key = $methodKey"));
     expect(contractCall?.sql).toContain("c.key = $key OR c.key = $methodKey");
@@ -335,7 +344,7 @@ describe("exact contract and entity retriever", () => {
     }) } as unknown as GraphDB;
     const contractResult = await retrieveExactTargets(contractDb, plan({
       enabledRoutes: ["contract"], contractTargets: [{ kind: "api", value: "/orders", method: "POST" }]
-    }), { workspaceId: "workspace:test" });
+    }), { workspaceId: "workspace:test", snapshot: PUBLIC_SNAPSHOT });
     expect(contractResult.contract).toMatchObject({ status: "failed", executed: true, queryCount: 3, reason: "query-failed" });
 
     let entityCalls = 0;
@@ -344,7 +353,10 @@ describe("exact contract and entity retriever", () => {
       if (entityCalls === 4) throw new GraphDatabaseOperationalError({ cause: new Error("entity query failed") });
       return [];
     }) } as unknown as GraphDB;
-    const entityResult = await retrieveExactTargets(entityDb, plan({ enabledRoutes: ["entity"], exactIdentifiers: ["Order"] }), { workspaceId: "workspace:test" });
+    const entityResult = await retrieveExactTargets(entityDb, plan({ enabledRoutes: ["entity"], exactIdentifiers: ["Order"] }), {
+      workspaceId: "workspace:test",
+      snapshot: PUBLIC_SNAPSHOT
+    });
     expect(entityResult.entity).toMatchObject({ status: "failed", executed: true, queryCount: 4, reason: "query-failed" });
   });
 

@@ -8,6 +8,12 @@ import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import type { ParsedFile, RepoNode } from "../src/core/parsing/types.js";
 import { fileId, repoId } from "../src/shared/path.js";
 
+const generationMetadata = {
+  workspaceId: "workspace:graph-facts",
+  generation: "generation:graph-facts",
+  systemName: "graph-facts"
+} as const;
+
 describe("graph facts batch", () => {
   function parsedFile(repo: RepoNode, relativePath: string, imports: ParsedFile["imports"] = []): ParsedFile {
     return {
@@ -31,7 +37,7 @@ describe("graph facts batch", () => {
       parseSourceFile({ repoId: repoB.id, absolutePath: path.resolve("tests/fixtures/service-b/src/PaymentService.ts"), relativePath: "src/PaymentService.ts", language: "typescript" })
     ]);
 
-    const facts = await buildGraphFactsBatch({ batchId: "batch:test", indexedAt: "indexed", repos: [repoA, repoB], parsedFiles: parsed, semantic: true });
+    const facts = await buildGraphFactsBatch({ ...generationMetadata, batchId: "batch:test", indexedAt: "indexed", repos: [repoA, repoB], parsedFiles: parsed, semantic: true });
 
     expect(facts.files).toHaveLength(2);
     expect(facts.code.length).toBeGreaterThan(0);
@@ -86,6 +92,7 @@ describe("graph facts batch", () => {
       line: 3
     }]);
     const facts = await buildGraphFactsBatch({
+      ...generationMetadata,
       batchId: "batch:monorepo",
       indexedAt: "indexed",
       repos: [monorepo, consumer],
@@ -155,7 +162,7 @@ describe("graph facts batch", () => {
       calls: []
     };
 
-    const facts = await buildGraphFactsBatch({ batchId: "batch:java-packages", indexedAt: "indexed", repos: [repo], parsedFiles: [parsed], semantic: true });
+    const facts = await buildGraphFactsBatch({ ...generationMetadata, batchId: "batch:java-packages", indexedAt: "indexed", repos: [repo], parsedFiles: [parsed], semantic: true });
 
     expect(facts.contracts).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: "package", key: "com.example.orders" }),
@@ -197,7 +204,7 @@ public class SmartBackorderController {
     await fs.writeFile(absolutePath, classSource, "utf8");
     const parsed = await parseSourceFile({ repoId: repo.id, absolutePath, relativePath, language: "java" });
 
-    const facts = await buildGraphFactsBatch({ batchId: "batch:spring-api", indexedAt: "indexed", repos: [repo], parsedFiles: [parsed], semantic: true });
+    const facts = await buildGraphFactsBatch({ ...generationMetadata, batchId: "batch:spring-api", indexedAt: "indexed", repos: [repo], parsedFiles: [parsed], semantic: true });
 
     expect(facts.contracts).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: "api", key: "/smart/backorder" }),
@@ -246,7 +253,7 @@ class UserController {
     await fs.writeFile(absolutePath, source, "utf8");
     const parsed = await parseSourceFile({ repoId: repo.id, absolutePath, relativePath, language: "java" });
 
-    const facts = await buildGraphFactsBatch({ batchId: "batch:spring-post", indexedAt: "indexed", repos: [repo], parsedFiles: [parsed], semantic: true });
+    const facts = await buildGraphFactsBatch({ ...generationMetadata, batchId: "batch:spring-post", indexedAt: "indexed", repos: [repo], parsedFiles: [parsed], semantic: true });
     const apiKeys = facts.contracts.filter((contract) => contract.kind === "api").map((contract) => contract.key);
 
     expect(apiKeys).toEqual(expect.arrayContaining(["GET:/orders/list", "GET:/users/profile"]));
@@ -270,7 +277,7 @@ class UserController {
       calls: []
     };
 
-    const facts = await buildGraphFactsBatch({ batchId: "batch:config-file", indexedAt: "indexed", repos: [repo], parsedFiles: [parsed], semantic: true });
+    const facts = await buildGraphFactsBatch({ ...generationMetadata, batchId: "batch:config-file", indexedAt: "indexed", repos: [repo], parsedFiles: [parsed], semantic: true });
 
     expect(facts.files).toEqual(expect.arrayContaining([
       expect.objectContaining({ path: "application.yml", language: "yaml" })
@@ -324,7 +331,7 @@ class UserController {
       calls: []
     };
 
-    const facts = await buildGraphFactsBatch({ batchId: "batch:request-object-api", indexedAt: "indexed", repos: [backend, frontend], parsedFiles: [backendFile, frontendFile], semantic: true });
+    const facts = await buildGraphFactsBatch({ ...generationMetadata, batchId: "batch:request-object-api", indexedAt: "indexed", repos: [backend, frontend], parsedFiles: [backendFile, frontendFile], semantic: true });
     const producerContract = facts.contracts.find((contract) => contract.kind === "api" && contract.key === "/smart/backorder");
     const consumerContract = facts.contracts.find((contract) => contract.kind === "api" && contract.key === "POST:/smart/backorder");
 
@@ -347,7 +354,7 @@ class UserController {
     const parsed = [
       await parseSourceFile({ repoId: repo.id, absolutePath: path.resolve("tests/fixtures/service-a/src/OrderController.ts"), relativePath: "src/OrderController.ts", language: "typescript" })
     ];
-    const facts = await buildGraphFactsBatch({ batchId: "batch:csv", indexedAt: "indexed", repos: [repo], parsedFiles: parsed, semantic: true });
+    const facts = await buildGraphFactsBatch({ ...generationMetadata, batchId: "batch:csv", indexedAt: "indexed", repos: [repo], parsedFiles: parsed, semantic: true });
     facts.evidence.push({
       id: "evidence:csv-special",
       repoId: repo.id,

@@ -25,7 +25,7 @@ describe("workspace unified retrieval fixture", () => {
       "e7faf5440bc55772cee7ed908dd0602a4a8501425fc0caa0c670feeb9dd63907",
       "5d204635fcf398d7df3ad44dfc795433580b1cec45f6fa11a9d95c363de2a1f1",
       "7ec881f8c54e740b37b7386867496f6db848a1c07a9e20257487a015fc308fef",
-      "fa474ca6e81099cf63e6f37027b9aa41c99984c2cc7c42717b11adbc1a0db625",
+      "d3b9ee06e482eee18ad0643f51db9497b5c26a3b46fccd443b139d43d1f571f3",
       "18d9d42846ccf4cc3623b54338174bc38d561bfbff925ab8b7e0fb0f8777222d"
     ]);
   });

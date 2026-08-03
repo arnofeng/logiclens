@@ -31,6 +31,7 @@ import {
 import { canonicalEventContractKey } from "./event.js";
 import type { GraphDB } from "../graph-model/db.js";
 import { loadActiveSemanticGraph } from "../graph-model/queries.js";
+import { withPublicGraphReadSnapshot, withPublicGraphSnapshotParams, type PublicGraphReadSnapshot } from "../graph-model/readSnapshot.js";
 import type { ConfidenceBand } from "../../shared/confidence.js";
 import { semanticRelationResolution } from "./semanticRelations.js";
 
@@ -392,7 +393,8 @@ export function summarizeSpec(node: ReadableContractSpecNode): string {
       return parts.join("  ");
     }
     if (spec.kind === "schema") {
-      return `${spec.name} (${spec.fields.length} field${spec.fields.length === 1 ? "" : "s"})`;
+      const fieldCount = spec.shape.kind === "object" ? spec.shape.fields.length : 0;
+      return `${spec.displayName} (${fieldCount} field${fieldCount === 1 ? "" : "s"})`;
     }
     if (spec.kind === "grpc-method") {
       const parts = [spec.fullName];
@@ -433,17 +435,25 @@ export function summarizeSpec(node: ReadableContractSpecNode): string {
 export async function traceSemanticGraphFromDB(
   target: string,
   db: GraphDB,
-  options: SemanticTraceOptions = {}
+  workspaceId: string,
+  options: SemanticTraceOptions = {},
+  pinnedSnapshot?: PublicGraphReadSnapshot
 ): Promise<SemanticTraceGraph> {
-  const { specs, relations } = await loadActiveSemanticGraph(db);
+  if (!pinnedSnapshot) {
+    return withPublicGraphReadSnapshot(db, workspaceId, (snapshot) =>
+      traceSemanticGraphFromDB(target, db, workspaceId, options, snapshot));
+  }
+  const snapshot = pinnedSnapshot;
+  const { specs, relations } = await loadActiveSemanticGraph(db, snapshot);
   const evidenceIds = [...new Set(relations.map((relation) => relation.evidenceId).filter(Boolean))];
   const evidenceRows = evidenceIds.length === 0 ? [] : await db.query<EvidenceNode>(
     `MATCH (e:Evidence)
-     WHERE e.id IN $evidenceIds AND (e.active IS NULL OR e.active = true)
+     WHERE e.id IN $evidenceIds AND e.workspaceId = $workspaceId AND e.generation = $generation
+       AND (e.active IS NULL OR e.active = true)
      RETURN e.id AS id, e.repoId AS repoId, e.fileId AS fileId, e.filePath AS filePath,
        e.line AS line, e.raw AS raw, e.rule AS rule, e.confidence AS confidence,
        e.batchId AS batchId, e.indexedAt AS indexedAt, e.active AS active`,
-    { evidenceIds }
+    withPublicGraphSnapshotParams(snapshot, { evidenceIds })
   );
   return traceSemanticGraph(target, specs, relations, options, new Map(evidenceRows.map((row) => [row.id, row])));
 }

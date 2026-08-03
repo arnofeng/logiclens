@@ -12,7 +12,11 @@ import {
   summarizeLexicalProviderGate,
   type WorkspaceLexicalStore
 } from "../src/core/retrieval/provider.js";
-import type { LexicalIndexHealth } from "../src/core/retrieval/types.js";
+import {
+  LEXICAL_PROJECTION_SCHEMA_VERSION,
+  TOKENIZER_VERSION,
+  type LexicalIndexHealth
+} from "../src/core/retrieval/types.js";
 
 const capability = {
   scope: "workspace" as const,
@@ -24,8 +28,8 @@ const capability = {
 function health(overrides: Partial<LexicalIndexHealth> = {}): LexicalIndexHealth {
   return {
     providerVersion: "1.2.3",
-    projectionSchemaVersion: "1",
-    tokenizerVersion: "1",
+    projectionSchemaVersion: LEXICAL_PROJECTION_SCHEMA_VERSION,
+    tokenizerVersion: TOKENIZER_VERSION,
     status: "healthy",
     reasons: [],
     metrics: { documentCount: 2, indexSizeBytes: 20 },
@@ -35,9 +39,11 @@ function health(overrides: Partial<LexicalIndexHealth> = {}): LexicalIndexHealth
 
 function store(result: LexicalIndexHealth | Error = health()): WorkspaceLexicalStore {
   return {
-    ensureSchema: vi.fn(), commitVersions: vi.fn(), upsertDocuments: vi.fn(),
+    ensureSchema: vi.fn(), commitVersions: vi.fn(), initializeGeneration: vi.fn(), deleteGeneration: vi.fn(),
+    upsertDocuments: vi.fn(), deleteDocuments: vi.fn(),
     reconcileRepoDocuments: vi.fn(), reconcileRepoFileDocuments: vi.fn(), cleanupBatch: vi.fn(),
     search: vi.fn(), loadDocuments: vi.fn(),
+    pendingHealth: vi.fn(async () => { if (result instanceof Error) throw result; return result; }),
     health: vi.fn(async () => { if (result instanceof Error) throw result; return result; })
   } as unknown as WorkspaceLexicalStore;
 }
@@ -61,6 +67,7 @@ function input(provider: string, overrides: Partial<Parameters<typeof resolveLex
     lexicalProvider: "auto" as const,
     scope: "workspace",
     workspaceId: "workspace:test",
+    generation: "generation:test",
     ...overrides
   };
 }

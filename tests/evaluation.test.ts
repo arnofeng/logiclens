@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { makeTestSchema } from "./helpers/schemaModel.js";
 import { materializeDependenciesFromSemanticRelations } from "../src/core/contracts/extraction/crossRepoContracts.js";
 import {
   compareDependencySets,
@@ -79,12 +80,7 @@ function makeSchemaSpec(opts: {
     fileId: `file:${opts.repoId}:test`,
     evidenceId: `ev:${opts.id}`,
     canonicalKey: opts.name.toLowerCase(),
-    specJson: serializeSpec({
-      kind: "schema",
-      name: opts.name,
-      language: "typescript",
-      fields: []
-    }),
+    specJson: serializeSpec(makeTestSchema({ name: opts.name, language: "typescript", repoId: opts.repoId })),
     confidence: 0.75
   };
 }

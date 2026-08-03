@@ -11,6 +11,9 @@ import { embeddingProviderRegistry } from "../src/core/registries/registry.js";
 import { KuzuWorkspaceLexicalStore, KUZU_WORKSPACE_FTS_INDEX } from "../src/adapters/graph-db/kuzu/KuzuWorkspaceLexicalStore.js";
 import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
 import { LEXICAL_PROJECTION_SCHEMA_VERSION, TOKENIZER_VERSION } from "../src/core/retrieval/types.js";
+import { pinPublicGraphReadSnapshot } from "../src/core/graph-model/readSnapshot.js";
+
+const BATCHED_WORKSPACE_ID = deriveWorkspaceId(defaultConfig().systemName);
 
 function fixturePath(name: string): string {
   return path.resolve("tests/fixtures", name).replace(/\\/g, "/");
@@ -37,20 +40,29 @@ async function withDb<T>(fn: (db: KuzuGraphDB, cwd: string) => Promise<T>): Prom
 }
 
 async function dependencyKeys(db: KuzuGraphDB): Promise<string[]> {
-  const rows = await listDependencies(db, { limit: 1000 });
+  const snapshot = await pinPublicGraphReadSnapshot(db, BATCHED_WORKSPACE_ID);
+  const rows = await listDependencies(db, snapshot, { limit: 1000 });
   return rows.map((row) => `${row.fromRepo}->${row.toRepo}:${row.dependencyType}:${row.contractKind}:${row.contractKey}:${row.filePath}:${row.line}:${row.rule}`).sort();
 }
 
 async function contractKeys(db: KuzuGraphDB): Promise<string[]> {
-  const rows = await listContracts(db, { limit: 1000 });
+  const snapshot = await pinPublicGraphReadSnapshot(db, BATCHED_WORKSPACE_ID);
+  const rows = await listContracts(db, snapshot, { limit: 1000 });
   return rows.map((row) => `${row.kind}:${row.key}:${row.producers}:${row.consumers}:${row.shared}`).sort();
 }
 
 async function lexicalSnapshot(db: KuzuGraphDB): Promise<string[]> {
-  const rows = await db.query<{ id: string; canonicalId: string; sourceHash: string }>(
-    "MATCH (n:LexicalDocument) WHERE n.active = true RETURN n.id AS id, n.canonicalId AS canonicalId, n.sourceHash AS sourceHash;"
+  const snapshot = await pinPublicGraphReadSnapshot(db, BATCHED_WORKSPACE_ID);
+  const rows = await db.query<{ documentId: string; canonicalId: string; sourceHash: string }>(
+    "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.active = true RETURN n.documentId AS documentId, n.canonicalId AS canonicalId, n.sourceHash AS sourceHash;",
+    snapshot
   );
-  return rows.map((row) => `${row.id}|${row.canonicalId}|${row.sourceHash}`).sort();
+  return rows.map((row) => `${row.documentId}|${row.canonicalId}|${row.sourceHash}`).sort();
+}
+
+async function activeStats(db: KuzuGraphDB) {
+  const snapshot = await pinPublicGraphReadSnapshot(db, BATCHED_WORKSPACE_ID);
+  return db.stats(snapshot);
 }
 
 describe("batched indexing", () => {
@@ -60,7 +72,7 @@ describe("batched indexing", () => {
       const result = await runIndexing(db, configFor(repos), { cwd, writeMode: "auto" });
       return {
         result,
-        stats: await db.stats(),
+        stats: await activeStats(db),
         dependencies: await dependencyKeys(db),
         contracts: await contractKeys(db),
         lexical: await lexicalSnapshot(db)
@@ -92,14 +104,19 @@ describe("batched indexing", () => {
       commitVersions.mockRestore();
       ensureSchema.mockRestore();
       const workspaceId = deriveWorkspaceId(config.systemName);
-      const hits = await new KuzuWorkspaceLexicalStore(db).search({ workspaceId, text: "order inventory" }, { topK: 30 });
+      const snapshot = await pinPublicGraphReadSnapshot(db, workspaceId);
+      const hits = await new KuzuWorkspaceLexicalStore(db).search({
+        workspaceId,
+        generation: snapshot.generation,
+        text: "order inventory"
+      }, { topK: 30 });
       const indexes = await db.query<{ index_name: string }>("CALL SHOW_INDEXES() WHERE table_name = 'LexicalDocument' RETURN index_name;");
       const stateCounts = await db.query<{ lexicalDocumentCount: number; projectionVersion: string; tokenizerVersion: string; lexicalIndexStatus: string }>(
         "MATCH (s:IndexState) RETURN s.lexicalDocumentCount AS lexicalDocumentCount, s.lexicalProjectionSchemaVersion AS projectionVersion, s.lexicalTokenizerVersion AS tokenizerVersion, s.lexicalIndexStatus AS lexicalIndexStatus;"
       );
       return {
         result,
-        stats: await db.stats(),
+        stats: await db.stats(snapshot),
         dependencies: await dependencyKeys(db),
         contracts: await contractKeys(db),
         lexical: await lexicalSnapshot(db),
@@ -143,11 +160,15 @@ describe("batched indexing", () => {
       await runIndexing(db, configFor(["service-a"], 1), { cwd, writeMode: "auto", batchSize: 1 });
       await runIndexing(db, configFor(["service-a", "service-b"], 1), { cwd, writeMode: "auto", batchSize: 1 });
 
-      const stats = await db.stats();
+      const stats = await activeStats(db);
       expect(stats.repos).toBe(2);
       expect(stats.files).toBeGreaterThan(0);
 
-      const systemContains = await db.query<{ count: number }>("MATCH (:System)-[r:CONTAINS]->(:Repo) RETURN count(r) AS count;");
+      const snapshot = await pinPublicGraphReadSnapshot(db, BATCHED_WORKSPACE_ID);
+      const systemContains = await db.query<{ count: number }>(
+        "MATCH (s:System)-[r:CONTAINS]->(repo:Repo) WHERE s.workspaceId = $workspaceId AND s.generation = $generation AND r.workspaceId = $workspaceId AND r.generation = $generation AND repo.workspaceId = $workspaceId AND repo.generation = $generation RETURN count(r) AS count;",
+        snapshot
+      );
       expect(Number(systemContains[0]?.count ?? 0)).toBe(2);
       expect(await dependencyKeys(db)).toEqual(expect.arrayContaining([
         expect.stringContaining("service-b->service-a:api:")

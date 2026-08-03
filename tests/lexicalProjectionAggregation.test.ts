@@ -13,10 +13,13 @@ import { parseRenderRef } from "../src/core/retrieval/renderRef.js";
 
 function completeFacts(): GraphFactsBatch {
   const repo = { id: "repo:a", name: "Alpha", path: "private", remoteUrl: "", branch: "main", commitSha: "a", language: "typescript", indexedAt: "old" };
-  const file = { id: "file:a", repoId: repo.id, path: "src/order.ts", language: "typescript", hash: "file", loc: 30, batchId: "batch:file", active: true };
+  const file = { id: "file:a", repoId: repo.id, path: "src/order.ts", directory: "src", language: "typescript", hash: "file", loc: 30, batchId: "batch:file", active: true };
   const evidence = { id: "evidence:a", repoId: repo.id, fileId: file.id, filePath: file.path, line: 3, raw: "orders.created package @scope/orders", rule: "fixture", confidence: 0.9, batchId: "batch:evidence", active: true };
   return {
     batchId: "batch:fallback",
+    workspaceId: "workspace:lexical-projection",
+    generation: "generation:lexical-projection",
+    systemName: "lexical-projection",
     indexedAt: "2026",
     repos: [repo],
     parsedFiles: [],
@@ -124,7 +127,7 @@ describe("complete lexical projection aggregation", () => {
 
   it("keeps source documents fusion-compatible and workspace identities isolated", () => {
     const facts = completeFacts();
-    facts.files.push({ id: "file:b", repoId: "repo:b", path: "src/order.ts", language: "typescript", hash: "b", loc: 3 });
+    facts.files.push({ id: "file:b", repoId: "repo:b", path: "src/order.ts", directory: "src", language: "typescript", hash: "b", loc: 3 });
     facts.evidence.push({ ...facts.evidence[0]!, id: "evidence:b", repoId: "repo:b", fileId: "file:b" });
     facts.repoContracts.push({ repoId: "repo:b", contractId: "contract:event:orders", role: "consumer", evidenceId: "evidence:b", confidence: 0.8 });
     const first = projectLexicalDocuments(facts, "workspace:first");

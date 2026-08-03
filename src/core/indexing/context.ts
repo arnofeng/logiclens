@@ -4,6 +4,7 @@ import type { GraphDB } from "../graph-model/db.js";
 import { resolveWorkspaceLexicalStore, type WorkspaceLexicalStore } from "../retrieval/provider.js";
 import { deriveWorkspaceId } from "../workspace/identity.js";
 import type { IndexLogger, IndexOptions } from "./types.js";
+import type { IncrementalIndexMutationSet } from "./incrementalMutation.js";
 
 export type IndexWriteMode = NonNullable<IndexOptions["writeMode"]>;
 
@@ -14,6 +15,14 @@ export type IndexRunContext = {
   writeMode: IndexWriteMode;
   workspaceId: string;
   lexicalStore: WorkspaceLexicalStore;
+  activeGeneration?: string;
+  activeRevision?: string;
+  schemaGeneration?: string;
+  targetGeneration?: string;
+  publicationMode?: "full-snapshot" | "incremental";
+  incrementalMutationSet?: IncrementalIndexMutationSet;
+  onGraphBatchStaged?: (batchId: string) => void;
+  pendingIndexStateCommits: Map<string, () => Promise<void>>;
   additionalIndexFilesByRepo: ReadonlyMap<string, readonly string[]>;
   activePluginSourceGlobsByRepo: ReadonlyMap<string, readonly string[]>;
   llm: {
@@ -69,6 +78,7 @@ export async function createIndexRunContext(input: {
     writeMode,
     workspaceId,
     lexicalStore,
+    pendingIndexStateCommits: new Map(),
     additionalIndexFilesByRepo,
     activePluginSourceGlobsByRepo,
     llm: {

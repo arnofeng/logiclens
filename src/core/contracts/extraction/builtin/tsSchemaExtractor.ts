@@ -2,22 +2,16 @@ import { compatExtractor } from "./compat.js";
 import type Parser from "tree-sitter";
 import type { FactCollector } from "../factCollector.js";
 import type { ParsedFile } from "../../../parsing/types.js";
-import type { SchemaFieldSpec, SchemaSpec } from "../../spec.js";
+import type { SchemaFieldSpec } from "../../spec.js";
 import { normalizePrimitiveType } from "../../spec.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
-import {
-  classifySharedContract,
-  contract,
-  evidence,
-  parsedCodeFiles,
-  pushContractEvidence,
-  pushContractSpec,
-  toBusinessEntityName, } from "./shared.js";
+import { parsedCodeFiles } from "./shared.js";
 import {
   parseSourceAst,
   walkSourceAst
 } from "./sourceAstUtils.js";
-import { entityId } from "../../../../shared/path.js";
+import { schemaFieldFromNormalized, typeExpressionFromNormalized } from "../../../schema/model.js";
+import { resolutionScopeIdForFile } from "../../../schema/sourceScopes.js";
 
 /**
  * TS utility types whose first type-argument is the underlying DTO / schema type.
@@ -36,12 +30,9 @@ const TS_UTILITY_TYPES = new Set([
 ]);
 
 /**
- * Extracts field-level schema information from TypeScript interface / type-alias
- * declarations that match DTO / schema naming conventions.
- *
- * Produces a `SchemaSpec` for each matching declaration, populating `fields`
- * with name, normalized type, optional, nullable, and source line.  Also emits
- * a `ContractSpecNode` + `HAS_SPEC` edge via `pushContractSpec`.
+ * Indexes field-level declaration candidates from TypeScript interfaces and
+ * object type aliases without publishing them as SchemaSpecs. Public schema
+ * facts are materialized later only when a typed contract root reaches them.
  *
  * TS utility types (`Omit`, `Pick`, `Partial`, `Required`, `Readonly`) are
  * unwrapped to extract the base type reference so the semantic layer can
@@ -63,86 +54,38 @@ export const tsSchemaExtractor = compatExtractor({
 
       // Collect schema-relevant declarations: interfaces + type aliases
       for (const symbol of file.symbols) {
-        const sharedKind = classifySharedContract(symbol.name, symbol.kind);
-        if (sharedKind !== "schema" && sharedKind !== "dto") continue;
+        if (symbol.kind !== "interface" && symbol.kind !== "type") continue;
 
         // Find the AST node for this symbol
         const node = findDeclarationNode(ast.tree.rootNode, symbol);
         if (!node) continue;
 
         const fields = extractFields(node, file);
-        const baseTypeRef = extractBaseTypeFromUtilityType(node);
+        const baseTypes = extractBaseTypes(node);
+        const typeParameters = extractTypeParameters(node);
 
         // Skip declarations that neither have extractable fields nor
         // reference a utility-wrapped base type.
-        if (fields.length === 0 && !baseTypeRef) continue;
+        if (fields.length === 0 && baseTypes.length === 0 && !isObjectDeclaration(node)) continue;
 
         const language = file.language === "tsx" ? "typescript" : file.language;
-        const schemaSpec: SchemaSpec = {
-          kind: "schema",
-          name: symbol.name,
-          language,
-          fields
-        };
-
-        const schemaContract = contract(sharedKind, symbol.name, `${sharedKind.toUpperCase()} ${symbol.name}`);
-        const evidenceNode = evidence({
-          repoId: file.repoId,
+        collector.addSchemaDeclaration({
+          declaration: { languageId: language, repoId: file.repoId, resolutionScopeId: resolutionScopeIdForFile(file), canonicalName: symbol.qualifiedName || symbol.name },
+          displayName: symbol.name,
+          typeParameters,
+          shape: { kind: "object", fields, baseTypes: baseTypes.length > 0 ? baseTypes : undefined },
           fileId: file.fileId,
           filePath: file.path,
-          line: symbol.startLine,
-          raw: symbol.signature,
-          rule: "ts-schema-fields",
-          confidence: confidenceFor("heuristic-schema-fields")
-        });
-
-        pushContractEvidence(collector, file.repoId, schemaContract, "shared", evidenceNode);
-
-        pushContractSpec({
-          collector,
-          contractNode: schemaContract,
-          spec: schemaSpec,
-          repoId: file.repoId,
-          fileId: file.fileId,
-          evidenceNode,
           sourceSymbolId: symbol.id,
           framework: "ts-schema",
-          version: undefined
+          evidence: {
+            line: symbol.startLine,
+            raw: symbol.signature,
+            rule: "ts-schema-declaration",
+            confidence: confidenceFor("heuristic-schema-fields")
+          }
         });
 
-        // Wire up business entity if applicable
-        const entityName = toBusinessEntityName(schemaContract);
-        if (entityName) {
-          collector.addEntity({
-            id: entityId(entityName),
-            name: entityName,
-            kind: "domain",
-            description: "Domain entity inferred from cross-repo contracts"
-          });
-          collector.addContractEntity({
-            contractId: schemaContract.id,
-            entityId: entityId(entityName),
-            evidenceId: evidenceNode.id,
-            confidence: evidenceNode.confidence
-          });
-        }
-
-        // For utility types (Omit/Pick/Partial/etc.), emit a USES_SCHEMA
-        // semantic relation to the base type so impact analysis can traverse
-        // from the derived type back to the canonical definition.
-        if (baseTypeRef) {
-          // We record the base type as a referenced schema name; the actual
-          // SEMANTIC_REL edge will be created in postExtract when the target
-          // schema is guaranteed to be in the batch.
-          collector.addSemanticRelation({
-            fromSpecId: `spec:${schemaContract.id}:pending`, // resolved in postExtract
-            toSpecId: `schema-ref:${baseTypeRef}`,           // resolved in postExtract
-            kind: "USES_SCHEMA",
-            evidenceId: evidenceNode.id,
-            reason: `TS utility type references base schema ${baseTypeRef}`,
-            confidence: confidenceFor("heuristic-generic-type-param")
-          });
-        }
       }
     }
 
@@ -177,25 +120,41 @@ function findDeclarationNode(
   return found;
 }
 
+function isObjectDeclaration(node: Parser.SyntaxNode): boolean {
+  if (node.type === "interface_declaration") return true;
+  return node.type === "type_alias_declaration" && node.namedChildren.some((child) => child.type === "object_type");
+}
+
+function extractTypeParameters(node: Parser.SyntaxNode): string[] {
+  const parameters = node.namedChildren.find((child) => child.type === "type_parameters");
+  if (!parameters) return [];
+  return parameters.namedChildren.flatMap((child) => {
+    const name = child.type === "type_identifier" || child.type === "identifier"
+      ? child.text
+      : child.namedChildren.find((part) => part.type === "type_identifier" || part.type === "identifier")?.text;
+    return name ? [name] : [];
+  });
+}
+
 /**
  * Extracts field definitions from an interface_declaration or type_alias_declaration
  * AST node. Returns an array of `SchemaFieldSpec`.
  */
 function extractFields(
   node: Parser.SyntaxNode,
-  _file: ParsedFile
+  file: ParsedFile
 ): SchemaFieldSpec[] {
   if (node.type === "interface_declaration") {
-    return extractInterfaceFields(node);
+    return extractInterfaceFields(node, file);
   }
   if (node.type === "type_alias_declaration") {
-    return extractTypeAliasFields(node);
+    return extractTypeAliasFields(node, file);
   }
   return [];
 }
 
 /** Extracts fields from `interface_declaration`. */
-function extractInterfaceFields(node: Parser.SyntaxNode): SchemaFieldSpec[] {
+function extractInterfaceFields(node: Parser.SyntaxNode, file: ParsedFile): SchemaFieldSpec[] {
   const body = node.childForFieldName("body");
   if (!body) return [];
 
@@ -212,7 +171,7 @@ function extractInterfaceFields(node: Parser.SyntaxNode): SchemaFieldSpec[] {
     if (child.type === "construct_signature") continue;
 
     if (child.type === "property_signature") {
-      const field = parsePropertySignature(child);
+      const field = parsePropertySignature(child, file);
       if (field) fields.push(field);
     }
   }
@@ -221,13 +180,13 @@ function extractInterfaceFields(node: Parser.SyntaxNode): SchemaFieldSpec[] {
 }
 
 /** Extracts fields from `type_alias_declaration`. */
-function extractTypeAliasFields(node: Parser.SyntaxNode): SchemaFieldSpec[] {
+function extractTypeAliasFields(node: Parser.SyntaxNode, file: ParsedFile): SchemaFieldSpec[] {
   const valueNode = node.namedChildren.find(
     (c) => c.type !== "type_identifier" && c.type !== "type_parameters" && c.type !== "=" && c.type !== ";" && c.type !== "type"
   );
   if (!valueNode) return [];
 
-  return extractFieldsFromTypeNode(valueNode);
+  return extractFieldsFromTypeNode(valueNode, file);
 }
 
 /**
@@ -236,7 +195,7 @@ function extractTypeAliasFields(node: Parser.SyntaxNode): SchemaFieldSpec[] {
  * - intersection_type merge properties from each branch
  * - generic_type (utility) only when the first arg is an object_type
  */
-function extractFieldsFromTypeNode(node: Parser.SyntaxNode): SchemaFieldSpec[] {
+function extractFieldsFromTypeNode(node: Parser.SyntaxNode, file: ParsedFile): SchemaFieldSpec[] {
   if (node.type === "object_type") {
     const fields: SchemaFieldSpec[] = [];
     for (let i = 0; i < node.namedChildCount; i++) {
@@ -245,7 +204,7 @@ function extractFieldsFromTypeNode(node: Parser.SyntaxNode): SchemaFieldSpec[] {
       if (child.type === "index_signature") continue;
       if (child.type === "method_signature") continue;
       if (child.type === "property_signature") {
-        const field = parsePropertySignature(child);
+        const field = parsePropertySignature(child, file);
         if (field) fields.push(field);
       }
     }
@@ -257,7 +216,7 @@ function extractFieldsFromTypeNode(node: Parser.SyntaxNode): SchemaFieldSpec[] {
     for (let i = 0; i < node.namedChildCount; i++) {
       const child = node.namedChild(i);
       if (!child) continue;
-      fields.push(...extractFieldsFromTypeNode(child));
+      fields.push(...extractFieldsFromTypeNode(child, file));
     }
     return fields;
   }
@@ -273,11 +232,11 @@ function extractFieldsFromTypeNode(node: Parser.SyntaxNode): SchemaFieldSpec[] {
           const arg = typeArgs.namedChild(i);
           if (!arg) continue;
           if (arg.type === "object_type") {
-            return extractFieldsFromTypeNode(arg);
+            return extractFieldsFromTypeNode(arg, file);
           }
           // For intersections inside utility types, dig deeper
           if (arg.type === "intersection_type" || arg.type === "generic_type") {
-            const inner = extractFieldsFromTypeNode(arg);
+            const inner = extractFieldsFromTypeNode(arg, file);
             if (inner.length > 0) return inner;
           }
         }
@@ -291,7 +250,7 @@ function extractFieldsFromTypeNode(node: Parser.SyntaxNode): SchemaFieldSpec[] {
 /**
  * Parses a single `property_signature` node into a `SchemaFieldSpec`.
  */
-function parsePropertySignature(node: Parser.SyntaxNode): SchemaFieldSpec | undefined {
+function parsePropertySignature(node: Parser.SyntaxNode, file: ParsedFile): SchemaFieldSpec | undefined {
   const nameNode = node.childForFieldName("name");
   if (!nameNode) return undefined;
 
@@ -310,13 +269,16 @@ function parsePropertySignature(node: Parser.SyntaxNode): SchemaFieldSpec | unde
   // Detect whether the result signals nullability (trailing "?").
   const nullable = normalized.endsWith("?") ? true : undefined;
 
-  return {
-    name,
-    type: normalized,
+  return schemaFieldFromNormalized({
+    languageId: "typescript",
+    repoId: file.repoId,
+    fileId: file.fileId,
+    sourceName: name,
+    normalizedType: normalized,
     optional,
     nullable: nullable || undefined,
-    sourceLine: node.startPosition.row + 1
-  };
+    line: node.startPosition.row + 1
+  });
 }
 
 /**
@@ -343,6 +305,39 @@ function typeText(node: Parser.SyntaxNode): string {
  * e.g. `Omit<Order, 'id'>` -> `Order`, `Partial<OrderDTO>` -> `OrderDTO`.
  * Returns `undefined` when the RHS is not a recognised utility type.
  */
+function extractBaseTypes(node: Parser.SyntaxNode): ReturnType<typeof typeExpressionFromNormalized>[] {
+  if (node.type === "interface_declaration") {
+    const header = node.text.slice(0, Math.max(0, node.text.indexOf("{")));
+    const match = header.match(/\bextends\s+(.+)$/su);
+    if (!match) return [];
+    return splitTopLevelTypes(match[1]!, ",").map((raw) =>
+      typeExpressionFromNormalized(normalizePrimitiveType("typescript", raw), "typescript")
+    );
+  }
+
+  const valueNode = node.type === "type_alias_declaration"
+    ? node.namedChildren.find(
+      (child) => child.type !== "type_identifier" && child.type !== "type_parameters" && child.type !== "=" && child.type !== ";" && child.type !== "type"
+    )
+    : node;
+  if (!valueNode) return [];
+
+  const utilityBase = extractBaseTypeFromUtilityType(valueNode);
+  if (utilityBase) {
+    return [typeExpressionFromNormalized(normalizePrimitiveType("typescript", utilityBase), "typescript")];
+  }
+
+  if (valueNode.type === "intersection_type" || valueNode.type === "union_type") {
+    const members = valueNode.namedChildren
+      .filter((child) => child.type !== "object_type")
+      .map((child) => typeExpressionFromNormalized(normalizePrimitiveType("typescript", child.text), "typescript"));
+    if (members.length === 0) return [];
+    return members.length === 1 ? members : [{ kind: valueNode.type === "intersection_type" ? "intersection" : "union", members }];
+  }
+
+  return [];
+}
+
 function extractBaseTypeFromUtilityType(node: Parser.SyntaxNode): string | undefined {
   if (node.type === "type_alias_declaration") {
     const valueNode = node.namedChildren.find(
@@ -370,12 +365,33 @@ function extractBaseTypeFromUtilityType(node: Parser.SyntaxNode): string | undef
       const typeArgs = node.childForFieldName("type_arguments");
       if (typeArgs) {
         const firstArg = typeArgs.namedChild(0);
-        if (firstArg && (firstArg.type === "type_identifier" || firstArg.type === "generic_type")) {
-          return firstArg.text.split("<")[0]!.trim();
-        }
+        if (firstArg) return firstArg.text.trim();
       }
     }
   }
 
   return undefined;
+}
+
+function splitTopLevelTypes(value: string, separator: string): string[] {
+  const result: string[] = [];
+  let angleDepth = 0;
+  let squareDepth = 0;
+  let parenDepth = 0;
+  let start = 0;
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index];
+    if (character === "<") angleDepth++;
+    else if (character === ">") angleDepth--;
+    else if (character === "[") squareDepth++;
+    else if (character === "]") squareDepth--;
+    else if (character === "(") parenDepth++;
+    else if (character === ")") parenDepth--;
+    else if (character === separator && angleDepth === 0 && squareDepth === 0 && parenDepth === 0) {
+      result.push(value.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  result.push(value.slice(start).trim());
+  return result.filter(Boolean);
 }

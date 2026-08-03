@@ -6,7 +6,7 @@ const document: LexicalDocument = { id: "doc:1", canonicalId: "code:1", workspac
 describe("lexical document contract", () => {
   it("defines the complete, finite document kind set", () => {
     expect(LEXICAL_DOCUMENT_KINDS).toEqual(["repo", "file", "code", "section", "contract", "contractSpec", "operation", "workflow", "entity", "package", "evidence"]);
-    expect(LEXICAL_PROJECTION_SCHEMA_VERSION).toBe("1");
+    expect(LEXICAL_PROJECTION_SCHEMA_VERSION).toBe("4");
   });
   it("requires stable identity and lifecycle fields", () => {
     expect(document).toMatchObject({ workspaceId: "workspace:1", repoId: "repo:1", canonicalId: "code:1", active: true, sourceHash: "hash", batchId: "batch:1", renderRef: "render:1" });
@@ -23,9 +23,14 @@ describe("lexical index health contract", () => {
 
 describe("lexical search contract", () => {
   it("uses a workspace-scoped query and global top-k", () => {
-    const query: LexicalQuery = { workspaceId: "workspace:1", text: "find handler" };
+    const query: LexicalQuery = {
+      workspaceId: "workspace:1",
+      generation: "generation:1",
+      text: "find handler"
+    };
     const options: LexicalSearchOptions = { topK: 5 };
     expect(query.workspaceId).toBe("workspace:1");
+    expect(query.generation).toBe("generation:1");
     expect(options.topK).toBe(5);
   });
   it("uses one-based ordered ranks with stable hit identity", () => {

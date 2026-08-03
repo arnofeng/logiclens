@@ -9,6 +9,7 @@
 // ---------------------------------------------------------------------------
 
 import { describe, expect, it } from "vitest";
+import { makeTestSchema } from "../helpers/schemaModel.js";
 import {
   normalizeSemanticTarget,
   traceSemanticGraph,
@@ -110,12 +111,7 @@ function schemaDef(opts: {
     fileId: opts.file ?? `file:his-backend:ruoyi-common/src/main/java/com/ruoyi/common/core/domain/${opts.name}.java`,
     evidenceId: sid("ev"),
     canonicalKey: opts.name.toLowerCase(),
-    specJson: serializeSpec({
-      kind: "schema",
-      name: opts.name,
-      language: "java",
-      fields: (opts.fields ?? []).map(f => ({ optional: false, ...f }))
-    }),
+    specJson: serializeSpec(makeTestSchema({ name: opts.name, language: "java", repoId: opts.repo, fileId: opts.file, fields: opts.fields })),
     confidence: 0.9
   };
 }

@@ -22,6 +22,7 @@ import { createQueryPlanningContext } from "../src/features/ask/planningContext.
 import { planQuestion } from "../src/features/ask/planner.js";
 import { AppClient } from "../src/interfaces/sdk/client.js";
 import type { QueryPlanningContext } from "../src/features/ask/planningContext.js";
+import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
 
 async function installFixtureLanguagePlugin(repo: string): Promise<void> {
   const pluginDir = path.join(repo, ".repohelix", "plugins", "fixture-csharp");
@@ -326,8 +327,19 @@ describe("plugin architecture foundation", () => {
     expect(parserRegistry.parsers()).toEqual(registryBefore);
 
     const queryClient = new AppClient({ cwd: firstCwd }, firstConfig);
-    (queryClient as unknown as { getDb(): Promise<unknown> }).getDb = async () => ({ async query() { return []; } });
+    (queryClient as unknown as { getDb(): Promise<unknown> }).getDb = async () => ({
+      async query(cypher: string) {
+        return cypher.includes("SchemaGenerationState")
+          ? [{
+            activeGeneration: "generation:planning-test",
+            activeRevision: "revision:planning-test"
+          }]
+          : [];
+      }
+    });
     (queryClient as unknown as { getLexicalProviderGate(): Promise<unknown> }).getLexicalProviderGate = async () => ({
+      workspaceId: deriveWorkspaceId(firstConfig.systemName),
+      generation: "generation:planning-test",
       configuredProvider: "auto",
       effectiveProvider: "planning-test",
       status: "unavailable",
@@ -450,9 +462,9 @@ describe("plugin architecture foundation", () => {
         kind: "schema",
         repoId: "repo:orders",
         filePath: "Dtos/OrderDto.cs",
-        name: "OrderDto",
-        language: "csharp",
-        fields: [{ name: "id", type: "string", optional: false }],
+        declaration: { languageId: "csharp", repoId: "repo:orders", resolutionScopeId: "source", canonicalName: "OrderDto" },
+        displayName: "OrderDto",
+        shape: { kind: "object", fields: [{ sourceName: "id", serializedName: "id", type: { kind: "resolved", expression: { kind: "scalar", name: "string" } }, optional: false, nullable: false, sourceLocation: { fileId: "repo:orders:Dtos/OrderDto.cs", line: 3 } }] },
         evidence: {
           repoId: "repo:orders",
           filePath: "Dtos/OrderDto.cs",
@@ -473,7 +485,7 @@ describe("plugin architecture foundation", () => {
     )).toBe(true);
     expect(facts.contractSpecs.some((spec) =>
       spec.specKind === "schema" &&
-      spec.specJson.includes("\"language\":\"csharp\"")
+      spec.specJson.includes("\"languageId\":\"csharp\"")
     )).toBe(true);
     expect(facts.evidence.map((item) => item.rule)).toContain("aspnet-http-attribute");
   });
@@ -507,9 +519,9 @@ describe("plugin architecture foundation", () => {
         ctx.emit.schema({
           repoId: file.repoId,
           filePath: file.path,
-          name: "OrderDto",
-          language: "csharp",
-          fields: [{ name: "id", type: "string", optional: false }],
+          declaration: { languageId: "csharp", repoId: file.repoId, resolutionScopeId: "source", canonicalName: "OrderDto" },
+          displayName: "OrderDto",
+          shape: { kind: "object", fields: [{ sourceName: "id", serializedName: "id", type: { kind: "resolved", expression: { kind: "scalar", name: "string" } }, optional: false, nullable: false, sourceLocation: { fileId: file.fileId, line: 1 } }] },
           evidence: {
             filePath: file.path,
             line: 1,
@@ -520,7 +532,7 @@ describe("plugin architecture foundation", () => {
         });
       },
       postExtract(ctx) {
-        if (ctx.facts.schemas().some((schema) => schema.name === "OrderDto")) {
+        if (ctx.facts.schemas().some((schema) => schema.displayName === "OrderDto")) {
           ctx.emit.packageUsage({
             repoId: "repo:orders",
             filePath: "Orders.csproj",
@@ -559,7 +571,57 @@ describe("plugin architecture foundation", () => {
     const facts = builder.build();
 
     expect(facts.contractSpecs.some((spec) => spec.specKind === "schema" && spec.specJson.includes("OrderDto"))).toBe(true);
+    expect(facts.contractSpecs.find((spec) => spec.specKind === "schema")?.fileId).toBe(parsedFiles[0]!.fileId);
+    expect(facts.contractSpecs.find((spec) => spec.specKind === "schema")?.specJson)
+      .toContain(`\"fileId\":\"${parsedFiles[0]!.fileId}\"`);
     expect(facts.packageUsages.some((usage) => usage.packageName === "Microsoft.AspNetCore.App")).toBe(true);
+  });
+
+  it("rejects plugin schema fields that invent a non-canonical source identity", async () => {
+    const extractor = adaptFactExtractor({
+      name: "plugin:invalid-schema-file-id",
+      languages: ["csharp"],
+      extract(ctx) {
+        const file = ctx.files.byLanguage("csharp")[0]!;
+        ctx.emit.schema({
+          repoId: file.repoId,
+          filePath: file.path,
+          declaration: {
+            languageId: "csharp",
+            repoId: file.repoId,
+            resolutionScopeId: "source",
+            canonicalName: "Invalid"
+          },
+          displayName: "Invalid",
+          shape: {
+            kind: "object",
+            fields: [{
+              sourceName: "id",
+              serializedName: "id",
+              type: { kind: "resolved", expression: { kind: "scalar", name: "string" } },
+              optional: false,
+              nullable: false,
+              sourceLocation: { fileId: `${file.repoId}:${file.path}` }
+            }]
+          },
+          evidence: { filePath: file.path, line: 1, raw: "Invalid", rule: "fixture", confidence: "exact" }
+        });
+      }
+    });
+    const parsedFiles = [{
+      repoId: "repo:invalid",
+      fileId: "file:repo:invalid:Invalid.cs",
+      path: "Invalid.cs",
+      language: "csharp",
+      hash: "hash",
+      loc: 1,
+      source: "public record Invalid(string Id);",
+      imports: [],
+      symbols: [],
+      calls: []
+    }];
+    await expect(extractor.extract({ repos: [], parsedFiles }, new ExtractionBuilder()))
+      .rejects.toThrow(/non-canonical fileId/u);
   });
 
   it("preserves public HTTP fields through the postExtract fact view", async () => {

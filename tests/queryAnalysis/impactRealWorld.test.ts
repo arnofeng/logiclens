@@ -18,6 +18,7 @@
 // ---------------------------------------------------------------------------
 
 import { describe, expect, it } from "vitest";
+import { makeTestSchema } from "../helpers/schemaModel.js";
 import { analyzeImpact } from "../../src/core/contracts/impact/impactEngine.js";
 import { serializeSpec } from "../../src/core/contracts/spec.js";
 import type { ContractSpecNode, SemanticRelationEdge } from "../../src/core/parsing/types.js";
@@ -105,14 +106,7 @@ function makeSchemaSpec(opts: {
     fileId: opts.fileId ?? `file:${opts.repoId}:src/dto/${opts.name}.ts`,
     evidenceId: sid("ev"),
     canonicalKey: opts.name.toLowerCase(),
-    specJson: serializeSpec({
-      kind: "schema",
-      name: opts.name,
-      language: opts.language ?? "typescript",
-      fields: opts.fields.map(f => ({
-        name: f.name, type: f.type, optional: f.optional ?? false, sourceLine: f.sourceLine
-      }))
-    }),
+    specJson: serializeSpec(makeTestSchema({ name: opts.name, language: opts.language, repoId: opts.repoId, fileId: opts.fileId, fields: opts.fields })),
     confidence: opts.confidence ?? 0.8
   };
 }

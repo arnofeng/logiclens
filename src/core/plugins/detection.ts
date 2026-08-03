@@ -6,6 +6,7 @@ import type { AppConfig } from "../../config/schema.js";
 import { BRAND } from "../../shared/branding.js";
 import { toPosixPath } from "../../shared/path.js";
 import { isGeneratedFile } from "../../shared/generatedFile.js";
+import { PLUGIN_API_VERSION } from "./adapter.js";
 
 export type DetectLanguageRule = {
   id: string;
@@ -74,7 +75,7 @@ function languageManifest(id: string, extensions: string[], markers: string[], r
     manifest: {
       name: id,
       version: "0.0.0-bundled",
-      pluginApiVersion: "1.0.0",
+      pluginApiVersion: PLUGIN_API_VERSION,
       capabilities: ["language"],
       languages: [language]
     } as DetectPluginManifest,

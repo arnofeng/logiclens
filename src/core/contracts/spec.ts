@@ -1,4 +1,22 @@
 import type { ContractSpecKind } from "../parsing/types.js";
+import type { SchemaFieldSpec, TypeDeclarationIdentity, TypeExpression, TypeInstanceIdentity } from "../schema/model.js";
+export type {
+  CanonicalTypeExpression,
+  ExternalTypeSymbolIdentity,
+  ResolutionContextFact,
+  ResolutionScopeDependencyFact,
+  ResolutionScopeIdentity,
+  SchemaBehaviorFingerprint,
+  SchemaDependencyFact,
+  SchemaDiagnosticFact,
+  SchemaFieldSpec,
+  SchemaFieldType,
+  SchemaRelationProvenance,
+  SchemaRootReference,
+  TypeDeclarationIdentity,
+  TypeExpression,
+  TypeInstanceIdentity
+} from "../schema/model.js";
 
 export type HttpEndpointSpec = {
   kind: "http-endpoint";
@@ -24,19 +42,16 @@ export type EventSpec = {
   version?: string;
 };
 
-export type SchemaFieldSpec = {
-  name: string;
-  type: string;
-  optional: boolean;
-  nullable?: boolean;
-  sourceLine?: number;
-};
-
 export type SchemaSpec = {
+  id: string;
   kind: "schema";
-  name: string;
-  language: string;
-  fields: SchemaFieldSpec[];
+  identity: TypeInstanceIdentity;
+  declaration: TypeDeclarationIdentity;
+  displayName: string;
+  languageId: string;
+  shape:
+    | { kind: "object"; fields: SchemaFieldSpec[]; baseTypes?: TypeExpression[] }
+    | { kind: "enum"; values: string[] };
 };
 
 export type GrpcStreaming = "unary" | "client-stream" | "server-stream" | "bidi-stream";
@@ -68,6 +83,7 @@ export type DubboMethodSpec = {
 
 export type GraphQLOperationSpec = {
   kind: "graphql-operation";
+  requestTypes?: string[];
   operationType: "query" | "mutation" | "subscription";
   field: string;             // 根字段名 "user" / "createOrder"
   operationName?: string;    // 命名 operation（client 侧）
@@ -115,6 +131,47 @@ export function serializeSpec(spec: ContractSpec): string {
 
 export function deserializeSpec(json: string): ContractSpec {
   return JSON.parse(json) as ContractSpec;
+}
+
+export function schemaFields(spec: SchemaSpec): SchemaFieldSpec[] {
+  return spec.shape.kind === "object" ? spec.shape.fields : [];
+}
+
+export function schemaFieldTypeName(field: SchemaFieldSpec): string {
+  const fieldType = field.type;
+  if (fieldType.kind === "resolved") return canonicalTypeDisplay(fieldType.expression);
+  if (fieldType.kind === "external-symbol") return fieldType.symbol.canonicalName;
+  return typeExpressionDisplay(fieldType.normalizedExpression);
+}
+
+function canonicalTypeDisplay(expression: import("../schema/model.js").CanonicalTypeExpression): string {
+  switch (expression.kind) {
+    case "scalar": return expression.name;
+    case "type-instance": return expression.declarationId;
+    case "array": return `array<${canonicalTypeDisplay(expression.element)}>`;
+    case "map": return `map<${canonicalTypeDisplay(expression.key)},${canonicalTypeDisplay(expression.value)}>`;
+    case "union": return expression.members.map(canonicalTypeDisplay).join(" | ");
+    case "intersection": return expression.members.map(canonicalTypeDisplay).join(" & ");
+    case "nullable": return `${canonicalTypeDisplay(expression.inner)}?`;
+    case "literal": return expression.value;
+    case "wildcard": return expression.type ? `? ${expression.bound ?? ""} ${canonicalTypeDisplay(expression.type)}`.trim() : "?";
+  }
+}
+
+function typeExpressionDisplay(expression: import("../schema/model.js").TypeExpression): string {
+  switch (expression.kind) {
+    case "reference":
+    case "variable": return expression.name;
+    case "application": return `${typeExpressionDisplay(expression.target)}<${expression.arguments.map(typeExpressionDisplay).join(",")}>`;
+    case "array": return `array<${typeExpressionDisplay(expression.element)}>`;
+    case "map": return `map<${typeExpressionDisplay(expression.key)},${typeExpressionDisplay(expression.value)}>`;
+    case "union": return expression.members.map(typeExpressionDisplay).join(" | ");
+    case "intersection": return expression.members.map(typeExpressionDisplay).join(" & ");
+    case "nullable": return `${typeExpressionDisplay(expression.inner)}?`;
+    case "literal": return expression.value;
+    case "opaque": return expression.canonicalText;
+    case "wildcard": return expression.type ? `? ${expression.bound ?? ""} ${typeExpressionDisplay(expression.type)}`.trim() : "?";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -227,6 +284,7 @@ const GO_PRIMITIVE_MAP: Record<string, NormalizedPrimitive> = {
   rune: "number",
   error: "string",
   any: "any",
+  "interface{}": "any",
   // common stdlib
   "time.Time": "date"
 };
@@ -358,9 +416,9 @@ export function normalizePrimitiveType(
       const base = normalizePrimitiveType(language, inner);
       return base.endsWith("?") ? `array<${base.slice(0, -1)}>?` : `array<${base}>`;
     }
-    // unwrap proto map
-    if (/^map<.+>$/.test(trimmed)) {
-      return "map";
+    const protoMap = unwrapGenericType(trimmed, ["map"]);
+    if (protoMap?.typeArgs.length === 2) {
+      return `map<${normalizePrimitiveType(language, protoMap.typeArgs[0]!)},${normalizePrimitiveType(language, protoMap.typeArgs[1]!)}>`;
     }
   }
 
@@ -377,7 +435,13 @@ export function normalizePrimitiveType(
     }
 
     // dict[K,V] / Dict[K,V] → map
-    if (/^(?:dict|Dict)\[.+\]$/.test(trimmed)) return "map";
+    const dictMatch = trimmed.match(/^(?:dict|Dict)\[(.+)\]$/);
+    if (dictMatch) {
+      const arguments_ = splitTopLevelTypeArgs(dictMatch[1]!);
+      if (arguments_.length === 2) {
+        return `map<${normalizePrimitiveType(language, arguments_[0]!)},${normalizePrimitiveType(language, arguments_[1]!)}>`;
+      }
+    }
   }
 
   // -- lookup in language-specific map ---------------------------------------
@@ -391,7 +455,12 @@ export function normalizePrimitiveType(
   if (hit) return hit;
 
   // -- Go map: map[K]V → map ------------------------------------------------
-  if (language === "go" && /^map\[/.test(trimmed)) return "map";
+  if (language === "go") {
+    const goMap = trimmed.match(/^map\[([^\]]+)\](.+)$/);
+    if (goMap) {
+      return `map<${normalizePrimitiveType(language, goMap[1]!)},${normalizePrimitiveType(language, goMap[2]!)}>`;
+    }
+  }
 
   // -- Go pointer deref: *T → T? (nullable) -----------------------------------
   if (language === "go" && trimmed.startsWith("*")) {
@@ -405,19 +474,22 @@ export function normalizePrimitiveType(
     return `array<${base}>`;
   }
 
-  // -- generic array / list / map: Array<T>, List<T>, Map<K,V> ---------------
-  const genericArray = unwrapGenericType(trimmed, ["Array", "List", "Set", "ArrayList", "LinkedList", "HashSet", "TreeSet"]);
-  if (genericArray) {
-    const inner = genericArray.typeArgs[0];
-    if (inner) {
-      const base = normalizePrimitiveType(language, inner);
-      return `array<${base}>`;
+  // Java's legacy extractor still normalizes JDK containers here. Other
+  // languages preserve applications losslessly so their adapter can match a
+  // wrapper only after canonical symbol resolution (and respect shadowing).
+  if (language === "java") {
+    const genericArray = unwrapGenericType(trimmed, ["List", "Set", "ArrayList", "LinkedList", "HashSet", "TreeSet"]);
+    if (genericArray) {
+      const inner = genericArray.typeArgs[0];
+      if (inner) {
+        const base = normalizePrimitiveType(language, inner);
+        return `array<${base}>`;
+      }
     }
-  }
-  // Map<K,V>, Record<K,V>, HashMap<>, Dictionary<>
-  const genericMap = unwrapGenericType(trimmed, ["Map", "Record", "HashMap", "Dictionary", "ConcurrentHashMap", "TreeMap", "LinkedHashMap"]);
-  if (genericMap) {
-    return `map`;
+    const genericMap = unwrapGenericType(trimmed, ["Map", "HashMap", "ConcurrentHashMap", "TreeMap", "LinkedHashMap"]);
+    if (genericMap?.typeArgs.length === 2) {
+      return `map<${normalizePrimitiveType(language, genericMap.typeArgs[0]!)},${normalizePrimitiveType(language, genericMap.typeArgs[1]!)}>`;
+    }
   }
 
   // Return the original name for complex / user-defined types
@@ -480,8 +552,8 @@ function splitTopLevelTypeArgs(s: string): string[] {
   let depth = 0;
   let current = "";
   for (const ch of s) {
-    if (ch === "<") depth++;
-    else if (ch === ">") depth--;
+    if (ch === "<" || ch === "[" || ch === "(") depth++;
+    else if (ch === ">" || ch === "]" || ch === ")") depth--;
     if (ch === "," && depth === 0) {
       parts.push(current.trim());
       current = "";

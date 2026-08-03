@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { makeTestSchema } from "../helpers/schemaModel.js";
 import { resolveSemanticRelations } from "../../src/core/contracts/resolver.js";
 import type { ContractSpecNode, RepoContractEdge, SemanticRelationEdge } from "../../src/core/parsing/types.js";
 import { serializeSpec } from "../../src/core/contracts/spec.js";
@@ -70,12 +71,7 @@ function makeSchemaSpec(opts: {
     fileId: `file:${opts.repoId}:test`,
     evidenceId: `ev:${opts.id}`,
     canonicalKey: opts.name.toLowerCase(),
-    specJson: serializeSpec({
-      kind: "schema",
-      name: opts.name,
-      language: "java",
-      fields: []
-    }),
+    specJson: serializeSpec(makeTestSchema({ name: opts.name, language: "java", repoId: opts.repoId })),
     confidence: 0.85
   };
 }
@@ -198,7 +194,7 @@ describe("Resolver Integration", () => {
     const high: SemanticRelationEdge = {
       fromSpecId: "spec:a",
       toSpecId: "schema-ref:Target",
-      kind: "REQUEST_SCHEMA",
+      kind: "USES_SCHEMA",
       evidenceId: "ev:high",
       reason: "high",
       confidence: 0.9
@@ -212,7 +208,7 @@ describe("Resolver Integration", () => {
       existingSemanticRelations: [high]
     });
 
-    expect(edges.filter((edge) => edge.kind === "REQUEST_SCHEMA")).toEqual([{
+    expect(edges.filter((edge) => edge.kind === "USES_SCHEMA")).toEqual([{
       ...high,
       toSpecId: target.id
     }]);

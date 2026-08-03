@@ -3,7 +3,9 @@ import type { FactCollector } from "../factCollector.js";
 import { parsedCodeFiles, contract, evidence, pushContractEvidence, pushContractSpec, pushGraphqlContract } from "./shared.js";
 import { parseGraphQLSchema, formatGraphQLType, getBaseTypeName, getLineFromLoc } from "./graphqlSchema.js";
 import { isObjectType, isInputObjectType, isNonNullType } from "graphql";
-import { normalizeName } from "../../../../shared/path.js";
+import { createSchemaSpec, schemaFieldFromNormalized } from "../../../schema/model.js";
+import { normalizePrimitiveType } from "../../spec.js";
+import { resolutionScopeIdForFile } from "../../../schema/sourceScopes.js";
 
 export const graphqlSdlExtractor = compatExtractor({
   name: "builtin:graphql-sdl",
@@ -24,20 +26,22 @@ export const graphqlSdlExtractor = compatExtractor({
 
         if (isObjectType(type) || isInputObjectType(type)) {
           const fields = type.getFields();
-          const extractedFields = Object.values(fields).map((field) => ({
-            name: field.name,
-            type: formatGraphQLType(field.type),
+          const extractedFields = Object.values(fields).map((field) => schemaFieldFromNormalized({
+            languageId: "graphql",
+            repoId: file.repoId,
+            fileId: file.fileId,
+            sourceName: field.name,
+            normalizedType: normalizePrimitiveType("graphql", formatGraphQLType(field.type)),
             optional: !isNonNullType(field.type),
             nullable: !isNonNullType(field.type),
-            sourceLine: getLineFromLoc(field.astNode?.loc)
+            line: getLineFromLoc(field.astNode?.loc)
           }));
 
-          const schemaSpec = {
-            kind: "schema" as const,
-            name: typeName,
-            language: "graphql",
-            fields: extractedFields
-          };
+          const schemaSpec = createSchemaSpec({
+            declaration: { languageId: "graphql", repoId: file.repoId, resolutionScopeId: resolutionScopeIdForFile(file), canonicalName: typeName },
+            displayName: typeName,
+            shape: { kind: "object", fields: extractedFields }
+          });
 
           const schemaContract = contract("schema", typeName, `GraphQL Schema ${typeName}`);
           const typeLine = getLineFromLoc(type.astNode?.loc) ?? 1;
@@ -86,10 +90,10 @@ export const graphqlSdlExtractor = compatExtractor({
             ? field.astNode.loc.source.body.slice(field.astNode.loc.start, field.astNode.loc.end)
             : `${fieldName}`;
 
-          const requestType = field.args.length > 0 ? getBaseTypeName(field.args[0].type) : undefined;
+          const requestTypes = field.args.map((argument) => getBaseTypeName(argument.type));
           const responseType = getBaseTypeName(field.type);
 
-          const { contractNode: opContract, evidenceNode: opEvidence } = pushGraphqlContract({
+          pushGraphqlContract({
             collector,
             file,
             operationType,
@@ -99,35 +103,11 @@ export const graphqlSdlExtractor = compatExtractor({
             raw: rawFieldText.slice(0, 160),
             rule: "graphql-sdl-operation",
             confidence: 1.0,
-            requestType,
+            requestTypes,
             responseType,
             source: "sdl"
           });
 
-          const opSpecId = `spec:${normalizeName(`${opContract.id}:${opEvidence.id}`)}`;
-
-          // Connect operation to response type
-          collector.addSemanticRelation({
-            fromSpecId: opSpecId,
-            toSpecId: `schema-ref:${responseType}`,
-            kind: "RESPONSE_SCHEMA",
-            evidenceId: opEvidence.id,
-            reason: `GraphQL operation response schema: ${responseType}`,
-            confidence: 1.0
-          });
-
-          // Connect operation to all argument types
-          for (const arg of field.args) {
-            const argBaseType = getBaseTypeName(arg.type);
-            collector.addSemanticRelation({
-              fromSpecId: opSpecId,
-              toSpecId: `schema-ref:${argBaseType}`,
-              kind: "REQUEST_SCHEMA",
-              evidenceId: opEvidence.id,
-              reason: `GraphQL operation request schema for arg ${arg.name}: ${argBaseType}`,
-              confidence: 1.0
-            });
-          }
         }
       }
     }

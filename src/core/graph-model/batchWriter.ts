@@ -6,6 +6,9 @@ import { upsertParsedFiles, type UpsertParsedFilesOptions } from "./upsert.js";
 
 export type GraphFactsBatch = {
   batchId: string;
+  workspaceId: string;
+  generation: string;
+  systemName: string;
   repos: RepoNode[];
   parsedFiles: ParsedGraphFile[];
   contracts?: CrossRepoExtraction;
@@ -16,5 +19,11 @@ export function createBatchId(prefix = "batch"): string {
 }
 
 export async function writeGraphFactsBatch(db: GraphDB, batch: GraphFactsBatch, options: UpsertParsedFilesOptions): Promise<void> {
-  await upsertParsedFiles(db, batch.parsedFiles, { ...options, batchId: batch.batchId }, batch.repos);
+  await upsertParsedFiles(db, batch.parsedFiles, {
+    ...options,
+    batchId: batch.batchId,
+    workspaceId: batch.workspaceId,
+    generation: batch.generation,
+    systemName: batch.systemName
+  }, batch.repos);
 }

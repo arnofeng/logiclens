@@ -32,7 +32,9 @@ import { ensureBuiltinGrammarsForParsedFiles, registerBuiltinParsers } from "../
 import { registerBuiltinsForParsedFiles } from "../plugins/bootstrap.js";
 import { confidenceFor } from "../../shared/confidence.js";
 import { getBrandedEnv } from "../../shared/branding.js";
+import { sourceDirectory } from "../../shared/path.js";
 import type { ProgressReporter } from "../../shared/progress.js";
+import { collapseSemanticRelations } from "../contracts/extraction/dedup.js";
 
 export type ContainsEdge = {
   fromId: string;
@@ -60,6 +62,9 @@ export type SectionReferencesFileEdge = {
 
 export type GraphFactsBatch = {
   batchId: string;
+  workspaceId: string;
+  generation: string;
+  systemName: string;
   indexedAt: string;
   repos: RepoNode[];
   parsedFiles: ParsedGraphFile[];
@@ -120,6 +125,9 @@ function writeFactTrace(message: string): void {
 
 export async function buildGraphFactsBatch(input: {
   batchId: string;
+  workspaceId: string;
+  generation: string;
+  systemName: string;
   indexedAt?: string;
   repos: RepoNode[];
   parsedFiles: ParsedGraphFile[];
@@ -148,7 +156,7 @@ export async function buildGraphFactsBatch(input: {
   const baseFactsStarted = Date.now();
   writeFactTrace(`Facts base start: files=${input.parsedFiles.length} codeFiles=${codeFiles.length}`);
   for (const file of input.parsedFiles) {
-    files.push({ id: file.fileId, repoId: file.repoId, path: file.path, language: file.language, hash: file.hash, loc: file.loc, batchId: input.batchId, indexedAt, active: true });
+    files.push({ id: file.fileId, repoId: file.repoId, path: file.path, directory: sourceDirectory(file.path), language: file.language, hash: file.hash, loc: file.loc, batchId: input.batchId, indexedAt, active: true });
     contains.push({ fromId: file.repoId, toId: file.fileId });
     if (isParsedDocument(file)) {
       for (const section of file.sections) {
@@ -229,6 +237,9 @@ export async function buildGraphFactsBatch(input: {
 
   return {
     batchId: input.batchId,
+    workspaceId: input.workspaceId,
+    generation: input.generation,
+    systemName: input.systemName,
     indexedAt,
     repos: input.repos,
     parsedFiles: input.parsedFiles,
@@ -255,7 +266,8 @@ export async function buildGraphFactsBatch(input: {
     repoDependencies: uniqueByKey(crossRepo.repoDependencies.map((edge) => ({ ...edge, batchId: input.batchId, active: true })), (edge) => `${edge.fromRepoId}:${edge.toRepoId}:${edge.dependencyType}:${edge.evidenceId}`),
     contractSpecs: uniqueById(crossRepo.contractSpecs.map((spec) => ({ ...spec, batchId: input.batchId, indexedAt, active: true }))),
     contractSpecEdges: uniqueByKey(crossRepo.contractSpecEdges.map((edge) => ({ ...edge, batchId: input.batchId, active: true })), (edge) => `${edge.contractId}:${edge.specId}:${edge.evidenceId}`),
-    semanticRelations: uniqueByKey(crossRepo.semanticRelations.map((edge) => ({ ...edge, batchId: input.batchId, active: true })), (edge) => `${edge.fromSpecId}:${edge.toSpecId}:${edge.kind}:${edge.evidenceId}`),
+    semanticRelations: collapseSemanticRelations(crossRepo.semanticRelations)
+      .map((edge) => ({ ...edge, batchId: input.batchId, active: true })),
     crossRepo
   };
 }

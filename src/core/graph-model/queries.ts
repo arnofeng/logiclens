@@ -25,6 +25,7 @@ import type {
   SemanticRelationEdge
 } from "../parsing/types.js";
 import { isKnownSpecKind } from "../parsing/types.js";
+import { publicGraphActivePredicate, publicGraphGenerationPredicate, withPublicGraphSnapshotParams, type PublicGraphReadSnapshot } from "./readSnapshot.js";
 
 export interface DependencyQueryOptions {
   limit?: number;
@@ -220,32 +221,35 @@ export function entityTraceRowKey(row: EntityTraceRow): string {
   ]);
 }
 
-export async function searchCode(db: GraphDB, term: string, limit = 20): Promise<CodeSearchRow[]> {
+export async function searchCode(db: GraphDB, snapshot: PublicGraphReadSnapshot, term: string, limit = 20): Promise<CodeSearchRow[]> {
   const lowered = term.toLowerCase();
   return db.query<CodeSearchRow>(
-    `MATCH (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(c:Code)
+    `MATCH (r:Repo)-[rf:CONTAINS]->(f:File)-[fc:CONTAINS]->(c:Code)
      WHERE (lower(c.name) CONTAINS $term OR lower(c.qualifiedName) CONTAINS $term OR lower(c.summary) CONTAINS $term OR lower(f.path) CONTAINS $term)
-       AND (f.active IS NULL OR f.active = true) AND (c.active IS NULL OR c.active = true)
+       AND ${publicGraphGenerationPredicate("r", "rf", "f", "fc", "c")}
+       AND ${publicGraphActivePredicate("f", "c")}
      RETURN r.name AS repoName, f.path AS filePath, c.id AS codeId, c.kind AS kind, c.name AS name, c.qualifiedName AS qualifiedName, c.summary AS summary, c.signature AS signature
      LIMIT ${limit};`,
-    { term: lowered }
+    withPublicGraphSnapshotParams(snapshot, { term: lowered })
   );
 }
 
-export async function searchSections(db: GraphDB, term: string, limit = 20): Promise<SectionSearchRow[]> {
+export async function searchSections(db: GraphDB, snapshot: PublicGraphReadSnapshot, term: string, limit = 20): Promise<SectionSearchRow[]> {
   const lowered = term.toLowerCase();
   return db.query<SectionSearchRow>(
-    `MATCH (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(s:Section)
+    `MATCH (r:Repo)-[rf:CONTAINS]->(f:File)-[fs:CONTAINS]->(s:Section)
      WHERE (lower(s.heading) CONTAINS $term OR lower(s.summary) CONTAINS $term OR lower(s.text) CONTAINS $term OR lower(f.path) CONTAINS $term)
-       AND (f.active IS NULL OR f.active = true) AND (s.active IS NULL OR s.active = true)
+       AND ${publicGraphGenerationPredicate("r", "rf", "f", "fs", "s")}
+       AND ${publicGraphActivePredicate("f", "s")}
      RETURN r.name AS repoName, f.path AS filePath, s.id AS sectionId, s.heading AS heading, s.level AS level, s.startLine AS startLine, s.endLine AS endLine, s.summary AS summary, s.text AS text
      LIMIT ${limit};`,
-    { term: lowered }
+    withPublicGraphSnapshotParams(snapshot, { term: lowered })
   );
 }
 
 export async function findExactCode(
   db: GraphDB,
+  snapshot: PublicGraphReadSnapshot,
   input: { identifiers: readonly string[]; paths: readonly string[]; scopedPaths?: readonly RepoScopedPath[]; limit: number }
 ): Promise<CodeSearchRow[]> {
   if (input.limit < 1 || (input.identifiers.length === 0 && input.paths.length === 0 && !input.scopedPaths?.length)) return [];
@@ -265,18 +269,20 @@ export async function findExactCode(
     params[`scopedPath${index}`] = target.path;
   }
   return db.query<CodeSearchRow>(
-    `MATCH (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(c:Code)
+    `MATCH (r:Repo)-[rf:CONTAINS]->(f:File)-[fc:CONTAINS]->(c:Code)
      WHERE (${conditions.join(" OR ")})
-       AND (f.active IS NULL OR f.active = true) AND (c.active IS NULL OR c.active = true)
+       AND ${publicGraphGenerationPredicate("r", "rf", "f", "fc", "c")}
+       AND ${publicGraphActivePredicate("f", "c")}
      RETURN r.name AS repoName, f.path AS filePath, c.id AS codeId, c.kind AS kind, c.name AS name, c.qualifiedName AS qualifiedName, c.summary AS summary, c.signature AS signature
      ORDER BY r.name, f.path, c.qualifiedName, c.id
      LIMIT ${input.limit};`,
-    params
+    withPublicGraphSnapshotParams(snapshot, params)
   );
 }
 
 export async function findSectionsAtExactPaths(
   db: GraphDB,
+  snapshot: PublicGraphReadSnapshot,
   paths: readonly string[],
   limit: number,
   scopedPaths: readonly RepoScopedPath[] = []
@@ -294,90 +300,97 @@ export async function findSectionsAtExactPaths(
     params[`scopedPath${index}`] = target.path;
   }
   return db.query<SectionSearchRow>(
-    `MATCH (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(s:Section)
+    `MATCH (r:Repo)-[rf:CONTAINS]->(f:File)-[fs:CONTAINS]->(s:Section)
      WHERE (${conditions.join(" OR ")})
-       AND (f.active IS NULL OR f.active = true) AND (s.active IS NULL OR s.active = true)
+       AND ${publicGraphGenerationPredicate("r", "rf", "f", "fs", "s")}
+       AND ${publicGraphActivePredicate("f", "s")}
      RETURN r.name AS repoName, f.path AS filePath, s.id AS sectionId, s.heading AS heading, s.level AS level, s.startLine AS startLine, s.endLine AS endLine, s.summary AS summary, s.text AS text
      ORDER BY r.name, f.path, s.startLine, s.id
      LIMIT ${limit};`,
-    params
+    withPublicGraphSnapshotParams(snapshot, params)
   );
 }
 
-export async function findImpactSections(db: GraphDB, term: string, limit = 50): Promise<SectionSearchRow[]> {
+export async function findImpactSections(db: GraphDB, snapshot: PublicGraphReadSnapshot, term: string, limit = 50): Promise<SectionSearchRow[]> {
   const lowered = term.toLowerCase();
   return db.query<SectionSearchRow>(
-    `MATCH (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(s:Section)
+    `MATCH (r:Repo)-[rf:CONTAINS]->(f:File)-[fs:CONTAINS]->(s:Section)
      WHERE (lower(s.heading) CONTAINS $term OR lower(s.summary) CONTAINS $term OR lower(s.text) CONTAINS $term OR lower(f.path) CONTAINS $term)
-       AND (f.active IS NULL OR f.active = true) AND (s.active IS NULL OR s.active = true)
+       AND ${publicGraphGenerationPredicate("r", "rf", "f", "fs", "s")}
+       AND ${publicGraphActivePredicate("f", "s")}
      RETURN r.name AS repoName, f.path AS filePath, s.id AS sectionId, s.heading AS heading, s.level AS level, s.startLine AS startLine, s.endLine AS endLine, s.summary AS summary, s.text AS text
      LIMIT ${limit};`,
-    { term: lowered }
+    withPublicGraphSnapshotParams(snapshot, { term: lowered })
   );
 }
 
-export async function sectionsDocumentingCode(db: GraphDB, codeIds: string[], limit = 50): Promise<SectionSearchRow[]> {
+export async function sectionsDocumentingCode(db: GraphDB, snapshot: PublicGraphReadSnapshot, codeIds: string[], limit = 50): Promise<SectionSearchRow[]> {
   if (codeIds.length === 0) return [];
   return db.query<SectionSearchRow>(
-    `MATCH (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(s:Section)-[:DOCUMENTS]->(c:Code)
+    `MATCH (r:Repo)-[rf:CONTAINS]->(f:File)-[fs:CONTAINS]->(s:Section)-[sc:DOCUMENTS]->(c:Code)
      WHERE c.id IN $codeIds
-       AND (f.active IS NULL OR f.active = true) AND (s.active IS NULL OR s.active = true) AND (c.active IS NULL OR c.active = true)
+       AND ${publicGraphGenerationPredicate("r", "rf", "f", "fs", "s", "sc", "c")}
+       AND ${publicGraphActivePredicate("f", "s", "c")}
      RETURN r.name AS repoName, f.path AS filePath, s.id AS sectionId, s.heading AS heading, s.level AS level, s.startLine AS startLine, s.endLine AS endLine, s.summary AS summary, s.text AS text
      LIMIT ${limit};`,
-    { codeIds }
+    withPublicGraphSnapshotParams(snapshot, { codeIds })
   );
 }
 
-export async function findImpact(db: GraphDB, term: string): Promise<CodeSearchRow[]> {
+export async function findImpact(db: GraphDB, snapshot: PublicGraphReadSnapshot, term: string): Promise<CodeSearchRow[]> {
   const lowered = term.toLowerCase();
   return db.query<CodeSearchRow>(
-    `MATCH (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(c:Code)
+    `MATCH (r:Repo)-[rf:CONTAINS]->(f:File)-[fc:CONTAINS]->(c:Code)
      WHERE (lower(c.name) CONTAINS $term OR lower(c.qualifiedName) CONTAINS $term OR lower(c.signature) CONTAINS $term OR lower(f.path) CONTAINS $term)
-       AND (f.active IS NULL OR f.active = true) AND (c.active IS NULL OR c.active = true)
+       AND ${publicGraphGenerationPredicate("r", "rf", "f", "fc", "c")}
+       AND ${publicGraphActivePredicate("f", "c")}
      RETURN r.name AS repoName, f.path AS filePath, c.id AS codeId, c.kind AS kind, c.name AS name, c.qualifiedName AS qualifiedName, c.summary AS summary, c.signature AS signature
      LIMIT 50;`,
-    { term: lowered }
+    withPublicGraphSnapshotParams(snapshot, { term: lowered })
   );
 }
 
-export async function hasCodeSymbolMatch(db: GraphDB, term: string): Promise<boolean> {
+export async function hasCodeSymbolMatch(db: GraphDB, snapshot: PublicGraphReadSnapshot, term: string): Promise<boolean> {
   const rows = await db.query<{ found: boolean }>(
-    `MATCH (:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(c:Code)
+    `MATCH (r:Repo)-[rf:CONTAINS]->(f:File)-[fc:CONTAINS]->(c:Code)
      WHERE (c.name = $term OR c.qualifiedName = $term)
-       AND (f.active IS NULL OR f.active = true) AND (c.active IS NULL OR c.active = true)
+       AND ${publicGraphGenerationPredicate("r", "rf", "f", "fc", "c")}
+       AND ${publicGraphActivePredicate("f", "c")}
      RETURN true AS found
      LIMIT 1;`,
-    { term }
+    withPublicGraphSnapshotParams(snapshot, { term })
   );
   return rows.length > 0;
 }
 
-export async function findContractSourceSymbols(db: GraphDB, contractIds: string[], limit = 100): Promise<CodeSearchRow[]> {
+export async function findContractSourceSymbols(db: GraphDB, snapshot: PublicGraphReadSnapshot, contractIds: string[], limit = 100): Promise<CodeSearchRow[]> {
   if (contractIds.length === 0 || limit < 1) return [];
   return db.query<CodeSearchRow>(
-    `MATCH (c:Contract)-[hs:HAS_SPEC]->(s:ContractSpec), (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(code:Code)
+    `MATCH (c:Contract)-[hs:HAS_SPEC]->(s:ContractSpec), (r:Repo)-[rf:CONTAINS]->(f:File)-[fc:CONTAINS]->(code:Code)
      WHERE c.id IN $contractIds AND s.sourceSymbolId = code.id
-       AND (hs.active IS NULL OR hs.active = true)
-       AND (s.active IS NULL OR s.active = true)
-       AND (f.active IS NULL OR f.active = true) AND (code.active IS NULL OR code.active = true)
+       AND ${publicGraphGenerationPredicate("c", "hs", "s", "r", "rf", "f", "fc", "code")}
+       AND ${publicGraphActivePredicate("hs", "s", "f", "code")}
      RETURN r.name AS repoName, f.path AS filePath, code.id AS codeId, code.kind AS kind, code.name AS name, code.qualifiedName AS qualifiedName, code.summary AS summary, code.signature AS signature
      ORDER BY r.name, f.path, code.qualifiedName, code.id
      LIMIT ${limit};`,
-    { contractIds }
+    withPublicGraphSnapshotParams(snapshot, { contractIds })
   );
 }
 
-export async function listCode(db: GraphDB, limit = 50): Promise<CodeSearchRow[]> {
+export async function listCode(db: GraphDB, snapshot: PublicGraphReadSnapshot, limit = 50): Promise<CodeSearchRow[]> {
   return db.query<CodeSearchRow>(
-    `MATCH (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(c:Code)
-     WHERE (f.active IS NULL OR f.active = true) AND (c.active IS NULL OR c.active = true)
+    `MATCH (r:Repo)-[rf:CONTAINS]->(f:File)-[fc:CONTAINS]->(c:Code)
+     WHERE ${publicGraphGenerationPredicate("r", "rf", "f", "fc", "c")}
+       AND ${publicGraphActivePredicate("f", "c")}
      RETURN r.name AS repoName, f.path AS filePath, c.id AS codeId, c.kind AS kind, c.name AS name, c.qualifiedName AS qualifiedName, c.summary AS summary, c.signature AS signature
-     LIMIT ${limit};`
+     LIMIT ${limit};`,
+    withPublicGraphSnapshotParams(snapshot)
   );
 }
 
 export async function listDependencies(
   db: GraphDB,
+  snapshot: PublicGraphReadSnapshot,
   limitOrOptions?: number | DependencyQueryOptions
 ): Promise<DependencyRow[]> {
   const options: DependencyQueryOptions =
@@ -387,10 +400,10 @@ export async function listDependencies(
   const conditions = [
     "d.sourceContractId = c.id",
     "d.evidenceId = e.id",
-    "(d.active IS NULL OR d.active = true)",
-    "(e.active IS NULL OR e.active = true)"
+    publicGraphGenerationPredicate("from", "d", "to", "c", "e"),
+    publicGraphActivePredicate("d", "e")
   ];
-  const params: Record<string, any> = {};
+  const params: Record<string, GraphValue> = {};
 
   if (options.type) {
     conditions.push("d.dependencyType = $type");
@@ -442,12 +455,12 @@ export async function listDependencies(
      RETURN from.name AS fromRepo, to.name AS toRepo, d.dependencyType AS dependencyType, c.kind AS contractKind, c.key AS contractKey, e.filePath AS filePath, e.line AS line, e.raw AS raw, e.rule AS rule, e.confidence AS confidence
      ORDER BY CASE WHEN d.dependencyType IN ['package', 'import', 'api'] THEN 0 ELSE 1 END, from.name, to.name, d.dependencyType, c.kind, c.key, e.filePath, e.line
      LIMIT ${limit};`,
-    Object.keys(params).length > 0 ? params : undefined
+    withPublicGraphSnapshotParams(snapshot, params)
   );
   return rows.map((row) => ({ ...row, resolution: confidenceBand(row.confidence) }));
 }
 
-export async function listContracts(db: GraphDB, options: { limit?: number; kind?: ContractKind; repo?: string; direction?: "outgoing" | "incoming" } = {}): Promise<ContractSummaryRow[]> {
+export async function listContracts(db: GraphDB, snapshot: PublicGraphReadSnapshot, options: { limit?: number; kind?: ContractKind; repo?: string; direction?: "outgoing" | "incoming" } = {}): Promise<ContractSummaryRow[]> {
   if (options.direction && !options.repo) {
     throw new Error("direction requires repo");
   }
@@ -462,25 +475,27 @@ export async function listContracts(db: GraphDB, options: { limit?: number; kind
   if (options.repo) {
     dbOptions.repo = repoId(options.repo);
   }
-  return db.listContracts(dbOptions);
+  return db.listContracts(snapshot, dbOptions);
 }
 
-async function traceContractRole(db: GraphDB, contractIds: string[], rel: string, role: ContractRole, limit: number): Promise<ContractTraceRow[]> {
+async function traceContractRole(db: GraphDB, snapshot: PublicGraphReadSnapshot, contractIds: string[], rel: string, role: ContractRole, limit: number): Promise<ContractTraceRow[]> {
   if (contractIds.length === 0 || limit < 1) return [];
   const rows = await db.query<Omit<ContractTraceRow, "resolution">>(
     `MATCH (r:Repo)-[edge:${rel}]->(c:Contract), (e:Evidence)
      WHERE c.id IN $contractIds AND edge.evidenceId = e.id
-       AND (edge.active IS NULL OR edge.active = true) AND (e.active IS NULL OR e.active = true)
+       AND ${publicGraphGenerationPredicate("r", "edge", "c", "e")}
+       AND ${publicGraphActivePredicate("edge", "e")}
      RETURN c.id AS contractId, c.kind AS kind, c.key AS key, c.name AS name, '${role}' AS role, r.name AS repoName, e.filePath AS filePath, e.line AS line, edge.evidenceId AS evidenceId, e.raw AS raw, e.rule AS rule, e.confidence AS confidence
      ORDER BY r.name, e.filePath, e.line, c.id
      LIMIT ${limit};`,
-    { contractIds }
+    withPublicGraphSnapshotParams(snapshot, { contractIds })
   );
   return rows.map((row) => ({ ...row, resolution: confidenceBand(row.confidence) }));
 }
 
 export async function traceContractWithQueryCount(
   db: GraphDB,
+  snapshot: PublicGraphReadSnapshot,
   kind: ContractKind,
   value: string,
   method?: string,
@@ -495,12 +510,12 @@ export async function traceContractWithQueryCount(
   queryCount = 1;
   let contracts = methodKey
     ? await db.query<{ id: string }>(
-      "MATCH (c:Contract) WHERE c.kind = $kind AND (c.key = $key OR c.key = $methodKey) RETURN c.id AS id;",
-      { kind, key, methodKey }
+      `MATCH (c:Contract) WHERE c.kind = $kind AND (c.key = $key OR c.key = $methodKey) AND ${publicGraphGenerationPredicate("c")} RETURN c.id AS id;`,
+      withPublicGraphSnapshotParams(snapshot, { kind, key, methodKey })
     )
     : await db.query<{ id: string }>(
-      "MATCH (c:Contract) WHERE c.kind = $kind AND c.key = $key RETURN c.id AS id;",
-      { kind, key }
+      `MATCH (c:Contract) WHERE c.kind = $kind AND c.key = $key AND ${publicGraphGenerationPredicate("c")} RETURN c.id AS id;`,
+      withPublicGraphSnapshotParams(snapshot, { kind, key })
     );
   // Fallback for API contracts: if no exact match, try matching by path suffix
   // because storage keys may include an HTTP method prefix (e.g.
@@ -513,8 +528,8 @@ export async function traceContractWithQueryCount(
   if (contracts.length === 0 && kind === "api" && !methodKey) {
     queryCount += 1;
     contracts = await db.query<{ id: string }>(
-      "MATCH (c:Contract) WHERE c.kind = $kind AND c.key ENDS WITH $suffix RETURN c.id AS id;",
-      { kind, suffix: `:${key}` }
+      `MATCH (c:Contract) WHERE c.kind = $kind AND c.key ENDS WITH $suffix AND ${publicGraphGenerationPredicate("c")} RETURN c.id AS id;`,
+      withPublicGraphSnapshotParams(snapshot, { kind, suffix: `:${key}` })
     );
   }
   const contractIds = contracts.map((contract) => contract.id);
@@ -522,7 +537,7 @@ export async function traceContractWithQueryCount(
   const rows: ContractTraceRow[] = [];
   for (const [rel, role] of [["OWNS_PACKAGE", "owner"], ["PRODUCES", "producer"], ["CONSUMES", "consumer"], ["SHARES_CONTRACT", "shared"]] as const) {
     queryCount += 1;
-    rows.push(...await traceContractRole(db, contractIds, rel, role, limit));
+    rows.push(...await traceContractRole(db, snapshot, contractIds, rel, role, limit));
   }
   return {
     rows: rows.sort((a, b) => a.repoName.localeCompare(b.repoName) || a.role.localeCompare(b.role) || a.line - b.line).slice(0, limit),
@@ -534,17 +549,19 @@ export async function traceContractWithQueryCount(
   }
 }
 
-export async function traceContract(db: GraphDB, kind: ContractKind, value: string, method?: string, limit = 100): Promise<ContractTraceRow[]> {
-  return (await traceContractWithQueryCount(db, kind, value, method, limit)).rows;
+export async function traceContract(db: GraphDB, snapshot: PublicGraphReadSnapshot, kind: ContractKind, value: string, method?: string, limit = 100): Promise<ContractTraceRow[]> {
+  return (await traceContractWithQueryCount(db, snapshot, kind, value, method, limit)).rows;
 }
 
-export async function listUnresolvedEvidence(db: GraphDB, limit = 100): Promise<UnresolvedEvidenceRow[]> {
+export async function listUnresolvedEvidence(db: GraphDB, snapshot: PublicGraphReadSnapshot, limit = 100): Promise<UnresolvedEvidenceRow[]> {
   const rows = await db.query<Omit<UnresolvedEvidenceRow, "reason" | "resolution">>(
-    `MATCH (r:Repo)-[:HAS_EVIDENCE]->(e:Evidence)
-     WHERE e.rule = 'dynamic-unresolved' AND (e.active IS NULL OR e.active = true)
+    `MATCH (r:Repo)-[re:HAS_EVIDENCE]->(e:Evidence)
+     WHERE e.rule = 'dynamic-unresolved' AND ${publicGraphGenerationPredicate("r", "re", "e")}
+       AND ${publicGraphActivePredicate("e")}
      RETURN r.name AS repoName, e.filePath AS filePath, e.line AS line, e.raw AS raw, e.rule AS rule
      ORDER BY r.name, e.filePath, e.line
-     LIMIT ${limit};`
+     LIMIT ${limit};`,
+    withPublicGraphSnapshotParams(snapshot)
   );
   return rows.map((row) => ({
     ...row,
@@ -555,6 +572,7 @@ export async function listUnresolvedEvidence(db: GraphDB, limit = 100): Promise<
 
 export async function listLowConfidenceRelations(
   db: GraphDB,
+  snapshot: PublicGraphReadSnapshot,
   options: { minConfidence: number; limit: number }
 ): Promise<LowConfidenceRelationRow[]> {
   const rels = [
@@ -568,36 +586,39 @@ export async function listLowConfidenceRelations(
     rels.map(([rel, role]) => db.query<LowConfidenceRelationRow>(
       `MATCH (r:Repo)-[edge:${rel}]->(c:Contract), (e:Evidence)
        WHERE edge.evidenceId = e.id
-         AND (edge.active IS NULL OR edge.active = true)
-         AND (e.active IS NULL OR e.active = true)
+         AND ${publicGraphGenerationPredicate("r", "edge", "c", "e")}
+         AND ${publicGraphActivePredicate("edge", "e")}
          AND edge.confidence < $minConfidence
        RETURN e.id AS evidenceId, r.name AS repoName, c.kind AS contractKind, c.key AS contractKey,
               '${role}' AS role, edge.confidence AS confidence, e.filePath AS filePath,
               e.line AS line, e.rule AS rule, e.raw AS raw
        LIMIT $limit;`,
-      options
+      withPublicGraphSnapshotParams(snapshot, options)
     ))
   );
   return results.flat();
 }
 
-export async function listProducerContracts(db: GraphDB): Promise<ProducerContractRow[]> {
+export async function listProducerContracts(db: GraphDB, snapshot: PublicGraphReadSnapshot): Promise<ProducerContractRow[]> {
   return db.query<ProducerContractRow>(
     `MATCH (r:Repo)-[p:PRODUCES]->(c:Contract)
-     WHERE (p.active IS NULL OR p.active = true)
-     RETURN c.kind AS contractKind, c.key AS contractKey, r.name AS repoName;`
+     WHERE ${publicGraphGenerationPredicate("r", "p", "c")}
+       AND ${publicGraphActivePredicate("p")}
+     RETURN c.kind AS contractKind, c.key AS contractKey, r.name AS repoName;`,
+    withPublicGraphSnapshotParams(snapshot)
   );
 }
 
-export async function listContractKeysByKind(db: GraphDB, kind: ContractKind): Promise<ContractKeyRow[]> {
+export async function listContractKeysByKind(db: GraphDB, snapshot: PublicGraphReadSnapshot, kind: ContractKind): Promise<ContractKeyRow[]> {
   return db.query<ContractKeyRow>(
-    "MATCH (c:Contract) WHERE c.kind = $kind RETURN c.key AS key;",
-    { kind }
+    `MATCH (c:Contract) WHERE c.kind = $kind AND ${publicGraphGenerationPredicate("c")} RETURN c.key AS key;`,
+    withPublicGraphSnapshotParams(snapshot, { kind })
   );
 }
 
 export async function listRepoContractKeysByRole(
   db: GraphDB,
+  snapshot: PublicGraphReadSnapshot,
   input: { kind: ContractKind; role: Extract<ContractRole, "producer" | "consumer" | "owner" | "shared"> }
 ): Promise<RepoContractKeyRow[]> {
   const rel = input.role === "owner"
@@ -609,14 +630,16 @@ export async function listRepoContractKeysByRole(
         : "SHARES_CONTRACT";
   return db.query<RepoContractKeyRow>(
     `MATCH (r:Repo)-[edge:${rel}]->(c:Contract)
-     WHERE c.kind = $kind AND (edge.active IS NULL OR edge.active = true)
+     WHERE c.kind = $kind AND ${publicGraphGenerationPredicate("r", "edge", "c")}
+       AND ${publicGraphActivePredicate("edge")}
      RETURN r.name AS repoName, c.key AS key;`,
-    { kind: input.kind }
+    withPublicGraphSnapshotParams(snapshot, { kind: input.kind })
   );
 }
 
 export async function listRepoContractCountsByRole(
   db: GraphDB,
+  snapshot: PublicGraphReadSnapshot,
   input: { kind: ContractKind; role: Extract<ContractRole, "producer" | "consumer" | "owner" | "shared"> }
 ): Promise<RepoContractCountRow[]> {
   const rel = input.role === "owner"
@@ -628,23 +651,30 @@ export async function listRepoContractCountsByRole(
         : "SHARES_CONTRACT";
   return db.query<RepoContractCountRow>(
     `MATCH (r:Repo)-[edge:${rel}]->(c:Contract)
-     WHERE c.kind = $kind AND (edge.active IS NULL OR edge.active = true)
+     WHERE c.kind = $kind AND ${publicGraphGenerationPredicate("r", "edge", "c")}
+       AND ${publicGraphActivePredicate("edge")}
      RETURN r.name AS repoName, count(c) AS count;`,
-    { kind: input.kind }
+    withPublicGraphSnapshotParams(snapshot, { kind: input.kind })
   );
 }
 
-export async function loadActiveSemanticGraph(db: GraphDB): Promise<ActiveSemanticGraph> {
+export async function loadActiveSemanticGraph(db: GraphDB, snapshot: PublicGraphReadSnapshot): Promise<ActiveSemanticGraph> {
   const [specRows, relRows] = await Promise.all([
     db.query<SpecRow>(
       `MATCH (s:ContractSpec)
-       WHERE (s.active IS NULL OR s.active = true)
-       RETURN ${SPEC_RETURN}`
+       WHERE s.workspaceId = $workspaceId AND s.generation = $generation
+         AND ${publicGraphActivePredicate("s")}
+       RETURN ${SPEC_RETURN}`,
+      withPublicGraphSnapshotParams(snapshot)
     ),
     db.query<SemanticRelRow>(
       `MATCH (a:ContractSpec)-[r:SEMANTIC_REL]->(b:ContractSpec)
-       WHERE (r.active IS NULL OR r.active = true)
-       RETURN ${SEMANTIC_REL_RETURN}`
+       WHERE a.workspaceId = $workspaceId AND a.generation = $generation
+         AND r.workspaceId = $workspaceId AND r.generation = $generation
+         AND b.workspaceId = $workspaceId AND b.generation = $generation
+         AND ${publicGraphActivePredicate("a", "r", "b")}
+       RETURN ${SEMANTIC_REL_RETURN}`,
+      withPublicGraphSnapshotParams(snapshot)
     )
   ]);
 
@@ -660,75 +690,87 @@ export async function loadActiveSemanticGraph(db: GraphDB): Promise<ActiveSemant
   };
 }
 
-export async function loadActiveKnownContractSpecs(db: GraphDB): Promise<ContractSpecNode[]> {
+export async function loadActiveKnownContractSpecs(db: GraphDB, snapshot: PublicGraphReadSnapshot): Promise<ContractSpecNode[]> {
   const rows = await db.query<SpecRow>(
     `MATCH (s:ContractSpec)
-     WHERE (s.active IS NULL OR s.active = true)
-     RETURN ${SPEC_RETURN}`
+     WHERE s.workspaceId = $workspaceId AND s.generation = $generation
+       AND ${publicGraphActivePredicate("s")}
+     RETURN ${SPEC_RETURN}`,
+    withPublicGraphSnapshotParams(snapshot)
   );
   return rows.filter((row) => isKnownSpecKind(row.specKind)).map(rowToContractSpec);
 }
 
-export async function loadActiveRepoDependencies(db: GraphDB): Promise<RepoDependencyEdge[]> {
+export async function loadActiveRepoDependencies(db: GraphDB, snapshot: PublicGraphReadSnapshot): Promise<RepoDependencyEdge[]> {
   const rows = await db.query<DepEdgeRow>(
     `MATCH (from:Repo)-[d:DEPENDS_ON]->(to:Repo)
-     WHERE (d.active IS NULL OR d.active = true)
-     RETURN ${DEP_EDGE_RETURN}`
+     WHERE from.workspaceId = $workspaceId AND from.generation = $generation
+       AND d.workspaceId = $workspaceId AND d.generation = $generation
+       AND to.workspaceId = $workspaceId AND to.generation = $generation
+       AND ${publicGraphActivePredicate("d")}
+     RETURN ${DEP_EDGE_RETURN}`,
+    withPublicGraphSnapshotParams(snapshot)
   );
   return rows.map(rowToDepEdge);
 }
 
-export async function traceEntity(db: GraphDB, value: string, limit = 100): Promise<EntityTraceRow[]> {
+export async function traceEntity(db: GraphDB, snapshot: PublicGraphReadSnapshot, value: string, limit = 100): Promise<EntityTraceRow[]> {
   const lowered = value.toLowerCase();
   const rows: EntityTraceRow[] = [];
   rows.push(...await db.query<EntityTraceRow>(
-    `MATCH (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(c:Code)-[m:MENTIONS]->(e:Entity)
+    `MATCH (r:Repo)-[rf:CONTAINS]->(f:File)-[fc:CONTAINS]->(c:Code)-[m:MENTIONS]->(e:Entity)
      WHERE (lower(e.name) CONTAINS $term OR lower(c.name) CONTAINS $term OR lower(c.qualifiedName) CONTAINS $term)
-       AND (f.active IS NULL OR f.active = true) AND (c.active IS NULL OR c.active = true)
+       AND ${publicGraphGenerationPredicate("r", "rf", "f", "fc", "c", "m", "e")}
+       AND ${publicGraphActivePredicate("f", "c")}
      RETURN e.id AS entityId, e.name AS entityName, r.name AS repoName, 'code' AS sourceKind, c.qualifiedName AS name, f.path AS filePath, c.startLine AS line, 'mentions' AS role, c.signature AS evidence, m.confidence AS confidence
      LIMIT ${limit};`,
-    { term: lowered }
+    withPublicGraphSnapshotParams(snapshot, { term: lowered })
   ));
   rows.push(...await db.query<EntityTraceRow>(
-    `MATCH (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(s:Section)-[m:MENTIONS]->(e:Entity)
+    `MATCH (r:Repo)-[rf:CONTAINS]->(f:File)-[fs:CONTAINS]->(s:Section)-[m:MENTIONS]->(e:Entity)
      WHERE (lower(e.name) CONTAINS $term OR lower(s.heading) CONTAINS $term OR lower(s.text) CONTAINS $term)
-       AND (f.active IS NULL OR f.active = true) AND (s.active IS NULL OR s.active = true)
+       AND ${publicGraphGenerationPredicate("r", "rf", "f", "fs", "s", "m", "e")}
+       AND ${publicGraphActivePredicate("f", "s")}
      RETURN e.id AS entityId, e.name AS entityName, r.name AS repoName, 'section' AS sourceKind, s.heading AS name, f.path AS filePath, s.startLine AS line, 'mentions' AS role, s.text AS evidence, m.confidence AS confidence
      LIMIT ${limit};`,
-    { term: lowered }
+    withPublicGraphSnapshotParams(snapshot, { term: lowered })
   ));
   for (const [rel, role] of [["OWNS_PACKAGE", "owner"], ["PRODUCES", "producer"], ["CONSUMES", "consumer"], ["SHARES_CONTRACT", "shared"]] as const) {
     rows.push(...await db.query<EntityTraceRow>(
-      `MATCH (r:Repo)-[:${rel}]->(c:Contract)-[m:CONTRACT_MENTIONS]->(e:Entity), (ev:Evidence)
+      `MATCH (r:Repo)-[edge:${rel}]->(c:Contract)-[m:CONTRACT_MENTIONS]->(e:Entity), (ev:Evidence)
        WHERE m.evidenceId = ev.id AND ev.repoId = r.id
          AND (lower(e.name) CONTAINS $term OR lower(c.name) CONTAINS $term OR lower(c.key) CONTAINS $term)
-         AND (m.active IS NULL OR m.active = true) AND (ev.active IS NULL OR ev.active = true)
+         AND ${publicGraphGenerationPredicate("r", "edge", "c", "m", "e", "ev")}
+         AND ${publicGraphActivePredicate("edge", "m", "ev")}
        RETURN e.id AS entityId, e.name AS entityName, r.name AS repoName, 'contract' AS sourceKind, c.kind + ':' + c.key AS name, ev.filePath AS filePath, ev.line AS line, '${role}' AS role, ev.raw AS evidence, m.confidence AS confidence
        LIMIT ${limit};`,
-      { term: lowered }
+      withPublicGraphSnapshotParams(snapshot, { term: lowered })
     ));
   }
   rows.push(...await db.query<EntityTraceRow>(
     `MATCH (r:Repo)-[p:PARTICIPATES_IN]->(o:Operation)
      WHERE (lower(o.entityName) CONTAINS $term OR lower(o.description) CONTAINS $term)
-       AND (p.active IS NULL OR p.active = true)
+       AND ${publicGraphGenerationPredicate("r", "p", "o")}
+       AND ${publicGraphActivePredicate("p")}
      RETURN 'entity:' + lower(o.entityName) AS entityId, o.entityName AS entityName, r.name AS repoName, 'operation' AS sourceKind, o.verb AS name, '' AS filePath, 0 AS line, p.role AS role, o.description AS evidence, p.confidence AS confidence
      LIMIT ${limit};`,
-    { term: lowered }
+    withPublicGraphSnapshotParams(snapshot, { term: lowered })
   ));
   rows.push(...await db.query<EntityTraceRow>(
     `MATCH (w:Workflow)-[s:WORKFLOW_STEP]->(o:Operation)<-[p:PARTICIPATES_IN]-(r:Repo)
      WHERE (lower(w.name) CONTAINS $term OR lower(o.entityName) CONTAINS $term OR lower(w.description) CONTAINS $term)
-       AND (s.active IS NULL OR s.active = true) AND (p.active IS NULL OR p.active = true)
+       AND ${publicGraphGenerationPredicate("w", "s", "o", "p", "r")}
+       AND ${publicGraphActivePredicate("s", "p")}
      RETURN 'entity:' + lower(o.entityName) AS entityId, o.entityName AS entityName, r.name AS repoName, 'workflow' AS sourceKind, w.name AS name, '' AS filePath, s.step AS line, p.role AS role, w.description AS evidence, s.confidence AS confidence
      LIMIT ${limit};`,
-    { term: lowered }
+    withPublicGraphSnapshotParams(snapshot, { term: lowered })
   ));
   return [...new Map(rows.map((row) => [`${row.repoName}:${row.sourceKind}:${row.name}:${row.line}:${row.role}`, row])).values()].slice(0, limit);
 }
 
 export async function traceEntitiesExactWithQueryCount(
   db: GraphDB,
+  snapshot: PublicGraphReadSnapshot,
   values: readonly string[],
   limit = 100
 ): Promise<CountedQueryResult<EntityTraceRow>> {
@@ -736,20 +778,22 @@ export async function traceEntitiesExactWithQueryCount(
   let attemptedQueryCount = 0;
   try {
   const normalizedValues = [...new Set(values.map((value) => value.normalize("NFC").toLowerCase()))].sort();
-  const params = { values: normalizedValues };
+  const params = withPublicGraphSnapshotParams(snapshot, { values: normalizedValues });
   const perQueryLimit = limit;
   const queries: Array<() => Promise<EntityTraceRow[]>> = [
     () => db.query<EntityTraceRow>(
-      `MATCH (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(c:Code)-[m:MENTIONS]->(e:Entity)
+      `MATCH (r:Repo)-[rf:CONTAINS]->(f:File)-[fc:CONTAINS]->(c:Code)-[m:MENTIONS]->(e:Entity)
        WHERE (lower(e.name) IN $values OR lower(c.name) IN $values OR lower(c.qualifiedName) IN $values OR c.id IN $values)
-         AND (f.active IS NULL OR f.active = true) AND (c.active IS NULL OR c.active = true)
+         AND ${publicGraphGenerationPredicate("r", "rf", "f", "fc", "c", "m", "e")}
+         AND ${publicGraphActivePredicate("f", "c")}
        RETURN e.id AS entityId, e.name AS entityName, r.name AS repoName, 'code' AS sourceKind, c.qualifiedName AS name, f.path AS filePath, c.startLine AS line, 'mentions' AS role, c.signature AS evidence, m.confidence AS confidence, c.id AS sourceId, '' AS evidenceId
        ORDER BY r.id, c.id, e.id, f.path, c.startLine, m.confidence
        LIMIT ${perQueryLimit};`, params),
     () => db.query<EntityTraceRow>(
-      `MATCH (r:Repo)-[:CONTAINS]->(f:File)-[:CONTAINS]->(s:Section)-[m:MENTIONS]->(e:Entity)
+      `MATCH (r:Repo)-[rf:CONTAINS]->(f:File)-[fs:CONTAINS]->(s:Section)-[m:MENTIONS]->(e:Entity)
        WHERE (lower(e.name) IN $values OR lower(s.heading) IN $values OR s.id IN $values)
-         AND (f.active IS NULL OR f.active = true) AND (s.active IS NULL OR s.active = true)
+         AND ${publicGraphGenerationPredicate("r", "rf", "f", "fs", "s", "m", "e")}
+         AND ${publicGraphActivePredicate("f", "s")}
        RETURN e.id AS entityId, e.name AS entityName, r.name AS repoName, 'section' AS sourceKind, s.heading AS name, f.path AS filePath, s.startLine AS line, 'mentions' AS role, s.text AS evidence, m.confidence AS confidence, s.id AS sourceId, '' AS evidenceId
        ORDER BY r.id, s.id, e.id, f.path, s.startLine, m.confidence
        LIMIT ${perQueryLimit};`, params)
@@ -759,8 +803,8 @@ export async function traceEntitiesExactWithQueryCount(
       `MATCH (r:Repo)-[edge:${rel}]->(c:Contract)-[m:CONTRACT_MENTIONS]->(e:Entity), (ev:Evidence)
        WHERE m.evidenceId = ev.id AND ev.repoId = r.id
          AND (lower(e.name) IN $values OR lower(c.name) IN $values OR lower(c.key) IN $values OR lower(c.id) IN $values)
-         AND (edge.active IS NULL OR edge.active = true)
-         AND (m.active IS NULL OR m.active = true) AND (ev.active IS NULL OR ev.active = true)
+         AND ${publicGraphGenerationPredicate("r", "edge", "c", "m", "e", "ev")}
+         AND ${publicGraphActivePredicate("edge", "m", "ev")}
        RETURN e.id AS entityId, e.name AS entityName, r.name AS repoName, 'contract' AS sourceKind, c.kind + ':' + c.key AS name, ev.filePath AS filePath, ev.line AS line, '${role}' AS role, ev.raw AS evidence, m.confidence AS confidence, c.id AS sourceId, ev.id AS evidenceId
        ORDER BY r.id, c.id, e.id, ev.id, ev.filePath, ev.line, m.confidence
        LIMIT ${perQueryLimit};`, params));
@@ -769,14 +813,16 @@ export async function traceEntitiesExactWithQueryCount(
     () => db.query<EntityTraceRow>(
       `MATCH (r:Repo)-[p:PARTICIPATES_IN]->(o:Operation)
        WHERE (lower(o.entityName) IN $values OR lower(o.verb) IN $values OR o.id IN $values)
-         AND (p.active IS NULL OR p.active = true)
+         AND ${publicGraphGenerationPredicate("r", "p", "o")}
+         AND ${publicGraphActivePredicate("p")}
        RETURN 'entity:' + lower(o.entityName) AS entityId, o.entityName AS entityName, r.name AS repoName, 'operation' AS sourceKind, o.verb AS name, '' AS filePath, 0 AS line, p.role AS role, o.description AS evidence, p.confidence AS confidence, o.id AS sourceId, p.evidenceId AS evidenceId
        ORDER BY r.id, o.id, p.evidenceId, p.role, p.confidence
        LIMIT ${perQueryLimit};`, params),
     () => db.query<EntityTraceRow>(
       `MATCH (w:Workflow)-[s:WORKFLOW_STEP]->(o:Operation)<-[p:PARTICIPATES_IN]-(r:Repo)
        WHERE (lower(w.name) IN $values OR lower(o.entityName) IN $values OR w.id IN $values OR o.id IN $values)
-         AND (s.active IS NULL OR s.active = true) AND (p.active IS NULL OR p.active = true)
+         AND ${publicGraphGenerationPredicate("w", "s", "o", "p", "r")}
+         AND ${publicGraphActivePredicate("s", "p")}
        RETURN 'entity:' + lower(o.entityName) AS entityId, o.entityName AS entityName, r.name AS repoName, 'workflow' AS sourceKind, w.name AS name, '' AS filePath, s.step AS line, p.role AS role, w.description AS evidence, s.confidence AS confidence, w.id AS sourceId, s.evidenceId AS evidenceId
        ORDER BY w.id, s.step, o.id, r.id, s.evidenceId, p.evidenceId, p.role
        LIMIT ${perQueryLimit};`, params)
@@ -797,10 +843,11 @@ export async function traceEntitiesExactWithQueryCount(
 
 export async function traceEntitiesExact(
   db: GraphDB,
+  snapshot: PublicGraphReadSnapshot,
   values: readonly string[],
   limit = 100
 ): Promise<EntityTraceRow[]> {
-  return (await traceEntitiesExactWithQueryCount(db, values, limit)).rows;
+  return (await traceEntitiesExactWithQueryCount(db, snapshot, values, limit)).rows;
 }
 
 // ---------------------------------------------------------------------------
@@ -835,6 +882,7 @@ export type SemanticTraceRow = {
  */
 export async function semanticTrace(
   db: GraphDB,
+  snapshot: PublicGraphReadSnapshot,
   specId: string,
   direction: "outgoing" | "incoming" | "both" = "both"
 ): Promise<SemanticTraceRow[]> {
@@ -842,7 +890,10 @@ export async function semanticTrace(
   if (direction === "outgoing") {
     cypher = `
       MATCH (a:ContractSpec {id: $specId})-[r:SEMANTIC_REL]->(b:ContractSpec)
-      WHERE r.active IS NULL OR r.active = true
+      WHERE a.workspaceId = $workspaceId AND a.generation = $generation
+        AND r.workspaceId = $workspaceId AND r.generation = $generation
+        AND b.workspaceId = $workspaceId AND b.generation = $generation
+        AND ${publicGraphActivePredicate("a", "r", "b")}
       RETURN a.id AS fromSpecId, b.id AS toSpecId, r.kind AS kind,
              r.reason AS reason, r.confidence AS confidence,
              a.canonicalKey AS fromContractKey, a.specKind AS fromSpecKind, a.repoId AS fromRepoId,
@@ -851,7 +902,10 @@ export async function semanticTrace(
   } else if (direction === "incoming") {
     cypher = `
       MATCH (a:ContractSpec)-[r:SEMANTIC_REL]->(b:ContractSpec {id: $specId})
-      WHERE r.active IS NULL OR r.active = true
+      WHERE a.workspaceId = $workspaceId AND a.generation = $generation
+        AND r.workspaceId = $workspaceId AND r.generation = $generation
+        AND b.workspaceId = $workspaceId AND b.generation = $generation
+        AND ${publicGraphActivePredicate("a", "r", "b")}
       RETURN a.id AS fromSpecId, b.id AS toSpecId, r.kind AS kind,
              r.reason AS reason, r.confidence AS confidence,
              a.canonicalKey AS fromContractKey, a.specKind AS fromSpecKind, a.repoId AS fromRepoId,
@@ -861,7 +915,10 @@ export async function semanticTrace(
     cypher = `
       MATCH (a:ContractSpec)-[r:SEMANTIC_REL]->(b:ContractSpec)
       WHERE (a.id = $specId OR b.id = $specId)
-        AND (r.active IS NULL OR r.active = true)
+        AND a.workspaceId = $workspaceId AND a.generation = $generation
+        AND r.workspaceId = $workspaceId AND r.generation = $generation
+        AND b.workspaceId = $workspaceId AND b.generation = $generation
+        AND ${publicGraphActivePredicate("a", "r", "b")}
       RETURN a.id AS fromSpecId, b.id AS toSpecId, r.kind AS kind,
              r.reason AS reason, r.confidence AS confidence,
              a.canonicalKey AS fromContractKey, a.specKind AS fromSpecKind, a.repoId AS fromRepoId,
@@ -869,24 +926,26 @@ export async function semanticTrace(
     `;
   }
 
-  return db.query<SemanticTraceRow>(cypher, { specId });
+  return db.query<SemanticTraceRow>(cypher, withPublicGraphSnapshotParams(snapshot, { specId }));
 }
 
 export async function explainSemanticRelationsBetweenRepos(
   db: GraphDB,
+  snapshot: PublicGraphReadSnapshot,
   fromRepoId: string,
   toRepoId: string
 ): Promise<SemanticTraceRow[]> {
   return db.query<SemanticTraceRow>(
     `MATCH (a:ContractSpec)-[r:SEMANTIC_REL]->(b:ContractSpec)
      WHERE a.repoId = $fromRepoId AND b.repoId = $toRepoId
-       AND (a.active IS NULL OR a.active = true)
-       AND (b.active IS NULL OR b.active = true)
-       AND (r.active IS NULL OR r.active = true)
+       AND a.workspaceId = $workspaceId AND a.generation = $generation
+       AND r.workspaceId = $workspaceId AND r.generation = $generation
+       AND b.workspaceId = $workspaceId AND b.generation = $generation
+       AND ${publicGraphActivePredicate("a", "r", "b")}
      RETURN a.id AS fromSpecId, b.id AS toSpecId, r.kind AS kind,
             r.reason AS reason, r.confidence AS confidence,
             a.canonicalKey AS fromContractKey, a.specKind AS fromSpecKind, a.repoId AS fromRepoId,
             b.canonicalKey AS toContractKey, b.specKind AS toSpecKind, b.repoId AS toRepoId;`,
-    { fromRepoId, toRepoId }
+    withPublicGraphSnapshotParams(snapshot, { fromRepoId, toRepoId })
   );
 }

@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GraphDB } from "../src/core/graph-model/db.js";
 
-const adapterState = vi.hoisted(() => ({ open: vi.fn() }));
+const adapterState = vi.hoisted(() => ({ open: vi.fn(), retainNativeHandleOnClose: vi.fn() }));
 
 vi.mock("../src/adapters/graph-db/kuzu/KuzuGraphDB.js", () => {
   class KuzuGraphDB {
     static open = adapterState.open;
+    retainNativeHandleOnClose() {
+      adapterState.retainNativeHandleOnClose();
+    }
   }
   return { KuzuGraphDB };
 });
@@ -19,6 +22,7 @@ describe("Kuzu lexical provider registration", () => {
   beforeEach(() => {
     vi.resetModules();
     adapterState.open.mockReset();
+    adapterState.retainNativeHandleOnClose.mockReset();
   });
 
   it("lazily exposes the conservative workspace full-text capability and binder", async () => {
@@ -45,6 +49,7 @@ describe("Kuzu lexical provider registration", () => {
 
     expect(store).toBeInstanceOf(KuzuWorkspaceLexicalStore);
     expect((store as unknown as { db: unknown }).db).toBe(db);
+    expect(adapterState.retainNativeHandleOnClose).toHaveBeenCalledOnce();
     expect(adapterState.open).not.toHaveBeenCalled();
   });
 

@@ -1,4 +1,4 @@
-export const LEXICAL_PROJECTION_SCHEMA_VERSION = "1";
+export const LEXICAL_PROJECTION_SCHEMA_VERSION = "4";
 export const TOKENIZER_VERSION = "1";
 
 export const LEXICAL_DOCUMENT_KINDS = ["repo", "file", "code", "section", "contract", "contractSpec", "operation", "workflow", "entity", "package", "evidence"] as const;
@@ -23,6 +23,7 @@ export interface LexicalDocument {
 
 export interface LexicalQuery {
   workspaceId: string;
+  generation: string;
   text: string;
 }
 

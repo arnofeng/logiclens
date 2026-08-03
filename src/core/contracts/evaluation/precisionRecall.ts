@@ -1,5 +1,6 @@
 import type { GraphDB } from "../../graph-model/db.js";
 import { loadActiveRepoDependencies, loadActiveSemanticGraph } from "../../graph-model/queries.js";
+import { withPublicGraphReadSnapshot } from "../../graph-model/readSnapshot.js";
 import type {
   ContractSpecNode,
   RepoDependencyEdge,
@@ -198,14 +199,15 @@ export function evaluatePrecisionRecallInMemory(
  *
  * This is suitable for runtime calibration against an already-indexed workspace.
  */
-export async function evaluatePrecisionRecall(db: GraphDB): Promise<PrecisionRecallReport> {
-  const [{ specs: allSpecs, relations: semanticRels }, legacyDeps] = await Promise.all([
-    loadActiveSemanticGraph(db),
-    loadActiveRepoDependencies(db)
-  ]);
-  const specs = allSpecs.filter(isKnownContractSpecNode);
-
-  return evaluatePrecisionRecallInMemory(semanticRels, specs, legacyDeps);
+export async function evaluatePrecisionRecall(db: GraphDB, workspaceId: string): Promise<PrecisionRecallReport> {
+  return withPublicGraphReadSnapshot(db, workspaceId, async (snapshot) => {
+    const [{ specs: allSpecs, relations: semanticRels }, legacyDeps] = await Promise.all([
+      loadActiveSemanticGraph(db, snapshot),
+      loadActiveRepoDependencies(db, snapshot)
+    ]);
+    const specs = allSpecs.filter(isKnownContractSpecNode);
+    return evaluatePrecisionRecallInMemory(semanticRels, specs, legacyDeps);
+  });
 }
 
 // ---------------------------------------------------------------------------

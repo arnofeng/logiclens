@@ -172,13 +172,29 @@ function createProtoParser(): LanguageParser {
         hash: input.hash,
         loc,
         source: input.source,
-        imports: [],
+        imports: protoImports(input.source, input.fileId),
         symbols: [],
         calls: []
       };
       return Promise.resolve(parsedFile);
     }
   };
+}
+
+function protoImports(source: string, sourceFileId: string): ParsedFile["imports"] {
+  const imports: ParsedFile["imports"] = [];
+  for (const [index, line] of source.split(/\r?\n/u).entries()) {
+    const match = line.match(/^\s*import\s+(?:(?:public|weak)\s+)?["']([^"']+)["']\s*;/u);
+    if (!match?.[1]) continue;
+    imports.push({
+      fileId: sourceFileId,
+      module: match[1],
+      raw: line.trim(),
+      line: index + 1,
+      importKind: "module"
+    });
+  }
+  return imports;
 }
 
 /**

@@ -15,7 +15,7 @@ async function context(sourceInput?: string, filePath = "AdditionalContracts.cs"
     endLine: symbol.endLine, signature: symbol.signature ?? "" }));
   const calls: PluginCallView[] = (parsed.calls ?? []).map((call) => ({ filePath, calleeName: call.calleeName,
     receiver: call.receiver, raw: call.raw, line: call.line }));
-  const view = { repoId: "repo:csharp", path: filePath, language: "csharp", source, symbols, imports: [], calls };
+  const view = { repoId: "repo:csharp", fileId: `file:repo:csharp:${filePath}`, path: filePath, language: "csharp", source, symbols, imports: [], calls };
   const files = Object.assign([view], { all: () => [view], byLanguage: (language: string) => language === "csharp" ? [view] : [],
     byRepo: (repoId: string) => repoId === "repo:csharp" ? [view] : [], get: () => view });
   return { source, symbols, files };
@@ -65,7 +65,7 @@ describe("C# additional contracts", () => {
     const schemas: PluginSchemaFact[] = [];
     const emitter = emit([], [], schemas);
     await csharpSchemaExtractor.postExtract?.({ repos: [], files, symbols, imports: [], calls: [], facts: { httpEndpoints: () => [], schemas: () => [], events: () => [], grpcMethods: () => [], packageUsages: () => [], frameworks: () => [], all: () => [] }, emit: emitter });
-    expect(schemas.some((schema) => schema.name === "EfOnlyEntity")).toBe(false);
+    expect(schemas.some((schema) => schema.displayName === "EfOnlyEntity")).toBe(false);
   });
 
   it("keeps typed receivers inside their lexical method and rejects generated owners", async () => {
