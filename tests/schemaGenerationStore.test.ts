@@ -7,7 +7,7 @@ import {
   SchemaGenerationStore,
   type OwnedSchemaFact
 } from "../src/core/schema/generationStore.js";
-import type { SchemaDependencyFact, SchemaRootReference, TypeDeclarationFact } from "../src/core/schema/model.js";
+import type { ResolutionContextFact, SchemaBehaviorFingerprint, SchemaDependencyFact, SchemaRootReference, TypeDeclarationFact } from "../src/core/schema/model.js";
 import { SCHEMA_INDEX_VERSION, typeDeclarationIdentityId } from "../src/core/schema/model.js";
 import { runSchemaReplacementConformance } from "./helpers/schemaReplacementConformance.js";
 
@@ -377,6 +377,25 @@ describe("schema generation and incremental revision lifecycle", () => {
         generation: ""
       }));
       for (const root of roots) {
+        const context: ResolutionContextFact & OwnedSchemaFact = {
+          id: root.resolutionContextId,
+          languageId: "typescript",
+          repoId: "repo:a",
+          resolutionScopeId: "module:shared",
+          fileId: root.ownerFileId,
+          sourceFileId: root.ownerFileId,
+          imports: [],
+          enclosingDeclarationIds: [],
+          genericBindings: [],
+          generation: ""
+        };
+        await generations.replaceSourceFacts({
+          generation: "generation:targeted",
+          kind: "resolutionContexts",
+          repoId: "repo:a",
+          fileId: root.ownerFileId,
+          facts: [context]
+        });
         await generations.replaceSourceFacts({
           generation: "generation:targeted",
           kind: "roots",
@@ -401,12 +420,54 @@ describe("schema generation and incremental revision lifecycle", () => {
           facts: [dependency]
         });
       }
+      const fingerprint: SchemaBehaviorFingerprint = {
+        id: "schema-behavior:typescript",
+        languageId: "typescript",
+        repoId: "repo:a",
+        resolutionScopeId: "module:shared",
+        adapterVersion: "1",
+        ruleSetVersion: "rules-1",
+        serializationVersion: "wire-1",
+        maxDepth: 12,
+        maxTypesPerRoot: 256,
+        buildInputsHash: "inputs",
+        generation: ""
+      };
+      await generations.replaceBehaviorFingerprints({
+        generation: "generation:targeted",
+        replacement: {
+          repoId: "repo:a",
+          languageId: "typescript",
+          resolutionScopeId: "module:shared",
+          facts: [fingerprint]
+        }
+      });
       await generations.commitFull("generation:targeted");
 
       expect((await generations.factsBySources("roots", [{ repoId: "repo:a", fileId: "file:a" }])).map((fact) => fact.id))
         .toEqual(["root:a"]);
       expect((await generations.rootsDependingOnDeclarations<SchemaRootReference & OwnedSchemaFact>(["declaration:changed"])).map((fact) => fact.id))
         .toEqual(["root:a"]);
+      expect(await generations.behaviorFingerprintsByRepos<SchemaBehaviorFingerprint>(["repo:missing", "repo:a"]))
+        .toEqual([{ ...fingerprint, generation: "generation:targeted" }]);
+      const pendingRoot: SchemaRootReference & OwnedSchemaFact = {
+        ...roots[0]!,
+        id: "root:pending",
+        ownerSpecId: "spec:pending",
+        ownerFileId: "file:pending",
+        sourceFileId: "file:pending",
+        resolutionContextId: "context:pending"
+      };
+      expect((await generations.affectedRoots({
+        touchedSources: [{ repoId: "repo:a", fileId: "file:b" }],
+        changedDeclarationIds: ["declaration:changed"],
+        changedResolutionScopes: [{
+          languageId: "typescript",
+          repoId: "repo:a",
+          resolutionScopeId: "module:shared"
+        }],
+        pendingRoots: [pendingRoot]
+      })).map((fact) => fact.id)).toEqual(["root:a", "root:b", "root:pending"]);
     } finally {
       await db.close();
     }

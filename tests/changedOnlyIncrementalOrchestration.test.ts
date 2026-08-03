@@ -41,6 +41,7 @@ const mocks = vi.hoisted(() => ({
     renewLease: vi.fn(),
     validateIncremental: vi.fn(),
     activeRevision: vi.fn(),
+    behaviorFingerprintsByRepos: vi.fn(),
     abandonIncremental: vi.fn(),
     rollback: vi.fn()
   }
@@ -95,6 +96,7 @@ vi.mock("../src/core/schema/generationStore.js", () => ({
     renewLease = mocks.generation.renewLease;
     validateIncremental = mocks.generation.validateIncremental;
     activeRevision = mocks.generation.activeRevision;
+    behaviorFingerprintsByRepos = mocks.generation.behaviorFingerprintsByRepos;
     abandonIncremental = mocks.generation.abandonIncremental;
     rollback = mocks.generation.rollback;
   }
@@ -327,6 +329,7 @@ describe("changed-only incremental orchestration", () => {
     mocks.generation.supersededGenerations.mockResolvedValue([]);
     mocks.generation.abortingGenerations.mockResolvedValue([]);
     mocks.generation.activeRevision.mockResolvedValue(ACTIVE_REVISION);
+    mocks.generation.behaviorFingerprintsByRepos.mockResolvedValue([]);
     mocks.buildCombinedIncrementalSchemaVisibility.mockResolvedValue(emptySchemaMutation());
     mocks.incrementalSchemaPublicGraphDelta.mockReturnValue({
       upsertSpecs: [],
@@ -371,6 +374,49 @@ describe("changed-only incremental orchestration", () => {
       generation: ACTIVE_GENERATION,
       revision: ACTIVE_REVISION
     });
+  });
+
+  it("forces a clean workspace rebuild when behavior changes without source changes", async () => {
+    const fixture = createFixture(false);
+    mocks.generation.behaviorFingerprintsByRepos.mockResolvedValue([{
+      id: "schema-behavior:old",
+      languageId: "typescript",
+      repoId: fixture.repo.id,
+      resolutionScopeId: "scope:main",
+      adapterVersion: "outdated-adapter",
+      ruleSetVersion: "non-java-schema-rules-v1",
+      serializationVersion: "schema-wire-v2",
+      maxDepth: 12,
+      maxTypesPerRoot: 256,
+      buildInputsHash: "inputs",
+      generation: ACTIVE_GENERATION
+    }]);
+    mocks.planIndexRun
+      .mockResolvedValueOnce({
+        publicationMode: "incremental",
+        activeGeneration: ACTIVE_GENERATION,
+        activeRevision: ACTIVE_REVISION,
+        runPath: "per-repo",
+        writeMode: "merge",
+        repoConfigs: fixture.config.repos,
+        initialRepoCount: 1,
+        batchSize: 0,
+        shouldUseCopyBulk: false
+      })
+      .mockRejectedValueOnce(new Error("clean workspace rebuild planned"));
+
+    await expect(runIndexing(fixture.db, fixture.config, {
+      cwd: fixture.cwd,
+      changedOnly: true,
+      writeMode: "merge"
+    })).rejects.toThrow("clean workspace rebuild planned");
+
+    expect(mocks.prepareRepoIndex).toHaveBeenCalledOnce();
+    expect(mocks.planIndexRun).toHaveBeenLastCalledWith(expect.objectContaining({
+      options: expect.objectContaining({ changedOnly: false })
+    }));
+    expect(mocks.generation.reserveIncremental).not.toHaveBeenCalled();
+    expect(fixture.db.readPublicGraphStats).not.toHaveBeenCalled();
   });
 
   it("rejects a missing active lexical stats revision without performing writes", async () => {

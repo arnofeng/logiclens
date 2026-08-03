@@ -30,7 +30,8 @@ import {
 } from "../schema/staging.js";
 import { reconcileNonJavaSchemaFacts } from "../contracts/extraction/nonJavaSchemaReconciler.js";
 import type { ContractSpecNode } from "../parsing/types.js";
-import { schemaSpecId } from "../schema/model.js";
+import { canonicalSerialize, schemaSpecId } from "../schema/model.js";
+import { schemaScopeDependencySetChanged } from "../schema/typeSystem.js";
 import type {
   ResolutionContextFact,
   ResolutionScopeIdentity,
@@ -476,10 +477,46 @@ export async function reconcileWithActiveSchemaCatalog(
       ...oldTouchedDeclarations.map((declaration) => declaration.id),
       ...facts.crossRepo.schemaInternalFacts.declarations.map((declaration) => declaration.id)
     ])].sort((left, right) => left.localeCompare(right));
-    const dependentRoots = await store.rootsDependingOnDeclarations<SchemaRootReference>(
-      changedDeclarationIds,
-      facts.generation
+    const [oldTouchedContexts, oldTouchedScopeDependencies] = await Promise.all([
+      store.factsBySources<ResolutionContextFact>("resolutionContexts", touchedSources, facts.generation),
+      store.factsBySources<import("../schema/model.js").ResolutionScopeDependencyFact>(
+        "resolutionScopeDependencies",
+        touchedSources,
+        facts.generation
+      )
+    ]);
+    const pendingTouchedContexts = facts.crossRepo.schemaInternalFacts.resolutionContexts
+      .filter((context) => touchedSourceKeys.has(`${context.repoId}\0${context.fileId}`));
+    const contextsChanged = canonicalSerialize(oldTouchedContexts.map(schemaScopeKey).sort())
+      !== canonicalSerialize(pendingTouchedContexts.map(schemaScopeKey).sort());
+    const touchedScopeKeys = new Set([...oldTouchedContexts, ...pendingTouchedContexts].map(schemaScopeKey));
+    const pendingTouchedScopeDependencies = facts.crossRepo.schemaInternalFacts.resolutionScopeDependencies
+      .filter((dependency) => touchedScopeKeys.has(schemaScopeKey(dependency.from)));
+    const scopeDependenciesChanged = schemaScopeDependencySetChanged(
+      oldTouchedScopeDependencies,
+      pendingTouchedScopeDependencies
     );
+    const changedResolutionScopes = [...new Map([
+      ...(contextsChanged ? [...oldTouchedContexts, ...pendingTouchedContexts] : []),
+      ...(scopeDependenciesChanged ? [
+        ...oldTouchedScopeDependencies.flatMap((dependency) => [dependency.from, dependency.to]),
+        ...pendingTouchedScopeDependencies.flatMap((dependency) => [dependency.from, dependency.to])
+      ] : [])
+    ].map((scope) => [schemaScopeKey(scope), {
+      languageId: scope.languageId,
+      repoId: scope.repoId,
+      resolutionScopeId: scope.resolutionScopeId
+    }])).values()].sort((left, right) => schemaScopeKey(left).localeCompare(schemaScopeKey(right)));
+    const dependentRoots = await store.affectedRoots<SchemaRootReference>({
+      generation: facts.generation,
+      // Touched owners are already replaced directly by the pending roots and
+      // public source replacement. Reverse planning here recovers only
+      // unchanged owners that are absent from the parsed batch.
+      touchedSources: [],
+      changedDeclarationIds,
+      changedResolutionScopes,
+      pendingRoots: facts.crossRepo.schemaInternalFacts.roots
+    });
     const dependentRootIds = dependentRoots.map((root) => root.id);
     const dependentOwnerSpecIds = [...new Set(dependentRoots.map((root) => root.ownerSpecId))]
       .sort((left, right) => left.localeCompare(right));
@@ -495,11 +532,6 @@ export async function reconcileWithActiveSchemaCatalog(
     const dependentContexts = await store.factsByIds<ResolutionContextFact>(
       "resolutionContexts",
       dependentRoots.map((root) => root.resolutionContextId),
-      facts.generation
-    );
-    const oldTouchedContexts = await store.factsBySources<ResolutionContextFact>(
-      "resolutionContexts",
-      parsedFiles.map((file) => ({ repoId: file.repoId, fileId: file.fileId })),
       facts.generation
     );
     const visibilityTarget = await schemaDeclarationVisibilityTarget({

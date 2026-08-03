@@ -17,7 +17,7 @@ import type { SchemaDeclarationCandidate } from "../../schema/model.js";
 import { canonicalSerialize, createSchemaSpec, schemaSpecId, stableFactId, typeDeclarationIdentityId } from "../../schema/model.js";
 import type { SchemaBehaviorFingerprint } from "../../schema/model.js";
 import { createSchemaBehaviorFingerprint } from "../../schema/typeSystem.js";
-import type { ResolutionResult } from "../../schema/typeSystem.js";
+import type { ResolutionResult, SchemaBehaviorImplementation } from "../../schema/typeSystem.js";
 import { IndexedTypeSystemAdapter, type IndexedSchemaDeclaration, type IndexedTypeSystemRules } from "../../schema/indexedTypeSystemAdapter.js";
 import { materializeSchemaRoot, type MaterializedSchemaType } from "../../schema/materializer.js";
 import { contract, evidence } from "./builtin/shared.js";
@@ -75,7 +75,7 @@ export function reconcileNonJavaSchemaFacts(
     const spec = parseSchema(node.specJson);
     return spec ? [{ node, spec }] : [];
   });
-  const declarations: TypeDeclarationFact[] = parsedSchemas.map(({ node, spec }) => {
+  const declarationFacts: TypeDeclarationFact[] = parsedSchemas.map(({ node, spec }) => {
     const candidate = candidateByDeclarationId.get(spec.identity.declarationId);
     return {
       id: typeDeclarationIdentityId(spec.declaration),
@@ -90,6 +90,10 @@ export function reconcileNonJavaSchemaFacts(
       generation: ""
     };
   });
+  const declarations = [...new Map(declarationFacts
+    .sort((left, right) => canonicalSerialize(left).localeCompare(canonicalSerialize(right)))
+    .map((fact) => [fact.id, fact])).values()]
+    .sort(byId);
   const declarationsById = new Map(declarations.map((fact) => [fact.id, fact]));
   const contexts = new Map<string, ResolutionContextFact>();
   const sourceContexts = buildSchemaSourceContexts(options.sourceFiles ?? [], declarations, declarationCandidates);
@@ -403,9 +407,7 @@ export function reconcileNonJavaSchemaFacts(
         adapters,
         declarations,
         contexts: [...contexts.values()],
-        scopeDependencies: [...scopeDependencies.values()],
-        roots,
-        sourceFiles: options.sourceFiles ?? []
+        scopeDependencies: [...scopeDependencies.values()]
       })
     }
   };
@@ -416,10 +418,7 @@ function buildBehaviorFingerprints(input: {
   declarations: readonly TypeDeclarationFact[];
   contexts: readonly ResolutionContextFact[];
   scopeDependencies: readonly ResolutionScopeDependencyFact[];
-  roots: readonly SchemaRootReference[];
-  sourceFiles: readonly ParsedGraphFile[];
 }): SchemaBehaviorFingerprint[] {
-  const contextById = new Map(input.contexts.map((context) => [context.id, context]));
   const scopes = new Map<string, { languageId: string; repoId: string; resolutionScopeId: string }>();
   for (const declaration of input.declarations) {
     const scope = declaration.identity;
@@ -435,56 +434,6 @@ function buildBehaviorFingerprints(input: {
   return [...scopes.values()].flatMap((scope) => {
     const adapter = input.adapters.get(adapterKey(scope.languageId, scope.repoId));
     if (!adapter) return [];
-    const scopedDeclarations = input.declarations
-      .filter((fact) => fact.identity.languageId === scope.languageId
-        && fact.identity.repoId === scope.repoId
-        && fact.identity.resolutionScopeId === scope.resolutionScopeId)
-      .map((fact) => ({
-        identity: fact.identity,
-        fileId: fact.fileId,
-        declarationKind: fact.declarationKind,
-        typeParameters: fact.typeParameters,
-        shape: fact.candidate?.shape.kind === "object"
-          ? {
-            kind: "object",
-            fields: fact.candidate.shape.fields.map((field) => ({
-              sourceName: field.sourceName,
-              serializedName: field.serializedName,
-              type: field.type,
-              optional: field.optional,
-              nullable: field.nullable,
-              sourceFileId: field.sourceLocation.fileId
-            })),
-            baseTypes: fact.candidate.shape.baseTypes ?? []
-          }
-          : fact.candidate?.shape
-      }))
-      .sort((left, right) => typeDeclarationIdentityId(left.identity).localeCompare(typeDeclarationIdentityId(right.identity)));
-    const scopedContexts = input.contexts
-      .filter((context) => context.languageId === scope.languageId
-        && context.repoId === scope.repoId
-        && context.resolutionScopeId === scope.resolutionScopeId)
-      .map((context) => ({
-        fileId: context.fileId,
-        namespaceId: context.namespaceId ?? "",
-        imports: [...context.imports].sort((left, right) => stableFactId("binding", left).localeCompare(stableFactId("binding", right)))
-      }))
-      .sort((left, right) => left.fileId.localeCompare(right.fileId));
-    const contextIds = new Set(input.contexts
-      .filter((context) => context.languageId === scope.languageId
-        && context.repoId === scope.repoId
-        && context.resolutionScopeId === scope.resolutionScopeId)
-      .map((context) => context.id));
-    const scopedRoots = input.roots
-      .filter((root) => contextIds.has(root.resolutionContextId))
-      .map((root) => ({
-        id: root.id,
-        ownerFileId: root.ownerFileId,
-        ownerSpecId: root.ownerSpecId,
-        relationKind: root.relationKind,
-        rawTypeExpression: root.rawTypeExpression
-      }))
-      .sort((left, right) => left.id.localeCompare(right.id));
     const scopedDependencies = input.scopeDependencies
       .filter((fact) => fact.from.languageId === scope.languageId
         && fact.from.repoId === scope.repoId
@@ -621,6 +570,17 @@ function rulesFor(languageId: string): IndexedTypeSystemRules {
     scalars: COMMON_SCALARS,
     externalSymbols: ["System", "google.protobuf", "GraphQL", "typing", "time", "net/url"],
     wrappers: wrappersFor(languageId)
+  };
+}
+
+export function currentSchemaBehaviorImplementation(languageId: string): SchemaBehaviorImplementation {
+  const rules = rulesFor(languageId);
+  return {
+    adapterVersion: rules.adapterVersion,
+    ruleSetVersion: rules.ruleSetVersion,
+    serializationVersion: rules.serializationVersion,
+    maxDepth: rules.maxDepth,
+    maxTypesPerRoot: rules.maxTypesPerRoot
   };
 }
 

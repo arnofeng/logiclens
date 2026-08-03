@@ -2,6 +2,7 @@ import type {
   CanonicalTypeExpression,
   ResolutionContextFact,
   SchemaBehaviorFingerprint,
+  ResolutionScopeDependencyFact,
   SchemaDiagnosticFact,
   SchemaFieldSpec,
   TypeDeclarationFact,
@@ -12,6 +13,9 @@ import { stableFactId } from "./model.js";
 
 export const DEFAULT_SCHEMA_MAX_DEPTH = 12;
 export const DEFAULT_SCHEMA_MAX_TYPES_PER_ROOT = 256;
+
+export type SchemaBehaviorImplementation = Pick<SchemaBehaviorFingerprint,
+  "adapterVersion" | "ruleSetVersion" | "serializationVersion" | "maxDepth" | "maxTypesPerRoot">;
 
 export type ResolutionResult =
   | { kind: "resolved"; instance: TypeInstanceIdentity; expression: CanonicalTypeExpression }
@@ -76,7 +80,47 @@ export function createSchemaBehaviorFingerprint(input: {
   buildInputsHash: string;
   generation: string;
 }): SchemaBehaviorFingerprint {
-  return { id: stableFactId("schema-behavior", { ...input, generation: undefined }), ...input };
+  const normalized = {
+    languageId: normalizeFingerprintText(input.languageId),
+    repoId: normalizeFingerprintText(input.repoId),
+    resolutionScopeId: normalizeFingerprintText(input.resolutionScopeId),
+    adapterVersion: normalizeFingerprintText(input.adapterVersion),
+    ruleSetVersion: normalizeFingerprintText(input.ruleSetVersion),
+    serializationVersion: normalizeFingerprintText(input.serializationVersion),
+    maxDepth: input.maxDepth,
+    maxTypesPerRoot: input.maxTypesPerRoot,
+    buildInputsHash: normalizeFingerprintText(input.buildInputsHash),
+    generation: normalizeFingerprintText(input.generation)
+  };
+  return { id: stableFactId("schema-behavior", { ...normalized, generation: undefined }), ...normalized };
+}
+
+function normalizeFingerprintText(value: string | null | undefined): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+export function schemaBehaviorMatchesImplementation(
+  fingerprint: SchemaBehaviorFingerprint,
+  implementation: SchemaBehaviorImplementation
+): boolean {
+  return normalizeFingerprintText(fingerprint.adapterVersion) === normalizeFingerprintText(implementation.adapterVersion)
+    && normalizeFingerprintText(fingerprint.ruleSetVersion) === normalizeFingerprintText(implementation.ruleSetVersion)
+    && normalizeFingerprintText(fingerprint.serializationVersion) === normalizeFingerprintText(implementation.serializationVersion)
+    && fingerprint.maxDepth === implementation.maxDepth
+    && fingerprint.maxTypesPerRoot === implementation.maxTypesPerRoot;
+}
+
+export function schemaScopeDependencySetChanged(
+  previous: readonly ResolutionScopeDependencyFact[],
+  pending: readonly ResolutionScopeDependencyFact[]
+): boolean {
+  const key = (facts: readonly ResolutionScopeDependencyFact[]): string => canonicalDependencySet(facts);
+  return key(previous) !== key(pending);
+}
+
+function canonicalDependencySet(facts: readonly ResolutionScopeDependencyFact[]): string {
+  return JSON.stringify(facts.map(({ id, from, to, kind, order }) => ({ id, from, to, kind, order }))
+    .sort((left, right) => left.id.localeCompare(right.id)));
 }
 
 export function assertTypeSystemAdapterContract(adapter: TypeSystemAdapter): void {

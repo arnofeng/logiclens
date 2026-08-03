@@ -9,7 +9,7 @@ import {
   typeDeclarationIdentityId,
   typeInstanceIdentityId
 } from "../src/core/schema/model.js";
-import { assertTypeSystemAdapterContract, createSchemaBehaviorFingerprint } from "../src/core/schema/typeSystem.js";
+import { assertTypeSystemAdapterContract, createSchemaBehaviorFingerprint, schemaBehaviorMatchesImplementation, schemaScopeDependencySetChanged } from "../src/core/schema/typeSystem.js";
 import { IndexedTypeSystemAdapter } from "../src/core/schema/indexedTypeSystemAdapter.js";
 import { materializeSchemaRoot } from "../src/core/schema/materializer.js";
 
@@ -56,6 +56,23 @@ describe("deterministic schema shared model", () => {
     expect(() => assertTypeSystemAdapterContract(adapter)).not.toThrow();
     const input = { languageId: "fixture", repoId: "repo:a", resolutionScopeId: "scope:main", adapterVersion: "1", ruleSetVersion: "rules-1", serializationVersion: "wire-1", maxDepth: 4, maxTypesPerRoot: 32, buildInputsHash: "inputs", generation: "g" };
     expect(createSchemaBehaviorFingerprint(input).id).toBe(createSchemaBehaviorFingerprint({ ...input, generation: "next" }).id);
+    expect(createSchemaBehaviorFingerprint({ ...input, buildInputsHash: undefined as unknown as string }).id)
+      .toBe(createSchemaBehaviorFingerprint({ ...input, buildInputsHash: "" }).id);
+    expect(schemaBehaviorMatchesImplementation(createSchemaBehaviorFingerprint(input), input)).toBe(true);
+  });
+
+  it("invalidates resolution scopes for both first-edge addition and final-edge removal", () => {
+    const dependency = {
+      id: "scope-dependency:one",
+      from: { languageId: "java", repoId: "repo:a", resolutionScopeId: "main" },
+      to: { languageId: "java", repoId: "repo:b", resolutionScopeId: "main" },
+      kind: "repository" as const,
+      order: 0,
+      generation: "generation:any"
+    };
+    expect(schemaScopeDependencySetChanged([], [dependency])).toBe(true);
+    expect(schemaScopeDependencySetChanged([dependency], [])).toBe(true);
+    expect(schemaScopeDependencySetChanged([dependency], [{ ...dependency, generation: "generation:next" }])).toBe(false);
   });
 
   it("materializes transparent wrappers, collections, nested declarations, and diagnostics through the shared engine", () => {

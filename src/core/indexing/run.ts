@@ -22,6 +22,9 @@ import {
 import { validateIncrementalIndexMutationEndpoints } from "./incrementalValidation.js";
 import { LEXICAL_PROJECTION_SCHEMA_VERSION } from "../retrieval/types.js";
 import { SCHEMA_INDEX_VERSION } from "../schema/model.js";
+import type { SchemaBehaviorFingerprint } from "../schema/model.js";
+import { schemaBehaviorMatchesImplementation } from "../schema/typeSystem.js";
+import { currentSchemaBehaviorImplementation } from "../contracts/extraction/nonJavaSchemaReconciler.js";
 import {
   applyIncrementalSchemaMutation,
   buildCombinedIncrementalSchemaVisibility,
@@ -247,6 +250,25 @@ export async function runIndexing(
       throw new Error(`Index preparation failed: ${failedPreparation.map((job) => `${job.id}: ${job.error ?? "unknown error"}`).join("; ")}`);
     }
     logger.log?.(`Index preparation complete: repos=${preparedRepos.size} concurrency=${config.indexing.concurrency}`);
+
+    if (planning.publicationMode === "incremental" && planning.activeGeneration) {
+      const configuredRepoIds = planning.repoConfigs.map((repoConfig) => toRepoNode(repoConfig, cwd).id);
+      const activeFingerprints = await schemaGenerations.behaviorFingerprintsByRepos<SchemaBehaviorFingerprint>(
+        configuredRepoIds,
+        planning.activeGeneration
+      );
+      const behaviorChangedRepoIds = new Set(activeFingerprints
+        .filter((fingerprint) => !schemaBehaviorMatchesImplementation(
+          fingerprint,
+          currentSchemaBehaviorImplementation(fingerprint.languageId)
+        ))
+        .map((fingerprint) => fingerprint.repoId));
+      if (behaviorChangedRepoIds.size > 0) {
+        logger.log?.(`Schema behavior changed for repos=${[...behaviorChangedRepoIds].sort().join(",")}; forcing a clean workspace rebuild.`);
+        const { repo: _repo, repos: _repos, ...workspaceOptions } = options;
+        return await runIndexing(db, config, { ...workspaceOptions, changedOnly: false });
+      }
+    }
 
     const preparedValues = [...preparedRepos.values()];
     const preparedTotals = preparedValues.reduce<IndexCounters>((totals, prepared) => {

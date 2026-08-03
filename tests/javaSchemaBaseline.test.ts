@@ -307,4 +307,41 @@ describe("Java schema deterministic discovery lifecycle", () => {
       await incrementalDb.db.close();
     }
   }, 120000);
+
+  it("rebuilds unchanged sources when the active behavior fingerprint is stale", async () => {
+    const config = configFor([{ name: "java-schema-js001", path: fixtureRoot }]);
+    const workspaceId = deriveWorkspaceId(config.systemName);
+    const { db } = await openKuzu("test-java-schema-behavior-change-");
+    try {
+      await runIndexing(db, config, { cwd: fixtureRoot, writeMode: "auto" });
+      const clean = await captureSchemaBaselineSnapshot(db, workspaceId);
+      const rows = await db.query<{ id?: string; payload?: string }>(
+        "MATCH (f:SchemaBehaviorFingerprintFact) RETURN f.id AS id, f.payload AS payload;"
+      );
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) {
+        const fingerprint = JSON.parse(String(row.payload)) as Record<string, unknown>;
+        await db.query(
+          "MATCH (f:SchemaBehaviorFingerprintFact {id: $id}) SET f.payload=$payload;",
+          { id: String(row.id), payload: JSON.stringify({ ...fingerprint, adapterVersion: "java-type-system-outdated" }) }
+        );
+      }
+      const logs: string[] = [];
+      const result = await runIndexing(db, config, {
+        cwd: fixtureRoot,
+        writeMode: "auto",
+        changedOnly: true,
+        logger: { log: (message) => logs.push(message) }
+      });
+      const rebuilt = await captureSchemaBaselineSnapshot(db, workspaceId);
+
+      expect(result.filesChanged).toBeGreaterThan(0);
+      expect(logs.some((message) => message.includes("forcing a clean workspace rebuild"))).toBe(true);
+      expect(rebuilt.publicGraph).toEqual(clean.publicGraph);
+      expect(rebuilt.internalIndex).toEqual(clean.internalIndex);
+      expect(rebuilt.lexical).toEqual(clean.lexical);
+    } finally {
+      await db.close();
+    }
+  }, 120000);
 });

@@ -45,6 +45,14 @@ export interface DeclarationScopePrefix {
   resolutionScopePrefix: string;
 }
 
+export interface AffectedSchemaRootsInput<T extends OwnedSchemaFact> {
+  generation?: string;
+  touchedSources: readonly { repoId: string; fileId: string }[];
+  changedDeclarationIds: readonly string[];
+  changedResolutionScopes: readonly ResolutionScopeIdentity[];
+  pendingRoots?: readonly T[];
+}
+
 type GenerationStateRow = {
   activeGeneration?: GraphValue;
   activeRevision?: GraphValue;
@@ -719,6 +727,23 @@ export class SchemaGenerationStore {
     return [...facts.values()].sort((left, right) => left.id.localeCompare(right.id));
   }
 
+  async behaviorFingerprintsByRepos<T extends OwnedSchemaFact>(
+    repoIds: readonly string[],
+    generation?: string
+  ): Promise<T[]> {
+    const targetGeneration = generation ?? await this.activeGeneration();
+    const ids = [...new Set(repoIds)].sort((left, right) => left.localeCompare(right));
+    if (!targetGeneration || ids.length === 0) return [];
+    const rows = await this.db.query<{ payload?: GraphValue }>(
+      "MATCH (f:SchemaBehaviorFingerprintFact) WHERE f.generation = $generation " +
+      "AND f.repoId IN $repoIds RETURN f.payload AS payload;",
+      { generation: targetGeneration, repoIds: ids }
+    );
+    const facts = new Map<string, T>();
+    for (const fact of rows.flatMap((row) => this.parsePayload<T>(row.payload))) facts.set(fact.id, fact);
+    return [...facts.values()].sort((left, right) => left.id.localeCompare(right.id));
+  }
+
   async factsByIds<T extends OwnedSchemaFact>(
     kind: SchemaInternalFactKind,
     factIds: readonly string[],
@@ -810,6 +835,50 @@ export class SchemaGenerationStore {
       { generation: targetGeneration, rootReferenceIds: [...new Set(rootReferenceIds)].sort((left, right) => left.localeCompare(right)) }
     );
     return rows.flatMap((row) => this.parsePayload<T>(row.payload)).sort((left, right) => left.id.localeCompare(right.id));
+  }
+
+  /**
+   * Plans affected roots from the active reverse index plus the pending source
+   * overlay. Source owners, declaration dependencies, and resolution-scope
+   * visibility are deliberately combined here so changed-only never has to
+   * infer the workspace catalog from the current parsed-file batch.
+   */
+  async affectedRoots<T extends OwnedSchemaFact & {
+    repoId?: string;
+    ownerFileId?: string;
+    resolutionContextId?: string;
+  }>(input: AffectedSchemaRootsInput<T>): Promise<T[]> {
+    const targetGeneration = input.generation ?? await this.activeGeneration();
+    const roots = new Map<string, T>();
+    const add = (facts: readonly T[]): void => {
+      for (const fact of facts) roots.set(fact.id, fact);
+    };
+    add(input.pendingRoots ?? []);
+    if (!targetGeneration) return [...roots.values()].sort((left, right) => left.id.localeCompare(right.id));
+
+    add(await this.factsBySources<T>("roots", input.touchedSources, targetGeneration));
+    add(await this.rootsDependingOnDeclarations<T>(input.changedDeclarationIds, targetGeneration));
+
+    const scopes = uniqueScopes(input.changedResolutionScopes);
+    if (scopes.length > 0) {
+      const contextIds = new Set<string>();
+      for (const scope of scopes) {
+        const rows = await this.db.query<{ factId?: GraphValue }>(
+          "MATCH (c:ResolutionContextFact) WHERE c.generation=$generation AND c.languageId=$languageId " +
+          "AND c.repoId=$repoId AND c.resolutionScopeId=$resolutionScopeId RETURN c.factId AS factId;",
+          { generation: targetGeneration, ...scope }
+        );
+        for (const row of rows) if (typeof row.factId === "string") contextIds.add(row.factId);
+      }
+      if (contextIds.size > 0) {
+        const rows = await this.db.query<{ payload?: GraphValue }>(
+          "MATCH (r:SchemaRootFact) WHERE r.generation=$generation AND r.resolutionContextId IN $contextIds RETURN r.payload AS payload;",
+          { generation: targetGeneration, contextIds: [...contextIds].sort() }
+        );
+        add(rows.flatMap((row) => this.parsePayload<T>(row.payload)));
+      }
+    }
+    return [...roots.values()].sort((left, right) => left.id.localeCompare(right.id));
   }
 
   async activeContributionCount(entityKind: "schema-spec" | "logical-relation" | "lexical-document", entityId: string): Promise<number> {
