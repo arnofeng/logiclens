@@ -88,15 +88,18 @@ program.command("impact")
   );
 program
   .command("quality")
-  .argument("[action]", "Action to perform: 'contracts' to audit contract quality, or empty to audit relation quality")
+  .argument("[action]", "Action to perform: 'contracts', 'schemas', or empty for relation quality")
   .option("--min-confidence <number>", "Minimum accepted confidence", (value) => Number(value))
   .option("--limit <number>", "Maximum audit rows", (value) => Number(value))
   .option("--reject-evidence <id>")
   .option("--reason <text>")
   .option("--alias <alias>")
   .option("--target-repo <name>")
-  .description("Audit and govern relation quality / contract quality")
-  .action((action: string | undefined, options: { minConfidence?: number; limit?: number; rejectEvidence?: string; reason?: string; alias?: string; targetRepo?: string }) => qualityCommand(action, options));
+  .option("--group-by <dimension>", "Schema quality grouping: language, framework, relation-kind, or repo")
+  .option("--details <outcomes>", "Comma-separated schema details: unresolved,external,ambiguous,unsupported,truncated")
+  .option("--json", "Output stable JSON")
+  .description("Audit and govern relation, contract, or schema quality")
+  .action((action: string | undefined, options: { minConfidence?: number; limit?: number; rejectEvidence?: string; reason?: string; alias?: string; targetRepo?: string; groupBy?: string; details?: string; json?: boolean }) => qualityCommand(action, options));
 program.command("rebuild-relations").option("--repo <name>").option("--full").description("Rebuild repo-to-repo dependency edges from indexed contract evidence").action((options: { repo?: string; full?: boolean }) => rebuildRelationsCommand(options));
 program.command("frameworks").description("List detected frameworks and enabled contract extractors for each repository").action(() => frameworksCommand());
 const plugin = program.command("plugin").description(`Install, inspect, diagnose, and remove ${BRAND.displayName} plugins`);

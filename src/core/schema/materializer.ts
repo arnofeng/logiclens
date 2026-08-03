@@ -64,13 +64,25 @@ export function materializeSchemaRoot(input: {
   const relations = new Map<string, SemanticRelationEdge>();
   let truncated = false;
 
-  const recordDiagnostic = (diagnostic: SchemaDiagnosticFact, fieldPath: string[]): void => {
+  const recordDiagnostic = (
+    diagnostic: SchemaDiagnosticFact,
+    fieldPath: string[],
+    typePath: TypeExpression[]
+  ): void => {
     const id = stableFactId("schema-diagnostic", {
       diagnosticId: diagnostic.id,
       rootReferenceId: root.id,
-      fieldPath
+      fieldPath,
+      typePath
     });
-    diagnostics.set(id, { ...diagnostic, id, rootReferenceId: root.id, ownerSpecId: root.ownerSpecId, fieldPath });
+    diagnostics.set(id, {
+      ...diagnostic,
+      id,
+      rootReferenceId: root.id,
+      ownerSpecId: root.ownerSpecId,
+      fieldPath,
+      typePath
+    });
   };
 
   while (queue.length > 0) {
@@ -94,7 +106,7 @@ export function materializeSchemaRoot(input: {
         fieldPath: item.fieldPath,
         limit: { kind: "depth", value: adapter.maxDepth }
       };
-      recordDiagnostic(diagnostic, item.fieldPath);
+      recordDiagnostic(diagnostic, item.fieldPath, diagnosticTypePath(item));
       continue;
     }
 
@@ -112,20 +124,20 @@ export function materializeSchemaRoot(input: {
     if (projection.kind === "stop") {
       const resolution = adapter.resolveType(item.expression, item.context);
       if (resolution.kind === "unresolved" || resolution.kind === "ambiguous" || resolution.kind === "unsupported") {
-        recordDiagnostic(resolution.diagnostic, item.fieldPath);
+        recordDiagnostic(resolution.diagnostic, item.fieldPath, diagnosticTypePath(item));
       } else if (resolution.kind === "external") {
-        recordDiagnostic(resolution.diagnostic, item.fieldPath);
+        recordDiagnostic(resolution.diagnostic, item.fieldPath, diagnosticTypePath(item));
       }
       continue;
     }
 
     const resolution = adapter.resolveType(projection.expression, item.context);
     if (resolution.kind === "unresolved" || resolution.kind === "ambiguous" || resolution.kind === "unsupported") {
-      recordDiagnostic(resolution.diagnostic, item.fieldPath);
+      recordDiagnostic(resolution.diagnostic, item.fieldPath, diagnosticTypePath(item));
       continue;
     }
     if (resolution.kind === "external") {
-      recordDiagnostic(resolution.diagnostic, item.fieldPath);
+      recordDiagnostic(resolution.diagnostic, item.fieldPath, diagnosticTypePath(item));
       continue;
     }
     if (resolution.kind === "scalar") continue;
@@ -147,12 +159,12 @@ export function materializeSchemaRoot(input: {
         code: "truncated",
         fieldPath: item.fieldPath,
         limit: { kind: "types", value: adapter.maxTypesPerRoot }
-      }, item.fieldPath);
+      }, item.fieldPath, diagnosticTypePath(item));
       continue;
     }
     const shape = adapter.inspectSchemaShape(resolution.instance);
     if (shape.kind === "unsupported") {
-      recordDiagnostic(shape.diagnostic, item.fieldPath);
+      recordDiagnostic(shape.diagnostic, item.fieldPath, diagnosticTypePath(item));
       continue;
     }
     if (!previouslyVisited) types.set(instanceId, { identity: resolution.instance, shape, depth: item.depth });
@@ -250,6 +262,10 @@ export function materializeSchemaRoot(input: {
     relations: [...relations.values()].sort((a, b) => `${a.fromSpecId}:${a.toSpecId}:${a.kind}`.localeCompare(`${b.fromSpecId}:${b.toSpecId}:${b.kind}`)),
     truncated
   };
+}
+
+function diagnosticTypePath(item: QueueItem): TypeExpression[] {
+  return [...item.typePath.map(canonicalToTypeExpression), item.expression];
 }
 
 function queueItemSortKey(adapter: TypeSystemAdapter, item: QueueItem): string {

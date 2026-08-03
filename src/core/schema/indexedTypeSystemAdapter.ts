@@ -373,7 +373,8 @@ export class IndexedTypeSystemAdapter implements TypeSystemAdapter {
   }
 
   private diagnostic(code: SchemaDiagnosticFact["code"], expression: TypeExpression, context: ResolutionContextFact, candidates: TypeDeclarationFact[] = []): SchemaDiagnosticFact {
-    const identities = candidates.map((candidate) => candidate.identity);
+    const identities = candidates.map((candidate) => candidate.identity)
+      .sort((left, right) => typeDeclarationIdentityId(left).localeCompare(typeDeclarationIdentityId(right)));
     return {
       id: stableFactId("schema-diagnostic", { code, expression, scope: { languageId: context.languageId, repoId: context.repoId, resolutionScopeId: context.resolutionScopeId }, candidates: identities }),
       generation: context.generation,

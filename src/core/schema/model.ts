@@ -1,6 +1,6 @@
 import { hashText } from "../../shared/hash.js";
 
-export const SCHEMA_INDEX_VERSION = "8";
+export const SCHEMA_INDEX_VERSION = "9";
 
 export interface ResolutionScopeIdentity {
   languageId: string;
@@ -182,6 +182,7 @@ export interface SchemaDiagnosticFact {
   scope?: ResolutionScopeIdentity;
   code: "unresolved" | "ambiguous" | "external" | "unsupported" | "truncated";
   symbol?: string;
+  typePath?: TypeExpression[];
   fieldPath?: string[];
   candidates?: TypeDeclarationIdentity[];
   evidenceId?: string;

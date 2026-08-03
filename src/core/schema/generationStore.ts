@@ -727,6 +727,21 @@ export class SchemaGenerationStore {
     return [...facts.values()].sort((left, right) => left.id.localeCompare(right.id));
   }
 
+  async facts<T extends OwnedSchemaFact>(
+    kind: SchemaInternalFactKind,
+    generation?: string
+  ): Promise<T[]> {
+    const targetGeneration = generation ?? await this.activeGeneration();
+    if (!targetGeneration) return [];
+    const rows = await this.db.query<{ payload?: GraphValue }>(
+      `MATCH (f:${FACT_TABLES[kind]}) WHERE f.generation = $generation RETURN f.payload AS payload;`,
+      { generation: targetGeneration }
+    );
+    const facts = new Map<string, T>();
+    for (const fact of rows.flatMap((row) => this.parsePayload<T>(row.payload))) facts.set(fact.id, fact);
+    return [...facts.values()].sort((left, right) => left.id.localeCompare(right.id));
+  }
+
   async behaviorFingerprintsByRepos<T extends OwnedSchemaFact>(
     repoIds: readonly string[],
     generation?: string
