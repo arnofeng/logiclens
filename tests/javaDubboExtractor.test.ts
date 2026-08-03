@@ -118,6 +118,37 @@ describe("Java Dubbo extractor", () => {
     expect(new Set(bundle.contractSpecs.map((spec) => spec.sourceSymbolId)).size).toBe(2);
   });
 
+  it("emits typed consumer slots only when an interface overload is statically proven", async () => {
+    const bundle = await extract(`
+      package com.acme.web;
+      import org.apache.dubbo.config.annotation.DubboReference;
+      interface OrderService {
+        OrderResult create(OrderInput value);
+        OrderResult create(String value);
+      }
+      class OrderInput {}
+      class OrderResult {}
+      class Controller {
+        @DubboReference private OrderService service;
+        void proven(OrderInput value) { service.create(value); }
+        void unproven(Object value) { service.create(value); }
+      }
+    `);
+
+    const consumerSpecs = specs(bundle);
+    expect(consumerSpecs).toHaveLength(2);
+    expect(consumerSpecs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        methodSignature: "create(OrderInput):OrderResult",
+        requestSlots: [{ index: 0, name: "value", type: "OrderInput" }],
+        responseType: "OrderResult"
+      })
+    ]));
+    const unproven = consumerSpecs.find((spec) => !spec.methodSignature)!;
+    expect(unproven.requestSlots).toBeUndefined();
+    expect(unproven.responseType).toBeUndefined();
+  });
+
   it("preserves complete generic request and response types", async () => {
     const bundle = await extract(`
       package com.acme.order;
@@ -219,5 +250,29 @@ describe("Java Dubbo extractor", () => {
 
     expect(roleKeys(bundle, "producer")).toEqual(["com.acme.api.orderservice#createOrder"]);
     expect(specs(bundle)[0]).toMatchObject({ interfaceName: "com.acme.api.OrderService" });
+  });
+
+  it("binds inherited generic interface methods for an annotated implementation", async () => {
+    const bundle = await extract(`
+      package com.acme.order;
+      import org.apache.dubbo.config.annotation.DubboService;
+
+      interface BaseService<T> { T exchange(T value); }
+      interface GenericService<T> extends BaseService<T> {}
+      class Activity { String code; }
+
+      @DubboService
+      class ActivityService implements GenericService<Activity> {}
+    `);
+
+    expect(specs(bundle)).toEqual([
+      expect.objectContaining({
+        interfaceName: "com.acme.order.GenericService",
+        method: "exchange",
+        requestSlots: [{ index: 0, name: "value", type: "Activity" }],
+        responseType: "Activity",
+        methodSignature: "exchange(Activity):Activity"
+      })
+    ]);
   });
 });

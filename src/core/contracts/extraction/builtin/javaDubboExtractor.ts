@@ -44,13 +44,6 @@ export function makeJavaDubboSymbol(file: ParsedFile, node: Parser.SyntaxNode, k
   };
 }
 
-function simpleTypeName(raw: string | undefined): string | undefined {
-  if (!raw) return undefined;
-  const cleaned = raw.replace(/\b(final|var)\b/g, "").replace(/[?*&]/g, "").trim();
-  const generic = cleaned.match(/([A-Za-z_$][\w$]*)\s*(?:<|$)/)?.[1];
-  return generic?.split(".").at(-1);
-}
-
 function declaredType(raw: string | undefined): string | undefined {
   const value = raw?.replace(/\s+/g, " ").trim();
   return value || undefined;
@@ -63,6 +56,19 @@ export function javaDubboParamTypes(methodNode: Parser.SyntaxNode): string[] {
     .filter((p) => p.type === "formal_parameter" || p.type === "spread_parameter")
     .map((p) => declaredType(p.childForFieldName("type")?.text) ?? "")
     .filter(Boolean);
+}
+
+export function javaDubboParamSlots(methodNode: Parser.SyntaxNode): { index: number; name?: string; type: string }[] {
+  const params = methodNode.childForFieldName("parameters");
+  if (!params) return [];
+  return namedChildren(params)
+    .filter((parameter) => parameter.type === "formal_parameter" || parameter.type === "spread_parameter")
+    .map((parameter, index) => ({
+      index,
+      name: parameter.childForFieldName("name")?.text,
+      type: declaredType(parameter.childForFieldName("type")?.text) ?? ""
+    }))
+    .filter((slot) => Boolean(slot.type));
 }
 
 export function javaDubboReturnType(methodNode: Parser.SyntaxNode): string | undefined {
@@ -124,23 +130,141 @@ export function resolveJavaDubboType(raw: string | undefined, imports: JavaImpor
 }
 
 export function javaDubboImplementedInterfaces(classNode: Parser.SyntaxNode): string[] {
+  return javaDubboImplementedInterfaceApplications(classNode).map((value) => typeApplication(value).name);
+}
+
+export function javaDubboImplementedInterfaceApplications(classNode: Parser.SyntaxNode): string[] {
   const text = classNode.text.slice(0, Math.max(classNode.text.indexOf("{"), classNode.text.length));
   const match = text.match(/\bimplements\s+([^{]+)/);
   if (!match) return [];
-  return match[1]!
-    .split(",")
-    .map((part) => part.trim().replace(/<[\s\S]*>/g, ""))
-    .filter(Boolean);
+  return splitTopLevelTypes(match[1]!);
 }
 
 function selectDubboInterface(interfaces: string[]): string | undefined {
-  return interfaces.find((name) => /(?:^|[.$])\w*Service$/.test(name)) ?? interfaces[0];
+  return interfaces.find((name) => /(?:^|[.$])\w*Service$/.test(typeApplication(name).name)) ?? interfaces[0];
 }
 
 export function directJavaDubboMethodDeclarations(classNode: Parser.SyntaxNode): Parser.SyntaxNode[] {
   const body = classNode.childForFieldName("body");
   if (!body) return [];
   return namedChildren(body).filter((child) => child.type === "method_declaration");
+}
+
+export function javaDubboMethodSignature(methodNode: Parser.SyntaxNode): string | undefined {
+  const method = methodNode.childForFieldName("name")?.text;
+  if (!method) return undefined;
+  const requestTypes = javaDubboParamTypes(methodNode).map((type) => type.replace(/\s+/gu, ""));
+  const responseType = javaDubboReturnType(methodNode)?.replace(/\s+/gu, "") ?? "void";
+  return `${method}(${requestTypes.join(",")}):${responseType}`;
+}
+
+export type DubboInterfaceMethod = {
+  node: Parser.SyntaxNode;
+  file: ParsedFile;
+  interfaceName: string;
+  method: string;
+  requestSlots: { index: number; name?: string; type: string }[];
+  responseType: string | undefined;
+  methodSignature: string;
+};
+
+function interfaceParents(node: Parser.SyntaxNode): string[] {
+  const header = node.text.slice(0, Math.max(node.text.indexOf("{"), 0));
+  const parents = /\bextends\s+([^\{]+)/u.exec(header)?.[1];
+  return parents ? parents.split(",").map((value) => value.trim()).filter(Boolean) : [];
+}
+
+function substituteType(type: string, bindings: Map<string, string>): string {
+  let result = type;
+  for (const [name, value] of [...bindings].sort(([left], [right]) => right.length - left.length)) {
+    result = result.replace(new RegExp(`\\b${name}\\b`, "gu"), value);
+  }
+  return result;
+}
+
+function splitTopLevelTypes(value: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < value.length; index++) {
+    if (value[index] === "<") depth++;
+    else if (value[index] === ">") depth--;
+    else if (value[index] === "," && depth === 0) {
+      parts.push(value.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  parts.push(value.slice(start).trim());
+  return parts.filter(Boolean);
+}
+
+function typeApplication(raw: string): { name: string; args: string[] } {
+  const match = /^([^<]+)(?:<([\s\S]+)>)?$/u.exec(raw.trim());
+  return { name: match?.[1]?.trim() ?? raw.trim(), args: match?.[2] ? splitTopLevelTypes(match[2]) : [] };
+}
+
+export type JavaDubboInterfaceIndex = {
+  byName: Map<string, DubboInterfaceMethod[]>;
+  resolve(rawType: string, imports?: JavaImportMap, packageName?: string): DubboInterfaceMethod[];
+};
+
+export function createJavaDubboInterfaceIndex(files: readonly ParsedFile[]): JavaDubboInterfaceIndex {
+  const declarations = new Map<string, { node: Parser.SyntaxNode; file: ParsedFile; imports: JavaImportMap; packageName?: string; typeParameters: string[] }>();
+  for (const file of files) {
+    if (file.language !== "java") continue;
+    const ast = parseSourceAst(file, "java");
+    if (!ast) continue;
+    const imports = javaDubboImports(ast.source);
+    const packageName = javaDubboPackage(ast.source, file);
+    for (const node of indexedSourceAstNodes(ast, ["interface_declaration"])) {
+      const name = node.childForFieldName("name")?.text;
+      if (!name) continue;
+      const fqn = resolveJavaDubboType(name, imports, packageName)!;
+      const parameters = /<([^>{]+)>/u.exec(node.text.slice(0, Math.max(node.text.indexOf("{"), 0)))?.[1]
+        ?.split(",").map((value) => value.trim().split(/\s+/u)[0]!).filter(Boolean) ?? [];
+      declarations.set(fqn, { node, file, imports, packageName, typeParameters: parameters });
+    }
+  }
+  const result = new Map<string, DubboInterfaceMethod[]>();
+  const collect = (fqn: string, bindings = new Map<string, string>(), seen = new Set<string>()): DubboInterfaceMethod[] => {
+    const visitKey = `${fqn}:${JSON.stringify([...bindings])}`;
+    if (seen.has(visitKey)) return [];
+    seen.add(visitKey);
+    const declaration = declarations.get(fqn);
+    if (!declaration) return [];
+    const methods = directJavaDubboMethodDeclarations(declaration.node).flatMap((node) => {
+      const method = node.childForFieldName("name")?.text;
+      if (!method) return [];
+      const requestSlots = javaDubboParamSlots(node).map((slot) => ({ ...slot, type: substituteType(slot.type, bindings) }));
+      const responseType = javaDubboReturnType(node);
+      const resolvedResponse = responseType ? substituteType(responseType, bindings) : undefined;
+      return [{ node, file: declaration.file, interfaceName: fqn, method, requestSlots, responseType: resolvedResponse,
+        methodSignature: `${method}(${requestSlots.map((slot) => slot.type.replace(/\s+/gu, "")).join(",")}):${resolvedResponse?.replace(/\s+/gu, "") ?? "void"}` }];
+    });
+    for (const rawParent of interfaceParents(declaration.node)) {
+      const application = typeApplication(rawParent);
+      const parentFqn = resolveJavaDubboType(application.name, declaration.imports, declaration.packageName);
+      const parent = parentFqn ? declarations.get(parentFqn) : undefined;
+      if (!parentFqn || !parent) continue;
+      const parentBindings = new Map<string, string>();
+      parent.typeParameters.forEach((parameter, index) => parentBindings.set(parameter, substituteType(application.args[index] ?? parameter, bindings)));
+      methods.push(...collect(parentFqn, parentBindings, seen));
+    }
+    return methods;
+  };
+  for (const fqn of declarations.keys()) result.set(fqn, collect(fqn));
+  return {
+    byName: result,
+    resolve(rawType, imports = new Map(), packageName) {
+      const application = typeApplication(rawType);
+      const fqn = resolveJavaDubboType(application.name, imports, packageName);
+      const declaration = fqn ? declarations.get(fqn) : undefined;
+      if (!fqn || !declaration) return [];
+      const bindings = new Map<string, string>();
+      declaration.typeParameters.forEach((parameter, index) => bindings.set(parameter, application.args[index] ?? parameter));
+      return collect(fqn, bindings, new Set());
+    }
+  };
 }
 
 function javaMethodCall(node: Parser.SyntaxNode): { object?: string; method?: string; args: Parser.SyntaxNode[] } | undefined {
@@ -151,14 +275,30 @@ function javaMethodCall(node: Parser.SyntaxNode): { object?: string; method?: st
   return { object: object?.text, method: name?.text, args: argsNode ? namedChildren(argsNode) : [] };
 }
 
-function typeFromObjectCreation(node: Parser.SyntaxNode | undefined): string | undefined {
+function typeFromStaticExpression(node: Parser.SyntaxNode | undefined): string | undefined {
   if (!node) return undefined;
   if (node.type === "object_creation_expression") {
-    return simpleTypeName(node.childForFieldName("type")?.text ?? node.namedChild(0)?.text);
+    return node.childForFieldName("type")?.text ?? node.namedChild(0)?.text;
+  }
+  if (node.type === "identifier") {
+    let owner: Parser.SyntaxNode | null = node.parent;
+    while (owner && owner.type !== "method_declaration") owner = owner.parent;
+    const parameter = owner ? javaDubboParamSlots(owner).find((slot) => slot.name === node.text) : undefined;
+    if (parameter) return parameter.type;
   }
   const text = node.text;
   return text.match(/\b([A-Za-z_$][\w$]*)\.newBuilder\s*\(/)?.[1]
     ?? text.match(/\bnew\s+([A-Za-z_$][\w$]*)\s*\(/)?.[1];
+}
+
+function canonicalStaticType(raw: string, file: ParsedFile): string {
+  const compact = raw.replace(/\s+/gu, "").replace(/\.\.\.$/u, "[]");
+  const arraySuffix = compact.endsWith("[]") ? "[]" : "";
+  const erased = compact.replace(/\[\]$/u, "").replace(/<.*>/su, "");
+  if (/^(?:byte|short|int|long|float|double|boolean|char|void)$/u.test(erased)) return `${erased}${arraySuffix}`;
+  const source = file.source ?? "";
+  const canonical = resolveJavaDubboType(erased, javaDubboImports(source), javaDubboPackage(source, file)) ?? erased;
+  return `${canonical}${arraySuffix}`;
 }
 
 function referenceReceiverName(objectText: string): string {
@@ -169,7 +309,10 @@ export const javaDubboExtractor = compatExtractor({
   name: "builtin:java-dubbo",
   languages: ["java"],
   extract(context, collector: FactCollector) {
-    for (const file of parsedCodeFiles(context.parsedFiles)) {
+    const files = [...parsedCodeFiles(context.parsedFiles)];
+    const interfaceIndex = createJavaDubboInterfaceIndex(files);
+    const interfaceMethods = interfaceIndex.byName;
+    for (const file of files) {
       if (file.language !== "java") continue;
       const ast = parseSourceAst(file, "java");
       if (!ast) continue;
@@ -177,21 +320,31 @@ export const javaDubboExtractor = compatExtractor({
       const imports = javaDubboImports(ast.source);
       const packageName = javaDubboPackage(ast.source, file);
 
-      for (const node of indexedSourceAstNodes(ast, ["class_declaration"])) {
+      for (const node of indexedSourceAstNodes(ast, ["class_declaration", "interface_declaration"])) {
         if (!hasAnyAnnotation(node, DUBBO_SERVICE_ANNOTATIONS, imports)) continue;
-        const implemented = selectDubboInterface(javaDubboImplementedInterfaces(node));
-        const interfaceName = resolveJavaDubboType(implemented, imports, packageName);
+        const declaredName = node.childForFieldName("name")?.text;
+        const implemented = node.type === "interface_declaration" ? declaredName : selectDubboInterface(javaDubboImplementedInterfaceApplications(node));
+        const interfaceName = resolveJavaDubboType(implemented ? typeApplication(implemented).name : undefined, imports, packageName);
         if (!interfaceName) continue;
         const group = annotationValue(node, "DubboService", "group") ?? annotationValue(node, "Service", "group");
         const version = annotationValue(node, "DubboService", "version") ?? annotationValue(node, "Service", "version");
 
-        for (const child of directJavaDubboMethodDeclarations(node)) {
-          const method = child.childForFieldName("name")?.text;
+        const indexedMethods = node.type === "interface_declaration"
+          ? interfaceIndex.resolve(interfaceName, imports, packageName)
+          : implemented ? interfaceIndex.resolve(implemented, imports, packageName) : [];
+        const producerMethods = indexedMethods.length > 0 ? indexedMethods : directJavaDubboMethodDeclarations(node).map((child) => ({
+          node: child, file, interfaceName, method: child.childForFieldName("name")?.text ?? "",
+          requestSlots: javaDubboParamSlots(child), responseType: javaDubboReturnType(child),
+          methodSignature: javaDubboMethodSignature(child) ?? ""
+        }));
+        for (const indexedMethod of producerMethods) {
+          const child = indexedMethod.node;
+          const method = indexedMethod.method;
           if (!method) continue;
-          const symbol = makeJavaDubboSymbol(file, child, "method", method, `${interfaceName}.${method}`);
+          const symbol = makeJavaDubboSymbol(indexedMethod.file, child, "method", method, `${interfaceName}.${indexedMethod.methodSignature}`);
           pushDubboContract({
             collector,
-            file,
+            file: indexedMethod.file,
             symbol,
             interfaceName,
             method,
@@ -202,8 +355,11 @@ export const javaDubboExtractor = compatExtractor({
             confidence: confidenceFor("exact-parser-route"),
             group,
             version,
-            requestTypes: javaDubboParamTypes(child),
-            responseType: javaDubboReturnType(child),
+            requestTypes: indexedMethod.requestSlots.map((slot) => slot.type),
+            requestSlots: indexedMethod.requestSlots,
+            responseType: indexedMethod.responseType,
+            methodSignature: indexedMethod.methodSignature,
+            ownerType: interfaceName,
             config: "annotation",
             framework: "dubbo-java"
           });
@@ -231,8 +387,17 @@ export const javaDubboExtractor = compatExtractor({
         if (!reference) continue;
         const caller = findContainingSymbol(file.symbols, node);
         if (!caller) continue;
+        const candidates = (interfaceMethods.get(reference.interfaceName) ?? [])
+          .filter((candidate) => candidate.method === call.method && candidate.requestSlots.length === call.args.length);
+        const argumentTypes = call.args.map(typeFromStaticExpression);
+        const proven = candidates.filter((candidate) => candidate.requestSlots.every((slot, index) => {
+          const argumentType = argumentTypes[index];
+          return Boolean(argumentType
+            && canonicalStaticType(slot.type, candidate.file) === canonicalStaticType(argumentType, file));
+        }));
+        const signature = proven.length === 1 ? proven[0] : candidates.length === 1 && call.args.length === 0 ? candidates[0] : undefined;
         const fullName = `${reference.interfaceName}#${call.method}`;
-        const invocationKey = `${caller.id}:${fullName}`;
+        const invocationKey = `${caller.id}:${fullName}:${signature?.methodSignature ?? "unproven"}`;
         if (seen.has(invocationKey)) continue;
         seen.add(invocationKey);
         pushDubboContract({
@@ -248,7 +413,12 @@ export const javaDubboExtractor = compatExtractor({
           confidence: confidenceFor("exact-parser-route"),
           group: reference.group,
           version: reference.version,
-          requestTypes: call.args.map(typeFromObjectCreation).filter((value): value is string => Boolean(value)),
+          requestTypes: signature?.requestSlots.map((slot) => slot.type)
+            ?? argumentTypes.filter((value): value is string => Boolean(value)),
+          requestSlots: signature?.requestSlots,
+          responseType: signature?.responseType,
+          methodSignature: signature?.methodSignature,
+          ownerType: reference.interfaceName,
           config: "annotation",
           framework: "dubbo-java"
         });

@@ -487,30 +487,10 @@ export async function applyIncrementalSchemaMutation(input: {
       });
       continue;
     }
-    if (change.entityKind !== "logical-relation") continue;
-    const relations = change.contributions.flatMap((contribution) => parseRelationContribution(contribution.payload));
-    if (change.nextCount === 0) {
-      const relation = change.previousContributions
-        .flatMap((contribution) => parseRelationContribution(contribution.payload))[0];
-      if (!relation) continue;
-      await input.db.query(
-        "MATCH (a:ContractSpec {storageId: $fromStorageId})-[r:SEMANTIC_REL]->(b:ContractSpec {storageId: $toStorageId}) " +
-        "WHERE r.workspaceId=$workspaceId AND r.generation=$generation AND r.kind=$kind DELETE r;",
-        {
-          workspaceId: input.workspaceId,
-          generation: input.generation,
-          fromStorageId: publicNodeStorageId(input.generation, relation.fromSpecId),
-          toStorageId: publicNodeStorageId(input.generation, relation.toSpecId),
-          kind: relation.kind
-        }
-      );
-      continue;
-    }
-    const [selected] = collapseSemanticRelations(relations);
-    if (selected) await input.db.addSemanticRelationsBatch([{ ...selected, active: true }], {
-      workspaceId: input.workspaceId,
-      generation: input.generation
-    });
+    // Logical semantic relations have one public publisher: the incremental
+    // dependency mutation prepared from contribution visibility. Applying
+    // them here as well creates a second relation path and is not idempotent
+    // on providers that allow parallel relationships.
   }
 }
 

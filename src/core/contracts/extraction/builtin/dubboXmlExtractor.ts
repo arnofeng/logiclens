@@ -9,11 +9,15 @@ import { parseDubboXmlConfig, type DubboXmlEntry } from "./dubboXmlConfig.js";
 import { indexedSourceAstNodes, parseSourceAst } from "./sourceAstUtils.js";
 import {
   directJavaDubboMethodDeclarations,
+  createJavaDubboInterfaceIndex,
+  type DubboInterfaceMethod,
   javaDubboImplementedInterfaces,
   javaDubboImports,
   javaDubboPackage,
   javaDubboParamTypes,
+  javaDubboParamSlots,
   javaDubboReturnType,
+  javaDubboMethodSignature,
   makeJavaDubboSymbol,
   resolveJavaDubboType
 } from "./javaDubboExtractor.js";
@@ -99,6 +103,41 @@ function matchingImplementation(
   return matches.length === 1 ? matches[0] : undefined;
 }
 
+function pushResolvedXmlProducer(
+  collector: FactCollector,
+  entry: DubboXmlEntry,
+  method: DubboInterfaceMethod
+): void {
+  const symbol = makeJavaDubboSymbol(
+    method.file,
+    method.node,
+    "method",
+    method.method,
+    `${entry.interfaceName}.${method.methodSignature}`
+  );
+  pushDubboContract({
+    collector,
+    file: method.file,
+    symbol,
+    interfaceName: entry.interfaceName,
+    method: method.method,
+    role: "producer",
+    offset: 0,
+    raw: method.node.text,
+    rule: "dubbo-xml-service-interface",
+    confidence: confidenceFor("exact-parser-route"),
+    group: entry.group,
+    version: entry.version,
+    requestTypes: method.requestSlots.map((slot) => slot.type),
+    requestSlots: method.requestSlots,
+    responseType: method.responseType,
+    methodSignature: method.methodSignature,
+    ownerType: entry.interfaceName,
+    config: "xml",
+    framework: "dubbo-java"
+  });
+}
+
 export const dubboXmlExtractor = compatExtractor({
   name: "builtin:dubbo-xml",
   languages: ["xml"],
@@ -106,6 +145,7 @@ export const dubboXmlExtractor = compatExtractor({
   extract(context, collector: FactCollector) {
     const files = [...parsedCodeFiles(context.parsedFiles)];
     const implementationsByRepo = collectJavaImplementations(files);
+    const interfaceIndex = createJavaDubboInterfaceIndex(files);
     const seen = new Set<string>();
     for (const file of files) {
       if (file.language !== "xml") continue;
@@ -117,6 +157,18 @@ export const dubboXmlExtractor = compatExtractor({
         const explicitMethods = entry.methods;
         if (explicitMethods.length > 0) {
           for (const method of explicitMethods) {
+            const resolvedMethods = entry.kind === "service"
+              ? interfaceIndex.resolve(entry.interfaceName).filter((candidate) => candidate.method === method.name)
+              : [];
+            if (resolvedMethods.length > 0) {
+              for (const resolvedMethod of resolvedMethods) {
+                const resolvedKey = `${file.repoId}:${role}:${entry.interfaceName}:${resolvedMethod.methodSignature}:${entry.group ?? ""}:${entry.version ?? ""}`;
+                if (seen.has(resolvedKey)) continue;
+                seen.add(resolvedKey);
+                pushResolvedXmlProducer(collector, entry, resolvedMethod);
+              }
+              continue;
+            }
             const key = `${file.repoId}:${role}:${entry.interfaceName}:${method.name}:${entry.group ?? ""}:${entry.version ?? ""}`;
             if (seen.has(key)) continue;
             seen.add(key);
@@ -137,6 +189,17 @@ export const dubboXmlExtractor = compatExtractor({
               config: "xml",
               framework: "dubbo-java"
             });
+          }
+          continue;
+        }
+
+        const resolvedInterfaceMethods = entry.kind === "service" ? interfaceIndex.resolve(entry.interfaceName) : [];
+        if (resolvedInterfaceMethods.length > 0) {
+          for (const resolvedMethod of resolvedInterfaceMethods) {
+            const key = `${file.repoId}:${role}:${entry.interfaceName}:${resolvedMethod.methodSignature}:${entry.group ?? ""}:${entry.version ?? ""}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            pushResolvedXmlProducer(collector, entry, resolvedMethod);
           }
           continue;
         }
@@ -172,7 +235,10 @@ export const dubboXmlExtractor = compatExtractor({
               group: entry.group,
               version: entry.version,
               requestTypes: javaDubboParamTypes(methodNode),
+              requestSlots: javaDubboParamSlots(methodNode),
               responseType: javaDubboReturnType(methodNode),
+              methodSignature: javaDubboMethodSignature(methodNode),
+              ownerType: entry.interfaceName,
               config: "xml",
               framework: "dubbo-java"
             });

@@ -1,132 +1,186 @@
 import { compatExtractor } from "./compat.js";
 import type Parser from "tree-sitter";
-import type { AnnotationFact } from "../../../parsing/facts.js";
 import type { FactCollector } from "../factCollector.js";
 import { confidenceFor } from "../../../../shared/confidence.js";
-import {
-  parsedCodeFiles,
-  pushEventContract, } from "./shared.js";
-import { findContainingSymbol, namedChildren, parseSourceAst, walkSourceAst } from "./sourceAstUtils.js";
-import { inferBrokerFromImports, type EventBroker } from "../../event.js";
+import { parsedCodeFiles, pushEventContract } from "./shared.js";
+import { findContainingSymbol, indexedSourceAstNodes, namedChildren, parseSourceAst } from "./sourceAstUtils.js";
+import type { EventBroker } from "../../event.js";
 
-// Listener annotations carry the topic/queue as a string argument, so they are
-// the highest-precision event signal in Java. `@EventListener`/`@StreamListener`
-// encode the topic as a parameter *type* (no string), which needs type
-// resolution (deferred), so they are intentionally out of scope here.
-const LISTENER_ANNOTATIONS: Record<string, { broker: EventBroker; topicArgs: string[] }> = {
-  KafkaListener: { broker: "kafka", topicArgs: ["topics"] },
-  RabbitListener: { broker: "rabbitmq", topicArgs: ["queues"] }
-};
+/** Exact AST/API patterns supported by deterministic Java event discovery. */
+export const JAVA_EVENT_PATTERNS = [
+  "@EventListener(payload-parameter)",
+  "@TransactionalEventListener(payload-parameter)",
+  "@KafkaListener(topics=..., payload-parameter)",
+  "@RabbitListener(queues=..., payload-parameter)",
+  "ApplicationEventPublisher.publishEvent(payload)",
+  "KafkaTemplate.send(topic,payload)",
+  "KafkaTemplate.send(topic,key,payload)",
+  "RabbitTemplate.convertAndSend(routingKey,payload)",
+  "RabbitTemplate.convertAndSend(exchange,routingKey,payload)",
+  "AmqpTemplate.send(destination,Message)"
+] as const;
 
-// Producer template methods topic is the first string literal argument.
-// `broker` is set only when the method name is broker-specific; `send` is
-// ambiguous (kafkaTemplate / streamBridge / amqpTemplate all expose it) so it
-// defers to the receiver name or the file's imported broker instead.
-const PRODUCER_METHODS: Record<string, EventBroker | undefined> = {
-  send: undefined,           // kafkaTemplate.send(...) / streamBridge.send(...) / amqpTemplate.send(...)
-  convertAndSend: "rabbitmq" // rabbitTemplate.convertAndSend("exchange"/"routingKey", payload)
-};
+type ParameterSlot = { index: number; name?: string; type: string };
+type Receiver = { broker: EventBroker | "application"; payloadType?: string };
 
-function javaStringValue(node: Parser.SyntaxNode | undefined): string | undefined {
-  if (!node || node.type !== "string_literal") return undefined;
-  return node.text.replace(/^["']|["']$/g, "");
+const INFRASTRUCTURE_TYPES = new Set([
+  "Acknowledgment", "Acknowledgement", "Headers", "MessageHeaders", "Header", "Metadata",
+  "Consumer", "ConsumerRecord", "ConsumerRecords", "Message", "Channel", "Envelope",
+  "AmqpHeaders", "KafkaHeaders", "Delivery", "StreamObserver"
+]);
+
+function simpleName(raw: string): string {
+  return raw.replace(/<.*>/su, "").replace(/\[\]$/u, "").trim().split(".").at(-1) ?? raw;
 }
 
-/** A topic value is usable only if it is a concrete string, not a `${...}` / `#{...}` placeholder. */
-function isConcreteTopic(value: string): boolean {
-  return value.length > 0 && !value.includes("${") && !value.includes("#{");
+function isInfrastructure(type: string): boolean {
+  return INFRASTRUCTURE_TYPES.has(simpleName(type));
 }
 
-/** Parses an annotation topic argument, unwrapping the `{"a","b"}` array form (serialized as JSON). */
-function topicsFromAnnotation(annotation: AnnotationFact, argNames: string[]): string[] {
-  const arg = annotation.arguments.find((a) => a.name && argNames.includes(a.name))
-    ?? annotation.arguments.find((a) => !a.name);
-  if (!arg) return [];
-  const raw = arg.value.trim();
-  let values: string[];
-  if (raw.startsWith("[")) {
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      values = Array.isArray(parsed) ? parsed.map(String) : [raw];
-    } catch {
-      values = [raw];
-    }
-  } else {
-    values = [raw];
-  }
-  return values.filter(isConcreteTopic);
+function methodParameters(node: Parser.SyntaxNode): ParameterSlot[] {
+  const parameters = node.childForFieldName("parameters");
+  if (!parameters) return [];
+  return namedChildren(parameters)
+    .filter((parameter) => parameter.type === "formal_parameter" || parameter.type === "spread_parameter")
+    .map((parameter, index) => ({
+      index,
+      name: parameter.childForFieldName("name")?.text,
+      type: parameter.childForFieldName("type")?.text.replace(/\s+/gu, " ").trim() ?? ""
+    }))
+    .filter((parameter) => Boolean(parameter.type));
 }
 
-function javaMethodCall(node: Parser.SyntaxNode): { object?: string; method?: string; args: Parser.SyntaxNode[] } | undefined {
+function annotationText(node: Parser.SyntaxNode, names: readonly string[]): string | undefined {
+  const modifiers = node.namedChildren.find((child) => child.type === "modifiers");
+  return modifiers?.namedChildren.find((child) => {
+    if (child.type !== "annotation" && child.type !== "marker_annotation") return false;
+    const name = child.namedChildren[0]?.text.split(".").at(-1);
+    return Boolean(name && names.includes(name));
+  })?.text;
+}
+
+function annotationTopics(text: string, property: string): string[] {
+  const named = new RegExp(`\\b${property}\\s*=\\s*(\\{[^}]*\\}|\"[^\"]*\")`, "u").exec(text)?.[1];
+  const positional = /\(\s*(\{[^}]*\}|"[^"]*")/u.exec(text)?.[1];
+  return [...(named ?? positional ?? "").matchAll(/"([^"$#{}]+)"/gu)].map((match) => match[1]!).filter(Boolean);
+}
+
+function call(node: Parser.SyntaxNode): { object?: string; method?: string; args: Parser.SyntaxNode[] } | undefined {
   if (node.type !== "method_invocation") return undefined;
-  const object = node.childForFieldName("object");
-  const name = node.childForFieldName("name");
-  const argsNode = node.childForFieldName("arguments");
-  return { object: object?.text, method: name?.text, args: argsNode ? namedChildren(argsNode) : [] };
+  const argumentsNode = node.childForFieldName("arguments");
+  return {
+    object: node.childForFieldName("object")?.text?.replace(/^this\./u, ""),
+    method: node.childForFieldName("name")?.text,
+    args: argumentsNode ? namedChildren(argumentsNode) : []
+  };
+}
+
+function stringValue(node: Parser.SyntaxNode | undefined): string | undefined {
+  return node?.type === "string_literal" ? node.text.slice(1, -1) : undefined;
+}
+
+function declaredVariables(ast: ReturnType<typeof parseSourceAst>): { types: Map<string, string>; receivers: Map<string, Receiver> } {
+  const types = new Map<string, string>();
+  const receivers = new Map<string, Receiver>();
+  if (!ast) return { types, receivers };
+  for (const node of indexedSourceAstNodes(ast, ["field_declaration", "local_variable_declaration"])) {
+    const type = node.childForFieldName("type")?.text ?? node.namedChildren.find((child) => /type/u.test(child.type))?.text;
+    if (!type) continue;
+    for (const declarator of node.namedChildren.filter((child) => child.type === "variable_declarator")) {
+      const name = declarator.childForFieldName("name")?.text;
+      if (!name) continue;
+      types.set(name, type);
+      const genericArgs = /<([\s\S]+)>/u.exec(type)?.[1]?.split(",").map((part) => part.trim());
+      if (/\bKafkaTemplate\b/u.test(type)) receivers.set(name, { broker: "kafka", payloadType: genericArgs?.at(-1) });
+      else if (/\b(?:RabbitTemplate|AmqpTemplate)\b/u.test(type)) receivers.set(name, { broker: "rabbitmq" });
+      else if (/\bApplicationEventPublisher\b/u.test(type)) receivers.set(name, { broker: "application" });
+    }
+  }
+  return { types, receivers };
+}
+
+function expressionType(node: Parser.SyntaxNode | undefined, variables: Map<string, string>): string | undefined {
+  if (!node) return undefined;
+  if (node.type === "object_creation_expression") return node.childForFieldName("type")?.text;
+  if (node.type === "identifier") {
+    let owner: Parser.SyntaxNode | null = node.parent;
+    while (owner && owner.type !== "method_declaration") owner = owner.parent;
+    const parameter = owner ? methodParameters(owner).find((slot) => slot.name === node.text) : undefined;
+    return parameter?.type ?? variables.get(node.text);
+  }
+  const builder = /\b([A-Za-z_$][\w$.]*)\.newBuilder\s*\(/u.exec(node.text)?.[1];
+  if (builder) return builder;
+  const cast = /^\(\s*([A-Za-z_$][\w$.]*(?:<[^>]+>)?)\s*\)/u.exec(node.text)?.[1];
+  return cast;
 }
 
 export const javaEventExtractor = compatExtractor({
   name: "builtin:java-event",
   languages: ["java"],
-  frameworks: ["java:spring-kafka", "java:spring-amqp"],
+  frameworks: ["java:spring-events", "java:spring-kafka", "java:spring-amqp"],
   extract(context, collector: FactCollector) {
     for (const file of parsedCodeFiles(context.parsedFiles)) {
       if (file.language !== "java") continue;
+      const ast = parseSourceAst(file, "java");
+      if (!ast) continue;
+      const { types, receivers } = declaredVariables(ast);
 
-      // Consumer side: annotation-driven, unambiguous.
-      for (const annotation of file.facts?.annotations ?? []) {
-        const config = LISTENER_ANNOTATIONS[annotation.name];
-        if (!config) continue;
-        for (const topic of topicsFromAnnotation(annotation, config.topicArgs)) {
+      for (const method of indexedSourceAstNodes(ast, ["method_declaration"])) {
+        const listener = annotationText(method, ["EventListener", "TransactionalEventListener", "KafkaListener", "RabbitListener"]);
+        if (!listener) continue;
+        const annotation = /@(?:[\w$.]+\.)?(EventListener|TransactionalEventListener|KafkaListener|RabbitListener)\b/u.exec(listener)?.[1];
+        if (!annotation) continue;
+        const broker: EventBroker = annotation === "KafkaListener" ? "kafka" : annotation === "RabbitListener" ? "rabbitmq" : "unknown";
+        const parameters = methodParameters(method);
+        const payloadCandidates = parameters.filter((parameter) => !isInfrastructure(parameter.type));
+        const payload = payloadCandidates.length === 1 ? payloadCandidates[0] : undefined;
+        const topics = annotation === "KafkaListener" ? annotationTopics(listener, "topics")
+          : annotation === "RabbitListener" ? annotationTopics(listener, "queues")
+          : payload ? [payload.type] : [annotation];
+        for (const topic of topics) {
           pushEventContract({
-            collector,
-            file,
-            topic,
-            role: "consumer",
-            broker: config.broker,
-            framework: config.broker,
-            line: annotation.line,
-            raw: annotation.raw,
-            rule: "java-event-listener",
-            confidence: confidenceFor("exact-event-annotation"),
-            sourceSymbolId: annotation.ownerSymbolId
+            collector, file, topic, role: "consumer", broker, framework: annotation,
+            payloadType: payload?.type,
+            payloadSlot: payload ? { index: payload.index, name: payload.name } : undefined,
+            payloadInference: payload ? "resolved" : payloadCandidates.length > 1 ? "ambiguous" : "unsupported",
+            topicConfidence: annotation === "KafkaListener" || annotation === "RabbitListener" ? 1 : 0.95,
+            line: method.startPosition.row + 1, raw: listener, rule: `java-event-listener:${annotation}`,
+            confidence: confidenceFor("exact-event-annotation"), sourceSymbolId: findContainingSymbol(file.symbols, method)?.id
           });
         }
       }
 
-      // Producer side: template call, import-gated.
-      const importBroker = inferBrokerFromImports(file.imports);
-      if (importBroker === "unknown") continue;
-
-      const ast = parseSourceAst(file, "java");
-      if (!ast) continue;
-
-      walkSourceAst(ast.tree.rootNode, (node) => {
-        const call = javaMethodCall(node);
-        if (!call?.method || !(call.method in PRODUCER_METHODS)) return;
-
-        const topic = javaStringValue(call.args.find((arg) => javaStringValue(arg) !== undefined));
-        if (!topic || !isConcreteTopic(topic)) return;
-
-        const methodBroker = PRODUCER_METHODS[call.method];
-        // A kafka receiver name overrides everything; then a broker-specific
-        // method name (convertAndSend rabbitmq); otherwise trust the import.
-        const broker = call.object?.toLowerCase().includes("kafka") ? "kafka" : (methodBroker ?? importBroker);
+      for (const node of indexedSourceAstNodes(ast, ["method_invocation"])) {
+        const invocation = call(node);
+        const receiver = invocation?.object ? receivers.get(invocation.object) : undefined;
+        if (!invocation?.method || !receiver) continue;
+        let topic: string | undefined;
+        let payloadNode: Parser.SyntaxNode | undefined;
+        if (receiver.broker === "application" && invocation.method === "publishEvent" && invocation.args.length === 1) {
+          payloadNode = invocation.args[0];
+        } else if (receiver.broker === "kafka" && invocation.method === "send" && (invocation.args.length === 2 || invocation.args.length === 3)) {
+          topic = stringValue(invocation.args[0]);
+          payloadNode = invocation.args.at(-1);
+        } else if (receiver.broker === "rabbitmq" && invocation.method === "convertAndSend" && (invocation.args.length === 2 || invocation.args.length === 3)) {
+          topic = stringValue(invocation.args.at(-2));
+          payloadNode = invocation.args.at(-1);
+        } else if (receiver.broker === "rabbitmq" && invocation.method === "send" && invocation.args.length === 2) {
+          topic = stringValue(invocation.args[0]);
+          payloadNode = invocation.args[1];
+        } else continue;
+        const payloadType = expressionType(payloadNode, types) ?? receiver.payloadType;
+        topic ??= payloadType;
+        if (!topic || topic.includes("${") || topic.includes("#{")) continue;
         const symbol = findContainingSymbol(file.symbols, node);
         pushEventContract({
-          collector,
-          file,
-          topic,
-          role: "producer",
-          broker,
-          framework: broker,
-          line: node.startPosition.row + 1,
-          raw: node.text,
-          rule: "java-event-producer",
-          confidence: confidenceFor("probable-event"),
-          sourceSymbolId: symbol?.id
+          collector, file, topic, role: "producer", broker: receiver.broker === "application" ? "unknown" : receiver.broker,
+          framework: receiver.broker === "application" ? "spring-events" : receiver.broker,
+          payloadType, payloadSlot: { index: invocation.args.indexOf(payloadNode!) },
+          payloadInference: payloadType ? "resolved" : "unresolved", topicConfidence: stringValue(invocation.args[0]) ? 1 : 0.95,
+          line: node.startPosition.row + 1, raw: node.text, rule: `java-event-producer:${invocation.method}`,
+          confidence: confidenceFor("exact-parser-route"), sourceSymbolId: symbol?.id
         });
-      });
+      }
     }
   }
 });

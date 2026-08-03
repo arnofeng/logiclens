@@ -13,16 +13,6 @@ function upperFirst(value: string): string {
   return value ? value[0]!.toUpperCase() + value.slice(1) : value;
 }
 
-function simpleTypeName(raw: string | undefined): string | undefined {
-  if (!raw) return undefined;
-  const cleaned = raw
-    .replace(/\b(final|var)\b/g, "")
-    .replace(/[?*&]/g, "")
-    .trim();
-  const generic = cleaned.match(/([A-Za-z_$][\w$]*)\s*(?:<|$)/)?.[1];
-  return generic?.split(".").at(-1);
-}
-
 function makeSymbol(file: ParsedFile, node: Parser.SyntaxNode, kind: CodeSymbol["kind"], name: string, qualifiedName: string): CodeSymbol {
   const startLine = node.startPosition.row + 1;
   const raw = node.text;
@@ -58,12 +48,13 @@ function methodSignatureTypes(methodNode: Parser.SyntaxNode): { requestType?: st
   const text = methodNode.text;
   const header = text.slice(0, Math.max(text.indexOf("{"), text.length));
   const params = header.match(/\(([\s\S]*?)\)/)?.[1] ?? "";
-  const responseType = header.match(/\bStreamObserver\s*<\s*([A-Za-z_$][\w$]*)\s*>/)?.[1];
+  const observerTypes = [...header.matchAll(/\bStreamObserver\s*<\s*([A-Za-z_$][\w$.]*(?:\s*<[^>]+>)?)\s*>/gu)].map((match) => match[1]!.trim());
+  const responseType = observerTypes.at(-1);
   const requestParam = params
     .split(",")
     .map((part) => part.trim())
     .find((part) => part && !part.includes("StreamObserver") && !/\b(Observer|Context)\b/.test(part));
-  const requestType = simpleTypeName(requestParam?.split(/\s+/).slice(0, -1).join(" "));
+  const requestType = requestParam?.split(/\s+/).slice(0, -1).join(" ").trim() || (javaServerStreaming(methodNode) === "client-stream" ? observerTypes[0] : undefined);
   return { requestType, responseType };
 }
 
@@ -112,11 +103,11 @@ function serviceFromStubFactory(text: string): string | undefined {
 function typeFromObjectCreation(node: Parser.SyntaxNode | undefined): string | undefined {
   if (!node) return undefined;
   if (node.type === "object_creation_expression") {
-    return simpleTypeName(node.childForFieldName("type")?.text ?? node.namedChild(0)?.text);
+    return node.childForFieldName("type")?.text ?? node.namedChild(0)?.text;
   }
   const text = node.text;
-  return text.match(/\b([A-Za-z_$][\w$]*)\.newBuilder\s*\(/)?.[1]
-    ?? text.match(/\bnew\s+([A-Za-z_$][\w$]*)\s*\(/)?.[1];
+  return text.match(/\b([A-Za-z_$][\w$.]*)\.newBuilder\s*\(/)?.[1]
+    ?? text.match(/\bnew\s+([A-Za-z_$][\w$.]*)\s*\(/)?.[1];
 }
 
 export const javaGrpcExtractor = compatExtractor({
@@ -155,7 +146,9 @@ export const javaGrpcExtractor = compatExtractor({
             requestType,
             responseType,
             streaming: javaServerStreaming(child),
-            framework: "grpc-java"
+            framework: "grpc-java",
+            ownerType: service,
+            methodSignature: `${method}(${requestType ?? ""}):${responseType ?? ""}`
           });
         });
       }
@@ -196,7 +189,8 @@ export const javaGrpcExtractor = compatExtractor({
           method,
           requestType: typeFromObjectCreation(call.args[0]),
           streaming: "unary",
-          framework: "grpc-java"
+          framework: "grpc-java",
+          methodSignature: `${method}(${typeFromObjectCreation(call.args[0]) ?? ""})`
         });
       }
     }

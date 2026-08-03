@@ -42,6 +42,9 @@ export type EventSpec = {
   topic: string;
   eventName?: string;
   payloadType?: string;
+  payloadSlot?: { index?: number; name?: string };
+  payloadInference?: "resolved" | "unresolved" | "ambiguous" | "unsupported";
+  topicConfidence?: number;
   keyType?: string;
   broker?: "kafka" | "rabbitmq" | "redis-stream" | "nats" | "unknown";
   version?: string;
@@ -54,6 +57,7 @@ export type SchemaSpec = {
   declaration: TypeDeclarationIdentity;
   displayName: string;
   languageId: string;
+  generatedTypeIdentities?: { languageId: string; canonicalName: string }[];
   shape:
     | { kind: "object"; fields: SchemaFieldSpec[]; baseTypes?: TypeExpression[] }
     | { kind: "enum"; values: string[] };
@@ -71,6 +75,12 @@ export type GrpcMethodSpec = {
   responseType?: string;    // "Order"
   streaming: GrpcStreaming;
   framework?: "proto" | "grpc-go" | "grpc-java" | "grpc-python" | "grpc-js";
+  ownerType?: string;
+  methodSignature?: string;
+  requestProtoType?: string;
+  responseProtoType?: string;
+  requestGeneratedJavaType?: string;
+  responseGeneratedJavaType?: string;
 };
 
 export type DubboMethodSpec = {
@@ -81,7 +91,11 @@ export type DubboMethodSpec = {
   version?: string;
   fullName: string;
   requestTypes?: string[];
+  requestSlots?: { index: number; name?: string; type: string }[];
   responseType?: string;
+  methodSignature?: string;
+  ownerType?: string;
+  ownerGenericBindings?: { name: string; type: string }[];
   config: "annotation" | "xml";
   framework?: "dubbo-java" | "dubbo-go";
 };

@@ -525,7 +525,7 @@ export async function reconcileWithActiveSchemaCatalog(
       workspaceId,
       generation: facts.generation,
       ids: dependentOwnerSpecIds,
-      kinds: ["event", "http-endpoint", "grpc-method", "graphql-operation"]
+      kinds: ["event", "http-endpoint", "grpc-method", "dubbo-method", "graphql-operation"]
     });
 
     const dependentFacts = await store.dependenciesByRoots<SchemaDependencyFact>(dependentRootIds, facts.generation);
@@ -661,9 +661,24 @@ export async function reconcileWithActiveSchemaCatalog(
   const eligibleActiveRootOwners = activeRootOwners.filter((spec) =>
     !touchedSourceKeys.has(`${spec.repoId}\0${spec.fileId}`));
   const changedIds = new Set(facts.contractSpecs.map((spec) => spec.id));
+  const protoBridgeRepoIds = [...new Set(facts.contractSpecs
+    .filter((spec) => spec.specKind === "grpc-method" && spec.framework === "grpc-java")
+    .map((spec) => spec.repoId))];
+  const protoBridgeCatalog = protoBridgeRepoIds.length > 0
+    ? await activeProtoBridgeContractSpecs({
+      db,
+      workspaceId,
+      generation: facts.generation,
+      repoIds: protoBridgeRepoIds
+    })
+    : [];
+  const protoBridgeContexts = protoBridgeRepoIds.length > 0
+    ? await activeProtoBridgeResolutionContexts({ db, generation: facts.generation, repoIds: protoBridgeRepoIds })
+    : [];
   const catalog = [...new Map([
     ...eligibleActiveSchemas.filter((spec) => !changedIds.has(spec.id)),
     ...eligibleActiveRootOwners.filter((spec) => !changedIds.has(spec.id)),
+    ...protoBridgeCatalog.filter((spec) => spec.specKind === "schema" && !changedIds.has(spec.id)),
     ...facts.contractSpecs
   ].map((spec) => [spec.id, spec])).values()];
   const activeCandidates = activeDeclarations.flatMap((fact) => fact.candidate ? [fact.candidate] : []);
@@ -673,7 +688,9 @@ export async function reconcileWithActiveSchemaCatalog(
   ])).values()];
   const reconciled = reconcileNonJavaSchemaFacts(catalog, facts.semanticRelations, declarationCandidates, {
     sourceFiles: parsedFiles,
-    resolutionContexts: activeResolutionContexts
+    resolutionContexts: [...new Map([...activeResolutionContexts, ...protoBridgeContexts]
+      .map((context) => [context.id, context])).values()],
+    protoBridgeContractSpecs: protoBridgeCatalog.filter((spec) => spec.specKind === "grpc-method")
   });
   const materializedIds = new Set(reconciled.materialized.contractSpecEdges.map((edge) => edge.specId));
   const affectedOwnerIds = new Set([
@@ -746,6 +763,54 @@ async function contractSpecsByIds(input: {
 
 function schemaScopeKey(scope: ResolutionScopeIdentity): string {
   return `${scope.languageId}\0${scope.repoId}\0${scope.resolutionScopeId}`;
+}
+
+async function activeProtoBridgeContractSpecs(input: {
+  db: GraphDB;
+  workspaceId: string;
+  generation: string;
+  repoIds: readonly string[];
+}): Promise<ContractSpecNode[]> {
+  const repoIds = [...new Set(input.repoIds)].sort((left, right) => left.localeCompare(right));
+  if (repoIds.length === 0) return [];
+  const rows = await input.db.query<ContractSpecNode>(
+    "MATCH (n:ContractSpec) WHERE n.workspaceId = $workspaceId AND n.generation = $generation " +
+    "AND n.active = true AND n.repoId IN $repoIds AND n.specKind IN ['schema', 'grpc-method'] " +
+    "RETURN n.id AS id, n.contractId AS contractId, n.specKind AS specKind, n.repoId AS repoId, n.fileId AS fileId, " +
+    "n.evidenceId AS evidenceId, n.sourceSymbolId AS sourceSymbolId, n.canonicalKey AS canonicalKey, " +
+    "n.httpMethod AS httpMethod, n.pathTemplate AS pathTemplate, n.eventTopic AS eventTopic, n.framework AS framework, " +
+    "n.version AS version, n.specJson AS specJson, n.confidence AS confidence, n.batchId AS batchId, " +
+    "n.indexedAt AS indexedAt, n.active AS active;",
+    { workspaceId: input.workspaceId, generation: input.generation, repoIds }
+  );
+  return rows.filter((node) => {
+    if (node.specKind === "grpc-method") return node.framework === "proto";
+    try {
+      return (JSON.parse(node.specJson) as { languageId?: unknown }).languageId === "proto";
+    } catch {
+      return false;
+    }
+  }).sort((left, right) => left.id.localeCompare(right.id));
+}
+
+async function activeProtoBridgeResolutionContexts(input: {
+  db: GraphDB;
+  generation: string;
+  repoIds: readonly string[];
+}): Promise<ResolutionContextFact[]> {
+  const rows = await input.db.query<{ payload?: unknown }>(
+    "MATCH (n:ResolutionContextFact) WHERE n.generation = $generation AND n.languageId = 'proto' " +
+    "AND n.repoId IN $repoIds RETURN n.payload AS payload;",
+    { generation: input.generation, repoIds: [...new Set(input.repoIds)] }
+  );
+  return rows.flatMap((row) => {
+    if (typeof row.payload !== "string") return [];
+    try {
+      return [JSON.parse(row.payload) as ResolutionContextFact];
+    } catch {
+      return [];
+    }
+  }).sort((left, right) => left.id.localeCompare(right.id));
 }
 
 function schemaScopePrefixKey(scope: {
@@ -1312,11 +1377,18 @@ export async function applyIncrementalRepoMutation(input: {
   const store = new SchemaGenerationStore(db, ctx.workspaceId);
   let lexicalWrite: LexicalWriteResult | undefined;
   const lexicalStarted = Date.now();
+  const publicFacts = {
+    ...mutation.publicGraph.facts,
+    // Incremental semantic relations are published once, after all repo and
+    // schema contribution mutations, by applyIncrementalDependencyMutation.
+    // Source replacement still owns nodes and non-semantic edges.
+    semanticRelations: []
+  };
   const graphWrite = await runGraphWritePhase({
     db,
     cwd: ctx.cwd,
     selection: mutation.selection,
-    facts: mutation.publicGraph.facts,
+    facts: publicFacts,
     repos: [...mutation.repos],
     parsedFiles: [...mutation.parsedFiles],
     publicGraphReplacement: mutation.publicGraph.replacement,

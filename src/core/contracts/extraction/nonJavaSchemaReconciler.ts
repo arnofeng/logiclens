@@ -24,6 +24,7 @@ import { contract, evidence } from "./builtin/shared.js";
 import { entityId } from "../../../shared/path.js";
 import { buildSchemaSourceContexts, type SchemaSourceResolutionContext } from "../../schema/sourceScopes.js";
 import { preferredSemanticRelation, semanticRelationDedupKey } from "./dedup.js";
+import { buildProtoJavaIdentityBridge } from "./protoJavaBridge.js";
 
 export interface SchemaInternalFacts {
   declarations: TypeDeclarationFact[];
@@ -65,6 +66,7 @@ export function reconcileNonJavaSchemaFacts(
   options: {
     sourceFiles?: readonly ParsedGraphFile[];
     resolutionContexts?: readonly ResolutionContextFact[];
+    protoBridgeContractSpecs?: readonly ContractSpecNode[];
   } = {}
 ): ReconciledSchemaFacts {
   const explicitSchemaIds = new Set(contractSpecs.filter(isExplicitSchemaNode).map((node) => node.id));
@@ -251,15 +253,106 @@ export function reconcileNonJavaSchemaFacts(
     const key = adapterKey(sourceContext.languageId, sourceContext.repoId);
     if (!adapters.has(key)) adapters.set(key, new IndexedTypeSystemAdapter(rulesFor(sourceContext.languageId), [], [...contexts.values()]));
   }
+  const protoJavaBridge = buildProtoJavaIdentityBridge(
+    options.sourceFiles ?? [],
+    [...updatedNodes, ...(options.protoBridgeContractSpecs ?? [])]
+  );
 
-  for (const node of updatedNodes) {
+  for (const [nodeIndex, originalNode] of updatedNodes.entries()) {
+    let node = originalNode;
+    if (node.specKind === "grpc-method" && node.framework === "grpc-java") {
+      try {
+        const spec = JSON.parse(node.specJson) as { kind?: string; service?: string; method?: string; streaming?: string; fullName?: string };
+        const methodBridge = spec.kind === "grpc-method" && spec.service && spec.method
+          ? protoJavaBridge.resolveMethod(node.fileId, spec.service, spec.method)
+          : undefined;
+        if (methodBridge) {
+          node = { ...node, specJson: JSON.stringify({ ...spec, fullName: methodBridge.fullName, streaming: methodBridge.streaming }) };
+          updatedNodes[nodeIndex] = node;
+        }
+      } catch {}
+    }
     const typedSlots = typedSlotsFor(node);
-    if (typedSlots.length === 0) continue;
     const sourceContext = sourceContextsByFile.get(`${node.repoId}\0${node.fileId}`);
+    if (typedSlots.length === 0) {
+      const inferenceDiagnostic = contractInferenceDiagnostic(node, sourceContext);
+      if (inferenceDiagnostic) diagnostics.set(inferenceDiagnostic.id, inferenceDiagnostic);
+      continue;
+    }
     const repoAdapters = [...adapters.entries()].filter(([key]) => key.split("\0")[1] === node.repoId
       && (!sourceContext || key.split("\0")[0] === sourceContext.languageId))
       .sort(([left], [right]) => left.localeCompare(right));
     for (const slot of typedSlots) {
+      if (node.specKind === "grpc-method" && node.framework === "grpc-java") {
+        let grpcSpec: { requestProtoType?: string; responseProtoType?: string; requestGeneratedJavaType?: string; responseGeneratedJavaType?: string } = {};
+        try { grpcSpec = JSON.parse(node.specJson) as typeof grpcSpec; } catch {}
+        const persistedJavaType = slot.kind === "REQUEST_SCHEMA" ? grpcSpec.requestGeneratedJavaType : grpcSpec.responseGeneratedJavaType;
+        const canonicalResolution = persistedJavaType ? protoJavaBridge.resolveCanonical(node.repoId, persistedJavaType) : undefined;
+        const bridgeResolution = canonicalResolution?.kind === "resolved" ? canonicalResolution : protoJavaBridge.resolve(node.fileId, slot.rawType);
+        if (bridgeResolution.kind !== "resolved") {
+          const code = bridgeResolution.kind;
+          const id = stableFactId("schema-diagnostic", { code, ownerSpecId: node.id, rawType: slot.rawType, bridge: "java-grpc-proto" });
+          diagnostics.set(id, {
+            id, generation: "", repoId: node.repoId, sourceFileId: node.fileId, sourceSymbolId: node.sourceSymbolId,
+            ownerSpecId: node.id, code, symbol: slot.rawType, evidenceId: node.evidenceId,
+            candidates: bridgeResolution.candidates?.map((canonicalName) => ({
+              languageId: "proto", repoId: node.repoId, resolutionScopeId: "proto-bridge", canonicalName
+            }))
+          });
+          continue;
+        }
+        const targetNode = bridgeResolution.schemaNode ?? reconciledSchemas.find(({ spec }) => (
+          spec.languageId === "proto" && spec.declaration.canonicalName === bridgeResolution.protoCanonicalName
+        ))?.node;
+        const targetSpec = targetNode ? parseSchema(targetNode.specJson) : undefined;
+        const targetContext = targetSpec ? contextsByDeclarationId.get(targetSpec.identity.declarationId) : undefined;
+        const adapter = adapters.get(adapterKey("proto", node.repoId));
+        if (!targetSpec || !targetContext || !adapter) {
+          const id = stableFactId("schema-diagnostic", { code: "unsupported", ownerSpecId: node.id, bridgeTarget: bridgeResolution.protoCanonicalName });
+          diagnostics.set(id, {
+            id, generation: "", repoId: node.repoId, sourceFileId: node.fileId, sourceSymbolId: node.sourceSymbolId,
+            ownerSpecId: node.id, code: "unsupported", symbol: bridgeResolution.protoCanonicalName,
+            fieldPath: [!targetSpec ? "missing-proto-schema" : !targetContext ? "missing-proto-context" : "missing-proto-adapter"],
+            evidenceId: node.evidenceId
+          });
+          continue;
+        }
+        try {
+          const current = JSON.parse(node.specJson) as Record<string, unknown> & {
+            service?: string;
+            method?: string;
+            requestProtoType?: string;
+            responseProtoType?: string;
+          };
+          const withTypes = { ...current, ...(slot.kind === "REQUEST_SCHEMA"
+            ? { requestProtoType: bridgeResolution.protoCanonicalName, requestGeneratedJavaType: bridgeResolution.javaCanonicalName }
+            : { responseProtoType: bridgeResolution.protoCanonicalName, responseGeneratedJavaType: bridgeResolution.javaCanonicalName }) };
+          const protoMethod = current.service && current.method
+            ? protoJavaBridge.resolveMethodByProtoTypes(
+              node.repoId,
+              current.service,
+              current.method,
+              withTypes.requestProtoType,
+              withTypes.responseProtoType
+            )
+            : undefined;
+          node = { ...node, specJson: JSON.stringify(protoMethod ? { ...withTypes, ...protoMethod } : withTypes) };
+          updatedNodes[nodeIndex] = node;
+        } catch {}
+        const root: SchemaRootReference = {
+          id: stableFactId("schema-root", { repoId: node.repoId, ownerSpecId: node.id, relationKind: slot.kind, slot: slot.slot, proto: bridgeResolution.protoCanonicalName }),
+          repoId: node.repoId, ownerSpecId: node.id, ownerFileId: node.fileId, relationKind: slot.kind,
+          languageId: "proto", frameworkId: "grpc-java-proto-bridge", rawTypeExpression: slot.rawType,
+          resolutionContextId: targetContext.id, slot: slot.slot, evidenceId: node.evidenceId, generation: ""
+        };
+        roots.push(root);
+        mergeMaterialized(materializeSchemaRoot({
+          adapter, root, context: targetContext,
+          contextForDeclaration: (declarationId) => contextsByDeclarationId.get(declarationId),
+          initialExpression: { kind: "reference", name: bridgeResolution.protoCanonicalName }
+        }));
+        continue;
+      }
       const attempts = repoAdapters.flatMap(([, adapter]) => {
         const declarationsForAdapter = adapter.indexDeclarations({ generation: "", files: [] });
         const declaration = declarationsForAdapter.find((fact) => fact.fileId === node.fileId) ?? declarationsForAdapter[0];
@@ -402,7 +495,7 @@ export function reconcileNonJavaSchemaFacts(
       roots: roots.sort(byId),
       dependencies: [...dependencies.values()].sort(byId),
       provenance: [...provenance.values()].sort(byId),
-      diagnostics: [...diagnostics.values()].sort(byId),
+      diagnostics: [...diagnostics.values()].filter((diagnostic) => !diagnostic.ownerSpecId || specIds.has(diagnostic.ownerSpecId)).sort(byId),
       fingerprints: buildBehaviorFingerprints({
         adapters,
         declarations,
@@ -570,6 +663,23 @@ function rulesFor(languageId: string): IndexedTypeSystemRules {
     scalars: COMMON_SCALARS,
     externalSymbols: ["System", "google.protobuf", "GraphQL", "typing", "time", "net/url"],
     wrappers: wrappersFor(languageId)
+  };
+}
+
+function contractInferenceDiagnostic(
+  node: ContractSpecNode,
+  context: SchemaSourceResolutionContext | undefined
+): SchemaDiagnosticFact | undefined {
+  let spec: Record<string, unknown>;
+  try { spec = JSON.parse(node.specJson) as Record<string, unknown>; } catch { return undefined; }
+  if (spec.kind !== "event" || typeof spec.payloadInference !== "string" || spec.payloadInference === "resolved") return undefined;
+  const code = spec.payloadInference === "ambiguous" ? "ambiguous"
+    : spec.payloadInference === "unsupported" ? "unsupported" : "unresolved";
+  const id = stableFactId("schema-diagnostic", { code, ownerSpecId: node.id, subject: "event-payload" });
+  return {
+    id, generation: "", repoId: node.repoId, sourceFileId: node.fileId, sourceSymbolId: node.sourceSymbolId,
+    ownerSpecId: node.id, code, symbol: "event-payload", evidenceId: node.evidenceId,
+    scope: context ? { languageId: context.languageId, repoId: context.repoId, resolutionScopeId: context.resolutionScopeId } : undefined
   };
 }
 
@@ -841,6 +951,14 @@ function typedSlotsFor(node: ContractSpecNode): { rawType: string; kind: SchemaR
       ...(typeof spec.requestType === "string" ? [{ rawType: spec.requestType, kind: "REQUEST_SCHEMA" as const, slot: { kind: "parameter" as const, index: 0, name: "request" } }] : []),
       ...(typeof spec.responseType === "string" ? [{ rawType: spec.responseType, kind: "RESPONSE_SCHEMA" as const, slot: { kind: "return" as const } }] : [])
     ];
+    if (spec.kind === "dubbo-method") return [
+      ...(Array.isArray(spec.requestSlots) ? spec.requestSlots.flatMap((slot) => isTypedBodySlot(slot)
+        ? [{ rawType: slot.type, kind: "REQUEST_SCHEMA" as const, slot: { kind: "parameter" as const, index: slot.index, name: slot.name } }]
+        : []) : []),
+      ...(typeof spec.responseType === "string" && !/^(?:void|Void)$/u.test(spec.responseType.trim())
+        ? [{ rawType: spec.responseType, kind: "RESPONSE_SCHEMA" as const, slot: { kind: "return" as const } }]
+        : [])
+    ];
     if (spec.kind === "graphql-operation") return [
       ...(Array.isArray(spec.requestTypes) ? spec.requestTypes.flatMap((rawType, index) => typeof rawType === "string"
         ? [{ rawType, kind: "REQUEST_SCHEMA" as const, slot: { kind: "parameter" as const, index } }]
@@ -848,7 +966,13 @@ function typedSlotsFor(node: ContractSpecNode): { rawType: string; kind: SchemaR
       ...(typeof spec.requestType === "string" ? [{ rawType: spec.requestType, kind: "REQUEST_SCHEMA" as const, slot: { kind: "parameter" as const, index: 0, name: "input" } }] : []),
       ...(typeof spec.responseType === "string" ? [{ rawType: spec.responseType, kind: "RESPONSE_SCHEMA" as const, slot: { kind: "return" as const } }] : [])
     ];
-    if (spec.kind === "event" && typeof spec.payloadType === "string") return [{ rawType: spec.payloadType, kind: "EVENT_PAYLOAD", slot: { kind: "payload" } }];
+    if (spec.kind === "event" && typeof spec.payloadType === "string") {
+      const payloadSlot = spec.payloadSlot && typeof spec.payloadSlot === "object" ? spec.payloadSlot as { index?: unknown; name?: unknown } : {};
+      return [{ rawType: spec.payloadType, kind: "EVENT_PAYLOAD", slot: {
+        kind: "payload", index: Number.isSafeInteger(payloadSlot.index) ? payloadSlot.index as number : undefined,
+        name: typeof payloadSlot.name === "string" ? payloadSlot.name : undefined
+      } }];
+    }
   } catch {}
   return [];
 }

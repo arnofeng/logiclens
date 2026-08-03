@@ -502,7 +502,10 @@ export function projectContractSpecDocuments(facts: GraphFactsBatch, workspaceId
     if (!proof || !location || spec.repoId !== proof.repoId || spec.fileId !== proof.fileId) return [];
     const edges = (edgesBySpec.get(spec.id) ?? []).filter((edge) => edge.contractId === spec.contractId && edge.evidenceId === spec.evidenceId);
     const schemaTerms = schemaSpecProjectionTerms(spec.specJson);
-    const relatedNames = [...(relatedSchemaNames.get(spec.id) ?? [])].sort();
+    const directSchemaNames = contractSpecSchemaIdentityTerms(spec.specJson);
+    const relatedNames = [...new Set(directSchemaNames.length > 0
+      ? directSchemaNames
+      : relatedSchemaNames.get(spec.id) ?? [])].sort();
     const searchableText = meaningfulText([spec.specKind, spec.canonicalKey, spec.httpMethod, spec.pathTemplate, spec.eventTopic, spec.framework, spec.version, ...schemaTerms, ...relatedNames, location.path]);
     return [makeLocatedDocument({
       workspaceId,
@@ -545,6 +548,16 @@ function schemaSpecProjectionTerms(value: string): string[] {
       for (const baseType of shape.baseTypes) terms.push(...schemaTypeProjectionTerms(baseType));
     }
     return terms;
+  } catch {
+    return [];
+  }
+}
+
+function contractSpecSchemaIdentityTerms(value: string): string[] {
+  try {
+    const spec = JSON.parse(value) as Record<string, unknown>;
+    return [spec.requestProtoType, spec.responseProtoType]
+      .filter((item): item is string => typeof item === "string" && item.length > 0);
   } catch {
     return [];
   }

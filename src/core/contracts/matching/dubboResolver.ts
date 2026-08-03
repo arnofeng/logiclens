@@ -73,13 +73,14 @@ function selectProducerCandidates(
   consumer: DubboMethodSpec,
   candidates: ParsedDubboSpec[]
 ): ParsedDubboSpec[] {
-  const compatible = candidates.filter((candidate) => methodsCompatible(consumer.method, candidate.dubboSpec.method));
+  const compatible = candidates.filter((candidate) => methodsCompatible(consumer, candidate.dubboSpec));
   const deduped = new Map<string, ParsedDubboSpec>();
   for (const candidate of compatible) {
     const method = candidate.dubboSpec.method || "*";
     const key = [
       candidate.specNode.repoId,
       method,
+      candidate.dubboSpec.methodSignature ?? "",
       candidate.dubboSpec.group ?? "",
       candidate.dubboSpec.version ?? ""
     ].join(":");
@@ -108,9 +109,15 @@ function interfaceKey(interfaceName: string): string {
   return interfaceName.replace(/\s+/g, "").toLowerCase();
 }
 
-function methodsCompatible(left: string | undefined, right: string | undefined): boolean {
-  if (!left || left === "*" || !right || right === "*") return true;
-  return left === right;
+function methodsCompatible(left: DubboMethodSpec, right: DubboMethodSpec): boolean {
+  if (!left.method || left.method === "*" || !right.method || right.method === "*") return true;
+  if (left.method !== right.method) return false;
+  if (left.methodSignature && right.methodSignature) return left.methodSignature === right.methodSignature;
+  if (left.requestTypes && right.requestTypes) {
+    return left.requestTypes.length === right.requestTypes.length
+      && left.requestTypes.every((type, index) => type.replace(/\s+/gu, "") === right.requestTypes?.[index]?.replace(/\s+/gu, ""));
+  }
+  return true;
 }
 
 function classifyDubboMatch(

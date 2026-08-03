@@ -8,6 +8,7 @@ import { codeId } from "../../../../shared/path.js";
 import { hashText } from "../../../../shared/hash.js";
 import { schemaFieldFromNormalized } from "../../../schema/model.js";
 import { resolutionScopeIdForFile } from "../../../schema/sourceScopes.js";
+import { protoJavaMessageIdentityMap } from "../protoJavaBridge.js";
 
 // Helper to find the start line of a regex search in source lines
 function findStartLine(lines: string[], regex: RegExp): number {
@@ -68,6 +69,7 @@ export const protoExtractor = compatExtractor({
       if (!schema) continue;
 
       const pkg = schema.package || "";
+      const javaIdentityByProto = new Map(protoJavaMessageIdentityMap(file.path, file.source).map((identity) => [identity.protoName, identity.javaName]));
       const lines = file.source.split(/\r?\n/);
       const canonicalProtoType = (raw: string): string => {
         return raw.startsWith(".") ? raw.slice(1) : raw;
@@ -190,6 +192,9 @@ export const protoExtractor = compatExtractor({
             rule: "proto-schema",
             confidence: 1.0,
             resolutionScopeId: resolutionScopeIdForFile(file)
+            ,generatedTypeIdentities: javaIdentityByProto.has(messageKey)
+              ? [{ languageId: "java", canonicalName: javaIdentityByProto.get(messageKey)! }]
+              : undefined
           });
 
           // Recursively process nested messages

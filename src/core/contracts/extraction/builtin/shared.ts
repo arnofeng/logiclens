@@ -422,6 +422,9 @@ export function pushEventContract(input: {
   broker: EventBroker;
   framework?: string;
   payloadType?: string;
+  payloadSlot?: { index?: number; name?: string };
+  payloadInference?: EventSpec["payloadInference"];
+  topicConfidence?: number;
   line: number;
   raw: string;
   rule: string;
@@ -446,6 +449,9 @@ export function pushEventContract(input: {
     // eventTopic/canonicalKey columns; the original-cased text stays in the raw.
     topic: eventContract.key,
     payloadType: input.payloadType,
+    payloadSlot: input.payloadSlot,
+    payloadInference: input.payloadInference,
+    topicConfidence: input.topicConfidence,
     broker: input.broker
   };
   const specId = pushContractSpec({
@@ -489,6 +495,8 @@ export function pushGrpcContract(input: {
   responseType?: string;
   streaming: GrpcStreaming;
   framework?: "proto" | "grpc-go" | "grpc-java" | "grpc-python" | "grpc-js";
+  ownerType?: string;
+  methodSignature?: string;
 }): { contractNode: ContractNode; evidenceNode: EvidenceNode; specId: string } {
   const contractNode = grpcContract(input.fullName, `gRPC ${input.fullName}`);
   const evidenceNode = evidence({
@@ -512,7 +520,9 @@ export function pushGrpcContract(input: {
     requestType: input.requestType,
     responseType: input.responseType,
     streaming: input.streaming,
-    framework: input.framework
+    framework: input.framework,
+    ownerType: input.ownerType,
+    methodSignature: input.methodSignature
   };
 
   const specId = pushContractSpec({
@@ -689,7 +699,11 @@ export function pushDubboContract(input: {
   group?: string;
   version?: string;
   requestTypes?: string[];
+  requestSlots?: { index: number; name?: string; type: string }[];
   responseType?: string;
+  methodSignature?: string;
+  ownerType?: string;
+  ownerGenericBindings?: { name: string; type: string }[];
   config: "annotation" | "xml";
   framework?: "dubbo-java" | "dubbo-go";
 }): { contractNode: ContractNode; evidenceNode: EvidenceNode } {
@@ -715,7 +729,11 @@ export function pushDubboContract(input: {
     version: input.version,
     fullName,
     requestTypes: input.requestTypes,
+    requestSlots: input.requestSlots,
     responseType: input.responseType,
+    methodSignature: input.methodSignature,
+    ownerType: input.ownerType,
+    ownerGenericBindings: input.ownerGenericBindings,
     config: input.config,
     framework: input.framework
   };
@@ -729,7 +747,8 @@ export function pushDubboContract(input: {
     evidenceNode,
     sourceSymbolId: input.symbol.id,
     framework: input.framework,
-    version: input.version
+    version: input.version,
+    canonicalSourceSignature: input.methodSignature
   });
 
   const interfaceSimpleName = input.interfaceName.split(".").filter(Boolean).at(-1) ?? input.interfaceName;
@@ -783,6 +802,7 @@ export function pushSchemaContract(input: {
   rule: string;
   confidence: number;
   resolutionScopeId: string;
+  generatedTypeIdentities?: { languageId: string; canonicalName: string }[];
 }): { contractNode: ContractNode; evidenceNode: EvidenceNode; specId: string } {
   const contractNode = contract("schema", input.name);
   const evidenceNode = evidence({
@@ -805,6 +825,7 @@ export function pushSchemaContract(input: {
     canonicalName: input.name
     },
     displayName: input.name,
+    generatedTypeIdentities: input.generatedTypeIdentities,
     shape: { kind: "object", fields: input.fields }
   });
 

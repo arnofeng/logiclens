@@ -475,6 +475,29 @@ export const goFallbackDetector: FrameworkDetector = {
   }
 };
 
+export const protoFallbackDetector: FrameworkDetector = {
+  name: "builtin:proto-fallback-detector",
+  async detect(repo, parsedFiles) {
+    const hasProto = parsedFiles.some((file) => file.language === "proto");
+    if (!hasProto) return [];
+    const protoEvidence = createFrameworkEvidence({
+      repoId: repo.id,
+      filePath: "",
+      line: 1,
+      raw: "contains proto files",
+      rule: "contains-proto-files",
+      confidence: confidenceFor("fallback-framework-language")
+    });
+    return [{
+      repoId: repo.id,
+      name: "proto:generic",
+      language: "proto",
+      confidence: confidenceFor("fallback-framework-language"),
+      evidence: [protoEvidence]
+    }];
+  }
+};
+
 export const dubboXmlFrameworkDetector: FrameworkDetector = {
   name: "builtin:dubbo-xml-detector",
   async detect(repo, parsedFiles) {
@@ -510,7 +533,8 @@ export const commonBuiltinFrameworkDetectors: FrameworkDetector[] = [
   pyprojectDetector,
   jsFallbackDetector,
   pythonFallbackDetector,
-  goFallbackDetector
+  goFallbackDetector,
+  protoFallbackDetector
 ];
 
 export const javaBuiltinFrameworkDetectors: FrameworkDetector[] = [

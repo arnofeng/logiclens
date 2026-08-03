@@ -40,6 +40,7 @@ export const defaultInclude = [
   "**/*.js",
   "**/*.jsx",
   "**/*.java",
+  "**/*.proto",
   "**/*.py",
   "**/*.go",
   "**/*.md",

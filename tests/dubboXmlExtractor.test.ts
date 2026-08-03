@@ -167,6 +167,30 @@ describe("Dubbo XML extractor", () => {
     expect(bundle.evidence.every((evidence) => evidence.rule === "dubbo-xml-service-implementation")).toBe(true);
   });
 
+  it("uses the declared service interface, including inherited methods, as typed XML roots", async () => {
+    const bundle = await extractWorkspace(
+      `<beans xmlns:dubbo="http://dubbo.apache.org/schema/dubbo">
+        <dubbo:service interface="com.acme.api.ActivityService" ref="activityService" />
+      </beans>`,
+      [{
+        path: "src/main/java/com/acme/api/ActivityService.java",
+        source: `package com.acme.api;
+          interface BaseService { Activity exchange(Activity value); }
+          interface ActivityService extends BaseService {}`
+      }]
+    );
+
+    expect(specs(bundle)).toEqual([
+      expect.objectContaining({
+        method: "exchange",
+        requestSlots: [{ index: 0, name: "value", type: "Activity" }],
+        responseType: "Activity",
+        methodSignature: "exchange(Activity):Activity"
+      })
+    ]);
+    expect(bundle.evidence[0]!.rule).toBe("dubbo-xml-service-interface");
+  });
+
   it("ignores unrelated XML", async () => {
     const bundle = await extract(`<beans><bean id="plain" class="com.acme.Plain" /></beans>`);
     expect(bundle.contractSpecs).toHaveLength(0);

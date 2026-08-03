@@ -111,4 +111,35 @@ public class P {
 }`);
     expect(bundle.contractSpecs.some((s) => s.specKind === "event")).toBe(false);
   });
+
+  it("supports Spring application events and records payload parameter provenance", async () => {
+    const bundle = await extract(`
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.event.EventListener;
+class Activity {}
+class Headers {}
+class Events {
+  private ApplicationEventPublisher publisher;
+  @EventListener void listen(Activity value, org.springframework.messaging.MessageHeaders headers) {}
+  void publish(Activity value) { publisher.publishEvent(value); }
+}`);
+    const parsed = bundle.contractSpecs.map((node) => JSON.parse(node.specJson));
+    expect(parsed).toEqual(expect.arrayContaining([
+      expect.objectContaining({ payloadType: "Activity", payloadSlot: { index: 0, name: "value" }, payloadInference: "resolved" }),
+      expect.objectContaining({ payloadType: "Activity", payloadSlot: { index: 0 }, payloadInference: "resolved" })
+    ]));
+  });
+
+  it("keeps a known topic but marks an ambiguous listener payload instead of guessing", async () => {
+    const bundle = await extract(`
+import org.springframework.kafka.annotation.KafkaListener;
+class A {} class B {}
+class Events { @KafkaListener(topics="known.topic") void listen(A left, B right) {} }
+`);
+    expect(bundle.contractSpecs).toHaveLength(1);
+    expect(JSON.parse(bundle.contractSpecs[0]!.specJson)).toMatchObject({
+      topic: "known.topic", payloadInference: "ambiguous"
+    });
+    expect(JSON.parse(bundle.contractSpecs[0]!.specJson).payloadType).toBeUndefined();
+  });
 });

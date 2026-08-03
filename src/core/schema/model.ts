@@ -1,6 +1,6 @@
 import { hashText } from "../../shared/hash.js";
 
-export const SCHEMA_INDEX_VERSION = "7";
+export const SCHEMA_INDEX_VERSION = "8";
 
 export interface ResolutionScopeIdentity {
   languageId: string;
@@ -250,7 +250,8 @@ export function createSchemaSpec(input: {
   declaration: TypeDeclarationIdentity;
   displayName: string;
   shape: { kind: "object"; fields: SchemaFieldSpec[]; baseTypes?: TypeExpression[] } | { kind: "enum"; values: string[] };
-}): { id: string; kind: "schema"; identity: TypeInstanceIdentity; declaration: TypeDeclarationIdentity; displayName: string; languageId: string; shape: typeof input.shape } {
+  generatedTypeIdentities?: { languageId: string; canonicalName: string }[];
+}): { id: string; kind: "schema"; identity: TypeInstanceIdentity; declaration: TypeDeclarationIdentity; displayName: string; languageId: string; generatedTypeIdentities?: { languageId: string; canonicalName: string }[]; shape: typeof input.shape } {
   const identity = createSchemaIdentity(input.declaration);
   return {
     id: schemaSpecId(identity),
@@ -259,6 +260,7 @@ export function createSchemaSpec(input: {
     declaration: input.declaration,
     displayName: input.displayName,
     languageId: input.declaration.languageId,
+    generatedTypeIdentities: input.generatedTypeIdentities,
     shape: input.shape
   };
 }
