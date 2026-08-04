@@ -4,6 +4,8 @@ RepoHelix reads `.repohelix/config.yaml`. One RepoHelix workspace corresponds to
 
 Configuration loading replaces `${ENV_VAR}` placeholders with environment-variable values before validation. Use placeholders for credentials instead of committing secrets.
 
+Deterministic contract-driven schema discovery adds no YAML keys. Language/framework adapters derive typed contract roots from source and plugins, and the shared core materializes bounded reachable schemas. See [Deterministic contract-driven schema release](contract-schema-release.md).
+
 ## Kuzu local profile
 
 Kuzu is the default local provider. It stores the workspace graph and full-text search data locally, with no external service or API key.

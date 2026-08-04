@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-Security fixes are applied to the latest RepoHelix 1.x release. Pre-1.0 beta versions and Plugin API 0.x are no longer supported.
+Security fixes are applied to the latest RepoHelix release.
 
 ## Reporting a Vulnerability
 

@@ -96,6 +96,24 @@ function resolveLexicalStore(client: Awaited<ReturnType<typeof createClient>>): 
   }).resolveLexicalStore();
 }
 
+describe("SDK repository discovery", () => {
+  it("returns no indexed repositories before the first public generation exists", async () => {
+    const db = fakeGraphDb();
+    vi.mocked(db.query).mockResolvedValue([]);
+    registerGraphProvider("sdk-empty-workspace", lexicalRegistration(db));
+    const client = await createClient({
+      config: {
+        ...defaultConfig(),
+        graph: { ...defaultConfig().graph, provider: "sdk-empty-workspace" }
+      }
+    });
+
+    await expect(client.listRepos()).resolves.toEqual([]);
+    expect(db.listRepos).not.toHaveBeenCalled();
+    await client.close();
+  });
+});
+
 describe("SDK ask retrieval options", () => {
   it("exports stable defaults, boundaries, and public response types from the package root", () => {
     const options: RetrieveOptions = { lexical: false, semantic: false, topK: 3, graphHops: 2, contextBudget: 512 };

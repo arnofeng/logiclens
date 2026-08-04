@@ -120,7 +120,7 @@ RepoHelix 会自动分析你的多仓库系统，将整个代码系统建模为�
 - 仓库（Repo）
 - 文件（File）
 - 符号（Symbol）
-- 代码契约（Contract）— API / Event / DTO / Schema / RPC / GraphQL / Dubbo / Package 等契约关系
+- 代码契约（Contract）— HTTP API / Event / Schema / gRPC / GraphQL / Dubbo / Package 等契约关系
 
 ### 🔗 边（Edges）
 
@@ -382,7 +382,6 @@ RepoHelix 支持针对性能调优、索引设置和自定义 LLM 重试等多�
 
 ### 当前局限
 
-- RepoHelix 1.x 会保持已记录的 CLI、SDK、MCP 和 Plugin API 契约稳定。未来如有破坏性契约或图迁移，将通过新的 major 版本发布，并在 changelog 中说明。
 - 静态分析偏保守。动态 API path、反射、运行时依赖注入、生成代码和框架魔法可能提取不完整，或被报告为 unresolved evidence。
 - 内置框架支持是聚焦的。未支持框架仍可作为源码解析，但契约提取可能较浅，直到添加对应 detector 或 extractor。
 - 跨仓库依赖质量依赖仓库名、包元数据、import、alias 和契约证据。

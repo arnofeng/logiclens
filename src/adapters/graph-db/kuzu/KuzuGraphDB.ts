@@ -188,6 +188,7 @@ export class KuzuGraphDB implements GraphDB {
   private retainHandleOnClose: boolean;
   private manualTx?: KuzuTransactionContext;
   private readonly txStorage = new AsyncLocalStorage<KuzuTransactionContext>();
+  private writeTransactionTail: Promise<void> = Promise.resolve();
   private readonly crud: CypherCrud;
 
   private constructor(db: kuzu.Database, managedKey: string, retainHandleOnClose: boolean) {
@@ -328,21 +329,23 @@ export class KuzuGraphDB implements GraphDB {
       }
     }
 
-    const conn = await this.createConnection();
-    const context: KuzuTransactionContext = { conn, depth: 1 };
-    try {
-      await conn.query("BEGIN TRANSACTION;");
-      const result = await this.txStorage.run(context, fn);
-      await conn.query("COMMIT;");
-      return result;
-    } catch (error) {
+    return this.serializeWriteTransaction(async () => {
+      const conn = await this.createConnection();
+      const context: KuzuTransactionContext = { conn, depth: 1 };
       try {
-        await conn.query("ROLLBACK;");
-      } catch {}
-      throw error;
-    } finally {
-      await conn.close();
-    }
+        await conn.query("BEGIN TRANSACTION;");
+        const result = await this.txStorage.run(context, fn);
+        await conn.query("COMMIT;");
+        return result;
+      } catch (error) {
+        try {
+          await conn.query("ROLLBACK;");
+        } catch {}
+        throw error;
+      } finally {
+        await conn.close();
+      }
+    });
   }
 
   async readTransaction<T>(fn: () => Promise<T>): Promise<T> {
@@ -779,23 +782,27 @@ export class KuzuGraphDB implements GraphDB {
   }
 
   async commitGraphWriteBatch(input: { batchId: string; updatedAt: string; completedStage?: string }): Promise<void> {
-    await this.query(
-      "MATCH (b:GraphWriteBatch {id: $id}) SET b.status=$status, b.updatedAt=$updatedAt, b.completedStage=$completedStage, b.error=$error;",
-      { id: `graph-write:${input.batchId}`, status: "committed", updatedAt: input.updatedAt, completedStage: input.completedStage ?? "commit", error: "" }
-    );
+    await this.transaction(async () => {
+      await this.query(
+        "MATCH (b:GraphWriteBatch {id: $id}) SET b.status=$status, b.updatedAt=$updatedAt, b.completedStage=$completedStage, b.error=$error;",
+        { id: `graph-write:${input.batchId}`, status: "committed", updatedAt: input.updatedAt, completedStage: input.completedStage ?? "commit", error: "" }
+      );
+    });
   }
 
   async failGraphWriteBatch(input: { batchId: string; updatedAt: string; error: string; completedStage?: string; awaitingCleanup?: boolean }): Promise<void> {
-    await this.query(
-      "MATCH (b:GraphWriteBatch {id: $id}) SET b.status=$status, b.updatedAt=$updatedAt, b.completedStage=$completedStage, b.error=$error;",
-      {
-        id: `graph-write:${input.batchId}`,
-        status: input.awaitingCleanup ? "awaiting-cleanup" : "failed",
-        updatedAt: input.updatedAt,
-        completedStage: input.completedStage ?? "failed",
-        error: input.error
-      }
-    );
+    await this.transaction(async () => {
+      await this.query(
+        "MATCH (b:GraphWriteBatch {id: $id}) SET b.status=$status, b.updatedAt=$updatedAt, b.completedStage=$completedStage, b.error=$error;",
+        {
+          id: `graph-write:${input.batchId}`,
+          status: input.awaitingCleanup ? "awaiting-cleanup" : "failed",
+          updatedAt: input.updatedAt,
+          completedStage: input.completedStage ?? "failed",
+          error: input.error
+        }
+      );
+    });
   }
 
   async recoverIncompleteGraphWriteBatches(input: { repoIds?: string[]; workspaceId?: string; generation?: string; updatedAt: string; cleanupBatch?: (journal: GraphWriteBatchJournal) => Promise<void> }): Promise<GraphWriteBatchJournal[]> {
@@ -965,10 +972,12 @@ export class KuzuGraphDB implements GraphDB {
   }
 
   async updateGraphWriteBatch(input: { batchId: string; updatedAt: string; completedStage: string }): Promise<void> {
-    await this.query(
-      "MATCH (b:GraphWriteBatch {id: $id}) SET b.updatedAt=$updatedAt, b.completedStage=$completedStage;",
-      { id: `graph-write:${input.batchId}`, updatedAt: input.updatedAt, completedStage: input.completedStage }
-    );
+    await this.transaction(async () => {
+      await this.query(
+        "MATCH (b:GraphWriteBatch {id: $id}) SET b.updatedAt=$updatedAt, b.completedStage=$completedStage;",
+        { id: `graph-write:${input.batchId}`, updatedAt: input.updatedAt, completedStage: input.completedStage }
+      );
+    });
   }
 
   async knownFileHashes(repoIdValue: string, scope: PublicGraphGenerationScope): Promise<Map<string, string>> {
@@ -1161,6 +1170,20 @@ export class KuzuGraphDB implements GraphDB {
 
   private activeTransaction(): KuzuTransactionContext | undefined {
     return this.txStorage.getStore() ?? this.manualTx;
+  }
+
+  private async serializeWriteTransaction<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.writeTransactionTail;
+    let release!: () => void;
+    this.writeTransactionTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous.catch(() => {});
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
   }
 
   private async createConnection(): Promise<kuzu.Connection> {

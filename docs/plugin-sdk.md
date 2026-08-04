@@ -147,7 +147,7 @@ If a capability is declared, its matching exported array is required. A language
 
 `defineFactExtractor()` provides `extract(context)` and optional `postExtract(context)` phases. Filter work with `languages` and `frameworks` metadata.
 
-The context exposes read-only repository, file, symbol, import, and call views. `context.files` supports `all()`, `byLanguage()`, `byRepo()`, and `get(repoId, path)`.
+The context exposes read-only repository, file, symbol, import, and call views. Every file view includes the required host-generated canonical `fileId`; plugins must reuse it for schema field source locations instead of constructing an ID from `repoId` and `path`. `context.files` supports `all()`, `byLanguage()`, `byRepo()`, and `get(repoId, path)`.
 
 Emit facts through `context.emit`:
 
@@ -158,6 +158,8 @@ Emit facts through `context.emit`:
 `postExtract` additionally receives `context.facts`, which can query facts emitted earlier in the extraction pass. Use it when one fact depends on endpoints, schemas, events, packages, or frameworks already collected.
 
 Every emitted fact must belong to the current context and include evidence with a repository-relative `filePath`, 1-based line, raw source description, stable rule name, and confidence (`exact`, `probable`, `heuristic`, or a numeric value).
+
+Schema facts participate in the host's deterministic contract-driven chain. Emit canonical declarations, recursive type expressions, explicit object/enum shapes, and stable source locations; do not infer public schemas from DTO/VO/Payload/Schema suffixes or emit provisional relations. The host owns reachability, type-instance identity, diagnostics, generation reconciliation, and lexical `contractSpec` projection. No plugin-specific schema configuration keys are required.
 
 ## Framework Detectors
 

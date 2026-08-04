@@ -21,9 +21,8 @@ repohelix index --repo <repo>
 
 The plugin parses `.cs` files. `.csproj`, `.sln`, `Directory.Build.props`, and `Directory.Packages.props` files are used to detect C# projects and extract project metadata.
 
-## Compatibility
+## Requirements
 
-- RepoHelix 1.x
 - Node.js 20.19.0 or later
 
 The plugin performs syntax-based static analysis. It does not run the project or provide compiler-level C# analysis.
@@ -34,7 +33,7 @@ The plugin extracts ASP.NET Core controller routes, minimal API mappings, route 
 
 ## Schema facts
 
-Schema extraction supports records, classes, structs, common collection and dictionary types, nullable types, serialization attributes, required members, and partial declarations. It focuses on DTOs and types referenced by public contracts; ordinary domain classes are not treated as schemas automatically.
+Schema declaration extraction supports records, classes, structs, common collection and dictionary types, nullable types, serialization attributes, required members, and partial declarations. Public `SchemaSpec` materialization is contract-driven and suffix-independent: the host follows provable typed roots through the shared deterministic adapter/core chain.
 
 ## gRPC and messaging facts
 
@@ -49,8 +48,6 @@ Entity Framework entities are not treated as database schemas. They are included
 For the shared discovery rules, workspace/global scope, updates, removal, and troubleshooting, see the RepoHelix [Plugin Guide](https://github.com/arnofeng/repohelix/blob/main/docs/plugins.md). Plugin authors should also read the [Plugin SDK Reference](https://github.com/arnofeng/repohelix/blob/main/docs/plugin-sdk.md).
 
 The default installation is scoped to the current RepoHelix workspace. Use `--global` to make the plugin available to all workspaces indexed by the current user.
-
-This release targets Plugin API `1.0.0`; Plugin API 0.x is not compatible with RepoHelix 1.x.
 
 If native grammar installation fails, use a supported Node ABI, remove the failed installation directory, reinstall with build tools available, and verify `tree-sitter` remains on `0.21.x`; `tree-sitter-c-sharp 0.23.5+` targets the incompatible `0.25.x` line.
 

@@ -1,6 +1,6 @@
 {
   "name": "repohelix",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "description": "Local-first semantic contract graph for AI coding agents to reason about cross-repository interfaces and change impact.",
   "type": "module",
   "packageManager": "pnpm@10.34.5",

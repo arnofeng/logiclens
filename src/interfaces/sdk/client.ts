@@ -463,7 +463,11 @@ export class AppClient {
    */
   async listRepos(): Promise<RepoNode[]> {
     const db = await this.getDb();
-    return withPublicGraphReadSnapshot(db, deriveWorkspaceId(this.config.systemName), (snapshot) => db.listRepos(snapshot));
+    return await tryWithPublicGraphReadSnapshot(
+      db,
+      deriveWorkspaceId(this.config.systemName),
+      (snapshot) => db.listRepos(snapshot)
+    ) ?? [];
   }
 
   /**

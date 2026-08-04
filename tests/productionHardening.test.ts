@@ -107,4 +107,54 @@ llm:
     await expect(db.stats({ workspaceId: "workspace:close-test", generation: "generation:close-test" })).rejects.toThrow(/closed/);
     await expect(db.close()).resolves.toBeUndefined();
   });
+
+  it("serializes graph journal writes behind an active Kuzu write transaction", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "test-db-write-serialization-"));
+    const db = await KuzuGraphDB.open(path.join(cwd, "graph"));
+    let releaseTransaction!: () => void;
+    const transactionGate = new Promise<void>((resolve) => {
+      releaseTransaction = resolve;
+    });
+    let markTransactionStarted!: () => void;
+    const transactionStarted = new Promise<void>((resolve) => {
+      markTransactionStarted = resolve;
+    });
+    try {
+      await db.initSchema("write-serialization-test");
+      await db.beginGraphWriteBatch({
+        batchId: "batch:write-serialization",
+        repoIds: [],
+        repoNames: [],
+        writerMode: "bulk-copy",
+        atomicityMode: "transactional",
+        workspaceId: "workspace:write-serialization",
+        generation: "generation:write-serialization",
+        startedAt: "2026-08-04T00:00:00.000Z"
+      });
+
+      const activeTransaction = db.transaction(async () => {
+        markTransactionStarted();
+        await transactionGate;
+      });
+      await transactionStarted;
+      const journalUpdate = db.updateGraphWriteBatch({
+        batchId: "batch:write-serialization",
+        updatedAt: "2026-08-04T00:00:01.000Z",
+        completedStage: "graph-written"
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      releaseTransaction();
+      await expect(Promise.all([activeTransaction, journalUpdate])).resolves.toEqual([undefined, undefined]);
+      const rows = await db.query<{ completedStage: string }>(
+        "MATCH (b:GraphWriteBatch {id: $id}) RETURN b.completedStage AS completedStage;",
+        { id: "graph-write:batch:write-serialization" }
+      );
+      expect(rows[0]?.completedStage).toBe("graph-written");
+    } finally {
+      releaseTransaction();
+      await db.close();
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
 });

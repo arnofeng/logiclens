@@ -105,7 +105,7 @@ Re-run `plugin install` with the desired source and `--force` to replace an inst
 repohelix plugin install @repohelix/plugin-csharp --force
 ```
 
-RepoHelix 1.x accepts Plugin API 1.x. Plugins that still declare `pluginApiVersion: 0.x` must update their SDK dependency and manifest before they can be loaded.
+Plugin manifests declare a compatible `pluginApiVersion`, and schema facts use the deterministic declaration/type-expression model.
 
 To remove a plugin, run `repohelix plugin remove <name>` with the same scope used for installation, stop or restart long-running RepoHelix processes, and re-index. Existing graph records are reconciled by normal indexing; use a clean full index when changing a parser or extractor substantially.
 

@@ -120,7 +120,7 @@ RepoHelix automatically analyzes your multi-repository system and models the ent
 - Repository
 - File
 - Symbol
-- Contract — API / Event / DTO / Schema / RPC / GraphQL / Dubbo / Package and other contractual relationships
+- Contract — HTTP API / Event / Schema / gRPC / GraphQL / Dubbo / Package and other contractual relationships
 
 ### 🔗 Edges
 
@@ -382,7 +382,6 @@ More languages, frameworks, and generated client patterns will be supported over
 
 ### Current Limitations
 
-- RepoHelix 1.x keeps its documented CLI, SDK, MCP, and Plugin API contracts stable. A future breaking contract or graph migration will be released under a new major version and documented in the changelog.
 - Static analysis is conservative. Dynamic API paths, reflection, runtime dependency injection, generated code, and framework magic may be incompletely extracted, or reported as unresolved evidence.
 - Built-in framework support is focused. Unsupported frameworks can still be parsed as source code, but contract extraction may be shallow until the corresponding detector or extractor is added.
 - Cross-repository dependency quality depends on repository names, package metadata, imports, aliases, and contract evidence.

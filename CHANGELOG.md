@@ -29,13 +29,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Improved workspace reliability, search fallback behavior, API-path parsing, impact analysis, graph updates, and incremental indexing.
 
-### Migration
-
-- Stop existing `repohelix watch` and MCP processes before upgrading.
-- Back up configuration and the installed-plugin list, recreate the beta workspace state, and reinstall plugins with Plugin API 1.x releases.
-- Run a complete `repohelix index` after recreating the workspace; `rebuild-relations` alone does not apply all 1.0 workspace changes.
-- See the [1.0 migration guide](docs/migration-1.0.md) for the complete upgrade sequence.
-
 ## [0.1.1-beta.15] - 2026-07-08
 
 ### Added

@@ -369,12 +369,6 @@ Trace call edges are protocol-specific (`CALLS_HTTP`, `CALLS_DUBBO`,
 its source line, raw expression, and extraction rule are included in JSON and
 shown in text output when available.
 
-> Upgrading from a graph that contains `CALLS_ENDPOINT` requires a complete
-> `repohelix index`. Running only `rebuild-relations` is insufficient because
-> older consumer specs do not identify the containing caller method. Follow the
-> [1.0 migration guide](migration-1.0.md) to preserve configuration and recreate
-> an already-indexed beta workspace before running the complete index.
-
 **Options**:
 
 | Option | Description |
@@ -458,6 +452,11 @@ repohelix quality
 # Audit contract quality rules
 repohelix quality contracts
 
+# Audit deterministic schema roots and diagnostics
+repohelix quality schemas --group-by framework
+repohelix quality schemas --details unresolved,external,ambiguous,unsupported,truncated
+repohelix quality schemas --group-by repo --details ambiguous,truncated --json
+
 # Filter by confidence
 repohelix quality --min-confidence 0.8 --limit 50
 
@@ -472,7 +471,7 @@ repohelix quality --alias my-service --target-repo service-a
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `[action]` | No | `contracts` to audit contract quality; omit to audit relation quality |
+| `[action]` | No | `contracts` for contract quality, `schemas` for schema root/diagnostic quality; omit for relation quality |
 
 **Options**:
 
@@ -484,6 +483,11 @@ repohelix quality --alias my-service --target-repo service-a
 | `--reason <text>` | Reason for rejection or alias override |
 | `--alias <alias>` | Alias override name (requires `--target-repo`) |
 | `--target-repo <name>` | Target repository for alias override (requires `--alias`) |
+| `--group-by <dimension>` | Group schema results by `language`, `framework`, `relation-kind`, or `repo` |
+| `--details <outcomes>` | Include comma-separated `unresolved`, `external`, `ambiguous`, `unsupported`, or `truncated` evidence |
+| `--json` | Emit stable grouped schema JSON |
+
+Schema details identify the owner/root/source, raw symbol/type, field and type path, semantic relation, candidate evidence, and truncation limit.
 
 ---
 
