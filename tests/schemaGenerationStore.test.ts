@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { KuzuGraphDB, withTransaction } from "../src/core/graph-model/db.js";
 import {
   SchemaGenerationStore,
+  type FullSchemaGenerationInput,
   type OwnedSchemaFact
 } from "../src/core/schema/generationStore.js";
 import type { ResolutionContextFact, SchemaBehaviorFingerprint, SchemaDependencyFact, SchemaRootReference, TypeDeclarationFact } from "../src/core/schema/model.js";
@@ -31,7 +32,59 @@ async function beginInitial(generations: SchemaGenerationStore, generation: stri
   });
 }
 
+function fullFacts(
+  overrides: Partial<FullSchemaGenerationInput["facts"]> = {}
+): FullSchemaGenerationInput["facts"] {
+  return {
+    declarations: [],
+    resolutionContexts: [],
+    resolutionScopeDependencies: [],
+    roots: [],
+    dependencies: [],
+    provenance: [],
+    diagnostics: [],
+    fingerprints: [],
+    ...overrides
+  };
+}
+
 describe("schema generation and incremental revision lifecycle", () => {
+  it("stages a full generation in bounded append-only batches without replacement metadata", async () => {
+    const { db, generations } = await store();
+    try {
+      await beginInitial(generations, "generation:batched");
+      const querySpy = vi.spyOn(db, "query");
+      querySpy.mockClear();
+      await generations.appendFullGenerationBatch({
+        generation: "generation:batched",
+        facts: fullFacts({
+          declarations: ["a", "b"].map((suffix) => ({
+            id: `declaration:${suffix}`,
+            repoId: "repo:a",
+            sourceFileId: `file:${suffix}`
+          }))
+        }),
+        contributions: [{
+          rootReferenceId: "root:a",
+          entityKind: "schema-spec",
+          entityId: "spec:a"
+        }]
+      });
+
+      const stagingQueries = querySpy.mock.calls.map(([query]) => query);
+      expect(stagingQueries.filter((query) => query.startsWith("UNWIND $rows AS row CREATE"))).toHaveLength(2);
+      expect(stagingQueries.some((query) => /Schema(?:Source|Behavior|Contribution)Replacement/u.test(query))).toBe(false);
+      expect(stagingQueries).toHaveLength(3);
+      expect((await generations.facts("declarations", "generation:batched")).map((fact) => fact.id))
+        .toEqual(["declaration:a", "declaration:b"]);
+      expect(await generations.activeContributionCount("schema-spec", "spec:a")).toBe(0);
+      await generations.commitFull("generation:batched");
+      expect(await generations.activeContributionCount("schema-spec", "spec:a")).toBe(1);
+    } finally {
+      await db.close();
+    }
+  });
+
   it("runs the provider-neutral replacement conformance harness on Kuzu", async () => {
     const { db } = await store("workspace:kuzu-conformance");
     try {
@@ -45,17 +98,10 @@ describe("schema generation and incremental revision lifecycle", () => {
     const { db, generations } = await store();
     try {
       await beginInitial(generations, "generation:base");
-      await generations.replaceSourceFacts({
+      await generations.appendFullGenerationBatch({
         generation: "generation:base",
-        kind: "declarations",
-        repoId: "repo:a",
-        fileId: "file:a",
-        facts: [{ id: "declaration:base", repoId: "repo:a", sourceFileId: "file:a" }]
-      });
-      await generations.replaceContributions({
-        generation: "generation:base",
-        rootReferenceId: "root:base",
-        contributions: [{ entityKind: "schema-spec", entityId: "spec:base" }]
+        facts: fullFacts({ declarations: [{ id: "declaration:base", repoId: "repo:a", sourceFileId: "file:a" }] }),
+        contributions: [{ rootReferenceId: "root:base", entityKind: "schema-spec", entityId: "spec:base" }]
       });
       await generations.commitFull("generation:base");
 
@@ -103,19 +149,16 @@ describe("schema generation and incremental revision lifecycle", () => {
       };
       const selected = declaration("package:example.com/service/pkg/contracts:contracts", "Payload", "file:payload");
       const unrelated = declaration("package:example.com/service/internal/state:state", "Payload", "file:state");
-      await generations.replaceSourceFacts({
+      await generations.appendFullGenerationBatch({
         generation: "generation:scopes",
-        kind: "declarations",
-        repoId: "repo:a",
-        fileId: selected.fileId,
-        facts: [{ ...selected, repoId: selected.identity.repoId, sourceFileId: selected.fileId }]
-      });
-      await generations.replaceSourceFacts({
-        generation: "generation:scopes",
-        kind: "declarations",
-        repoId: "repo:a",
-        fileId: unrelated.fileId,
-        facts: [{ ...unrelated, repoId: unrelated.identity.repoId, sourceFileId: unrelated.fileId }]
+        facts: fullFacts({
+          declarations: [selected, unrelated].map((fact) => ({
+            ...fact,
+            repoId: fact.identity.repoId,
+            sourceFileId: fact.fileId
+          }))
+        }),
+        contributions: []
       });
       await generations.commitFull("generation:scopes");
 
@@ -135,28 +178,19 @@ describe("schema generation and incremental revision lifecycle", () => {
     }
   });
 
-  it("records explicit empty source and contribution replacement tombstones", async () => {
+  it("does not create incremental replacement metadata for an empty full generation", async () => {
     const { db, generations } = await store();
     try {
       await beginInitial(generations, "generation:empty");
-      await generations.replaceSourceFacts({ generation: "generation:empty", kind: "roots", repoId: "repo:a", fileId: "file:a", facts: [] });
-      await generations.replaceBehaviorFingerprints({
+      await generations.appendFullGenerationBatch({
         generation: "generation:empty",
-        replacement: {
-          repoId: "repo:a",
-          languageId: "typescript",
-          resolutionScopeId: "module:models",
-          facts: []
-        }
+        facts: fullFacts(),
+        contributions: []
       });
-      await generations.replaceContributions({ generation: "generation:empty", rootReferenceId: "root:removed", contributions: [] });
       await generations.commitFull("generation:empty");
-      expect(await db.query<{ tombstone: boolean }>("MATCH (r:SchemaSourceReplacement) RETURN r.tombstone AS tombstone;"))
-        .toEqual([{ tombstone: true }]);
-      expect(await db.query<{ tombstone: boolean }>("MATCH (r:SchemaContributionReplacement) RETURN r.tombstone AS tombstone;"))
-        .toEqual([{ tombstone: true }]);
-      expect(await db.query<{ tombstone: boolean }>("MATCH (r:SchemaBehaviorReplacement) RETURN r.tombstone AS tombstone;"))
-        .toEqual([{ tombstone: true }]);
+      for (const table of ["SchemaSourceReplacement", "SchemaContributionReplacement", "SchemaBehaviorReplacement"]) {
+        expect(await db.query(`MATCH (r:${table}) RETURN r.id AS id;`)).toEqual([]);
+      }
     } finally {
       await db.close();
     }
@@ -166,12 +200,10 @@ describe("schema generation and incremental revision lifecycle", () => {
     const { db, generations } = await store();
     try {
       await beginInitial(generations, "generation:active");
-      await generations.replaceSourceFacts({
+      await generations.appendFullGenerationBatch({
         generation: "generation:active",
-        kind: "declarations",
-        repoId: "repo:a",
-        fileId: "file:a",
-        facts: [{ id: "declaration:old", repoId: "repo:a", sourceFileId: "file:a" }]
+        facts: fullFacts({ declarations: [{ id: "declaration:old", repoId: "repo:a", sourceFileId: "file:a" }] }),
+        contributions: []
       });
       await generations.commitFull("generation:active");
       const querySpy = vi.spyOn(db, "query");
@@ -196,12 +228,17 @@ describe("schema generation and incremental revision lifecycle", () => {
       });
 
       await withTransaction(db, async () => {
-        await generations.replaceActiveSourceFacts({
+        await generations.applyActiveReplacementBatch({
           generation: "generation:active",
-          kind: "declarations",
-          repoId: "repo:a",
-          fileId: "file:a",
-          facts: [{ id: "declaration:new", repoId: "repo:a", sourceFileId: "file:a" }]
+          revision: "revision:two",
+          sourceReplacements: [{
+            kind: "declarations",
+            repoId: "repo:a",
+            fileId: "file:a",
+            facts: [{ id: "declaration:new", repoId: "repo:a", sourceFileId: "file:a" }]
+          }],
+          behaviorFingerprintReplacements: [],
+          contributionReplacements: []
         });
         await generations.commitIncremental("revision:two");
       });
@@ -226,12 +263,10 @@ describe("schema generation and incremental revision lifecycle", () => {
     const { db, generations } = await store();
     try {
       await beginInitial(generations, "generation:rollback");
-      await generations.replaceSourceFacts({
+      await generations.appendFullGenerationBatch({
         generation: "generation:rollback",
-        kind: "declarations",
-        repoId: "repo:a",
-        fileId: "file:a",
-        facts: [{ id: "declaration:stable", repoId: "repo:a", sourceFileId: "file:a" }]
+        facts: fullFacts({ declarations: [{ id: "declaration:stable", repoId: "repo:a", sourceFileId: "file:a" }] }),
+        contributions: []
       });
       await generations.commitFull("generation:rollback");
       await generations.reserveIncremental({
@@ -240,12 +275,12 @@ describe("schema generation and incremental revision lifecycle", () => {
         expectedActiveRevision: "generation:rollback"
       });
       await expect(withTransaction(db, async () => {
-        await generations.replaceActiveSourceFacts({
+        await generations.applyActiveReplacementBatch({
           generation: "generation:rollback",
-          kind: "declarations",
-          repoId: "repo:a",
-          fileId: "file:a",
-          facts: []
+          revision: "revision:failed",
+          sourceReplacements: [{ kind: "declarations", repoId: "repo:a", fileId: "file:a", facts: [] }],
+          behaviorFingerprintReplacements: [],
+          contributionReplacements: []
         });
         await generations.commitIncremental("revision:failed");
         throw new Error("injected failure before provider commit");
@@ -320,20 +355,18 @@ describe("schema generation and incremental revision lifecycle", () => {
     const { db, generations } = await store();
     try {
       await beginInitial(generations, "generation:contributions");
-      for (const rootReferenceId of ["root:a", "root:b"]) {
-        await generations.replaceContributions({
-          generation: "generation:contributions",
-          rootReferenceId,
-          contributions: [
-            { entityKind: "schema-spec", entityId: "spec:shared" },
+      await generations.appendFullGenerationBatch({
+        generation: "generation:contributions",
+        facts: fullFacts(),
+        contributions: ["root:a", "root:b"].flatMap((rootReferenceId) => [
+            { entityKind: "schema-spec" as const, entityId: "spec:shared" },
             {
-              entityKind: "logical-relation",
+              entityKind: "logical-relation" as const,
               entityId: "relation:shared",
               payload: { fromSpecId: "spec:owner", toSpecId: "spec:shared", kind: "USES_SCHEMA", evidenceId: `evidence:${rootReferenceId}` }
             }
-          ]
-        });
-      }
+          ].map((contribution) => ({ ...contribution, rootReferenceId })))
+      });
       await generations.commitFull("generation:contributions");
 
       const retained = await generations.contributionVisibilityForReplacements({
@@ -376,8 +409,10 @@ describe("schema generation and incremental revision lifecycle", () => {
         evidenceId: `evidence:${suffix}`,
         generation: ""
       }));
+      const contexts: Array<ResolutionContextFact & OwnedSchemaFact> = [];
+      const dependencies: Array<SchemaDependencyFact & OwnedSchemaFact> = [];
       for (const root of roots) {
-        const context: ResolutionContextFact & OwnedSchemaFact = {
+        contexts.push({
           id: root.resolutionContextId,
           languageId: "typescript",
           repoId: "repo:a",
@@ -388,22 +423,8 @@ describe("schema generation and incremental revision lifecycle", () => {
           enclosingDeclarationIds: [],
           genericBindings: [],
           generation: ""
-        };
-        await generations.replaceSourceFacts({
-          generation: "generation:targeted",
-          kind: "resolutionContexts",
-          repoId: "repo:a",
-          fileId: root.ownerFileId,
-          facts: [context]
         });
-        await generations.replaceSourceFacts({
-          generation: "generation:targeted",
-          kind: "roots",
-          repoId: "repo:a",
-          fileId: root.ownerFileId,
-          facts: [root]
-        });
-        const dependency: SchemaDependencyFact & OwnedSchemaFact = {
+        dependencies.push({
           id: `dependency:${root.id}`,
           repoId: "repo:a",
           sourceFileId: root.ownerFileId,
@@ -411,13 +432,6 @@ describe("schema generation and incremental revision lifecycle", () => {
           declarationId: root.id === "root:a" ? "declaration:changed" : "declaration:other",
           fieldPath: [],
           generation: ""
-        };
-        await generations.replaceSourceFacts({
-          generation: "generation:targeted",
-          kind: "dependencies",
-          repoId: "repo:a",
-          fileId: root.ownerFileId,
-          facts: [dependency]
         });
       }
       const fingerprint: SchemaBehaviorFingerprint = {
@@ -433,14 +447,15 @@ describe("schema generation and incremental revision lifecycle", () => {
         buildInputsHash: "inputs",
         generation: ""
       };
-      await generations.replaceBehaviorFingerprints({
+      await generations.appendFullGenerationBatch({
         generation: "generation:targeted",
-        replacement: {
-          repoId: "repo:a",
-          languageId: "typescript",
-          resolutionScopeId: "module:shared",
-          facts: [fingerprint]
-        }
+        facts: fullFacts({
+          resolutionContexts: contexts,
+          roots,
+          dependencies,
+          fingerprints: [fingerprint]
+        }),
+        contributions: []
       });
       await generations.commitFull("generation:targeted");
 

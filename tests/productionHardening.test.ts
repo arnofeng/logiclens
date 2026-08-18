@@ -137,6 +137,10 @@ llm:
         await transactionGate;
       });
       await transactionStarted;
+      const autoCommitUpdate = db.query(
+        "MATCH (b:GraphWriteBatch {id: $id}) SET b.error=$error;",
+        { id: "graph-write:batch:write-serialization", error: "auto-commit-retried" }
+      );
       const journalUpdate = db.updateGraphWriteBatch({
         batchId: "batch:write-serialization",
         updatedAt: "2026-08-04T00:00:01.000Z",
@@ -145,12 +149,13 @@ llm:
 
       await new Promise((resolve) => setTimeout(resolve, 25));
       releaseTransaction();
-      await expect(Promise.all([activeTransaction, journalUpdate])).resolves.toEqual([undefined, undefined]);
-      const rows = await db.query<{ completedStage: string }>(
-        "MATCH (b:GraphWriteBatch {id: $id}) RETURN b.completedStage AS completedStage;",
+      await expect(Promise.all([activeTransaction, autoCommitUpdate, journalUpdate])).resolves.toEqual([undefined, [], undefined]);
+      const rows = await db.query<{ completedStage: string; error: string }>(
+        "MATCH (b:GraphWriteBatch {id: $id}) RETURN b.completedStage AS completedStage, b.error AS error;",
         { id: "graph-write:batch:write-serialization" }
       );
       expect(rows[0]?.completedStage).toBe("graph-written");
+      expect(rows[0]?.error).toBe("auto-commit-retried");
     } finally {
       releaseTransaction();
       await db.close();

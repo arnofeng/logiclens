@@ -105,6 +105,19 @@ function optionalString(value: GraphValue | undefined): string {
   return typeof value === "string" ? value : "";
 }
 
+function isSingleWriterConflict(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current; depth++) {
+    if (current instanceof Error) {
+      if (current.message.includes("Only one write transaction at a time is allowed")) return true;
+      current = current.cause;
+      continue;
+    }
+    break;
+  }
+  return false;
+}
+
 function encodeList(values: string[]): string {
   return JSON.stringify(values);
 }
@@ -1086,11 +1099,22 @@ export class KuzuGraphDB implements GraphDB {
       if (active) {
         return await this.queryWithConnection<T>(active.conn, cypher, params);
       }
-      const conn = await this.createConnection();
+      const execute = async (): Promise<T[]> => {
+        const conn = await this.createConnection();
+        try {
+          return await this.queryWithConnection<T>(conn, cypher, params);
+        } finally {
+          await conn.close();
+        }
+      };
       try {
-        return await this.queryWithConnection<T>(conn, cypher, params);
-      } finally {
-        await conn.close();
+        return await execute();
+      } catch (error) {
+        // Auto-commit mutations (notably lexical COPY and stats updates) do
+        // not enter transaction(). If a lease heartbeat acquired Kuzu's only
+        // writer slot first, wait for the local write queue and retry once.
+        if (!isSingleWriterConflict(error)) throw error;
+        return await this.serializeWriteTransaction(execute);
       }
     } catch (error) {
       if (error instanceof GraphDatabaseClosedError) throw error;

@@ -85,16 +85,14 @@ async function openFixture(): Promise<Fixture> {
     PARENT_GENERATION,
     await db.computePublicGraphStats(parentScope)
   );
-  await generations.replaceSourceFacts({
+  await generations.appendFullGenerationBatch({
     generation: PARENT_GENERATION,
-    kind: "declarations",
-    repoId: consumer.id,
-    fileId: "file:consumer:model",
-    facts: [{
-      id: "declaration:consumer:model",
-      repoId: consumer.id,
-      sourceFileId: "file:consumer:model"
-    }]
+    facts: {
+      declarations: [{ id: "declaration:consumer:model", repoId: consumer.id, sourceFileId: "file:consumer:model" }],
+      resolutionContexts: [], resolutionScopeDependencies: [], roots: [], dependencies: [],
+      provenance: [], diagnostics: [], fingerprints: []
+    },
+    contributions: []
   });
   await generations.validateFull(PARENT_GENERATION);
   await generations.commitFull(PARENT_GENERATION);

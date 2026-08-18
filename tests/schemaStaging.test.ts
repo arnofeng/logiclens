@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { CrossRepoExtraction } from "../src/core/contracts/extraction/crossRepoContracts.js";
 import { applyIncrementalSchemaMutation, buildCombinedIncrementalSchemaVisibility, stageSchemaGenerationFacts } from "../src/core/schema/staging.js";
-import type { SchemaGenerationStore } from "../src/core/schema/generationStore.js";
+import type { FullSchemaGenerationInput, SchemaGenerationStore } from "../src/core/schema/generationStore.js";
 import { stableFactId } from "../src/core/schema/model.js";
 import type { LexicalDocument } from "../src/core/retrieval/types.js";
 import { KuzuGraphDB } from "../src/adapters/graph-db/kuzu/KuzuGraphDB.js";
@@ -253,33 +253,21 @@ describe("schema generation contribution staging", () => {
   });
 
   it("stages one evidence-independent logical relation contribution with deterministic evidence attributes", async () => {
-    const replacements: Array<{
-      rootReferenceId: string;
-      contributions: readonly { entityKind: string; entityId: string; payload?: unknown }[];
-    }> = [];
+    let staged: FullSchemaGenerationInput | undefined;
     const store = {
-      activeFacts: vi.fn(async () => []),
-      activeContributions: vi.fn(async () => []),
-      replaceContributions: vi.fn(async (input: {
-        rootReferenceId: string;
-        contributions: readonly { entityKind: string; entityId: string; payload?: unknown }[];
-      }) => {
-        replacements.push(input);
-      }),
-      reconcilePendingContributionVisibility: vi.fn(async () => ({ lexicalDocumentIds: [] }))
+      appendFullGenerationBatch: vi.fn(async (input: FullSchemaGenerationInput) => { staged = input; })
     } as unknown as SchemaGenerationStore;
 
     await stageSchemaGenerationFacts({
       store,
       generation: "generation:pending",
-      parsedFiles: [],
       extraction: extraction(),
       lexicalDocuments: []
     });
 
-    const logicalRelations = replacements
-      .find((replacement) => replacement.rootReferenceId === "declaration:spec:source")!
-      .contributions.filter((contribution) => contribution.entityKind === "logical-relation");
+    const logicalRelations = staged!.contributions
+      .filter((contribution) => contribution.rootReferenceId === "declaration:spec:source"
+        && contribution.entityKind === "logical-relation");
     expect(logicalRelations).toHaveLength(1);
     expect(logicalRelations[0]).toEqual(expect.objectContaining({
       payload: expect.objectContaining({ evidenceId: "evidence:second", reason: "second path", confidence: 0.9 })
@@ -320,33 +308,24 @@ describe("schema generation contribution staging", () => {
       evidenceId: `evidence:${suffix}`,
       generation: ""
     }));
-    const replacements: Array<{
-      rootReferenceId: string;
-      contributions: readonly { entityKind: string; entityId: string; payload?: unknown }[];
-    }> = [];
+    let staged: FullSchemaGenerationInput | undefined;
     const store = {
-      activeFacts: vi.fn(async () => []),
-      activeContributions: vi.fn(async () => []),
-      replaceContributions: vi.fn(async (input: {
-        rootReferenceId: string;
-        contributions: readonly { entityKind: string; entityId: string; payload?: unknown }[];
-      }) => replacements.push(input)),
-      reconcilePendingContributionVisibility: vi.fn(async () => ({ lexicalDocumentIds: [] }))
+      appendFullGenerationBatch: vi.fn(async (input: FullSchemaGenerationInput) => { staged = input; })
     } as unknown as SchemaGenerationStore;
 
     await stageSchemaGenerationFacts({
       store,
       generation: "generation:pending",
-      parsedFiles: [],
       extraction: value,
       lexicalDocuments: []
     });
 
-    const evidenceByRoot = new Map(replacements
-      .filter((replacement) => replacement.rootReferenceId.startsWith("root:"))
-      .map((replacement) => [
-        replacement.rootReferenceId,
-        (replacement.contributions.find((contribution) => contribution.entityKind === "logical-relation")?.payload as { evidenceId?: string } | undefined)?.evidenceId
+    const evidenceByRoot = new Map(staged!.contributions
+      .filter((contribution) => contribution.rootReferenceId.startsWith("root:")
+        && contribution.entityKind === "logical-relation")
+      .map((contribution) => [
+        contribution.rootReferenceId,
+        (contribution.payload as { evidenceId?: string } | undefined)?.evidenceId
       ]));
     expect(evidenceByRoot).toEqual(new Map([
       ["root:a", "evidence:a"],
@@ -365,32 +344,20 @@ describe("schema generation contribution staging", () => {
       repoId: "repo:one",
       sourceFileId: "file:owned"
     } as CrossRepoExtraction["schemaInternalFacts"]["dependencies"][number] & { repoId: string; sourceFileId: string }];
-    const replacements: Array<{ kind: string; repoId: string; fileId: string; facts: readonly { id: string; sourceFileId?: string }[] }> = [];
+    let staged: FullSchemaGenerationInput | undefined;
     const store = {
-      replaceSourceFacts: vi.fn(async (input: { kind: string; repoId: string; fileId: string; facts: readonly { id: string; sourceFileId?: string }[] }) => {
-        replacements.push(input);
-      }),
-      activeFacts: vi.fn(async () => []),
-      activeContributions: vi.fn(async () => []),
-      replaceContributions: vi.fn(async () => undefined),
-      reconcilePendingContributionVisibility: vi.fn(async () => ({ lexicalDocumentIds: [] }))
+      appendFullGenerationBatch: vi.fn(async (input: FullSchemaGenerationInput) => { staged = input; })
     } as unknown as SchemaGenerationStore;
-    const parsedFiles = ["file:owned", "file:other"].map((fileId) => ({
-      repoId: "repo:one", fileId, path: `${fileId}.ts`, language: "typescript", hash: "hash", loc: 1,
-      imports: [], symbols: [], calls: []
-    }));
 
     await stageSchemaGenerationFacts({
       store,
       generation: "generation:pending",
-      parsedFiles,
       extraction: value,
       lexicalDocuments: []
     });
 
-    expect(replacements.find((item) => item.kind === "dependencies" && item.fileId === "file:owned")?.facts)
+    expect(staged!.facts.dependencies)
       .toEqual([expect.objectContaining({ id: "dependency:owned", sourceFileId: "file:owned" })]);
-    expect(replacements.find((item) => item.kind === "dependencies" && item.fileId === "file:other")?.facts).toEqual([]);
   });
 
   it("stages behavior fingerprints by repo/language/scope instead of source replacement", async () => {
@@ -408,37 +375,23 @@ describe("schema generation contribution staging", () => {
       buildInputsHash: "inputs:shape-and-context",
       generation: ""
     }];
-    const sourceReplacements: Array<{ kind: string }> = [];
-    const behaviorReplacements: Array<{
-      replacement: { repoId: string; languageId: string; resolutionScopeId: string; facts: readonly { id: string }[] };
-    }> = [];
+    let staged: FullSchemaGenerationInput | undefined;
     const store = {
-      replaceSourceFacts: vi.fn(async (input: { kind: string }) => sourceReplacements.push(input)),
-      replaceBehaviorFingerprints: vi.fn(async (input: {
-        replacement: { repoId: string; languageId: string; resolutionScopeId: string; facts: readonly { id: string }[] };
-      }) => behaviorReplacements.push(input)),
-      replaceContributions: vi.fn(async () => undefined)
+      appendFullGenerationBatch: vi.fn(async (input: FullSchemaGenerationInput) => { staged = input; })
     } as unknown as SchemaGenerationStore;
 
     await stageSchemaGenerationFacts({
       store,
       generation: "generation:pending",
-      parsedFiles: [{
-        repoId: "repo:one", fileId: "file:source", path: "source.ts", language: "typescript", hash: "hash", loc: 1,
-        imports: [], symbols: [], calls: []
-      }],
       extraction: value,
       lexicalDocuments: []
     });
 
-    expect(sourceReplacements.some((replacement) => replacement.kind === "fingerprints")).toBe(false);
-    expect(behaviorReplacements).toEqual([expect.objectContaining({
-      replacement: expect.objectContaining({
-        repoId: "repo:one",
-        languageId: "typescript",
-        resolutionScopeId: "module:models",
-        facts: [expect.objectContaining({ id: "schema-behavior:scope" })]
-      })
+    expect(staged!.facts.fingerprints).toEqual([expect.objectContaining({
+      id: "schema-behavior:scope",
+      repoId: "repo:one",
+      languageId: "typescript",
+      resolutionScopeId: "module:models"
     })]);
   });
 });

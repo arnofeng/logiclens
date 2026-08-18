@@ -136,16 +136,20 @@ async function replaceQualityFacts(
     resolution: code,
     generation
   };
-  await store.replaceSourceFacts({ generation, kind: "roots", repoId, fileId, facts: [{ ...root, sourceFileId: fileId }] });
-  await store.replaceSourceFacts({ generation, kind: "declarations", repoId, fileId, facts: [{ ...declaration, repoId, sourceFileId: fileId }] });
-  await store.replaceSourceFacts({
+  await store.appendFullGenerationBatch({
     generation,
-    kind: "diagnostics",
-    repoId,
-    fileId,
-    facts: code === "ambiguous"
-      ? [{ ...diagnostic(`diagnostic:${suffix}`, []), sourceFileId: fileId }, { ...diagnostic(`diagnostic:${suffix}:second`, ["nested"]), sourceFileId: fileId }]
-      : [{ ...diagnostic(`diagnostic:${suffix}`, []), sourceFileId: fileId }]
+    facts: {
+      declarations: [{ ...declaration, repoId, sourceFileId: fileId }],
+      resolutionContexts: [],
+      resolutionScopeDependencies: [],
+      roots: [{ ...root, sourceFileId: fileId }],
+      dependencies: [],
+      provenance: [{ ...provenance, repoId, sourceFileId: fileId }],
+      diagnostics: code === "ambiguous"
+        ? [{ ...diagnostic(`diagnostic:${suffix}`, []), sourceFileId: fileId }, { ...diagnostic(`diagnostic:${suffix}:second`, ["nested"]), sourceFileId: fileId }]
+        : [{ ...diagnostic(`diagnostic:${suffix}`, []), sourceFileId: fileId }],
+      fingerprints: []
+    },
+    contributions: []
   });
-  await store.replaceSourceFacts({ generation, kind: "provenance", repoId, fileId, facts: [{ ...provenance, repoId, sourceFileId: fileId }] });
 }

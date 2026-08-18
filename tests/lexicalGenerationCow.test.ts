@@ -168,17 +168,15 @@ describe("lexical generation isolation", () => {
     });
     await store.initializeGeneration({ workspaceId, generation: parentGeneration });
     await store.upsertDocuments({ workspaceId, generation: parentGeneration, documents: [rootDocument] });
-    await generations.replaceSourceFacts({
+    await generations.appendFullGenerationBatch({
       generation: parentGeneration,
-      kind: "declarations",
-      repoId: "repo:one",
-      fileId: "file:declaration",
-      facts: [{ id: "declaration:user", repoId: "repo:one", sourceFileId: "file:declaration" }]
-    });
-    await generations.replaceContributions({
-      generation: parentGeneration,
-      rootReferenceId: "root:file:publisher",
+      facts: {
+        declarations: [{ id: "declaration:user", repoId: "repo:one", sourceFileId: "file:declaration" }],
+        resolutionContexts: [], resolutionScopeDependencies: [], roots: [], dependencies: [],
+        provenance: [], diagnostics: [], fingerprints: []
+      },
       contributions: [{
+        rootReferenceId: "root:file:publisher",
         entityKind: "lexical-document",
         entityId: rootDocument.id,
         payload: rootDocument
@@ -220,10 +218,12 @@ describe("lexical generation isolation", () => {
       schemaIndexVersion: SCHEMA_INDEX_VERSION,
       lexicalProjectionVersion: LEXICAL_PROJECTION_SCHEMA_VERSION
     }, async () => {
-      await generations.replaceActiveContributions({
+      await generations.applyActiveReplacementBatch({
         generation: parentGeneration,
-        rootReferenceId: "root:file:publisher",
-        contributions: []
+        revision: pendingRevision,
+        sourceReplacements: [],
+        behaviorFingerprintReplacements: [],
+        contributionReplacements: [{ rootReferenceId: "root:file:publisher", contributions: [] }]
       });
       await store.applyIncrementalMutation({
         workspaceId,

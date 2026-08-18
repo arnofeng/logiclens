@@ -16,29 +16,21 @@ export async function runSchemaReplacementConformance(db: GraphDB, workspaceId: 
     expectedActiveGeneration: null,
     expectedActiveRevision: null
   });
-  await store.replaceSourceFacts({
+  await store.appendFullGenerationBatch({
     generation,
-    kind: "declarations",
-    repoId: "repo:a",
-    fileId: "file:a",
-    facts: [{ id: "declaration:a", repoId: "repo:a", sourceFileId: "file:a" }]
-  });
-  await store.replaceSourceFacts({
-    generation,
-    kind: "declarations",
-    repoId: "repo:a",
-    fileId: "file:b",
-    facts: [{ id: "declaration:b", repoId: "repo:a", sourceFileId: "file:b" }]
-  });
-  await store.replaceContributions({
-    generation,
-    rootReferenceId: "root:a",
-    contributions: [{ entityKind: "schema-spec", entityId: specId }]
-  });
-  await store.replaceContributions({
-    generation,
-    rootReferenceId: "root:b",
-    contributions: [{ entityKind: "schema-spec", entityId: specId }]
+    facts: {
+      declarations: [
+        { id: "declaration:a", repoId: "repo:a", sourceFileId: "file:a" },
+        { id: "declaration:b", repoId: "repo:a", sourceFileId: "file:b" }
+      ],
+      resolutionContexts: [], resolutionScopeDependencies: [], roots: [], dependencies: [],
+      provenance: [], diagnostics: [], fingerprints: []
+    },
+    contributions: ["a", "b"].map((suffix) => ({
+      rootReferenceId: `root:${suffix}`,
+      entityKind: "schema-spec" as const,
+      entityId: specId
+    }))
   });
   await store.commitFull(generation);
 
@@ -61,14 +53,13 @@ export async function runSchemaReplacementConformance(db: GraphDB, workspaceId: 
     expectedActiveRevision: baseRevision
   });
   await withTransaction(db, async () => {
-    await store.replaceActiveSourceFacts({
+    await store.applyActiveReplacementBatch({
       generation,
-      kind: "declarations",
-      repoId: "repo:a",
-      fileId: "file:a",
-      facts: []
+      revision: nextRevision,
+      sourceReplacements: [{ kind: "declarations", repoId: "repo:a", fileId: "file:a", facts: [] }],
+      behaviorFingerprintReplacements: [],
+      contributionReplacements: [{ rootReferenceId: "root:a", contributions: [] }]
     });
-    await store.replaceActiveContributions({ generation, rootReferenceId: "root:a", contributions: [] });
     await store.commitIncremental(nextRevision);
   });
 
@@ -84,12 +75,12 @@ export async function runSchemaReplacementConformance(db: GraphDB, workspaceId: 
     expectedActiveRevision: nextRevision
   });
   await expect(withTransaction(db, async () => {
-    await store.replaceActiveSourceFacts({
+    await store.applyActiveReplacementBatch({
       generation,
-      kind: "declarations",
-      repoId: "repo:a",
-      fileId: "file:b",
-      facts: []
+      revision: failedRevision,
+      sourceReplacements: [{ kind: "declarations", repoId: "repo:a", fileId: "file:b", facts: [] }],
+      behaviorFingerprintReplacements: [],
+      contributionReplacements: []
     });
     throw new Error("injected incremental failure");
   })).rejects.toThrow(/injected incremental failure/u);

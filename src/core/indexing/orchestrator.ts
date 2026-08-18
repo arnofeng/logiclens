@@ -21,7 +21,7 @@ import { runLexicalWritePhase, type LexicalWriteResult } from "./lexicalWrite.js
 import { runLlmSummaryPhase, shouldSummarizeGraphWithLlm, type SummaryFailureState } from "./summaries.js";
 import { runIndexStateCommitPhase } from "./stateCommit.js";
 import { runRelationRebuildPhase, runSemanticWritePhase, runStaleMarkPhase } from "./semanticWrite.js";
-import type { ProgressReporter } from "../../shared/progress.js";
+import type { ProgressBarFactory, ProgressReporter } from "../../shared/progress.js";
 import { SchemaGenerationStore } from "../schema/generationStore.js";
 import {
   applyIncrementalSchemaMutation,
@@ -77,6 +77,7 @@ export type PreparedRepoIndex = {
   indexedAt: string;
   scanParse: ScanParseRepoResult;
   summaryFailures?: SummaryFailureState;
+  preparationDurationMs: number;
 };
 
 function createProgressBar(ctx: IndexRunContext): (label: string, total: number) => ProgressBarLike {
@@ -162,6 +163,8 @@ export async function prepareRepoIndex(input: {
   ctx: IndexRunContext;
   repoConfig: AppConfig["repos"][number];
   options: IndexOptions;
+  progressBarFactory?: ProgressBarFactory;
+  logCompletion?: boolean;
 }): Promise<PreparedRepoIndex> {
   const { db, ctx, repoConfig, options } = input;
   const repo = toRepoNode(repoConfig, ctx.cwd);
@@ -178,23 +181,28 @@ export async function prepareRepoIndex(input: {
     maxFiles: options.maxFiles,
     additionalIndexFiles: ctx.additionalIndexFilesByRepo.get(repo.path),
     activePluginSourceGlobs: ctx.activePluginSourceGlobsByRepo.get(repo.path),
-    createProgressBar: createProgressBar(ctx)
+    createProgressBar: input.progressBarFactory ?? createProgressBar(ctx)
   });
   const summaryFailuresByRepo = await runSummaryPipeline({
     ctx,
     batchId,
     repos: [repo],
     parsedFiles: scanParse.parsedFiles,
-    label: repo.name
+    label: repo.name,
+    progressBarFactory: input.progressBarFactory
   });
-  logStage(ctx, `Scan/parse/summarize ${repo.name}`, scanStarted);
+  const preparationDurationMs = Date.now() - scanStarted;
+  if (input.logCompletion !== false) {
+    log(ctx)(`Scan/parse/summarize ${repo.name}: ${(preparationDurationMs / 1000).toFixed(2)}s`);
+  }
   return {
     repoConfig,
     repo,
     batchId,
     indexedAt,
     scanParse,
-    summaryFailures: summaryFailuresByRepo.get(repo.id)
+    summaryFailures: summaryFailuresByRepo.get(repo.id),
+    preparationDurationMs
   };
 }
 
@@ -382,7 +390,6 @@ async function runGraphPipeline(input: {
   const graphLabel = repoName ? `Graph write ${repoName}` : logPrefix ? `${logPrefix} graph write` : "Graph write";
   log(ctx)(`${graphLabel} start: writer=${selection.mode} files=${factBuild.facts.files.length} code=${factBuild.facts.code.length} relations=${factBuild.facts.imports.length + factBuild.facts.calls.length}`);
   let lexicalWrite: LexicalWriteResult | undefined;
-  let contributionGcLexicalDocumentIds: string[] = [];
   const graphWrite = await runGraphWritePhase({
     db,
     cwd: ctx.cwd,
@@ -405,10 +412,9 @@ async function runGraphPipeline(input: {
     parentGeneration: ctx.activeGeneration,
     beforeWrite: ctx.schemaGeneration
       ? async () => {
-        contributionGcLexicalDocumentIds = await stageSchemaGenerationFacts({
+        await stageSchemaGenerationFacts({
           store: new SchemaGenerationStore(db, ctx.workspaceId),
           generation: ctx.schemaGeneration!,
-          parsedFiles,
           extraction: factBuild.facts.crossRepo,
           lexicalDocuments: lexicalProjection.documents
         });
@@ -433,7 +439,7 @@ async function runGraphPipeline(input: {
           reconcileReason: lexicalReconcileReason,
           activeFileIdsByRepo,
           touchedFileIdsByRepo: new Map(repos.map((repo) => [repo.id, parsedFiles.filter((file) => file.repoId === repo.id).map((file) => file.fileId)])),
-          deleteDocumentIds: contributionGcLexicalDocumentIds
+          deleteDocumentIds: []
         });
         log(ctx)(`${lexicalWriteLabel} complete: documents=${lexicalWrite.documentCount} indexSizeBytes=${lexicalWrite.providerHealth.metrics.indexSizeBytes} status=${lexicalWrite.indexStatus} duration=${(lexicalWrite.durationMs / 1000).toFixed(2)}s`);
       }
@@ -891,6 +897,7 @@ async function runSummaryPipeline(input: {
   repos: RepoNode[];
   parsedFiles: ParsedGraphFile[];
   label: string;
+  progressBarFactory?: ProgressBarFactory;
 }): Promise<SummaryFailuresByRepo> {
   const { ctx, batchId, repos, parsedFiles, label } = input;
   const summaryPhase = await runLlmSummaryPhase({
@@ -902,7 +909,7 @@ async function runSummaryPipeline(input: {
     llmSummaryLevel: ctx.llm.summaryLevel,
     label,
     batchId,
-    createProgressBar: createProgressBar(ctx),
+    createProgressBar: input.progressBarFactory ?? createProgressBar(ctx),
     errorLogger: errorLogger(ctx)
   });
   return summaryPhase.failuresByRepo;

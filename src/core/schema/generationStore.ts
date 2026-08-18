@@ -25,6 +25,8 @@ const FACT_TABLES: Record<SchemaInternalFactKind, string> = {
   fingerprints: "SchemaBehaviorFingerprintFact"
 };
 
+const FULL_GENERATION_BATCH_SIZE = 1_000;
+
 export interface OwnedSchemaFact {
   id: string;
   generation?: string;
@@ -132,8 +134,29 @@ export interface SchemaContributionVisibilityChange extends SchemaContributionEn
   contributions: SchemaContributionView[];
 }
 
+export interface FullSchemaGenerationInput {
+  generation: string;
+  facts: Readonly<Record<SchemaInternalFactKind, readonly OwnedSchemaFact[]>>;
+  contributions: readonly SchemaContributionView[];
+}
+
 export class SchemaGenerationStore {
   constructor(private readonly db: GraphDB, private readonly workspaceId: string) {}
+
+  /**
+   * Writes a complete pending generation as immutable append-only batches.
+   * Full generations are empty by construction, so replacement markers,
+   * tombstones, deletes, and per-row MERGE operations do not belong here.
+   */
+  async appendFullGenerationBatch(input: FullSchemaGenerationInput): Promise<void> {
+    await withTransaction(this.db, async () => {
+      await this.assertPending(input.generation);
+      for (const kind of Object.keys(FACT_TABLES) as SchemaInternalFactKind[]) {
+        await this.insertFullFactBatch(FACT_TABLES[kind], input.generation, input.facts[kind]);
+      }
+      await this.insertFullContributionBatch(input.generation, input.contributions);
+    });
+  }
 
   async beginFull(input: BeginFullSchemaGenerationInput): Promise<string | undefined> {
     const { generation, createdAt } = input;
@@ -229,68 +252,6 @@ export class SchemaGenerationStore {
         }
       );
     });
-  }
-
-  async replaceSourceFacts(input: {
-    generation: string;
-    kind: SchemaInternalFactKind;
-    repoId: string;
-    fileId: string;
-    facts: readonly OwnedSchemaFact[];
-  }): Promise<void> {
-    await this.assertPending(input.generation);
-    await this.replaceSourceFactsUnchecked({ ...input, revision: input.generation });
-  }
-
-  async replaceBehaviorFingerprints(input: {
-    generation: string;
-    replacement: SchemaBehaviorFingerprintReplacement;
-  }): Promise<void> {
-    await this.assertPending(input.generation);
-    await this.replaceBehaviorFingerprintsUnchecked({
-      generation: input.generation,
-      revision: input.generation,
-      ...input.replacement
-    });
-  }
-
-  /**
-   * Applies one source replacement to the active physical dataset. Callers must
-   * invoke this only from the provider's final incremental write transaction.
-   */
-  async replaceActiveSourceFacts(input: {
-    generation: string;
-    kind: SchemaInternalFactKind;
-    repoId: string;
-    fileId: string;
-    facts: readonly OwnedSchemaFact[];
-  }): Promise<void> {
-    const revision = await this.assertIncrementalActiveTarget(input.generation);
-    await this.replaceSourceFactsUnchecked({ ...input, revision });
-  }
-
-  async replaceContributions(input: {
-    generation: string;
-    rootReferenceId: string;
-    contributions: readonly { entityKind: "schema-spec" | "logical-relation" | "lexical-document"; entityId: string; payload?: unknown }[];
-  }): Promise<void> {
-    await this.assertPending(input.generation);
-    await this.replaceContributionsUnchecked({ ...input, revision: input.generation });
-  }
-
-  /**
-   * Applies one root-contribution replacement to the active physical dataset.
-   * Callers must invoke this only from the provider's final incremental write
-   * transaction so public, internal, lexical, and revision state roll back
-   * together on failure.
-   */
-  async replaceActiveContributions(input: {
-    generation: string;
-    rootReferenceId: string;
-    contributions: readonly Omit<SchemaContributionView, "rootReferenceId">[];
-  }): Promise<void> {
-    const revision = await this.assertIncrementalActiveTarget(input.generation);
-    await this.replaceContributionsUnchecked({ ...input, revision });
   }
 
   /**
@@ -1117,6 +1078,72 @@ export class SchemaGenerationStore {
     );
   }
 
+  private async insertFullFactBatch(
+    table: string,
+    generation: string,
+    facts: readonly OwnedSchemaFact[]
+  ): Promise<void> {
+    const uniqueFacts = uniqueByIdentity(facts, (fact) => fact.id, `full ${table} fact`);
+    if (uniqueFacts.length === 0) return;
+    const rows = uniqueFacts.map((fact) => {
+      if (!fact.repoId) throw new Error(`Full ${table} fact ${fact.id} has no repository owner.`);
+      const fileId = table === "SchemaBehaviorFingerprintFact" ? "" : fact.sourceFileId;
+      if (fileId === undefined) throw new Error(`Full ${table} fact ${fact.id} has no source file owner.`);
+      const payload = { ...fact, generation };
+      const row: Record<string, GraphValue> = {
+        storageId: stableFactId("generation-fact", { generation, id: fact.id }),
+        generation,
+        repoId: fact.repoId,
+        fileId,
+        payload: canonicalSerialize(payload),
+        ...factIndexProperties(table, fact)
+      };
+      return row;
+    });
+    const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))].sort();
+    const createProperties = columns
+      .map((column) => `${column === "storageId" ? "id" : column}: row.${column}`)
+      .join(", ");
+    for (const batch of batches(rows, FULL_GENERATION_BATCH_SIZE)) {
+      await this.db.query(
+        `UNWIND $rows AS row CREATE (f:${table} {${createProperties}});`,
+        { rows: batch.map((row) => Object.fromEntries(columns.map((column) => [column, row[column] ?? null]))) }
+      );
+    }
+  }
+
+  private async insertFullContributionBatch(
+    generation: string,
+    contributions: readonly SchemaContributionView[]
+  ): Promise<void> {
+    const uniqueContributions = uniqueByIdentity(
+      contributions,
+      contributionKey,
+      "full schema contribution"
+    );
+    const rows = uniqueContributions.map((contribution) => ({
+      id: stableFactId("schema-contribution", {
+        generation,
+        rootReferenceId: contribution.rootReferenceId,
+        entityKind: contribution.entityKind,
+        entityId: contribution.entityId
+      }),
+      generation,
+      rootReferenceId: contribution.rootReferenceId,
+      entityKind: contribution.entityKind,
+      entityId: contribution.entityId,
+      payload: canonicalSerialize(contribution.payload ?? {})
+    } satisfies Record<string, GraphValue>));
+    for (const batch of batches(rows, FULL_GENERATION_BATCH_SIZE)) {
+      await this.db.query(
+        "UNWIND $rows AS row CREATE (c:SchemaContribution {" +
+        "id: row.id, generation: row.generation, rootReferenceId: row.rootReferenceId, " +
+        "entityKind: row.entityKind, entityId: row.entityId, payload: row.payload});",
+        { rows: batch }
+      );
+    }
+  }
+
   private stateId(): string {
     return `schema-generation-state:${this.workspaceId}`;
   }
@@ -1265,17 +1292,6 @@ export class SchemaGenerationStore {
     }
   }
 
-  private async assertIncrementalActiveTarget(generation: string): Promise<string> {
-    const state = await this.readGenerationState();
-    const revision = this.stringValue(state.pendingRevision);
-    if (!revision) throw new Error(`Active schema generation ${generation} has no reserved incremental revision.`);
-    const validated = this.assertIncrementalCommitCandidate(revision, state);
-    if (validated.generation !== generation) {
-      throw new Error(`Schema incremental mutation targets ${generation}, but the active physical generation is ${validated.generation}.`);
-    }
-    return revision;
-  }
-
   private nextLeaseUntil(): string {
     return new Date(Date.now() + SCHEMA_GENERATION_LEASE_MS).toISOString();
   }
@@ -1332,6 +1348,29 @@ function compareContributions(left: SchemaContributionView, right: SchemaContrib
 
 function sameContributionEntity(left: SchemaContributionEntityKey, right: SchemaContributionEntityKey): boolean {
   return left.entityKind === right.entityKind && left.entityId === right.entityId;
+}
+
+function uniqueByIdentity<T>(values: readonly T[], identity: (value: T) => string, label: string): T[] {
+  const unique = new Map<string, T>();
+  for (const value of values) {
+    const id = identity(value);
+    const previous = unique.get(id);
+    if (previous && canonicalSerialize(previous) !== canonicalSerialize(value)) {
+      throw new Error(`Conflicting ${label} identity ${id}.`);
+    }
+    unique.set(id, value);
+  }
+  return [...unique.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, value]) => value);
+}
+
+function batches<T>(values: readonly T[], size: number): T[][] {
+  const result: T[][] = [];
+  for (let offset = 0; offset < values.length; offset += size) {
+    result.push(values.slice(offset, offset + size));
+  }
+  return result;
 }
 
 function factIndexProperties(table: string, fact: OwnedSchemaFact): Record<string, GraphValue> {

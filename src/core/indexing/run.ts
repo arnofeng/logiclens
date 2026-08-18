@@ -11,6 +11,7 @@ import { runIndexStateCommitPhase } from "./stateCommit.js";
 import { SchemaGenerationStore } from "../schema/generationStore.js";
 import { createBatchId } from "../graph-model/batchWriter.js";
 import { toRepoNode } from "../workspace/repoRegistry.js";
+import { RepositoryPreparationProgress } from "../../shared/progress.js";
 
 import { chunk } from "../../shared/chunk.js";
 import {
@@ -236,16 +237,37 @@ export async function runIndexing(
   };
   try {
     const preparedRepos = new Map<string, PreparedRepoIndex>();
+    const preparationProgress = new RepositoryPreparationProgress(
+      logger.createProgressBar,
+      planning.repoConfigs.map((repoConfig) => repoConfig.name)
+    );
     const preparationJobs = await runIndexQueue(
       planning.repoConfigs,
       { concurrency: config.indexing.concurrency, retries: 1 },
       async (repoConfig) => {
-        const prepared = await prepareRepoIndex({ db, ctx, repoConfig, options });
+        const prepared = await prepareRepoIndex({
+          db,
+          ctx,
+          repoConfig,
+          options,
+          progressBarFactory: preparationProgress.startRepo(repoConfig.name),
+          logCompletion: false
+        });
         preparedRepos.set(prepared.repo.id, prepared);
+        preparationProgress.completeRepo(repoConfig.name);
       },
       (repoConfig) => `prepare:${repoConfig.name}`
     );
     const failedPreparation = preparationJobs.filter((job) => job.status === "failed");
+    preparationProgress.finish(failedPreparation.length);
+    for (const repoConfig of planning.repoConfigs) {
+      const prepared = preparedRepos.get(toRepoNode(repoConfig, cwd).id);
+      if (prepared) {
+        logger.log?.(
+          `Scan/parse/summarize ${repoConfig.name}: ${(prepared.preparationDurationMs / 1000).toFixed(2)}s`
+        );
+      }
+    }
     if (failedPreparation.length > 0) {
       throw new Error(`Index preparation failed: ${failedPreparation.map((job) => `${job.id}: ${job.error ?? "unknown error"}`).join("; ")}`);
     }

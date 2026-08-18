@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ProgressBar } from "../src/shared/progress.js";
+import { ProgressBar, RepositoryPreparationProgress } from "../src/shared/progress.js";
 
 describe("ProgressBar", () => {
   const originalWrite = process.stderr.write;
@@ -85,5 +85,38 @@ describe("ProgressBar", () => {
     expect(renderedLines).toHaveLength(2);
     expect(renderedLines[0]).toContain("Resolve calls");
     expect(renderedLines[1]).toContain("Framework detection");
+  });
+
+  it("renders concurrent repository preparation through one aggregate terminal line", () => {
+    delete process.env.CI;
+    const writes: string[] = [];
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      writes.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    Object.defineProperty(process.stderr, "isTTY", { configurable: true, value: true });
+    Object.defineProperty(process.stderr, "columns", { configurable: true, value: 120 });
+
+    const preparation = new RepositoryPreparationProgress(
+      (label, total) => new ProgressBar(label, total),
+      ["service-a", "service-b"]
+    );
+    const serviceA = preparation.startRepo("service-a")("Files service-a", 2);
+    const serviceB = preparation.startRepo("service-b")("Files service-b", 3);
+    serviceA.tick("a.ts");
+    serviceB.tick("b.ts");
+    serviceA.complete();
+    preparation.completeRepo("service-a");
+    serviceB.complete();
+    preparation.completeRepo("service-b");
+
+    const renderedLines = writes
+      .filter((write) => write !== "\n")
+      .map((write) => write.replace(/^\r\x1b\[2K/, ""));
+    expect(renderedLines.length).toBeGreaterThan(2);
+    expect(renderedLines.every((line) => line.startsWith("Repository preparation"))).toBe(true);
+    expect(renderedLines.every((line) => !line.includes("service-a") && !line.includes("service-b"))).toBe(true);
+    expect(renderedLines.at(-1)).toContain("2/2 100%");
+    expect(writes.filter((write) => write === "\n")).toHaveLength(1);
   });
 });

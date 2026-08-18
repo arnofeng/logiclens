@@ -2,7 +2,15 @@ import type { CrossRepoExtraction } from "../contracts/extraction/crossRepoContr
 import type { ParsedGraphFile } from "../parsing/types.js";
 import type { LexicalDocument } from "../retrieval/types.js";
 import { schemaSpecId, stableFactId } from "./model.js";
-import { SchemaGenerationStore, type OwnedSchemaFact, type SchemaBehaviorFingerprintReplacement, type SchemaInternalFactKind } from "./generationStore.js";
+import {
+  SchemaGenerationStore,
+  type OwnedSchemaFact,
+  type SchemaBehaviorFingerprintReplacement,
+  type SchemaContributionReplacement,
+  type SchemaContributionView,
+  type SchemaContributionVisibilityChange,
+  type SchemaInternalFactKind
+} from "./generationStore.js";
 import { collapseSemanticRelations, semanticRelationDedupKey } from "../contracts/extraction/dedup.js";
 import type { GraphDB } from "../graph-model/db.js";
 import { publicNodeStorageId } from "../graph-model/publicGraphGeneration.js";
@@ -18,8 +26,8 @@ export interface SchemaSourceFactReplacement {
 export interface IncrementalSchemaMutation {
   sourceFactReplacements: SchemaSourceFactReplacement[];
   behaviorFingerprintReplacements: SchemaBehaviorFingerprintReplacement[];
-  contributionReplacements: import("./generationStore.js").SchemaContributionReplacement[];
-  visibilityChanges: import("./generationStore.js").SchemaContributionVisibilityChange[];
+  contributionReplacements: SchemaContributionReplacement[];
+  visibilityChanges: SchemaContributionVisibilityChange[];
   upsertLexicalDocuments: LexicalDocument[];
   deleteLexicalDocumentIds: string[];
 }
@@ -34,13 +42,12 @@ export interface IncrementalSchemaPublicGraphDelta {
 export async function stageSchemaGenerationFacts(input: {
   store: SchemaGenerationStore;
   generation: string;
-  parsedFiles: readonly ParsedGraphFile[];
   extraction: CrossRepoExtraction;
   lexicalDocuments: readonly LexicalDocument[];
-}): Promise<string[]> {
-  const { store, generation, parsedFiles, extraction } = input;
+}): Promise<void> {
+  const { store, generation, extraction } = input;
   const rootsById = new Map(extraction.schemaInternalFacts.roots.map((root) => [root.id, root]));
-  const collections: Record<Exclude<SchemaInternalFactKind, "fingerprints">, readonly OwnedSchemaFact[]> = {
+  const facts: Record<SchemaInternalFactKind, readonly OwnedSchemaFact[]> = {
     declarations: extraction.schemaInternalFacts.declarations.map((fact) => ({ ...fact, repoId: fact.identity.repoId, sourceFileId: fact.fileId })),
     resolutionContexts: extraction.schemaInternalFacts.resolutionContexts.map((fact) => ({ ...fact, sourceFileId: fact.fileId })),
     resolutionScopeDependencies: extraction.schemaInternalFacts.resolutionScopeDependencies.map((fact) => {
@@ -53,72 +60,34 @@ export async function stageSchemaGenerationFacts(input: {
     roots: extraction.schemaInternalFacts.roots.map((fact) => ({ ...fact, sourceFileId: fact.ownerFileId })),
     dependencies: extraction.schemaInternalFacts.dependencies.map((fact) => ownedByRoot(fact, rootsById)),
     provenance: extraction.schemaInternalFacts.provenance.map((fact) => ownedByRoot(fact, rootsById)),
-    diagnostics: extraction.schemaInternalFacts.diagnostics
+    diagnostics: extraction.schemaInternalFacts.diagnostics,
+    fingerprints: extraction.schemaInternalFacts.fingerprints
   };
-
-  const touchedRepoIds = new Set(parsedFiles.map((file) => file.repoId));
-  const replacementSources = new Map(parsedFiles.map((file) => [
-    `${file.repoId}\0${file.fileId}`,
-    { repoId: file.repoId, fileId: file.fileId }
-  ]));
-  for (const root of extraction.schemaInternalFacts.roots) {
-    if (!touchedRepoIds.has(root.repoId)) continue;
-    replacementSources.set(`${root.repoId}\0${root.ownerFileId}`, {
-      repoId: root.repoId,
-      fileId: root.ownerFileId
-    });
-  }
-  for (const fingerprint of extraction.schemaInternalFacts.fingerprints) {
-    await store.replaceBehaviorFingerprints({
-      generation,
-      replacement: {
-        repoId: fingerprint.repoId,
-        languageId: fingerprint.languageId,
-        resolutionScopeId: fingerprint.resolutionScopeId,
-        facts: [{ ...fingerprint, generation }]
-      }
-    });
-  }
-
-  for (const source of [...replacementSources.values()].sort((left, right) =>
-    left.repoId.localeCompare(right.repoId) || left.fileId.localeCompare(right.fileId))) {
-    for (const [kind, facts] of Object.entries(collections) as [SchemaInternalFactKind, readonly OwnedSchemaFact[]][]) {
-      const sourceFacts = facts
-        .filter((fact) => (fact.repoId === undefined || fact.repoId === source.repoId)
-          && (fact.sourceFileId === undefined || fact.sourceFileId === source.fileId))
-        .map((fact) => ({ ...fact, generation }));
-      await store.replaceSourceFacts({ generation, kind, repoId: source.repoId, fileId: source.fileId, facts: sourceFacts });
-    }
-  }
+  const generationContributions: SchemaContributionView[] = [];
   const currentSchemaSpecs = extraction.contractSpecs.filter((spec) => spec.specKind === "schema");
   const candidateSchemaSpecIds = new Set(extraction.schemaInternalFacts.declarations.flatMap((fact) => fact.candidate
     ? [schemaSpecId({ declarationId: fact.id, canonicalTypeArguments: [] })]
     : []));
   for (const spec of currentSchemaSpecs) {
-    if (candidateSchemaSpecIds.has(spec.id)) {
-      await store.replaceContributions({ generation, rootReferenceId: `declaration:${spec.id}`, contributions: [] });
-      continue;
-    }
+    if (candidateSchemaSpecIds.has(spec.id)) continue;
     const ownedRelations = collapseSemanticRelations(
       extraction.semanticRelations.filter((relation) => relation.fromSpecId === spec.id)
     );
-    await store.replaceContributions({
-      generation,
-      rootReferenceId: `declaration:${spec.id}`,
-      contributions: [
-        { entityKind: "schema-spec", entityId: spec.id, payload: spec },
+    const rootReferenceId = `declaration:${spec.id}`;
+    generationContributions.push(
+      ...[
+        { entityKind: "schema-spec" as const, entityId: spec.id, payload: spec },
         ...ownedRelations.map((relation) => ({ entityKind: "logical-relation" as const, entityId: relationContributionId(relation), payload: relationContributionPayload(relation) })),
         ...input.lexicalDocuments.filter((document) => document.canonicalId === spec.id)
           .map((document) => ({ entityKind: "lexical-document" as const, entityId: document.id, payload: document }))
-      ]
-    });
+      ].map((contribution) => ({ ...contribution, rootReferenceId }))
+    );
   }
-  const activeLexicalDocuments: LexicalDocument[] = [];
   for (const root of extraction.schemaInternalFacts.roots) {
     const relations = reachableRelations(root.ownerSpecId, extraction.semanticRelations);
     const targetIds = new Set(relations.flatMap((relation) => [relation.fromSpecId, relation.toSpecId]));
     targetIds.delete(root.ownerSpecId);
-    const contributions = [
+    const rootContributions = [
       ...[...targetIds].map((entityId) => ({ entityKind: "schema-spec" as const, entityId })),
       ...relations.map((relation) => ({
         entityKind: "logical-relation" as const,
@@ -128,13 +97,13 @@ export async function stageSchemaGenerationFacts(input: {
           rootEvidenceId(root.id, relation, extraction.schemaInternalFacts.provenance)
         )
       })),
-      ...[...new Map([...activeLexicalDocuments, ...input.lexicalDocuments].map((document) => [document.id, document])).values()]
+      ...[...new Map(input.lexicalDocuments.map((document) => [document.id, document])).values()]
         .filter((document) => targetIds.has(document.canonicalId))
         .map((document) => ({ entityKind: "lexical-document" as const, entityId: document.id, payload: document }))
     ];
-    await store.replaceContributions({ generation, rootReferenceId: root.id, contributions });
+    generationContributions.push(...rootContributions.map((contribution) => ({ ...contribution, rootReferenceId: root.id })));
   }
-  return [];
+  await store.appendFullGenerationBatch({ generation, facts, contributions: generationContributions });
 }
 
 /**

@@ -6,6 +6,15 @@ export type ProgressEvent = {
 
 export type ProgressReporter = (event: ProgressEvent) => void;
 
+export type ProgressBarHandle = {
+  tick(label?: string): void;
+  update(current: number, label?: string, total?: number, stepMs?: number): void;
+  complete(label?: string): void;
+  reporter(): ProgressReporter;
+};
+
+export type ProgressBarFactory = (label: string, total: number) => ProgressBarHandle;
+
 function terminalColumns(): number {
   const columns = process.stderr.columns;
   return typeof columns === "number" && columns > 0 ? columns : 120;
@@ -93,4 +102,106 @@ export class ProgressBar {
   private elapsedMs(): number {
     return (this.completedAt ?? Date.now()) - this.started;
   }
+}
+
+type RepositoryPreparationState = {
+  active: boolean;
+  completed: boolean;
+  filesCurrent: number;
+  filesTotal: number;
+};
+
+/**
+ * Collapses concurrently active repository file bars into one terminal-owned
+ * progress line. Other per-repository bars stay silent during preparation so
+ * independent renderers cannot erase each other's output.
+ */
+export class RepositoryPreparationProgress {
+  private readonly progress?: ProgressBarHandle;
+  private readonly states: Map<string, RepositoryPreparationState>;
+
+  constructor(createProgressBar: ProgressBarFactory | undefined, repoNames: readonly string[]) {
+    this.states = new Map(repoNames.map((repoName) => [repoName, {
+      active: false,
+      completed: false,
+      filesCurrent: 0,
+      filesTotal: 0
+    }]));
+    this.progress = createProgressBar?.("Repository preparation", repoNames.length);
+    this.render();
+  }
+
+  startRepo(repoName: string): ProgressBarFactory {
+    const state = this.requireState(repoName);
+    state.active = true;
+    this.render();
+    return (label, total) => {
+      if (!label.startsWith("Files ")) return silentProgressBar();
+      state.filesTotal = total;
+      state.filesCurrent = 0;
+      this.render();
+      return {
+        tick: () => {
+          state.filesCurrent = Math.min(state.filesCurrent + 1, state.filesTotal);
+          this.render();
+        },
+        update: (current, _label, nextTotal = state.filesTotal) => {
+          state.filesTotal = nextTotal;
+          state.filesCurrent = Math.min(current, nextTotal);
+          this.render();
+        },
+        complete: () => {
+          state.filesCurrent = state.filesTotal;
+          this.render();
+        },
+        reporter: () => (event) => {
+          state.filesTotal = event.total;
+          state.filesCurrent = Math.min(event.current, event.total);
+          this.render();
+        }
+      };
+    };
+  }
+
+  completeRepo(repoName: string): void {
+    const state = this.requireState(repoName);
+    state.active = false;
+    state.completed = true;
+    state.filesCurrent = state.filesTotal;
+    this.render();
+  }
+
+  finish(failedCount = 0): void {
+    if (failedCount > 0) this.progress?.complete(`failed=${failedCount}`);
+  }
+
+  private requireState(repoName: string): RepositoryPreparationState {
+    const state = this.states.get(repoName);
+    if (!state) throw new Error(`Unknown repository preparation progress: ${repoName}`);
+    return state;
+  }
+
+  private render(): void {
+    if (!this.progress) return;
+    const states = [...this.states.values()];
+    const active = states.filter((state) => state.active).length;
+    const completed = states.filter((state) => state.completed).length;
+    const filesCurrent = states.reduce((total, state) => total + state.filesCurrent, 0);
+    const filesTotal = states.reduce((total, state) => total + state.filesTotal, 0);
+    const files = filesTotal > 0 ? ` files=${filesCurrent}/${filesTotal}` : "";
+    this.progress.update(
+      completed,
+      `active=${active} completed=${completed}/${states.length}${files}`,
+      states.length
+    );
+  }
+}
+
+function silentProgressBar(): ProgressBarHandle {
+  return {
+    tick: () => {},
+    update: () => {},
+    complete: () => {},
+    reporter: () => () => {}
+  };
 }

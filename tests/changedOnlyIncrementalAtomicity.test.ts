@@ -259,17 +259,14 @@ describe("changed-only provider transaction atomicity", () => {
       await db.upsertSystem("changed-only-atomicity", scope);
       await db.upsertRepo(oldRepo, scope);
       await db.upsertEntity(oldEntity, scope);
-      await generations.replaceSourceFacts({
+      await generations.appendFullGenerationBatch({
         generation,
-        kind: "declarations",
-        repoId,
-        fileId,
-        facts: [declaration({
-          id: `declaration:old:${suffix}`,
-          repoId,
-          fileId,
-          canonicalName: "example.OldModel"
-        })]
+        facts: {
+          declarations: [declaration({ id: `declaration:old:${suffix}`, repoId, fileId, canonicalName: "example.OldModel" })],
+          resolutionContexts: [], resolutionScopeDependencies: [], roots: [], dependencies: [],
+          provenance: [], diagnostics: [], fingerprints: []
+        },
+        contributions: []
       });
       await lexical.upsertDocuments({
         workspaceId,
@@ -311,17 +308,17 @@ describe("changed-only provider transaction atomicity", () => {
         await db.upsertEntity(newEntity, scope);
         await db.upsertRepo(newRepo, scope);
         if (phase === "graph-upsert") throw new Error("injected failure after graph upsert");
-        await generations.replaceActiveSourceFacts({
+        await generations.applyActiveReplacementBatch({
           generation,
-          kind: "declarations",
-          repoId,
-          fileId,
-          facts: [declaration({
-            id: `declaration:new:${suffix}`,
+          revision: nextRevision,
+          sourceReplacements: [{
+            kind: "declarations",
             repoId,
             fileId,
-            canonicalName: "example.NewModel"
-          })]
+            facts: [declaration({ id: `declaration:new:${suffix}`, repoId, fileId, canonicalName: "example.NewModel" })]
+          }],
+          behaviorFingerprintReplacements: [],
+          contributionReplacements: []
         });
         if (phase === "schema-facts") throw new Error("injected failure after schema facts");
         await lexical.applyIncrementalMutation({
