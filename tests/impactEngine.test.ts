@@ -3,6 +3,7 @@ import { makeTestSchema } from "./helpers/schemaModel.js";
 import {
   analyzeImpact,
   findFieldReferences,
+  findTypedFieldReferences,
   findTargetSpecs,
   parseTarget,
   type ImpactAnalysisOptions
@@ -337,6 +338,25 @@ describe("findFieldReferences", () => {
   it("returns empty when field not referenced", () => {
     const refs = findFieldReferences(sourceText, "nonExistentField");
     expect(refs).toHaveLength(0);
+  });
+
+  it("requires the affected schema type for repository-wide field matches", () => {
+    const related = `class Service {
+  void create(ActivityCreateDTO request) {
+    use(request.getActivityType());
+    use(activityBaseBO.getActivityType());
+  }
+}`;
+    const unrelated = `class OtherService {
+  void create(OtherDTO request) {
+    use(request.getActivityType());
+  }
+}`;
+
+    const relatedReferences = findTypedFieldReferences(related, ["ActivityCreateDTO"], "activityType", "Service.java");
+    expect(relatedReferences).toHaveLength(1);
+    expect(relatedReferences[0]?.raw).toContain("request.getActivityType()");
+    expect(findTypedFieldReferences(unrelated, ["ActivityCreateDTO"], "activityType", "OtherService.java")).toHaveLength(0);
   });
 });
 
@@ -811,6 +831,33 @@ describe("analyzeImpact — report structure", () => {
     expect(report.recommendedFiles).toBeInstanceOf(Array);
     expect(report.traversedEdgeCount).toBeGreaterThanOrEqual(0);
     expect(report.inspectedSpecCount).toBeGreaterThanOrEqual(0);
+  });
+
+  it("includes confirmed implementation field references as breaking impacts", () => {
+    const report = analyzeImpact(
+      { target: "schema:MyDto", changeType: "field-removed", detail: "fieldA" },
+      [schema],
+      [],
+      {
+        implementationFieldReferences: [{
+          repoId: "repo:svc-a",
+          filePath: "file:repo:svc-a:src/MyService.java",
+          line: 42,
+          evidence: "request.getFieldA()",
+          confidence: 0.9,
+        }],
+      }
+    );
+
+    const implementationImpact = report.impacts.find((impact) => impact.filePath === "src/MyService.java");
+    expect(implementationImpact).toMatchObject({
+      repoName: "svc-a",
+      line: 42,
+      severity: "breaking",
+      relationKind: "USES_SCHEMA",
+      evidence: "request.getFieldA()",
+    });
+    expect(report.recommendedFiles).toContain("svc-a/src/MyService.java");
   });
 
   it("impacts are sorted by severity (breaking first)", () => {

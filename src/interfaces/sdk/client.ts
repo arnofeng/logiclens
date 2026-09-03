@@ -505,6 +505,8 @@ export class AppClient {
     const { selectImpactRootIds } = await import("../../core/contracts/semanticRelations.js");
     const { normalizeSemanticTarget } = await import("../../core/contracts/targetNormalization.js");
     const { isKnownContractSpecNode } = await import("../../core/parsing/types.js");
+    const { deserializeSpec } = await import("../../core/contracts/spec.js");
+    const { scanImplementationFieldReferences } = await import("../../core/contracts/impact/implementationFieldSearch.js");
 
     return withPublicGraphReadSnapshot(db, deriveWorkspaceId(this.config.systemName), async (snapshot) => {
       // 1. Load all specs and relations from the shared graph query layer.
@@ -526,6 +528,8 @@ export class AppClient {
     // 3. Find files to read asynchronously
     const filesToRead = new Set<string>(); // "repoId:fileId"
     const fileIdToParams = new Map<string, { repoId: string; fileId: string }>();
+    const relatedRepoIds = new Set<string>();
+    const schemaTypeNames = new Set<string>();
 
     if (targetSpecs.length > 0) {
       const targetSpecIds = new Set(targetSpecs.map((s) => s.id));
@@ -534,9 +538,18 @@ export class AppClient {
 
       const isSchemaChange = targetSpecs.some((s) => s.specKind === "schema");
       if (isSchemaChange && change.detail) {
+        for (const targetSpec of targetSpecs) {
+          relatedRepoIds.add(targetSpec.repoId);
+          const parsed = deserializeSpec(targetSpec.specJson);
+          if (parsed.kind === "schema") {
+            schemaTypeNames.add(parsed.displayName);
+            schemaTypeNames.add(parsed.declaration.canonicalName);
+          }
+        }
         for (const step of pathSteps) {
           const impactedSpec = specMap.get(step.impactedSpecId);
           if (impactedSpec && !targetSpecIds.has(step.impactedSpecId) && impactedSpec.fileId) {
+            relatedRepoIds.add(impactedSpec.repoId);
             const key = `${impactedSpec.repoId}:${impactedSpec.fileId}`;
             filesToRead.add(key);
             fileIdToParams.set(key, { repoId: impactedSpec.repoId, fileId: impactedSpec.fileId });
@@ -565,13 +578,27 @@ export class AppClient {
     });
     await Promise.all(readPromises);
 
+    const implementationFieldReferences = change.detail && change.changeType !== "field-added"
+      ? await scanImplementationFieldReferences({
+        repos: [...relatedRepoIds].flatMap((relatedRepoId) => {
+          const repoName = relatedRepoId.replace(/^repo:/, "");
+          const rootPath = repoPaths.get(repoName);
+          return rootPath ? [{ repoId: relatedRepoId, rootPath }] : [];
+        }),
+        typeNames: [...schemaTypeNames],
+        fieldName: change.detail,
+        ignore: this.config.exclude,
+      })
+      : [];
+
     const readFile = (repoId: string, fileId: string): string | undefined => {
       return fileContents.get(`${repoId}:${fileId}`);
     };
 
       return analyzeImpact(change, specs, relations, {
         maxHops: changeIntent.maxHops,
-        readFile
+        readFile,
+        implementationFieldReferences
       });
     });
   }

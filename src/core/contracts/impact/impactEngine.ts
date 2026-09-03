@@ -40,7 +40,7 @@ import { assessGraphqlOperationChange, classifyGraphqlOperationTargetChange } fr
 import { normalizeSemanticTarget } from "../targetNormalization.js";
 
 // Re-export for backward compatibility (tests and external consumers)
-export { findFieldReferences } from "./fieldSearch.js";
+export { findFieldReferences, findTypedFieldReferences } from "./fieldSearch.js";
 export type { ImpactAnalysisOptions } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -334,6 +334,25 @@ export function analyzeImpact(
           });
         }
       }
+    }
+  }
+
+  if (isSchemaChange && change.detail) {
+    const targetName = change.target.split(/[\s:]/).filter(Boolean).pop() ?? change.target;
+    for (const reference of options.implementationFieldReferences ?? []) {
+      impacts.push({
+        repoId: reference.repoId,
+        filePath: reference.filePath,
+        line: reference.line,
+        symbol: `${targetName}.${change.detail}`,
+        relationKind: "USES_SCHEMA",
+        severity: change.changeType === "field-removed" ? "breaking"
+          : change.changeType === "field-added" ? "compatible" : "risky",
+        description: `Field '${change.detail}' is referenced by implementation code`,
+        evidence: reference.evidence,
+        specId: `implementation-field-reference:${reference.repoId}:${reference.filePath}:${reference.line}`,
+        confidence: reference.confidence,
+      });
     }
   }
 

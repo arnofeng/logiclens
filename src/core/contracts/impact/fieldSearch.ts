@@ -156,3 +156,48 @@ export function findFieldReferences(
 
   return results;
 }
+
+/**
+ * Restricts field-reference matches to files that also mention the affected
+ * schema type. This is intentionally conservative for repository-wide scans:
+ * a common accessor such as getType() must not match unrelated domain models.
+ */
+export function findTypedFieldReferences(
+  sourceText: string,
+  typeNames: string[],
+  fieldName: string,
+  filePath?: string
+): { line: number; raw: string }[] {
+  const { noCommentsOrStrings } = stripCommentsAndStrings(sourceText, filePath);
+  const receiverNames = new Set<string>();
+  for (const typeName of typeNames) {
+    const simpleName = typeName.split(/[.$]/).pop() ?? typeName;
+    if (!simpleName) continue;
+    const escaped = simpleName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const typeBeforeName = new RegExp(`\\b${escaped}(?:\\s*<[^;={}()]*>)?\\s+([A-Za-z_$][\\w$]*)\\b`, "g");
+    const nameBeforeType = new RegExp(`\\b([A-Za-z_$][\\w$]*)\\s*:\\s*${escaped}\\b`, "g");
+    for (const pattern of [typeBeforeName, nameBeforeType]) {
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(noCommentsOrStrings)) !== null) {
+        if (match[1]) receiverNames.add(match[1]);
+      }
+    }
+  }
+
+  if (receiverNames.size === 0) return [];
+
+  const escapedField = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const accessor = `${escapedField.charAt(0).toUpperCase()}${escapedField.slice(1)}`;
+  return findFieldReferences(sourceText, fieldName, filePath).filter((reference) => {
+    return [...receiverNames].some((receiverName) => {
+      const escapedReceiver = receiverName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const receiverPattern = new RegExp(
+        `(?:\\bthis\\s*\\.\\s*)?\\b${escapedReceiver}\\s*(?:` +
+        `\\.\\s*(?:get${accessor}|set${accessor})\\b|` +
+        `\\.\\s*${escapedField}\\b|` +
+        `\\[\\s*["']${escapedField}["']\\s*\\])`
+      );
+      return receiverPattern.test(reference.raw);
+    });
+  });
+}

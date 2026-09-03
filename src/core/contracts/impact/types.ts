@@ -109,6 +109,14 @@ export type ImpactAnalysisOptions = {
    * at the contract level only.
    */
   readFile?: (repoId: string, filePath: string) => string | undefined;
+  /** Confirmed field accessor references discovered in related repository source files. */
+  implementationFieldReferences?: {
+    repoId: string;
+    filePath: string;
+    line: number;
+    evidence: string;
+    confidence: number;
+  }[];
   /** Maximum BFS depth for transitive impact traversal (default 3). */
   maxHops?: number;
 };

@@ -310,7 +310,7 @@ export function printImpactReport(report: ImpactReport): void {
     return;
   }
 
-  console.log("Direct impacts:");
+  console.log("Impacts:");
   for (const imp of report.impacts) {
     const icon = severityMarker(imp.severity);
     const lineInfo = imp.line ? `:${imp.line}` : "";

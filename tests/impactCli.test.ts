@@ -157,6 +157,8 @@ describe("semantic impact CLI output", () => {
 
     const text = output.join("\n");
     expect(text).toContain("[!] Severity: breaking");
+    expect(text).toContain("Impacts:");
+    expect(text).not.toContain("Direct impacts:");
     expect(text).toContain("[breaking] mp-groupon-center ActivityCreateDTO.activityType");
     expect(text).toContain("evidence: mp-groupon-center/src/ActivityCreateDTO.java");
     expect(text).not.toContain("repo:mp-groupon-center/file:repo:");
