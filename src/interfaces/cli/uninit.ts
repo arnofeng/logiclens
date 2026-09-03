@@ -50,7 +50,6 @@ function safeResolveManagedPath(cwd: string, candidate: string, label: string): 
   const allowedPrefixes = [
     BRAND.configDirName,
     BRAND_PATHS.graph,
-    BRAND_PATHS.semanticIndex,
     ".codegraph"
   ].map((value) => value.replace(/\\/g, "/").replace(/\/$/, ""));
 
@@ -69,9 +68,9 @@ function validPidInfo(info: McpPidFile, cwd: string): { pid: number } | undefine
 
 /**
  * Removes the branded workspace: stops a running MCP server (via its pid
- * lock file) and deletes the config, graph database, and semantic index.
+ * lock file) and deletes the config and graph database.
  *
- * Workspace teardown lives in the CLI layer (not the SDK) so that embedding the
+ * Workspace teardown lives in the CLI layer (not the SDK) so that using the
  * SDK can never delete a user's workspace as a side effect.
  */
 export async function uninitCommand(cwd = process.cwd()): Promise<void> {
@@ -113,10 +112,7 @@ export async function uninitCommand(cwd = process.cwd()): Promise<void> {
 
   // Resolve and remove all workspace artifacts.
   const graphPath = safeResolveManagedPath(cwd, config.graph.path, "graph");
-  const semanticPath = safeResolveManagedPath(cwd, config.semantic.jsonPath, "semantic index");
-
   await fs.rm(graphPath, { recursive: true, force: true });
-  await fs.rm(semanticPath, { force: true });
   await Promise.all(configFileCandidates(cwd).map((file) => fs.rm(file, { force: true })));
   await Promise.all(mcpPidPaths.map((file) => fs.rm(file, { force: true })));
   await fs.rm(configPath(cwd), { force: true });

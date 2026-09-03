@@ -1,75 +1,8 @@
-import type { AppConfig } from "../../config/schema.js";
 import { rebuildRepoDependencies } from "../graph-model/rebuildRelations.js";
 import type { GraphDB } from "../graph-model/db.js";
-import type { ParsedGraphFile, RepoNode } from "../parsing/types.js";
-import { indexSemanticText, type SemanticIndexingResult } from "../semantic/semanticIndex.js";
-import type { ProgressReporter } from "../../shared/progress.js";
-import { formatProviderStats } from "../../shared/providerPolicy.js";
+import type { RepoNode } from "../parsing/types.js";
 import { runIndexPhase } from "./phases.js";
 import type { PublicGraphGenerationScope } from "../graph-model/publicGraphGeneration.js";
-
-type ProgressBarLike = {
-  reporter(): ProgressReporter;
-  complete(): void;
-};
-
-export type SemanticWriteResult = {
-  indexed: boolean;
-  warning?: string;
-  fallbackEvents: number;
-};
-
-function formatSemanticIndexWarning(result: SemanticIndexingResult | undefined): string | undefined {
-  if (!result) return undefined;
-  const warnings: string[] = [];
-  if (result.fallbackEvents.length > 0) {
-    const details = result.fallbackEvents.slice(0, 3).map((event) => `${event.operation}: ${event.message}`).join("\n");
-    warnings.push(`Semantic index used fallback storage for ${result.fallbackEvents.length} operation(s). First few errors:\n${details}`);
-  }
-  const providerStats = result.providerStats ? formatProviderStats("Embedding", result.providerStats) : undefined;
-  if (providerStats) warnings.push(providerStats);
-  return warnings.length > 0 ? warnings.join("\n\n") : undefined;
-}
-
-export async function runSemanticWritePhase(input: {
-  cwd: string;
-  repos: RepoNode[];
-  parsedFiles: ParsedGraphFile[];
-  config: AppConfig;
-  enabled: boolean;
-  label: string;
-  repoName?: string;
-  batchId?: string;
-  createProgressBar: (label: string, total: number) => ProgressBarLike;
-  warn: (message: string) => void;
-}): Promise<SemanticWriteResult> {
-  const { cwd, repos, parsedFiles, config, enabled, label, repoName, batchId, createProgressBar, warn } = input;
-  const result = await runIndexPhase({ phase: "semantic-write", repoName, batchId }, async () => {
-    if (!enabled) return { indexed: false, fallbackEvents: 0 };
-
-    const embeddingProgress = createProgressBar(`Embeddings ${label}`, 1);
-    try {
-      const semanticResult = await indexSemanticText({
-        cwd,
-        repos,
-        parsedFiles,
-        config,
-        progress: embeddingProgress.reporter()
-      });
-      const warning = formatSemanticIndexWarning(semanticResult);
-      if (warning) warn(warning);
-      return {
-        indexed: true,
-        warning,
-        fallbackEvents: semanticResult.fallbackEvents.length
-      };
-    } finally {
-      embeddingProgress.complete();
-    }
-  });
-
-  return result.result;
-}
 
 export async function runStaleMarkPhase(input: {
   db: GraphDB;

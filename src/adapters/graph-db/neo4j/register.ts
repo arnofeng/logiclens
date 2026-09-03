@@ -1,6 +1,5 @@
 import { registerGraphProvider } from "../../../core/graph-model/factory.js";
 import { Neo4jGraphDB } from "./Neo4jGraphDB.js";
-import { Neo4jWorkspaceLexicalStore } from "./Neo4jWorkspaceLexicalStore.js";
 
 registerGraphProvider("neo4j", {
   factory: {
@@ -18,19 +17,5 @@ registerGraphProvider("neo4j", {
           : undefined;
       return Neo4jGraphDB.open(url, credentials);
     }
-  },
-  capabilities: {
-    nativeFullText: {
-      scope: "workspace",
-      updateConsistency: "synchronous",
-      supportsFieldBoost: false,
-      supportsPrefix: false
-    }
-  },
-  bindLexical: (db) => {
-    if (!(db instanceof Neo4jGraphDB)) {
-      throw new TypeError("Neo4j lexical binder requires the current Neo4jGraphDB instance");
-    }
-    return new Neo4jWorkspaceLexicalStore(db);
   }
 });

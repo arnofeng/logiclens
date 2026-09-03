@@ -4,10 +4,7 @@ export type IndexPhaseName =
   | "parse"
   | "llm-summary"
   | "fact-build"
-  | "lexical-projection"
   | "graph-write"
-  | "lexical-write"
-  | "semantic-write"
   | "stale-mark"
   | "relation-rebuild"
   | "index-state-commit";

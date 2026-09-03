@@ -1,5 +1,4 @@
 import type { GraphDB } from "./db.js";
-import type { GraphProviderCapabilities, WorkspaceLexicalStore } from "../retrieval/provider.js";
 
 export type GraphProviderId = string;
 
@@ -9,8 +8,6 @@ export interface GraphDBFactory {
 
 export interface GraphProviderRegistration {
   factory: GraphDBFactory;
-  capabilities: GraphProviderCapabilities;
-  bindLexical?: (db: GraphDB) => WorkspaceLexicalStore;
 }
 
 const registrations = new Map<GraphProviderId, GraphProviderRegistration>();
@@ -32,14 +29,6 @@ export function registerGraphProvider(
   assertValidProviderId(provider);
   if (registrations.has(provider)) {
     throw new Error(`Graph provider already registered: ${provider}`);
-  }
-
-  const hasNativeFullText = registration.capabilities.nativeFullText !== undefined;
-  const hasLexicalBinder = registration.bindLexical !== undefined;
-  if (hasNativeFullText !== hasLexicalBinder) {
-    throw new Error(
-      `Invalid graph provider registration for ${provider}: nativeFullText capability and bindLexical must be provided together`
-    );
   }
 
   registrations.set(provider, registration);

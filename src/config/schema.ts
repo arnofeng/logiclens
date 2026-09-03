@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { BRAND_DEFAULTS, BRAND_PATHS } from "../shared/branding.js";
+import { BRAND_PATHS } from "../shared/branding.js";
 
 export const repoConfigSchema = z.object({
   name: z.string().min(1),
@@ -78,12 +78,6 @@ export const configSchema = z.object({
     password: optionalSecretString,
     database: z.string().trim().min(1).optional()
   }).default({ provider: "kuzu", path: BRAND_PATHS.graph }),
-  retrieval: z.object({
-    lexical: z.object({
-      provider: providerIdSchema.default("auto"),
-      scope: z.literal("workspace").default("workspace")
-    }).default({ provider: "auto", scope: "workspace" })
-  }).default({ lexical: { provider: "auto", scope: "workspace" } }),
   llm: z.object({
     provider: z.literal("openai").default("openai"),
     apiKey: optionalSecretString,
@@ -94,34 +88,6 @@ export const configSchema = z.object({
     budget: providerBudgetSchema,
     rateLimit: providerRateLimitSchema
   }).default({ provider: "openai", model: "gpt-4.1-mini", maxSourceCharsPerNode: 6000, retry: defaultProviderRetry, budget: {}, rateLimit: defaultProviderRateLimit }),
-  embedding: z.object({
-    provider: z.string().default("off"),
-    apiKey: optionalSecretString,
-    baseUrl: optionalUrlString,
-    model: z.string().optional(),
-    level: z.enum(["off", "repo", "docs", "file", "node", "all"]).default("off"),
-    batchSize: z.number().int().positive().default(64),
-    concurrency: z.number().int().positive().default(2),
-    retry: providerRetrySchema,
-    budget: providerBudgetSchema,
-    rateLimit: providerRateLimitSchema
-  }).default({ provider: "off", level: "off", batchSize: 64, concurrency: 2, retry: defaultProviderRetry, budget: {}, rateLimit: defaultProviderRateLimit }),
-  semantic: z.object({
-    provider: z.enum(["json", "chroma"]).default("json"),
-    jsonPath: z.string().default(BRAND_PATHS.semanticIndex),
-    chroma: z.object({
-      mode: z.enum(["local", "remote"]).default("local"),
-      url: z.string().default("http://localhost:8000"),
-      collection: z.string().default(BRAND_DEFAULTS.chromaCollection),
-      authToken: z.string().optional(),
-      tenant: z.string().optional(),
-      database: z.string().optional()
-    }).default({ mode: "local", url: "http://localhost:8000", collection: BRAND_DEFAULTS.chromaCollection })
-  }).default({
-    provider: "json",
-    jsonPath: BRAND_PATHS.semanticIndex,
-    chroma: { mode: "local", url: "http://localhost:8000", collection: BRAND_DEFAULTS.chromaCollection }
-  }),
   mcp: z.object({
     logCalls: z.boolean().default(false)
   }).default({ logCalls: false }),
@@ -156,5 +122,4 @@ export const configSchema = z.object({
 });
 
 export type AppConfig = z.infer<typeof configSchema>;
-export type EmbeddingLevel = AppConfig["embedding"]["level"];
 export type LlmSummaryLevel = AppConfig["indexing"]["llmSummaryLevel"];

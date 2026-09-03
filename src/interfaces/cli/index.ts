@@ -44,8 +44,6 @@ export async function indexCommand(options: IndexOptions, cwd = process.cwd()): 
     console.log(`Call edges: ${result.callEdges}`);
     console.log(`Import edges: ${result.importEdges}`);
     console.log(`Entities: ${result.entities}`);
-    console.log(`Lexical documents: ${result.lexicalDocumentCount} count`);
-    console.log(`Lexical index size: ${result.lexicalIndexSizeBytes} bytes`);
     console.log(`Index duration: ${result.durationMs} ms`);
     const totalDuration = (result.durationMs / 1000).toFixed(1);
     process.stderr.write(`Total duration: ${totalDuration}s\n`);

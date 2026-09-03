@@ -2,15 +2,6 @@ import type { ExtractedFacts } from "../contracts/extraction/contracts.js";
 import type { FactCollector } from "../contracts/extraction/factCollector.js";
 import type { ParsedGraphFile, RepoNode } from "../parsing/types.js";
 import type { DetectedFramework } from "../frameworks/types.js";
-import type { ProviderCallRuntime } from "../../shared/providerPolicy.js";
-
-export type EmbeddingVector = number[];
-
-export interface EmbeddingProvider {
-  readonly name: string;
-  embedTexts(texts: string[], runtime?: ProviderCallRuntime): Promise<(EmbeddingVector | undefined)[]>;
-  embedText(text: string, runtime?: ProviderCallRuntime): Promise<EmbeddingVector | undefined>;
-}
 
 export type ParseInput = {
   repoId: string;

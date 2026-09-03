@@ -48,10 +48,6 @@ export async function loadConfig(cwd = process.cwd()): Promise<AppConfig> {
   if (parsed?.llm?.apiKey && typeof parsed.llm.apiKey === "string" && !parsed.llm.apiKey.startsWith("${") && parsed.llm.apiKey !== "") {
     console.warn(`[WARNING] Storing plaintext API keys in configuration is not recommended. Please consider using environment variables or references like '\${OPENAI_API_KEY}' for better security.`);
   }
-  if (parsed?.embedding?.apiKey && typeof parsed.embedding.apiKey === "string" && !parsed.embedding.apiKey.startsWith("${") && parsed.embedding.apiKey !== "") {
-    console.warn(`[WARNING] Storing plaintext API keys in configuration is not recommended. Please consider using environment variables or references like '\${OPENAI_API_KEY}' for better security.`);
-  }
-
   const resolved = resolveEnvVars(parsed);
   return configSchema.parse(resolved);
 }

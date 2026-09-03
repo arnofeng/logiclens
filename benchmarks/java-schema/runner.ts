@@ -29,7 +29,7 @@ type Sample = {
   durationMs: number;
   peakRssBytes: number;
   persistentIndexBytes: number;
-  counts: { publicGraph: number; internalFacts: number; lexicalDocuments: number; roots: number; semanticRelations: number; diagnostics: number };
+  counts: { publicGraph: number; internalFacts: number; roots: number; semanticRelations: number; diagnostics: number };
 };
 
 type SampleRequest = {
@@ -91,7 +91,7 @@ async function main(): Promise<void> {
       `Java schema benchmark (${report.runnerProfile}, commit ${report.commitSha})`,
       `fixture=${report.fixtureVersion} samples=${report.measuredRuns} smoke=${report.smoke}`,
       `median duration=${report.median.durationMs.toFixed(1)}ms peakRSS=${formatBytes(report.median.peakRssBytes)} index=${formatBytes(report.median.persistentIndexBytes)}`,
-      `counts public=${report.median.counts.publicGraph} internal=${report.median.counts.internalFacts} lexical=${report.median.counts.lexicalDocuments} roots=${report.median.counts.roots} relations=${report.median.counts.semanticRelations} diagnostics=${report.median.counts.diagnostics}`,
+      `counts public=${report.median.counts.publicGraph} internal=${report.median.counts.internalFacts} roots=${report.median.counts.roots} relations=${report.median.counts.semanticRelations} diagnostics=${report.median.counts.diagnostics}`,
       `json=${path.relative(root, jsonPath).replaceAll("\\", "/")}`
     ].join("\n");
     await fs.writeFile(textPath, `${summary}\n`, "utf8");
@@ -163,7 +163,6 @@ async function executeSample(fixture: string, manifest: Manifest, scratch: strin
     ...base,
     systemName,
     repos: [{ name: "spring-petclinic", path: fixture }],
-    embedding: { ...base.embedding, level: "off" as const },
     indexing: { ...base.indexing, llmSummaryLevel: "off" as const }
   };
   const started = performance.now();
@@ -180,14 +179,13 @@ async function executeSample(fixture: string, manifest: Manifest, scratch: strin
     const internalCounts = await Promise.all(internalLabels.map((label) => count(`MATCH (n:${label}) WHERE n.generation=$generation RETURN count(n) AS count;`, { generation })));
     const roots = await count("MATCH (n:SchemaRootFact) WHERE n.generation=$generation RETURN count(n) AS count;", { generation });
     const diagnostics = await count("MATCH (n:SchemaDiagnosticFact) WHERE n.generation=$generation RETURN count(n) AS count;", { generation });
-    const lexicalDocuments = await count("MATCH (n:LexicalDocument) WHERE n.workspaceId=$workspaceId AND n.generation=$generation RETURN count(n) AS count;", { workspaceId, generation });
     const semanticRelations = await count("MATCH (:ContractSpec)-[r:SEMANTIC_REL]->(:ContractSpec) WHERE r.workspaceId=$workspaceId AND r.generation=$generation RETURN count(r) AS count;", { workspaceId, generation });
     await db.close();
     return {
       durationMs: performance.now() - started,
       peakRssBytes: 0,
       persistentIndexBytes: await directorySize(path.dirname(graphPath)),
-      counts: { publicGraph: publicCounts.reduce(sum, 0) + semanticRelations, internalFacts: internalCounts.reduce(sum, 0), lexicalDocuments, roots, semanticRelations, diagnostics }
+      counts: { publicGraph: publicCounts.reduce(sum, 0) + semanticRelations, internalFacts: internalCounts.reduce(sum, 0), roots, semanticRelations, diagnostics }
     };
   } catch (error) {
     await db.close().catch(() => undefined);

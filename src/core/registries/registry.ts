@@ -1,4 +1,4 @@
-import type { ContractExtractor, EmbeddingProvider, FrameworkDetector, LanguageParser, ReferenceResolver } from "./types.js";
+import type { ContractExtractor, FrameworkDetector, LanguageParser, ReferenceResolver } from "./types.js";
 
 export class ParserRegistry {
   private languageStacks = new Map<string, LanguageParser[]>();
@@ -89,29 +89,6 @@ function topParser(stack: readonly LanguageParser[] | undefined): LanguageParser
   return stack?.[stack.length - 1];
 }
 
-export class EmbeddingProviderRegistry {
-  private byName = new Map<string, EmbeddingProvider>();
-
-  register(provider: EmbeddingProvider): void {
-    if (this.byName.has(provider.name)) {
-      console.warn(`Embedding provider "${provider.name}" is already registered and will be overwritten.`);
-    }
-    this.byName.set(provider.name, provider);
-  }
-
-  resolve(name: string): EmbeddingProvider | undefined {
-    return this.byName.get(name);
-  }
-
-  providers(): EmbeddingProvider[] {
-    return [...this.byName.values()];
-  }
-
-  names(): string[] {
-    return [...this.byName.keys()];
-  }
-}
-
 export class ContractExtractorRegistry {
   private byName = new Map<string, ContractExtractor>();
 
@@ -197,7 +174,6 @@ export class ReferenceResolverRegistry {
 }
 
 export const parserRegistry = new ParserRegistry();
-export const embeddingProviderRegistry = new EmbeddingProviderRegistry();
 export const contractExtractorRegistry = new ContractExtractorRegistry();
 export const frameworkDetectorRegistry = new FrameworkDetectorRegistry();
 export const referenceResolverRegistry = new ReferenceResolverRegistry();

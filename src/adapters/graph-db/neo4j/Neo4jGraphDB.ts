@@ -515,7 +515,7 @@ export class Neo4jGraphDB implements GraphDB {
     );
   }
 
-  async recoverIncompleteGraphWriteBatches(input: { repoIds?: string[]; workspaceId?: string; generation?: string; updatedAt: string; cleanupBatch?: (journal: GraphWriteBatchJournal) => Promise<void> }): Promise<GraphWriteBatchJournal[]> {
+  async recoverIncompleteGraphWriteBatches(input: { repoIds?: string[]; workspaceId?: string; generation?: string; updatedAt: string }): Promise<GraphWriteBatchJournal[]> {
     const rows = await this.query<{
       batchId: string;
       generation: string;
@@ -545,15 +545,6 @@ export class Neo4jGraphDB implements GraphDB {
         await this.cleanupGraphWriteBatch(journal.batchId);
       } catch (error) {
         cleanupErrors.push(`graph: ${error instanceof Error ? error.message : String(error)}`);
-      }
-      if (!input.cleanupBatch) {
-        cleanupErrors.push("lexical: cleanup callback is required for a workspace-scoped journal");
-      } else {
-        try {
-          await input.cleanupBatch?.(journal);
-        } catch (error) {
-          cleanupErrors.push(`lexical: ${error instanceof Error ? error.message : String(error)}`);
-        }
       }
       if (cleanupErrors.length > 0) {
         await this.failGraphWriteBatch({
@@ -940,8 +931,8 @@ export class Neo4jGraphDB implements GraphDB {
         throw new Error(`Incremental index revision ${request.nextRevision} has an expired workspace reservation.`);
       }
 
-      // The callback contains only the already-prepared graph, schema, and
-      // lexical delta. AsyncLocalStorage keeps all nested provider calls on
+      // The callback contains only the already-prepared graph and schema delta.
+      // AsyncLocalStorage keeps all nested provider calls on
       // this same transaction, so any callback failure rolls the delta back.
       const result = await apply();
       const statsRows = await this.query<{ revision?: GraphValue }>(
@@ -967,15 +958,13 @@ export class Neo4jGraphDB implements GraphDB {
       const generationRows = await this.query<{ id?: GraphValue }>(
         "MATCH (g:SchemaGeneration {id: $generation}) " +
         "WHERE g.workspaceId=$workspaceId AND g.status='active' " +
-        "SET g.activeRevision=$nextRevision, g.schemaIndexVersion=$schemaIndexVersion, " +
-        "g.lexicalProjectionVersion=$lexicalProjectionVersion, g.updatedAt=$updatedAt " +
+        "SET g.activeRevision=$nextRevision, g.schemaIndexVersion=$schemaIndexVersion, g.updatedAt=$updatedAt " +
         "RETURN g.id AS id;",
         {
           generation: request.expectedActiveGeneration,
           workspaceId: request.workspaceId,
           nextRevision: request.nextRevision,
           schemaIndexVersion: request.schemaIndexVersion,
-          lexicalProjectionVersion: request.lexicalProjectionVersion,
           updatedAt
         }
       );
@@ -995,8 +984,7 @@ export class Neo4jGraphDB implements GraphDB {
         "AND s.pendingLeaseUntil=$pendingLeaseUntil " +
         "SET s.activeRevision=$nextRevision, s.pendingRevision='', " +
         "s.pendingParentGeneration='', s.pendingParentRevision='', s.pendingLeaseUntil='', " +
-        "s.schemaIndexVersion=$schemaIndexVersion, " +
-        "s.lexicalProjectionVersion=$lexicalProjectionVersion, s.protocolNonce=$lockNonce " +
+        "s.schemaIndexVersion=$schemaIndexVersion, s.protocolNonce=$lockNonce " +
         "RETURN s.activeRevision AS activeRevision;",
         {
           stateId,
@@ -1005,7 +993,6 @@ export class Neo4jGraphDB implements GraphDB {
           nextRevision: request.nextRevision,
           pendingLeaseUntil: leaseUntil,
           schemaIndexVersion: request.schemaIndexVersion,
-          lexicalProjectionVersion: request.lexicalProjectionVersion,
           lockNonce
         }
       );
