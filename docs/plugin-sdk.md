@@ -159,7 +159,7 @@ Emit facts through `context.emit`:
 
 Every emitted fact must belong to the current context and include evidence with a repository-relative `filePath`, 1-based line, raw source description, stable rule name, and confidence (`exact`, `probable`, `heuristic`, or a numeric value).
 
-Schema facts participate in the host's deterministic contract-driven chain. Emit canonical declarations, recursive type expressions, explicit object/enum shapes, and stable source locations; do not infer public schemas from DTO/VO/Payload/Schema suffixes or emit provisional relations. The host owns reachability, type-instance identity, diagnostics, generation reconciliation, and lexical `contractSpec` projection. No plugin-specific schema configuration keys are required.
+Schema facts participate in the host's deterministic contract-driven chain. Emit canonical declarations, recursive type expressions, explicit object/enum shapes, and stable source locations; do not infer public schemas from DTO/VO/Payload/Schema suffixes or emit provisional relations. The host owns reachability, type-instance identity, diagnostics, generation reconciliation, and graph materialization. No plugin-specific schema configuration keys are required.
 
 ## Framework Detectors
 

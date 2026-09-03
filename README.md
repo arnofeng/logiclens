@@ -56,7 +56,7 @@ repohelix add-repo ../service-a --name service-a
 repohelix index # Index all repositories
 ```
 
-### 3. Ask Questions Based on Graph Context
+### 3. Trace a Contract Across Repositories
 
 ```bash
 repohelix trace "http POST /orders"
@@ -140,7 +140,7 @@ RepoHelix automatically analyzes your multi-repository system and models the ent
 - **Trace and impact analysis**: Starting from contracts or symbols, follows graph paths to return producers, consumers, related code, calls, documentation, and recommended files to inspect.
 - **CLI / SDK / MCP**: Supports manual graph queries, Node.js integration, and AI coding assistant connectivity.
 - **Quality governance**: Audits low-confidence evidence, rejects false positives, registers alias overrides to ensure graph accuracy.
-- **Optional LLM layer**: When needed, integrates an OpenAI-compatible chat provider to generate answers from retrieved evidence.
+- **Optional LLM summaries**: When configured, an OpenAI-compatible chat provider can summarize indexed files, repositories, and the graph.
 
 **Upgrade from "code search" to "graph traversal + reasoning".**
 
@@ -211,14 +211,13 @@ You can use the interactive installer to automatically register the RepoHelix MC
 | Tool Name | Description |
 |---|---|
 | `repohelix_get_stats` | Get summary statistics of the graph database (repository count, file count, code node count, call count, etc.) |
-| `repohelix_get_watch_status` | Check indexing and search status; pass `refresh: true` to refresh the search status |
+| `repohelix_get_watch_status` | Check watcher activity, pending files, queue state, and catch-up status |
 | `repohelix_list_dependencies` | List cross-repository dependencies with evidence (filterable by strength/type) |
 | `repohelix_list_contracts` | List identified contracts with producer/consumer/shared counts (filterable by kind, repo, direction) |
 | `repohelix_trace` | Multi-hop semantic trace — find the producers, consumers, and request/response/payload schemas connected to a contract |
 | `repohelix_impact_analysis` | Evaluate downstream impact scope when modifying code symbols or contracts |
-| `repohelix_ask_question` | Search the workspace and return matching source evidence |
 
-`repohelix_ask_question` accepts `question` plus the same retrieval controls as the SDK: `lexical`, `topK` (`1..100`), `graphHops` (`0..5`), and `contextBudget` (`256..65536`).
+Use the coding host's native file search for free-text source exploration. RepoHelix MCP tools are intentionally scoped to contracts, dependencies, traces, impact analysis, indexing, and watcher state.
 
 ### MCP Configuration Example
 
@@ -237,7 +236,7 @@ You can use the interactive installer to automatically register the RepoHelix MC
 
 ## 🧠 SDK (Programmatic Access)
 
-RepoHelix provides a Node.js SDK for building automation systems and AI toolchains. Use `retrieve()` to obtain source evidence or `ask()` to generate an answer from it.
+RepoHelix provides a Node.js SDK for building graph-aware automation systems and AI toolchains.
 
 ```ts
 import { createClient } from "repohelix";
@@ -256,12 +255,8 @@ try {
   const contractsForRepo = await client.contracts({ repo: "order-service", direction: "outgoing" });
   const trace = await client.trace("http GET /api/order/:id");
   const impact = await client.impact("OrderCreatedEvent");
-  const answer = await client.ask("Where is order validation implemented?", {
-    lexical: true,
-  });
-  const lexicalStatus = await client.getLexicalProviderStatus({ refresh: true });
 
-  console.log({ stats, dependencies, contracts, trace, impact, answer, lexicalStatus });
+  console.log({ stats, dependencies, contracts, trace, impact });
 } finally {
   await client.close();
 }
@@ -282,24 +277,10 @@ try {
 | `client.contracts(options)` | List identified contracts (filterable by kind, repo, direction). |
 | `client.trace(target)` | Multi-hop semantic trace of a contract spec. |
 | `client.impact(target)` | Analyze downstream impact scope. |
-| `client.retrieve(question, options)` | Return a structured `RetrievalResult` without generating an answer. |
-| `client.ask(question, options)` | Generate an answer or deterministic citation fallback from workspace evidence. |
-| `client.getLexicalProviderStatus(options)` | Check whether workspace lexical search is available; `{ refresh: true }` refreshes the status. |
 | `client.watch(options)` | Enable automatic changed-file indexing. |
 | `client.unwatch()` | Stop the watcher. |
 | `client.getWatchStatus()` | Check watcher, catch-up, pending files, and queue status. |
 | `client.close()` | Close watcher, queue, and graph database resources. |
-
-`RetrieveOptions` and `AskOptions` have the same fields and validation:
-
-| Option | Default | Range / meaning |
-|---|---:|---|
-| `lexical?: boolean` | `true` | Enable workspace lexical retrieval. |
-| `topK?: number` | `20` | Integer `1..100`. |
-| `graphHops?: number` | `1` | Integer `0..5`. |
-| `contextBudget?: number` | `16000` | Integer `256..65536` characters. |
-
-`ask()` generates a source-grounded answer when an LLM key is configured. Without a key, it returns a deterministic citation fallback when reliable evidence is available, or `no_reliable_evidence` otherwise.
 
 ---
 
@@ -345,7 +326,7 @@ For the complete list of supported parameters and their default values, see the 
 
 ### Cost and Privacy Notes
 
-For a fully offline run, use the local Kuzu graph, omit `llm.apiKey`, ensure `OPENAI_API_KEY` is unset, and do not configure a remote LLM endpoint. Without an LLM key, `ask` still returns a citation fallback when reliable evidence exists.
+For a fully offline run, use the local Kuzu graph, omit `llm.apiKey`, ensure `OPENAI_API_KEY` is unset, and do not configure a remote LLM endpoint. LLM configuration is used only for optional graph summaries.
 
 Only explicitly configured remote Neo4j or LLM services produce the corresponding network access. RepoHelix is local-first, but not every configuration is necessarily offline.
 
@@ -386,7 +367,7 @@ More languages, frameworks, and generated client patterns will be supported over
 - Built-in framework support is focused. Unsupported frameworks can still be parsed as source code, but contract extraction may be shallow until the corresponding detector or extractor is added.
 - Cross-repository dependency quality depends on repository names, package metadata, imports, aliases, and contract evidence.
 - Large workspaces may need `--changed-only`, `--batch-size`, `--max-files`, or watcher tuning.
-- LLM answers depend on retrieval context and provider behavior. For auditable evidence, prefer using `trace`, `deps`, `contracts`, and `impact`.
+- LLM summaries depend on provider behavior. Contract, dependency, trace, and impact results remain graph-derived and auditable.
 - MCP Server has local workspace access capability. Only connect it to clients you trust.
 
 ---

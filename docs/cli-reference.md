@@ -41,7 +41,6 @@ repohelix <command> --help
 | [`deps`](#repohelix-deps) | List cross-repository dependencies |
 | [`contracts`](#repohelix-contracts) | List contracts with producer/consumer counts |
 | [`trace`](#repohelix-trace-target) | Multi-hop semantic trace of a contract spec |
-| [`ask`](#repohelix-ask-question) | Natural language Q&A |
 | [`impact`](#repohelix-impact-symbolorentity) | Change impact analysis |
 | [`quality`](#repohelix-quality-action) | Audit and govern relation/contract quality |
 | [`rebuild-relations`](#repohelix-rebuild-relations) | Rebuild cross-repository dependency edges |
@@ -416,26 +415,6 @@ repositories, transitive impact chains, and recommended files. If no contract
 spec is found for a bare symbol, it falls back to the legacy symbol/call graph
 impact output. Explicit contract targets such as `schema Order` or
 `http POST /orders` do not fall back silently when no contract spec exists.
-
----
-
-### `repohelix ask <question>`
-
-Ask a natural-language question about the indexed workspace.
-
-```bash
-repohelix ask "Which services depend on OrderService?"
-repohelix ask "What modules would be affected by modifying PaymentEvent?"
-repohelix ask "/mall/mgr/groupon/activity/createActivity"
-repohelix ask "Analyze the workflow for /mall/mgr/groupon/activity/createActivity"
-repohelix ask "Analyze the workflow for POST /mall/mgr/groupon/activity/createActivity"
-```
-
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `<question>` | Yes | A natural-language question, API path, or question containing an API path |
-
-If no reliable evidence is found, the command returns `no_reliable_evidence`.
 
 ---
 

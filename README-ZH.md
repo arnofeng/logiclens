@@ -56,7 +56,7 @@ repohelix add-repo ../service-a --name service-a
 repohelix index # 索引所有仓库
 ```
 
-### 3. 基于图上下文提问
+### 3. 跨仓库追踪契约
 
 ```bash
 repohelix trace "http POST /orders"
@@ -140,7 +140,7 @@ RepoHelix 会自动分析你的多仓库系统，将整个代码系统建模为�
 - **追踪和影响面分析**：从契约或符号出发，沿图谱路径返回生产者、消费者、相关代码、调用、文档和建议检查文件。
 - **CLI / SDK / MCP**：支持手动查询图谱、Node.js 集成和 AI 编程助手接入。
 - **质量治理**：审计低置信度证据、拒绝误报、注册 alias override，确保图谱准确性。
-- **可选 LLM 层**：需要时可接入 OpenAI 兼容 chat provider，根据检索证据生成回答。
+- **可选 LLM 摘要**：配置后可通过 OpenAI 兼容 chat provider 汇总文件、仓库和图谱信息。
 
 **从"代码搜索"升级为"图谱遍历 + 推理"。**
 
@@ -211,14 +211,13 @@ repohelix install
 | 工具名称 | 功能说明 |
 |---|---|
 | `repohelix_get_stats` | 获取图数据库的汇总统计（仓库数、文件数、代码节点数、调用数等） |
-| `repohelix_get_watch_status` | 查看索引与搜索状态；传入 `refresh: true` 可刷新搜索状态 |
+| `repohelix_get_watch_status` | 查看监听活动、待处理文件、队列和追赶状态 |
 | `repohelix_list_dependencies` | 列出跨仓库依赖及其证据（支持按 strength/type 过滤） |
 | `repohelix_list_contracts` | 列出已识别的契约及其生产者/消费者/共享计数（支持按 kind、repo、direction 过滤） |
 | `repohelix_trace` | 多跳语义追踪 — 查找契约关联的生产者、消费者和请求/响应/负载 schema |
 | `repohelix_impact_analysis` | 评估修改代码符号或契约的下游影响范围 |
-| `repohelix_ask_question` | 搜索工作区并返回匹配的源码证据 |
 
-`repohelix_ask_question` 接受 `question`，以及与 SDK 相同的检索控制项：`lexical`、`topK`（`1..100`）、`graphHops`（`0..5`）和 `contextBudget`（`256..65536`）。
+自由文本源码探索请使用编码宿主的原生文件搜索。RepoHelix MCP 工具专注于契约、依赖、追踪、影响分析、索引和监听状态。
 
 ### MCP 配置示例
 
@@ -237,7 +236,7 @@ repohelix install
 
 ## 🧠 SDK（编程方式访问）
 
-RepoHelix 提供 Node.js SDK，用于构建自动化系统与 AI 工具链。使用 `retrieve()` 获取源码证据，或使用 `ask()` 基于证据生成回答。
+RepoHelix 提供 Node.js SDK，用于构建图谱感知的自动化系统与 AI 工具链。
 
 ```ts
 import { createClient } from "repohelix";
@@ -256,12 +255,8 @@ try {
   const contractsForRepo = await client.contracts({ repo: "order-service", direction: "outgoing" });
   const trace = await client.trace("http GET /api/order/:id");
   const impact = await client.impact("OrderCreatedEvent");
-  const answer = await client.ask("订单校验在哪里实现？", {
-    lexical: true,
-  });
-  const lexicalStatus = await client.getLexicalProviderStatus({ refresh: true });
 
-  console.log({ stats, dependencies, contracts, trace, impact, answer, lexicalStatus });
+  console.log({ stats, dependencies, contracts, trace, impact });
 } finally {
   await client.close();
 }
@@ -282,24 +277,10 @@ try {
 | `client.contracts(options)` | 列出识别到的契约（支持按 kind、repo、direction 过滤）。 |
 | `client.trace(target)` | 契约的多跳语义追踪。 |
 | `client.impact(target)` | 分析下游影响面。 |
-| `client.retrieve(question, options)` | 返回结构化 `RetrievalResult`，不生成答案。 |
-| `client.ask(question, options)` | 基于工作区证据生成回答或确定性的引用结果。 |
-| `client.getLexicalProviderStatus(options)` | 检查工作区全文检索是否可用；`{ refresh: true }` 会刷新状态。 |
 | `client.watch(options)` | 开启自动变更文件索引。 |
 | `client.unwatch()` | 停止 watcher。 |
 | `client.getWatchStatus()` | 查看 watcher、catch-up、pending files 和队列状态。 |
 | `client.close()` | 关闭 watcher、队列和图数据库资源。 |
-
-`RetrieveOptions` 与 `AskOptions` 使用相同字段和校验：
-
-| 选项 | 默认值 | 范围 / 含义 |
-|---|---:|---|
-| `lexical?: boolean` | `true` | 启用 workspace lexical retrieval。 |
-| `topK?: number` | `20` | 整数 `1..100`。 |
-| `graphHops?: number` | `1` | 整数 `0..5`。 |
-| `contextBudget?: number` | `16000` | 整数 `256..65536` 个字符。 |
-
-配置 LLM key 时，`ask()` 会生成有源码依据的回答。未配置 key 时，如果存在可靠证据，它会返回确定性的引用结果；否则返回 `no_reliable_evidence`。
 
 ---
 
@@ -345,7 +326,7 @@ RepoHelix 支持针对性能调优、索引设置和自定义 LLM 重试等多�
 
 ### 成本和隐私说明
 
-若要完全离线运行，请使用本地 Kuzu graph，省略 `llm.apiKey`、确保进程环境中未设置 `OPENAI_API_KEY`，并且不要配置远程 LLM endpoint。没有 LLM key 时，只要存在可靠证据，`ask` 仍会返回 citation fallback。
+若要完全离线运行，请使用本地 Kuzu graph，省略 `llm.apiKey`、确保进程环境中未设置 `OPENAI_API_KEY`，并且不要配置远程 LLM endpoint。LLM 配置仅用于可选的图谱摘要。
 
 只有显式配置的远程 Neo4j 或 LLM 服务才会产生对应网络访问。RepoHelix 是 local-first，但并非所有配置组合都必然离线。
 
@@ -386,7 +367,7 @@ RepoHelix 支持针对性能调优、索引设置和自定义 LLM 重试等多�
 - 内置框架支持是聚焦的。未支持框架仍可作为源码解析，但契约提取可能较浅，直到添加对应 detector 或 extractor。
 - 跨仓库依赖质量依赖仓库名、包元数据、import、alias 和契约证据。
 - 大型工作区可能需要 `--changed-only`、`--batch-size`、`--max-files` 或 watcher 调优。
-- LLM 答案取决于检索上下文和 provider 行为。需要可审计证据时，优先使用 `trace`、`deps`、`contracts` 和 `impact`。
+- LLM 摘要取决于 provider 行为；契约、依赖、追踪和影响分析仍来自可审计的图谱数据。
 - MCP Server 拥有本地工作区访问能力。只应连接到你信任的客户端。
 
 ---

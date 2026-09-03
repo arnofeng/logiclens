@@ -4,9 +4,7 @@ RepoHelix now discovers schemas from typed contract roots, not class-name suffix
 
 Built-in coverage includes TypeScript/JavaScript, Python, Go, Proto, GraphQL, and Java Spring MVC, Dubbo (annotation and XML), Spring/Kafka events, and gRPC generated-Java-to-Proto identity bridging. The plugin declaration/type-expression/shape contract supplies the same core path for C# and other language plugins. No schema YAML keys were added.
 
-Full and changed-only indexing use the same materializer and atomic generation overlay. Public graph records, internal declaration/root/dependency/provenance/diagnostic facts, semantic relations, evidence links, and lexical documents become visible through one active generation. A source rename, package move, signature change, or removal reconciles affected roots; a shared `SchemaSpec` is collected only after its final contribution disappears.
-
-`SchemaSpec` full-text documents use the stable schema spec ID as canonical ID and aggregate searchable shape/field data. Multiple roots do not create duplicate documents.
+Full and changed-only indexing use the same materializer and atomic generation overlay. Public graph records, internal declaration/root/dependency/provenance/diagnostic facts, semantic relations, and evidence links become visible through one active generation. A source rename, package move, signature change, or removal reconciles affected roots; a shared `SchemaSpec` is collected only after its final contribution disappears.
 
 ## Quality diagnostics
 

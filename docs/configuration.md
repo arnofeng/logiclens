@@ -1,6 +1,6 @@
 # Configuration Guide
 
-RepoHelix reads `.repohelix/config.yaml`. One RepoHelix workspace corresponds to one configuration and its `repos` collection. `systemName` identifies the logical workspace; all configured repositories share one graph provider and one workspace-wide lexical search scope.
+RepoHelix reads `.repohelix/config.yaml`. One RepoHelix workspace corresponds to one configuration and its `repos` collection. `systemName` identifies the logical workspace; all configured repositories share one graph provider and one semantic contract graph.
 
 Configuration loading replaces `${ENV_VAR}` placeholders with environment-variable values before validation. Use placeholders for credentials instead of committing secrets.
 
@@ -8,7 +8,7 @@ Deterministic contract-driven schema discovery adds no YAML keys. Language/frame
 
 ## Kuzu local profile
 
-Kuzu is the default local provider. It stores the workspace graph and full-text search data locally, with no external service or API key.
+Kuzu is the default local provider. It stores the workspace graph locally, with no external service or API key.
 
 ```yaml
 systemName: commerce-workspace
@@ -26,7 +26,7 @@ graph:
 
 ## Neo4j cloud profile
 
-Neo4j can host both the workspace graph and full-text search data. Supply a dedicated database and inject credentials through the environment:
+Neo4j can host the workspace graph. Supply a dedicated database and inject credentials through the environment:
 
 ```yaml
 systemName: commerce-workspace
@@ -92,7 +92,8 @@ indexing:
 
 ### LLM
 
-- `llm.provider`, `llm.model`, and `llm.apiKey`: Answer-generation provider configuration.
+- `llm.provider`, `llm.model`, and `llm.apiKey`: Optional graph, repository, file, and code summary provider configuration.
+- `indexing.llmSummaryLevel`: Summary granularity (`off`, `repo`, `file`, or `node`); defaults to `off`.
 
 For a fully offline run, use the local Kuzu graph and do not configure an LLM key:
 
@@ -102,7 +103,7 @@ graph:
   path: .repohelix/graph
 ```
 
-Also omit `llm.apiKey`, ensure `OPENAI_API_KEY` is unset in the process environment, and do not configure a remote LLM endpoint. `ask` reads either `llm.apiKey` or `OPENAI_API_KEY`; if either is present, it can send selected evidence to that LLM endpoint. Without an LLM key, `ask` can still produce a deterministic citation fallback when reliable evidence exists. If no reliable evidence is available, it returns `no_reliable_evidence`.
+Also omit `llm.apiKey`, ensure `OPENAI_API_KEY` is unset in the process environment, and leave `indexing.llmSummaryLevel` set to `off`. When summaries are enabled, RepoHelix reads either `llm.apiKey` or `OPENAI_API_KEY` and can send source excerpts and graph facts to the configured LLM endpoint.
 
 Only explicitly configured remote Neo4j or LLM services cause the corresponding network access. Therefore RepoHelix is local-first, but not every possible configuration is offline.
 
@@ -113,3 +114,12 @@ Only explicitly configured remote Neo4j or LLM services cause the corresponding 
 - `indexing.concurrency`, `indexing.maxFilesPerRun`, and `indexing.batchSize`: Indexing controls.
 
 See the [Plugin Guide](plugins.md) and [Plugin SDK Reference](plugin-sdk.md) for plugin configuration.
+
+## Generated database compatibility
+
+Schema index version 10 removes the former search projections and requires a fresh generated database. RepoHelix rejects a non-empty version 9 database instead of modifying or dropping its data automatically. `init` and `uninit` remain available so that the workspace can be prepared for a clean rebuild.
+
+- Kuzu: remove the generated directory configured by `graph.path`, then run a full `repohelix index`.
+- Neo4j: clear the dedicated RepoHelix database, or configure a new database name, then run a full `repohelix index`.
+
+Legacy `retrieval`, `embedding`, and vector-oriented `semantic` configuration keys are ignored as unknown fields. Remove them from the configuration rather than relying on compatibility aliases.

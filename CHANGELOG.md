@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Focused RepoHelix on cross-repository semantic contract graphs, dependency queries, tracing, and impact analysis.
+- Simplified graph indexing and atomic generation storage by removing the separate source-search projections and vector index pipeline.
+- Raised the generated schema index version to 10; existing non-empty version 9 databases must be rebuilt explicitly.
+
+### Removed
+
+- Removed the natural-language question command and tool from the CLI and MCP server.
+- Removed the SDK question, free-text source lookup, search-provider status, and vector-provider APIs.
+
 ## [1.0.0] - 2026-07-25
 
 ### Added
