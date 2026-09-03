@@ -1,6 +1,5 @@
 import type { CrossRepoExtraction } from "../contracts/extraction/crossRepoContracts.js";
 import type { ParsedGraphFile } from "../parsing/types.js";
-import type { LexicalDocument } from "../retrieval/types.js";
 import { schemaSpecId, stableFactId } from "./model.js";
 import {
   SchemaGenerationStore,
@@ -28,8 +27,6 @@ export interface IncrementalSchemaMutation {
   behaviorFingerprintReplacements: SchemaBehaviorFingerprintReplacement[];
   contributionReplacements: SchemaContributionReplacement[];
   visibilityChanges: SchemaContributionVisibilityChange[];
-  upsertLexicalDocuments: LexicalDocument[];
-  deleteLexicalDocumentIds: string[];
 }
 
 export interface IncrementalSchemaPublicGraphDelta {
@@ -43,7 +40,6 @@ export async function stageSchemaGenerationFacts(input: {
   store: SchemaGenerationStore;
   generation: string;
   extraction: CrossRepoExtraction;
-  lexicalDocuments: readonly LexicalDocument[];
 }): Promise<void> {
   const { store, generation, extraction } = input;
   const rootsById = new Map(extraction.schemaInternalFacts.roots.map((root) => [root.id, root]));
@@ -77,9 +73,7 @@ export async function stageSchemaGenerationFacts(input: {
     generationContributions.push(
       ...[
         { entityKind: "schema-spec" as const, entityId: spec.id, payload: spec },
-        ...ownedRelations.map((relation) => ({ entityKind: "logical-relation" as const, entityId: relationContributionId(relation), payload: relationContributionPayload(relation) })),
-        ...input.lexicalDocuments.filter((document) => document.canonicalId === spec.id)
-          .map((document) => ({ entityKind: "lexical-document" as const, entityId: document.id, payload: document }))
+        ...ownedRelations.map((relation) => ({ entityKind: "logical-relation" as const, entityId: relationContributionId(relation), payload: relationContributionPayload(relation) }))
       ].map((contribution) => ({ ...contribution, rootReferenceId }))
     );
   }
@@ -96,10 +90,7 @@ export async function stageSchemaGenerationFacts(input: {
           relation,
           rootEvidenceId(root.id, relation, extraction.schemaInternalFacts.provenance)
         )
-      })),
-      ...[...new Map(input.lexicalDocuments.map((document) => [document.id, document])).values()]
-        .filter((document) => targetIds.has(document.canonicalId))
-        .map((document) => ({ entityKind: "lexical-document" as const, entityId: document.id, payload: document }))
+      }))
     ];
     generationContributions.push(...rootContributions.map((contribution) => ({ ...contribution, rootReferenceId: root.id })));
   }
@@ -116,7 +107,6 @@ export async function buildIncrementalSchemaMutation(input: {
   parsedFiles: readonly ParsedGraphFile[];
   removedSources: readonly { repoId: string; fileId: string }[];
   extraction: CrossRepoExtraction;
-  lexicalDocuments: readonly LexicalDocument[];
   activeFileIdsByRepo: ReadonlyMap<string, readonly string[]>;
 }): Promise<IncrementalSchemaMutation> {
   const rootsById = new Map(input.extraction.schemaInternalFacts.roots.map((root) => [root.id, root]));
@@ -238,25 +228,11 @@ export async function buildIncrementalSchemaMutation(input: {
       rootReferenceId: `declaration:${spec.id}`,
       contributions: [
         { entityKind: "schema-spec", entityId: spec.id, payload: spec },
-        ...relations.map((relation) => ({ entityKind: "logical-relation" as const, entityId: relationContributionId(relation), payload: relationContributionPayload(relation) })),
-        ...input.lexicalDocuments.filter((document) => document.canonicalId === spec.id)
-          .map((document) => ({ entityKind: "lexical-document" as const, entityId: document.id, payload: document }))
+        ...relations.map((relation) => ({ entityKind: "logical-relation" as const, entityId: relationContributionId(relation), payload: relationContributionPayload(relation) }))
       ]
     });
   }
 
-  const rootIds = [
-    ...oldRoots.map((root) => root.id),
-    ...input.extraction.schemaInternalFacts.roots.map((root) => root.id),
-    ...currentSchemaSpecs.map((spec) => `declaration:${spec.id}`)
-  ];
-  const previousContributions = await input.store.contributionsByRoots(rootIds, input.generation);
-  const previousLexicalDocuments = previousContributions.flatMap((contribution) => {
-    if (contribution.entityKind !== "lexical-document" || !contribution.payload || typeof contribution.payload !== "object") return [];
-    const document = contribution.payload as Partial<LexicalDocument>;
-    return typeof document.id === "string" && typeof document.canonicalId === "string" ? [document as LexicalDocument] : [];
-  });
-  const lexicalDocuments = [...new Map([...previousLexicalDocuments, ...input.lexicalDocuments].map((document) => [document.id, document])).values()];
   for (const root of input.extraction.schemaInternalFacts.roots) {
     if (!replacementSources.has(`${root.repoId}\0${root.ownerFileId}`)) continue;
     const relations = reachableRelations(root.ownerSpecId, input.extraction.semanticRelations);
@@ -273,9 +249,7 @@ export async function buildIncrementalSchemaMutation(input: {
             relation,
             rootEvidenceId(root.id, relation, input.extraction.schemaInternalFacts.provenance)
           )
-        })),
-        ...lexicalDocuments.filter((document) => targetIds.has(document.canonicalId))
-          .map((document) => ({ entityKind: "lexical-document" as const, entityId: document.id, payload: document }))
+        }))
       ]
     });
   }
@@ -285,9 +259,7 @@ export async function buildIncrementalSchemaMutation(input: {
     sourceFactReplacements,
     behaviorFingerprintReplacements,
     contributionReplacements: replacements,
-    visibilityChanges: [],
-    upsertLexicalDocuments: [],
-    deleteLexicalDocumentIds: []
+    visibilityChanges: []
   };
 }
 
@@ -317,33 +289,11 @@ export async function buildCombinedIncrementalSchemaVisibility(input: {
     generation: input.generation,
     replacements
   });
-  const upsertLexicalDocuments = visibilityChanges.flatMap((change) => {
-    if (change.entityKind !== "lexical-document" || change.nextCount === 0) return [];
-    const document = change.contributions
-      .map((contribution) => parseLexicalContribution(contribution.payload))
-      .find((candidate): candidate is LexicalDocument => Boolean(candidate));
-    if (!document) return [];
-    const previous = change.previousContributions
-      .map((contribution) => parseLexicalContribution(contribution.payload))
-      .find((candidate): candidate is LexicalDocument => Boolean(candidate));
-    // A contribution count change does not imply that the physical search
-    // document changed. Keep the existing document when its semantic payload
-    // is identical; batch ownership is journal metadata and must not turn a
-    // one-root removal into an otherwise unnecessary lexical rewrite.
-    if (previous && lexicalDocumentSemanticKey(previous) === lexicalDocumentSemanticKey(document)) return [];
-    return [document];
-  });
   return {
     sourceFactReplacements: [],
     behaviorFingerprintReplacements: [],
     contributionReplacements: [],
-    visibilityChanges,
-    upsertLexicalDocuments: [...new Map(upsertLexicalDocuments.map((document) => [document.id, document])).values()]
-      .sort((left, right) => left.id.localeCompare(right.id)),
-    deleteLexicalDocumentIds: visibilityChanges
-      .filter((change) => change.entityKind === "lexical-document" && change.nextCount === 0)
-      .map((change) => change.entityId)
-      .sort((left, right) => left.localeCompare(right))
+    visibilityChanges
   };
 }
 
@@ -399,24 +349,6 @@ export function incrementalSchemaPublicGraphDelta(
   };
 }
 
-function lexicalDocumentSemanticKey(document: LexicalDocument): string {
-  return stableFactId("lexical-document-payload", {
-    id: document.id,
-    canonicalId: document.canonicalId,
-    workspaceId: document.workspaceId,
-    repoId: document.repoId,
-    kind: document.kind,
-    title: document.title,
-    qualifiedName: document.qualifiedName ?? null,
-    path: document.path ?? null,
-    searchableText: document.searchableText,
-    tokens: [...document.tokens],
-    active: document.active,
-    sourceHash: document.sourceHash,
-    renderRef: document.renderRef
-  });
-}
-
 export async function applyIncrementalSchemaMutation(input: {
   db: GraphDB;
   store: SchemaGenerationStore;
@@ -461,19 +393,6 @@ export async function applyIncrementalSchemaMutation(input: {
     // them here as well creates a second relation path and is not idempotent
     // on providers that allow parallel relationships.
   }
-}
-
-function parseLexicalContribution(payload: unknown): LexicalDocument | undefined {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return undefined;
-  const document = payload as Partial<LexicalDocument>;
-  if (typeof document.id !== "string" || typeof document.canonicalId !== "string"
-    || typeof document.workspaceId !== "string" || typeof document.repoId !== "string"
-    || typeof document.kind !== "string" || typeof document.title !== "string"
-    || typeof document.searchableText !== "string" || !Array.isArray(document.tokens)
-    || !document.tokens.every((token) => typeof token === "string")
-    || typeof document.active !== "boolean" || typeof document.sourceHash !== "string"
-    || typeof document.batchId !== "string" || typeof document.renderRef !== "string") return undefined;
-  return document as LexicalDocument;
 }
 
 function parseSchemaSpecContribution(payload: unknown): ContractSpecNode | undefined {

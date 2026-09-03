@@ -6,7 +6,7 @@ import type { IndexOptions } from "./types.js";
 import { deriveWorkspaceId } from "../workspace/identity.js";
 import type { GraphValue } from "../graph-model/db.js";
 import { SCHEMA_INDEX_VERSION } from "../schema/model.js";
-import { LEXICAL_PROJECTION_SCHEMA_VERSION } from "../retrieval/types.js";
+import { generatedDatabaseRecoveryInstruction } from "../../shared/branding.js";
 
 export type IndexRunPath = "batched-full" | "full-copy-bulk" | "per-repo";
 
@@ -28,7 +28,6 @@ type GenerationState = {
   activeGeneration?: string;
   activeRevision?: string;
   schemaIndexVersion?: string;
-  lexicalProjectionVersion?: string;
 };
 
 async function generationState(db: GraphDB, workspaceId: string): Promise<GenerationState | undefined> {
@@ -36,11 +35,9 @@ async function generationState(db: GraphDB, workspaceId: string): Promise<Genera
     activeGeneration?: GraphValue;
     activeRevision?: GraphValue;
     schemaIndexVersion?: GraphValue;
-    lexicalProjectionVersion?: GraphValue;
   }>(
     "MATCH (s:SchemaGenerationState {id: $id}) RETURN s.activeGeneration AS activeGeneration, " +
-    "s.activeRevision AS activeRevision, s.schemaIndexVersion AS schemaIndexVersion, " +
-    "s.lexicalProjectionVersion AS lexicalProjectionVersion;",
+    "s.activeRevision AS activeRevision, s.schemaIndexVersion AS schemaIndexVersion;",
     { id: `schema-generation-state:${workspaceId}` }
   );
   const row = rows[0];
@@ -54,9 +51,6 @@ async function generationState(db: GraphDB, workspaceId: string): Promise<Genera
       : undefined,
     schemaIndexVersion: typeof row.schemaIndexVersion === "string"
       ? row.schemaIndexVersion
-      : undefined,
-    lexicalProjectionVersion: typeof row.lexicalProjectionVersion === "string"
-      ? row.lexicalProjectionVersion
       : undefined
   };
 }
@@ -93,7 +87,7 @@ export async function planIndexRun(input: {
       if ((typeof legacyCount === "number" || typeof legacyCount === "bigint") && Number(legacyCount) > 0) {
         throw new Error(
           "Existing public graph data has no generation state and cannot be upgraded in place; " +
-          "clean generated graph/internal/lexical artifacts and run a full reindex."
+          `${generatedDatabaseRecoveryInstruction()}.`
         );
       }
     }
@@ -101,19 +95,12 @@ export async function planIndexRun(input: {
       const mode = options.changedOnly ? "changed-only/watch indexing" : "indexing";
       throw new Error(
         `Schema index version ${state.schemaIndexVersion ?? "missing"} is incompatible with ${mode}; ` +
-        `clean generated graph/internal/lexical artifacts and run a full reindex (required version ${SCHEMA_INDEX_VERSION}).`
-      );
-    }
-    if (state && state.lexicalProjectionVersion !== LEXICAL_PROJECTION_SCHEMA_VERSION) {
-      const mode = options.changedOnly ? "changed-only/watch indexing" : "indexing";
-      throw new Error(
-        `Lexical projection version ${state.lexicalProjectionVersion ?? "missing"} is incompatible with ${mode}; ` +
-        `clean generated graph/internal/lexical artifacts and run a full reindex (required version ${LEXICAL_PROJECTION_SCHEMA_VERSION}).`
+        `${generatedDatabaseRecoveryInstruction()} (required version ${SCHEMA_INDEX_VERSION}).`
       );
     }
     if (state && Boolean(state.activeGeneration) !== Boolean(state.activeRevision)) {
       throw new Error(
-        "Schema generation/revision state is incomplete; clean generated graph/internal/lexical artifacts and run a full reindex."
+        `Schema generation/revision state is incomplete; ${generatedDatabaseRecoveryInstruction()}.`
       );
     }
     const pinnedGeneration = state?.activeGeneration;

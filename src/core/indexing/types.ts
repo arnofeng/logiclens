@@ -24,11 +24,4 @@ export type IndexResult = {
   importEdges: number;
   entities: number;
   durationMs: number;
-  lexicalDocumentCount: number;
-  lexicalIndexSizeBytes: number;
-  lexicalProjectionSchemaVersion: string;
-  lexicalTokenizerVersion: string;
-  lexicalIndexStatus: "healthy" | "unhealthy" | "unavailable";
-  lexicalProjectionDurationMs: number;
-  lexicalWriteDurationMs: number;
 };

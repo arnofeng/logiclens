@@ -16,11 +16,9 @@ import {
   selectGraphWriter,
   type GraphWriteResult
 } from "./graphWrite.js";
-import { runLexicalProjectionPhase, type LexicalProjectionResult } from "./lexicalProjection.js";
-import { runLexicalWritePhase, type LexicalWriteResult } from "./lexicalWrite.js";
 import { runLlmSummaryPhase, shouldSummarizeGraphWithLlm, type SummaryFailureState } from "./summaries.js";
 import { runIndexStateCommitPhase } from "./stateCommit.js";
-import { runRelationRebuildPhase, runSemanticWritePhase, runStaleMarkPhase } from "./semanticWrite.js";
+import { runRelationRebuildPhase, runStaleMarkPhase } from "./semanticWrite.js";
 import type { ProgressBarFactory, ProgressReporter } from "../../shared/progress.js";
 import { SchemaGenerationStore } from "../schema/generationStore.js";
 import {
@@ -62,8 +60,6 @@ export type IndexCounters = {
 export type IndexPathResult = IndexCounters & {
   repos: RepoNode[];
   batchId: string;
-  lexicalProjectionDurationMs: number;
-  lexicalWriteDurationMs: number;
   batchIds?: string[];
 };
 
@@ -216,15 +212,12 @@ async function runGraphPipeline(input: {
   label: string;
   stageLabel?: string;
   repoName?: string;
-  reconcileLexicalRepos?: boolean;
-  lexicalReconcileReason?: string;
   activeFileIdsByRepo?: ReadonlyMap<string, readonly string[]>;
   removedFileIds?: readonly string[];
   removedFileIdsByRepo?: ReadonlyMap<string, readonly string[]>;
-  lexicalReconcileOnly?: boolean;
   selection: ReturnType<typeof selectGraphWriter>;
 }): Promise<GraphPipelineResult> {
-  const { db, ctx, batchId, indexedAt, repos, parsedFiles, label, stageLabel, repoName, selection, reconcileLexicalRepos, lexicalReconcileReason, activeFileIdsByRepo, removedFileIds = [], removedFileIdsByRepo, lexicalReconcileOnly = false } = input;
+  const { db, ctx, batchId, indexedAt, repos, parsedFiles, label, stageLabel, repoName, selection, activeFileIdsByRepo, removedFileIds = [], removedFileIdsByRepo } = input;
   const logPrefix = stageLabel ?? (repoName ? undefined : "");
   // Keep fact construction and graph writes as one reusable phase bundle so
   // full, batched, and per-repo paths share the same writer semantics.
@@ -273,18 +266,6 @@ async function runGraphPipeline(input: {
     ctx.incrementalMutationSet.publicGraphStatsDelta = preparedStats.delta;
   }
 
-  const lexicalLabel = repoName ? `Lexical projection ${repoName}` : logPrefix ? `${logPrefix} lexical projection` : "Lexical projection";
-  const projectionFacts = lexicalReconcileOnly ? { ...factBuild.facts, repos: [] } : factBuild.facts;
-  log(ctx)(`${lexicalLabel} start: repos=${projectionFacts.repos.length} files=${projectionFacts.files.length} evidence=${projectionFacts.evidence.length}`);
-  const lexicalProjection = await runLexicalProjectionPhase({
-    facts: projectionFacts,
-    workspaceId: ctx.workspaceId,
-    repoName,
-    repoId: repos.length === 1 ? repos[0]?.id : undefined,
-    createProgressBar: createProgressBar(ctx)
-  });
-  log(ctx)(`${lexicalLabel} complete: documents=${lexicalProjection.documentCount} duration=${(lexicalProjection.durationMs / 1000).toFixed(2)}s`);
-
   if (ctx.incrementalMutationSet) {
     if (repos.length === 0) throw new Error("Incremental graph mutation has no repository owner.");
     const touchedFileIds = [...new Set([
@@ -297,23 +278,8 @@ async function runGraphPipeline(input: {
       parsedFiles,
       removedSources,
       extraction: factBuild.facts.crossRepo,
-      lexicalDocuments: lexicalProjection.documents,
       activeFileIdsByRepo: activeFileIdsByRepo ?? new Map()
     });
-    const previousDocumentIds = (await Promise.all(repos.map((repo) => ctx.lexicalStore.documentIdsForSources({
-      workspaceId: ctx.workspaceId,
-      generation: pendingPublicGraphScope(ctx).generation,
-      repoId: repo.id,
-      fileIds: [...new Set([
-        ...parsedFiles.filter((file) => file.repoId === repo.id).map((file) => file.fileId),
-        ...(removedFileIdsByRepo?.get(repo.id) ?? (repos.length === 1 ? removedFileIds : []))
-      ])]
-    })))).flat();
-    const nextDocumentIds = new Set(lexicalProjection.documents.map((document) => document.id));
-    const deleteDocumentIds = [...new Set([
-      ...previousDocumentIds.filter((documentId) => !nextDocumentIds.has(documentId)),
-      ...schema.deleteLexicalDocumentIds
-    ])].sort((left, right) => left.localeCompare(right));
     const summaries = shouldSummarizeGraphWithLlm(ctx.llm.summaryLevel)
       ? {
         kind: "prepared" as const,
@@ -347,19 +313,11 @@ async function runGraphPipeline(input: {
         replacement: publicGraphReplacement!
       },
       schema,
-      lexical: {
-        upsertDocuments: lexicalProjection.documents,
-        deleteDocumentIds
-      },
-      summaries,
-      reconcileLexicalRepos: reconcileLexicalRepos ?? false,
-      lexicalProjectionDurationMs: lexicalProjection.durationMs
+      summaries
     };
     addIncrementalRepoMutation(ctx.incrementalMutationSet, mutation);
-    const providerHealth = await ctx.lexicalStore.health(pendingPublicGraphScope(ctx));
     log(ctx)(`${repoName ? `Incremental mutation ${repoName}` : "Incremental mutation"} prepared: ` +
-      `files=${touchedFileIds.length} graphNodes=${factBuild.facts.files.length + factBuild.facts.code.length + factBuild.facts.contractSpecs.length} ` +
-      `lexicalUpserts=${lexicalProjection.documents.length} lexicalDeletes=${deleteDocumentIds.length}`);
+      `files=${touchedFileIds.length} graphNodes=${factBuild.facts.files.length + factBuild.facts.code.length + factBuild.facts.contractSpecs.length}`);
     return {
       graphWrite: {
         writerMode: selection.mode,
@@ -370,18 +328,6 @@ async function runGraphPipeline(input: {
         journalStatus: "started",
         recoveredBatchIds: [],
         fallback: false
-      },
-      lexicalProjection,
-      lexicalWrite: {
-        phase: "lexical-write",
-        durationMs: 0,
-        documentCount: lexicalProjection.documentCount,
-        reconciledRepoIds: [],
-        providerHealth,
-        projectionSchemaVersion: providerHealth.projectionSchemaVersion,
-        tokenizerVersion: providerHealth.tokenizerVersion,
-        indexStatus: providerHealth.status,
-        indexReasons: [...providerHealth.reasons]
       }
     };
   }
@@ -389,7 +335,6 @@ async function runGraphPipeline(input: {
   const writeStarted = Date.now();
   const graphLabel = repoName ? `Graph write ${repoName}` : logPrefix ? `${logPrefix} graph write` : "Graph write";
   log(ctx)(`${graphLabel} start: writer=${selection.mode} files=${factBuild.facts.files.length} code=${factBuild.facts.code.length} relations=${factBuild.facts.imports.length + factBuild.facts.calls.length}`);
-  let lexicalWrite: LexicalWriteResult | undefined;
   const graphWrite = await runGraphWritePhase({
     db,
     cwd: ctx.cwd,
@@ -406,7 +351,6 @@ async function runGraphPipeline(input: {
     createProgressBar: createProgressBar(ctx),
     log: log(ctx),
     warn: warn(ctx),
-    skipGraphWrite: lexicalReconcileOnly,
     deferWorkspaceCommit: Boolean(ctx.schemaGeneration),
     skipRecovery: Boolean(ctx.schemaGeneration),
     parentGeneration: ctx.activeGeneration,
@@ -415,39 +359,13 @@ async function runGraphPipeline(input: {
         await stageSchemaGenerationFacts({
           store: new SchemaGenerationStore(db, ctx.workspaceId),
           generation: ctx.schemaGeneration!,
-          extraction: factBuild.facts.crossRepo,
-          lexicalDocuments: lexicalProjection.documents
+          extraction: factBuild.facts.crossRepo
         });
       }
-      : undefined,
-    lexical: {
-      store: ctx.lexicalStore,
-      workspaceId: ctx.workspaceId,
-      write: async () => {
-        const lexicalWriteLabel = repoName ? `Lexical write ${repoName}` : logPrefix ? `${logPrefix} lexical write` : "Lexical write";
-        log(ctx)(`${lexicalWriteLabel} start: documents=${lexicalProjection.documentCount}`);
-        lexicalWrite = await runLexicalWritePhase({
-          store: ctx.lexicalStore,
-          workspaceId: ctx.workspaceId,
-          generation: pendingPublicGraphScope(ctx).generation,
-          batchId,
-          repos,
-          documents: lexicalProjection.documents,
-          repoName,
-          repoId: repos.length === 1 ? repos[0]?.id : undefined,
-          reconcileRepos: reconcileLexicalRepos,
-          reconcileReason: lexicalReconcileReason,
-          activeFileIdsByRepo,
-          touchedFileIdsByRepo: new Map(repos.map((repo) => [repo.id, parsedFiles.filter((file) => file.repoId === repo.id).map((file) => file.fileId)])),
-          deleteDocumentIds: []
-        });
-        log(ctx)(`${lexicalWriteLabel} complete: documents=${lexicalWrite.documentCount} indexSizeBytes=${lexicalWrite.providerHealth.metrics.indexSizeBytes} status=${lexicalWrite.indexStatus} duration=${(lexicalWrite.durationMs / 1000).toFixed(2)}s`);
-      }
-    }
+      : undefined
   });
-  if (!lexicalWrite) throw new Error("Graph write completed without executing its lexical write callback.");
   log(ctx)(`${graphLabel} complete: writer=${graphWrite.writerMode} duration=${((Date.now() - writeStarted) / 1000).toFixed(2)}s`);
-  return { graphWrite, lexicalProjection, lexicalWrite };
+  return { graphWrite };
 }
 
 export async function reconcileWithActiveSchemaCatalog(
@@ -838,58 +756,7 @@ function schemaDeclarationId(spec: ContractSpecNode): string | undefined {
 
 export type GraphPipelineResult = {
   graphWrite: GraphWriteResult;
-  lexicalProjection: LexicalProjectionResult;
-  lexicalWrite: LexicalWriteResult;
 };
-
-export type FullCopyLexicalReconcileDecision = {
-  reconcile: boolean;
-  reason: "non-kuzu-provider" | "health-check-failed" | "invalid-document-count" | "unreliable-stats" | "active-documents" | "empty-workspace";
-};
-
-export async function resolveFullCopyLexicalReconcile(ctx: IndexRunContext): Promise<FullCopyLexicalReconcileDecision> {
-  if (ctx.config.graph.provider !== "kuzu") return { reconcile: true, reason: "non-kuzu-provider" };
-  try {
-    const health = await ctx.lexicalStore.pendingHealth(pendingPublicGraphScope(ctx));
-    const documentCount = health.metrics.documentCount;
-    if (!Number.isSafeInteger(documentCount) || documentCount < 0) {
-      return { reconcile: true, reason: "invalid-document-count" };
-    }
-    if (health.reasons.some((reason) => reason === "lexical_stats_table_missing" || reason === "lexical_stats_version_mismatch")) {
-      return { reconcile: true, reason: "unreliable-stats" };
-    }
-    return documentCount === 0
-      ? { reconcile: false, reason: "empty-workspace" }
-      : { reconcile: true, reason: "active-documents" };
-  } catch {
-    return { reconcile: true, reason: "health-check-failed" };
-  }
-}
-
-async function runSemanticPipeline(input: {
-  ctx: IndexRunContext;
-  batchId: string;
-  repos: RepoNode[];
-  parsedFiles: ParsedGraphFile[];
-  label: string;
-  repoName?: string;
-}): Promise<string | undefined> {
-  const { ctx, batchId, repos, parsedFiles, label, repoName } = input;
-  if (!ctx.embedding.enabled) return undefined;
-  const semanticWrite = await runSemanticWritePhase({
-    cwd: ctx.cwd,
-    repos,
-    parsedFiles,
-    config: ctx.config,
-    enabled: true,
-    label,
-    repoName,
-    batchId,
-    createProgressBar: createProgressBar(ctx),
-    warn: warn(ctx)
-  });
-  return semanticWrite.warning;
-}
 
 async function runSummaryPipeline(input: {
   ctx: IndexRunContext;
@@ -923,10 +790,9 @@ async function commitSucceededRepos(input: {
   batchId: string;
   indexedAt: string;
   summaryFailures: SummaryFailuresByRepo;
-  semanticWarning?: string;
   graphPipeline?: GraphPipelineResult;
 }): Promise<void> {
-  const { db, ctx, repos, counts, batchId, indexedAt, summaryFailures, semanticWarning, graphPipeline } = input;
+  const { db, ctx, repos, counts, batchId, indexedAt, summaryFailures, graphPipeline } = input;
   for (const repo of repos) {
     const repoCounts = counts.get(repo.id) ?? { scanned: 0, changed: 0 };
     const commit = () => runIndexStateCommitPhase({
@@ -939,11 +805,8 @@ async function commitSucceededRepos(input: {
       filesStale: 0,
       status: "succeeded",
       summaryFailures: summaryFailures.get(repo.id),
-      semanticWarning,
       graphWriteAtomicity: graphPipeline?.graphWrite.atomicityMode,
-      graphWriteStatus: graphPipeline?.graphWrite.journalStatus,
-      lexical: graphPipeline?.lexicalWrite,
-      lexicalProjectionDurationMs: graphPipeline?.lexicalProjection.durationMs
+      graphWriteStatus: graphPipeline?.graphWrite.journalStatus
     });
     if (ctx.schemaGeneration) ctx.pendingIndexStateCommits.set(repo.id, commit);
     else await commit();
@@ -993,8 +856,6 @@ export async function runBatchedFullIndex(input: {
   const indexedRepos: RepoNode[] = [];
   let filesScanned = 0;
   let filesChanged = 0;
-  let lexicalProjectionDurationMs = 0;
-  let lexicalWriteDurationMs = 0;
   // A full publication always targets a newly allocated empty physical
   // generation, regardless of how many repos exist in the active snapshot.
   let graphIsEmpty = true;
@@ -1034,11 +895,9 @@ export async function runBatchedFullIndex(input: {
         ? new Map(preparedBatch.flatMap((item) => item.summaryFailures ? [[item.repo.id, item.summaryFailures] as const] : []))
         : await runSummaryPipeline({ ctx, batchId, repos: batchRepos, parsedFiles, label: `batch ${batchNumber}` });
       logStage(ctx, `${batchLabel} scan/parse/summarize`, scanStarted);
-      // Each graph writer owns a bounded provider transaction. Lexical and
-      // semantic staging remain outside it and are invisible in the pending
-      // generation until the workspace visibility switch.
+      // Each graph writer owns a bounded provider transaction. Staged graph
+      // data remains invisible until the workspace visibility switch.
       let graphPipeline: GraphPipelineResult | undefined;
-      let semanticWarning: string | undefined;
       graphPipeline = await runGraphPipeline({
         db,
         ctx,
@@ -1050,11 +909,8 @@ export async function runBatchedFullIndex(input: {
         stageLabel: batchLabel,
         selection: selectGraphWriter({ writeMode: ctx.writeMode, batchedFull: true, graphIsEmpty: graphIsEmpty && batchIndex === 0, provider: ctx.config.graph.provider })
       });
-      lexicalProjectionDurationMs += graphPipeline.lexicalProjection.durationMs;
-      lexicalWriteDurationMs += graphPipeline.lexicalWrite.durationMs;
       graphIsEmpty = false;
-      semanticWarning = await runSemanticPipeline({ ctx, batchId, repos: batchRepos, parsedFiles, label: `batch ${batchNumber}/${repoBatches.length}` });
-      await commitSucceededRepos({ db, ctx, repos: batchRepos, counts: perRepoCounts, batchId, indexedAt, summaryFailures, semanticWarning, graphPipeline });
+      await commitSucceededRepos({ db, ctx, repos: batchRepos, counts: perRepoCounts, batchId, indexedAt, summaryFailures, graphPipeline });
       if (!graphPipeline) throw new Error(`Batch ${batchNumber} completed without a graph pipeline result.`);
       ctx.onGraphBatchStaged?.(batchId);
 
@@ -1076,7 +932,7 @@ export async function runBatchedFullIndex(input: {
     }
   }
 
-  return { filesScanned, filesChanged, repos: indexedRepos, batchId: createBatchId("batched-full"), batchIds, lexicalProjectionDurationMs, lexicalWriteDurationMs };
+  return { filesScanned, filesChanged, repos: indexedRepos, batchId: createBatchId("batched-full"), batchIds };
 }
 
 export async function runFullCopyBulkIndex(input: {
@@ -1108,11 +964,9 @@ export async function runFullCopyBulkIndex(input: {
       ? new Map(prepared.flatMap((item) => item.summaryFailures ? [[item.repo.id, item.summaryFailures] as const] : []))
       : await runSummaryPipeline({ ctx, batchId, repos, parsedFiles, label: "all repos" });
     logStage(ctx, "Scan/parse/summarize", scanStarted);
-    const lexicalReconcile = await resolveFullCopyLexicalReconcile(ctx);
     // Generation-scoped bulk writes are invisible until the final pointer
     // switch, so the workspace does not need one provider transaction here.
     let graphPipeline: GraphPipelineResult | undefined;
-    let semanticWarning: string | undefined;
     let rebuilt = 0;
     graphPipeline = await runGraphPipeline({
       db,
@@ -1122,22 +976,17 @@ export async function runFullCopyBulkIndex(input: {
       repos,
       parsedFiles,
       label: "bulk-copy",
-      reconcileLexicalRepos: lexicalReconcile.reconcile,
-      lexicalReconcileReason: lexicalReconcile.reason,
       selection: selectGraphWriter({ writeMode: ctx.writeMode, fullCopyBulk: true, provider: ctx.config.graph.provider })
     });
-    semanticWarning = await runSemanticPipeline({ ctx, batchId, repos, parsedFiles, label: "all repos" });
     rebuilt = await runRelationRebuildPhase({ db, batchId: createBatchId("deps"), log: log(ctx), scope: pendingPublicGraphScope(ctx) });
     logStage(ctx, `Dependency rebuild (${rebuilt} edges)`, Date.now());
-    await commitSucceededRepos({ db, ctx, repos, counts: perRepoCounts, batchId, indexedAt, summaryFailures, semanticWarning, graphPipeline });
+    await commitSucceededRepos({ db, ctx, repos, counts: perRepoCounts, batchId, indexedAt, summaryFailures, graphPipeline });
     ctx.onGraphBatchStaged?.(batchId);
     return {
       ...counts,
       repos,
       batchId,
-      batchIds: [batchId],
-      lexicalProjectionDurationMs: graphPipeline?.lexicalProjection.durationMs ?? 0,
-      lexicalWriteDurationMs: graphPipeline?.lexicalWrite.durationMs ?? 0
+      batchIds: [batchId]
     };
   } catch (error) {
     if (ctx.schemaGeneration) {
@@ -1195,20 +1044,15 @@ export async function prepareIncrementalWorkspaceIndex(input: {
     repos,
     parsedFiles,
     label: "incremental workspace",
-    reconcileLexicalRepos: false,
     activeFileIdsByRepo,
     removedFileIds: [...removedFileIdsByRepo.values()].flat(),
     removedFileIdsByRepo,
-    lexicalReconcileOnly: parsedFiles.length === 0,
     selection: selectGraphWriter({
       writeMode: ctx.writeMode,
       changedOnly: true,
       provider: ctx.config.graph.provider
     })
   });
-  const semanticWarning = parsedFiles.length > 0
-    ? await runSemanticPipeline({ ctx, batchId, repos, parsedFiles, label: "incremental workspace" })
-    : undefined;
   for (const prepared of changed) {
     const repo = prepared.repo;
     ctx.pendingIndexStateCommits.set(repo.id, () => runIndexStateCommitPhase({
@@ -1221,14 +1065,10 @@ export async function prepareIncrementalWorkspaceIndex(input: {
       filesStale: ctx.incrementalMutationSet?.repoMutations[0]?.applied?.filesStaleByRepo.get(repo.id) ?? 0,
       status: "succeeded",
       summaryFailures: prepared.summaryFailures,
-      semanticWarning,
       graphWriteAtomicity: ctx.incrementalMutationSet?.repoMutations[0]?.applied?.graphWrite.atomicityMode
         ?? graphPipeline.graphWrite.atomicityMode,
       graphWriteStatus: ctx.incrementalMutationSet?.repoMutations[0]?.applied?.graphWrite.journalStatus
-        ?? graphPipeline.graphWrite.journalStatus,
-      lexical: ctx.incrementalMutationSet?.repoMutations[0]?.applied?.lexicalWrite
-        ?? graphPipeline.lexicalWrite,
-      lexicalProjectionDurationMs: graphPipeline.lexicalProjection.durationMs
+        ?? graphPipeline.graphWrite.journalStatus
     }));
   }
   ctx.onGraphBatchStaged?.(batchId);
@@ -1237,9 +1077,7 @@ export async function prepareIncrementalWorkspaceIndex(input: {
     filesChanged: changed.reduce((total, prepared) => total + prepared.scanParse.filesChanged, 0),
     repos,
     batchId,
-    batchIds: [batchId],
-    lexicalProjectionDurationMs: graphPipeline.lexicalProjection.durationMs,
-    lexicalWriteDurationMs: 0
+    batchIds: [batchId]
   };
 }
 
@@ -1263,16 +1101,13 @@ export async function runPerRepoIndex(input: {
         filesChanged: 0,
         repos: [repo],
         batchId,
-        batchIds: [],
-        lexicalProjectionDurationMs: 0,
-        lexicalWriteDurationMs: 0
+        batchIds: []
       };
     }
 
-    // The graph mutation owns a bounded transaction. Lexical, semantic, and
-    // stale writes target the same invisible pending generation and need no
+    // The graph mutation owns a bounded transaction. Stale writes target the
+    // same invisible pending generation and need no
     // compensation against the active snapshot.
-    let semanticWarning: string | undefined;
     let graphPipeline: GraphPipelineResult | undefined;
     let filesStale = 0;
     graphPipeline = await runGraphPipeline({
@@ -1284,18 +1119,13 @@ export async function runPerRepoIndex(input: {
       parsedFiles,
       label: repo.name,
       repoName: repo.name,
-      reconcileLexicalRepos: !options.changedOnly,
       activeFileIdsByRepo: ctx.incrementalMutationSet || options.changedOnly
         ? new Map([[repo.id, scanParse.activeFileIds]])
         : undefined,
       removedFileIds: scanParse.removedFileIds,
       removedFileIdsByRepo: new Map([[repo.id, scanParse.removedFileIds]]),
-      lexicalReconcileOnly: Boolean(options.changedOnly && parsedFiles.length === 0),
       selection: selectGraphWriter({ writeMode: ctx.writeMode, changedOnly: options.changedOnly, provider: ctx.config.graph.provider })
     });
-    if (parsedFiles.length > 0 || !options.changedOnly) {
-      semanticWarning = await runSemanticPipeline({ ctx, batchId, repos: [repo], parsedFiles, label: repo.name, repoName: repo.name });
-    }
 
     const staleStarted = Date.now();
     if (!ctx.incrementalMutationSet) {
@@ -1313,11 +1143,8 @@ export async function runPerRepoIndex(input: {
         ?.applied?.filesStaleByRepo.get(repo.id) ?? filesStale,
       status: "succeeded",
       summaryFailures,
-      semanticWarning,
       graphWriteAtomicity: ctx.incrementalMutationSet?.repoMutations.find((mutation) => mutation.batchId === batchId)?.applied?.graphWrite.atomicityMode ?? graphPipeline?.graphWrite.atomicityMode,
-      graphWriteStatus: ctx.incrementalMutationSet?.repoMutations.find((mutation) => mutation.batchId === batchId)?.applied?.graphWrite.journalStatus ?? graphPipeline?.graphWrite.journalStatus,
-      lexical: ctx.incrementalMutationSet?.repoMutations.find((mutation) => mutation.batchId === batchId)?.applied?.lexicalWrite ?? graphPipeline?.lexicalWrite,
-      lexicalProjectionDurationMs: graphPipeline?.lexicalProjection.durationMs
+      graphWriteStatus: ctx.incrementalMutationSet?.repoMutations.find((mutation) => mutation.batchId === batchId)?.applied?.graphWrite.journalStatus ?? graphPipeline?.graphWrite.journalStatus
     });
     if (ctx.schemaGeneration) ctx.pendingIndexStateCommits.set(repo.id, commitIndexState);
     else await commitIndexState();
@@ -1328,9 +1155,7 @@ export async function runPerRepoIndex(input: {
     filesChanged: scanParse.filesChanged,
     repos: [repo],
     batchId,
-    batchIds: [batchId],
-    lexicalProjectionDurationMs: graphPipeline?.lexicalProjection.durationMs ?? 0,
-    lexicalWriteDurationMs: graphPipeline?.lexicalWrite.durationMs ?? 0
+    batchIds: [batchId]
   };
   } catch (error) {
     const graphWriteFailure = getGraphWriteFailureDetails(error);
@@ -1368,22 +1193,18 @@ export async function runPerRepoIndex(input: {
 /**
  * Applies one previously prepared repository delta. The caller owns the
  * provider-level workspace transaction and revision CAS; this function must
- * not scan, parse, clone a generation, or perform a repo-wide lexical
- * reconciliation.
+ * not scan, parse, clone a generation, or perform a repo-wide reconciliation.
  */
 export async function applyIncrementalRepoMutation(input: {
   db: GraphDB;
   ctx: IndexRunContext;
   mutation: IncrementalRepoMutation;
-  deferLexicalWrite?: boolean;
 }): Promise<NonNullable<IncrementalRepoMutation["applied"]>> {
-  const { db, ctx, mutation, deferLexicalWrite = false } = input;
+  const { db, ctx, mutation } = input;
   if (!ctx.incrementalMutationSet) throw new Error("Incremental apply requires a reserved mutation set.");
   const mutationSet = ctx.incrementalMutationSet;
   const scope = pendingPublicGraphScope(ctx);
   const store = new SchemaGenerationStore(db, ctx.workspaceId);
-  let lexicalWrite: LexicalWriteResult | undefined;
-  const lexicalStarted = Date.now();
   const publicFacts = {
     ...mutation.publicGraph.facts,
     // Incremental semantic relations are published once, after all repo and
@@ -1424,47 +1245,14 @@ export async function applyIncrementalRepoMutation(input: {
         revision: mutationSet.nextRevision,
         mutation: mutation.schema
       });
-    },
-    lexical: {
-      store: ctx.lexicalStore,
-      workspaceId: ctx.workspaceId,
-      write: async () => {
-        if (deferLexicalWrite) return;
-        await ctx.lexicalStore.applyIncrementalMutation({
-          workspaceId: ctx.workspaceId,
-          generation: scope.generation,
-          expectedRevision: mutationSet.expectedActiveRevision,
-          nextRevision: mutationSet.nextRevision,
-          upsertDocuments: mutation.lexical.upsertDocuments,
-          deleteDocumentIds: mutation.lexical.deleteDocumentIds
-        });
-        const providerHealth = await ctx.lexicalStore.health({
-          ...scope,
-          revision: mutationSet.nextRevision
-        });
-        lexicalWrite = {
-          phase: "lexical-write",
-          durationMs: Date.now() - lexicalStarted,
-          documentCount: mutation.lexical.upsertDocuments.length,
-          reconciledRepoIds: [],
-          providerHealth,
-          projectionSchemaVersion: providerHealth.projectionSchemaVersion,
-          tokenizerVersion: providerHealth.tokenizerVersion,
-          indexStatus: providerHealth.status,
-          indexReasons: [...providerHealth.reasons]
-        };
-      }
     }
   });
-  if (!deferLexicalWrite && !lexicalWrite) {
-    throw new Error(`Incremental batch ${mutation.batchId} did not apply its lexical delta.`);
-  }
   const filesStaleByRepo = new Map<string, number>();
   for (const repo of mutation.repos) {
     const prefix = `file:${repo.id}:`;
     filesStaleByRepo.set(repo.id, mutation.publicGraph.deletedFileIds.filter((fileId) => fileId.startsWith(prefix)).length);
   }
-  const applied = { graphWrite, lexicalWrite, filesStaleByRepo };
+  const applied = { graphWrite, filesStaleByRepo };
   mutation.applied = applied;
   return applied;
 }

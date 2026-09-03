@@ -13,7 +13,6 @@ import { runIndexPhase } from "./phases.js";
 import { shouldSummarizeGraphWithLlm, summarizeGraphWithProgress } from "./summaries.js";
 import type { ProgressReporter } from "../../shared/progress.js";
 import { BRAND_PATHS } from "../../shared/branding.js";
-import type { WorkspaceLexicalStore } from "../retrieval/provider.js";
 import { fileId as createFileId } from "../../shared/path.js";
 
 export type GraphWriterMode = "bulk-copy" | "append-copy" | "bulk-upsert" | "merge";
@@ -782,13 +781,8 @@ export async function runGraphWritePhase(input: {
   parentGeneration?: string;
   publicGraphReplacement?: IncrementalPublicGraphReplacementPlan;
   preparedSummaries?: PreparedGraphSummaries;
-  lexical?: {
-    store: WorkspaceLexicalStore;
-    workspaceId: string;
-    write: () => Promise<unknown>;
-  };
 }): Promise<GraphWriteResult> {
-  const { db, cwd, selection, facts, repos, parsedFiles, config, llmSummaryLevel, openAiApiKey, openAiBaseUrl, label, repoName, createProgressBar, log, warn, lexical, beforeWrite, deferWorkspaceCommit = false, skipRecovery = false, skipGraphWrite = false, parentGeneration, publicGraphReplacement, preparedSummaries } = input;
+  const { db, cwd, selection, facts, repos, parsedFiles, config, llmSummaryLevel, openAiApiKey, openAiBaseUrl, label, repoName, createProgressBar, log, warn, beforeWrite, deferWorkspaceCommit = false, skipRecovery = false, skipGraphWrite = false, parentGeneration, publicGraphReplacement, preparedSummaries } = input;
   const result = await runIndexPhase({
     phase: "graph-write",
     repoName,
@@ -808,20 +802,8 @@ export async function runGraphWritePhase(input: {
       ? []
       : await db.recoverIncompleteGraphWriteBatches({
         repoIds,
-        workspaceId: lexical?.workspaceId,
-        updatedAt: new Date().toISOString(),
-        cleanupBatch: lexical
-          ? async (journal) => {
-            await lexical.store.deleteGeneration({
-              workspaceId: journal.workspaceId,
-              generation: journal.generation
-            });
-            await lexical.store.cleanupBatch({
-              workspaceId: journal.workspaceId,
-              batchId: journal.batchId
-            });
-          }
-          : undefined
+        workspaceId: facts.workspaceId,
+        updatedAt: new Date().toISOString()
       });
     for (const journal of recovered) {
       warn(`Recovered incomplete graph writer batch repo=${journal.repoNames.join(",")} batchId=${journal.batchId} writer=${journal.writerMode}`);
@@ -848,10 +830,10 @@ export async function runGraphWritePhase(input: {
         cleanupErrors.push(`journal: ${errorMessage(journalError)}`);
       }
       // Staging only mutates the pending generation. A graph-writer failure is
-      // rolled back by its bounded provider transaction; a later lexical or
-      // workspace failure is cleaned by deleting the complete pending
+      // rolled back by its bounded provider transaction; a later workspace
+      // publication failure is cleaned by deleting the complete pending
       // generation in runIndexing. Never compensate against the active graph.
-      if (!completedStage.includes("lexical")) return cleanupErrors.length === 0 ? "failed" : "awaiting-cleanup";
+      if (!completedStage.includes("workspace")) return cleanupErrors.length === 0 ? "failed" : "awaiting-cleanup";
       try {
         await db.failGraphWriteBatch({
           batchId: facts.batchId,
@@ -868,12 +850,7 @@ export async function runGraphWritePhase(input: {
 
     async function finishSuccessfulGraphWrite(stagePrefix = ""): Promise<void> {
       const graphStage = stagePrefix ? `${stagePrefix}-graph-written` : "graph-written";
-      const lexicalStage = stagePrefix ? `${stagePrefix}-lexical-written` : "lexical-written";
       await db.updateGraphWriteBatch({ batchId: facts.batchId, updatedAt: new Date().toISOString(), completedStage: graphStage });
-      if (lexical) {
-        await lexical.write();
-        await db.updateGraphWriteBatch({ batchId: facts.batchId, updatedAt: new Date().toISOString(), completedStage: lexicalStage });
-      }
       if (deferWorkspaceCommit) {
         await db.updateGraphWriteBatch({
           batchId: facts.batchId,
@@ -944,7 +921,7 @@ export async function runGraphWritePhase(input: {
       }
     } catch (error) {
       const failedAfterGraphWrite = graphWriteCompleted;
-      const writeFailureStatus = await cleanupFailedBatch(error, failedAfterGraphWrite ? "lexical-write-failed" : "graph-write-failed");
+      const writeFailureStatus = await cleanupFailedBatch(error, failedAfterGraphWrite ? "workspace-commit-failed" : "graph-write-failed");
       if (failedAfterGraphWrite || writeFailureStatus !== "failed" || !selection.fallbackToMerge) {
         throw markGraphWriteFailure(error, { graphWriteAtomicity: atomicityMode, graphWriteStatus: writeFailureStatus });
       }
@@ -977,7 +954,7 @@ export async function runGraphWritePhase(input: {
       } catch (fallbackWriteError) {
         const fallbackFailureStatus = await cleanupFailedBatch(
           fallbackWriteError,
-          graphWriteCompleted ? "fallback-lexical-write-failed" : "fallback-graph-write-failed"
+          graphWriteCompleted ? "fallback-workspace-commit-failed" : "fallback-graph-write-failed"
         );
         throw markGraphWriteFailure(fallbackWriteError, { graphWriteAtomicity: atomicityMode, graphWriteStatus: fallbackFailureStatus });
       }

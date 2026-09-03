@@ -21,6 +21,7 @@ import type {
   WorkflowOperationEdge
 } from "../parsing/types.js";
 import { chunk } from "../../shared/chunk.js";
+import { generatedDatabaseRecoveryInstruction } from "../../shared/branding.js";
 import { systemId } from "./schema.js";
 import type {
   ActiveAliasOverride,
@@ -206,7 +207,7 @@ export function createCypherCrud(executor: CypherExecutor) {
       const actual = row?.revision ?? "missing";
       throw new Error(
         `Public graph stats revision ${actual} does not match incremental parent ${update.expectedRevision}; ` +
-        "clean generated graph/internal/lexical artifacts and run a full reindex."
+        `${generatedDatabaseRecoveryInstruction()}.`
       );
     }
     const current = validateStats({
@@ -839,10 +840,10 @@ export function createCypherCrud(executor: CypherExecutor) {
       );
     },
 
-    async upsertIndexState(state: { repoId: string; repoName: string; lastBatchId: string; lastIndexedAt: string; lastCommitSha: string; filesScanned: number; filesChanged: number; filesStale: number; status: string; error?: string; graphWriteAtomicity?: GraphWriteAtomicityMode; graphWriteStatus?: GraphWriteBatchStatus; lexicalDocumentCount?: number; lexicalIndexSizeBytes?: number; lexicalProjectionSchemaVersion?: string; lexicalTokenizerVersion?: string; lexicalIndexStatus?: string; lexicalProjectionDurationMs?: number; lexicalWriteDurationMs?: number }): Promise<void> {
+    async upsertIndexState(state: { repoId: string; repoName: string; lastBatchId: string; lastIndexedAt: string; lastCommitSha: string; filesScanned: number; filesChanged: number; filesStale: number; status: string; error?: string; graphWriteAtomicity?: GraphWriteAtomicityMode; graphWriteStatus?: GraphWriteBatchStatus }): Promise<void> {
       await query(
-        "MERGE (s:IndexState {id: $id}) ON CREATE SET s.repoId=$repoId, s.repoName=$repoName, s.lastBatchId=$lastBatchId, s.lastIndexedAt=$lastIndexedAt, s.lastCommitSha=$lastCommitSha, s.filesScanned=$filesScanned, s.filesChanged=$filesChanged, s.filesStale=$filesStale, s.status=$status, s.error=$error, s.graphWriteAtomicity=$graphWriteAtomicity, s.graphWriteStatus=$graphWriteStatus, s.lexicalDocumentCount=$lexicalDocumentCount, s.lexicalIndexSizeBytes=$lexicalIndexSizeBytes, s.lexicalProjectionSchemaVersion=$lexicalProjectionSchemaVersion, s.lexicalTokenizerVersion=$lexicalTokenizerVersion, s.lexicalIndexStatus=$lexicalIndexStatus, s.lexicalProjectionDurationMs=$lexicalProjectionDurationMs, s.lexicalWriteDurationMs=$lexicalWriteDurationMs ON MATCH SET s.repoId=$repoId, s.repoName=$repoName, s.lastBatchId=$lastBatchId, s.lastIndexedAt=$lastIndexedAt, s.lastCommitSha=$lastCommitSha, s.filesScanned=$filesScanned, s.filesChanged=$filesChanged, s.filesStale=$filesStale, s.status=$status, s.error=$error, s.graphWriteAtomicity=$graphWriteAtomicity, s.graphWriteStatus=$graphWriteStatus, s.lexicalDocumentCount=CASE WHEN $lexicalDocumentCount IS NULL THEN s.lexicalDocumentCount ELSE $lexicalDocumentCount END, s.lexicalIndexSizeBytes=CASE WHEN $lexicalIndexSizeBytes IS NULL THEN s.lexicalIndexSizeBytes ELSE $lexicalIndexSizeBytes END, s.lexicalProjectionSchemaVersion=CASE WHEN $lexicalProjectionSchemaVersion IS NULL THEN s.lexicalProjectionSchemaVersion ELSE $lexicalProjectionSchemaVersion END, s.lexicalTokenizerVersion=CASE WHEN $lexicalTokenizerVersion IS NULL THEN s.lexicalTokenizerVersion ELSE $lexicalTokenizerVersion END, s.lexicalIndexStatus=CASE WHEN $lexicalIndexStatus IS NULL THEN s.lexicalIndexStatus ELSE $lexicalIndexStatus END, s.lexicalProjectionDurationMs=CASE WHEN $lexicalProjectionDurationMs IS NULL THEN s.lexicalProjectionDurationMs ELSE $lexicalProjectionDurationMs END, s.lexicalWriteDurationMs=CASE WHEN $lexicalWriteDurationMs IS NULL THEN s.lexicalWriteDurationMs ELSE $lexicalWriteDurationMs END;",
-        { id: `index-state:${state.repoId}`, ...state, error: state.error ?? "", graphWriteAtomicity: state.graphWriteAtomicity ?? "", graphWriteStatus: state.graphWriteStatus ?? "", lexicalDocumentCount: state.lexicalDocumentCount ?? null, lexicalIndexSizeBytes: state.lexicalIndexSizeBytes ?? null, lexicalProjectionSchemaVersion: state.lexicalProjectionSchemaVersion ?? null, lexicalTokenizerVersion: state.lexicalTokenizerVersion ?? null, lexicalIndexStatus: state.lexicalIndexStatus ?? null, lexicalProjectionDurationMs: state.lexicalProjectionDurationMs ?? null, lexicalWriteDurationMs: state.lexicalWriteDurationMs ?? null } as unknown as Record<string, GraphValue>
+        "MERGE (s:IndexState {id: $id}) ON CREATE SET s.repoId=$repoId, s.repoName=$repoName, s.lastBatchId=$lastBatchId, s.lastIndexedAt=$lastIndexedAt, s.lastCommitSha=$lastCommitSha, s.filesScanned=$filesScanned, s.filesChanged=$filesChanged, s.filesStale=$filesStale, s.status=$status, s.error=$error, s.graphWriteAtomicity=$graphWriteAtomicity, s.graphWriteStatus=$graphWriteStatus ON MATCH SET s.repoId=$repoId, s.repoName=$repoName, s.lastBatchId=$lastBatchId, s.lastIndexedAt=$lastIndexedAt, s.lastCommitSha=$lastCommitSha, s.filesScanned=$filesScanned, s.filesChanged=$filesChanged, s.filesStale=$filesStale, s.status=$status, s.error=$error, s.graphWriteAtomicity=$graphWriteAtomicity, s.graphWriteStatus=$graphWriteStatus;",
+        { id: `index-state:${state.repoId}`, ...state, error: state.error ?? "", graphWriteAtomicity: state.graphWriteAtomicity ?? "", graphWriteStatus: state.graphWriteStatus ?? "" } as unknown as Record<string, GraphValue>
       );
     },
 
@@ -884,7 +885,7 @@ export function createCypherCrud(executor: CypherExecutor) {
       const stored = await readPublicGraphStats(scope);
       if (!stored) {
         throw new Error(
-          "Public graph stats metadata is missing; clean generated graph/internal/lexical artifacts and run a full reindex."
+          `Public graph stats metadata is missing; ${generatedDatabaseRecoveryInstruction()}.`
         );
       }
       return stored;

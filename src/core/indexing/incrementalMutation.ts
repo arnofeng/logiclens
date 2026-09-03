@@ -5,8 +5,6 @@ import type {
   IncrementalPublicGraphReplacementPlan,
   PreparedGraphSummaries
 } from "./graphWrite.js";
-import type { LexicalWriteResult } from "./lexicalWrite.js";
-import type { LexicalDocument } from "../retrieval/types.js";
 import type { ParsedGraphFile, RepoNode } from "../parsing/types.js";
 import type { IncrementalSchemaMutation } from "../schema/staging.js";
 import { canonicalSerialize } from "../schema/model.js";
@@ -20,14 +18,6 @@ export interface IncrementalPublicGraphMutation {
   deletedFileIds: readonly string[];
   activeFileIdsByRepo: ReadonlyMap<string, readonly string[]>;
   replacement: IncrementalPublicGraphReplacementPlan;
-}
-
-export interface IncrementalLexicalMutation {
-  upsertDocuments: readonly LexicalDocument[];
-  // Source replacement and contribution reconciliation can add exact IDs at
-  // commit time, but they may never request a generation clone or repo-wide
-  // rewrite.
-  deleteDocumentIds: string[];
 }
 
 export type IncrementalSummaryMutation =
@@ -45,13 +35,9 @@ export interface IncrementalRepoMutation {
   selection: GraphWriterSelection;
   publicGraph: IncrementalPublicGraphMutation;
   schema: IncrementalSchemaMutation;
-  lexical: IncrementalLexicalMutation;
   summaries: IncrementalSummaryMutation;
-  reconcileLexicalRepos: boolean;
-  lexicalProjectionDurationMs: number;
   applied?: {
     graphWrite: GraphWriteResult;
-    lexicalWrite?: LexicalWriteResult;
     filesStaleByRepo: ReadonlyMap<string, number>;
   };
 }
@@ -65,38 +51,7 @@ export interface IncrementalIndexMutationSet {
   dependencyMutation?: IncrementalDependencyMutation;
   schemaVisibility?: IncrementalSchemaMutation;
   schemaSupportGc?: IncrementalSchemaSupportGcPlan;
-  lexicalMutation?: IncrementalLexicalMutation;
   publicGraphStatsDelta?: StatsDelta;
-}
-
-export function buildCombinedIncrementalLexicalMutation(
-  mutationSet: IncrementalIndexMutationSet
-): IncrementalLexicalMutation {
-  if (!mutationSet.schemaVisibility) {
-    throw new Error("Incremental mutation set is missing combined schema contribution visibility.");
-  }
-  const upserts = new Map<string, LexicalDocument>();
-  const deletes = new Set<string>();
-  for (const mutation of mutationSet.repoMutations) {
-    for (const document of mutation.lexical.upsertDocuments) upserts.set(document.id, document);
-    for (const documentId of mutation.lexical.deleteDocumentIds) deletes.add(documentId);
-  }
-  for (const document of mutationSet.schemaVisibility.upsertLexicalDocuments) {
-    upserts.set(document.id, document);
-  }
-  for (const documentId of mutationSet.schemaVisibility.deleteLexicalDocumentIds) {
-    deletes.add(documentId);
-  }
-  const conflictingIds = [...deletes].filter((documentId) => upserts.has(documentId)).sort();
-  if (conflictingIds.length > 0) {
-    throw new Error(
-      `Incremental lexical replacement cannot both upsert and delete: ${conflictingIds.join(", ")}.`
-    );
-  }
-  return {
-    upsertDocuments: [...upserts.values()].sort((left, right) => left.id.localeCompare(right.id)),
-    deleteDocumentIds: [...deletes].sort((left, right) => left.localeCompare(right))
-  };
 }
 
 export function createIncrementalIndexMutationSet(input: {
@@ -133,16 +88,6 @@ export function addIncrementalRepoMutation(
       throw new Error(`Incremental mutation set contains duplicate repository ${repo.id}.`);
     }
   }
-  const documentIds = new Set<string>();
-  for (const document of mutation.lexical.upsertDocuments) {
-    if (document.workspaceId !== mutationSet.workspaceId || document.batchId !== mutation.batchId) {
-      throw new Error(`Incremental lexical document ${document.id} has an invalid workspace or batch owner.`);
-    }
-    if (documentIds.has(document.id)) {
-      throw new Error(`Incremental lexical document ${document.id} is duplicated.`);
-    }
-    documentIds.add(document.id);
-  }
   mutationSet.repoMutations.push(mutation);
   mutationSet.repoMutations.sort((left, right) =>
     (left.repos[0]?.id ?? "").localeCompare(right.repos[0]?.id ?? ""));
@@ -164,8 +109,6 @@ export function validateIncrementalIndexMutationSet(mutationSet: IncrementalInde
   const behaviorReplacementOwners = new Set<string>();
   const contributionReplacementOwners = new Set<string>();
   const factOwners = new Map<string, string>();
-  const lexicalPayloads = new Map<string, string>();
-  const lexicalDeletes = new Set<string>();
   for (const mutation of mutationSet.repoMutations) {
     if (batchIds.has(mutation.batchId)) {
       throw new Error(`Incremental mutation set contains duplicate batch ${mutation.batchId}.`);
@@ -243,10 +186,6 @@ export function validateIncrementalIndexMutationSet(mutationSet: IncrementalInde
         entities.add(entity);
       }
     }
-    for (const document of mutation.lexical.upsertDocuments) {
-      registerLexicalPayload(mutationSet.workspaceId, document, lexicalPayloads);
-    }
-    for (const documentId of mutation.lexical.deleteDocumentIds) lexicalDeletes.add(documentId);
   }
   if (!mutationSet.schemaVisibility) {
     throw new Error("Incremental mutation set is missing combined schema contribution visibility.");
@@ -262,9 +201,6 @@ export function validateIncrementalIndexMutationSet(mutationSet: IncrementalInde
       }
       seenIds.add(id);
     }
-  }
-  if (!mutationSet.lexicalMutation) {
-    throw new Error("Incremental mutation set is missing its combined lexical replacement.");
   }
   if (!mutationSet.publicGraphStatsDelta) {
     throw new Error("Incremental mutation set is missing its public graph stats delta.");
@@ -301,24 +237,6 @@ export function validateIncrementalIndexMutationSet(mutationSet: IncrementalInde
       && !affectedContracts.has(dependency.targetContractId)) {
       throw new Error(`Incremental dependency ${dependency.sourceContractId} -> ${dependency.targetContractId} is outside the affected contract set.`);
     }
-  }
-  for (const document of mutationSet.schemaVisibility.upsertLexicalDocuments) {
-    registerLexicalPayload(mutationSet.workspaceId, document, lexicalPayloads);
-  }
-  for (const documentId of mutationSet.schemaVisibility.deleteLexicalDocumentIds) lexicalDeletes.add(documentId);
-  for (const documentId of lexicalDeletes) {
-    if (lexicalPayloads.has(documentId)) {
-      throw new Error(`Incremental lexical document ${documentId} cannot be both upserted and deleted.`);
-    }
-  }
-  const combinedUpsertIds = mutationSet.lexicalMutation.upsertDocuments.map((document) => document.id);
-  const expectedUpsertIds = [...lexicalPayloads.keys()].sort();
-  if (canonicalSerialize([...combinedUpsertIds].sort()) !== canonicalSerialize(expectedUpsertIds)) {
-    throw new Error("Incremental combined lexical upserts do not match the prepared source/schema mutations.");
-  }
-  const combinedDeleteIds = [...new Set(mutationSet.lexicalMutation.deleteDocumentIds)].sort();
-  if (canonicalSerialize(combinedDeleteIds) !== canonicalSerialize([...lexicalDeletes].sort())) {
-    throw new Error("Incremental combined lexical deletes do not match the prepared source/schema mutations.");
   }
 }
 
@@ -382,17 +300,6 @@ function validatePublicGraphIdentity(
       registerStablePayload(relationships, `${kind}\0${entry.key}`, entry.edge, "relationship");
     }
   }
-}
-
-function registerLexicalPayload(
-  workspaceId: string,
-  document: LexicalDocument,
-  payloads: Map<string, string>
-): void {
-  if (document.workspaceId !== workspaceId) {
-    throw new Error(`Incremental lexical document ${document.id} belongs to a different workspace.`);
-  }
-  registerStablePayload(payloads, document.id, document, "lexical document");
 }
 
 function registerStablePayload(

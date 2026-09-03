@@ -2,6 +2,7 @@ import type { GraphFactsBatch } from "../graph-model/facts.js";
 import type { GraphDB, Stats, StatsDelta } from "../graph-model/db.js";
 import type { PublicGraphGenerationScope } from "../graph-model/publicGraphGeneration.js";
 import type { IncrementalPublicGraphReplacementPlan } from "./graphWrite.js";
+import { generatedDatabaseRecoveryInstruction } from "../../shared/branding.js";
 
 const STAT_FIELDS = [
   "repos",
@@ -59,13 +60,13 @@ export async function prepareIncrementalPublicGraphStatsDelta(input: {
   if (!current) {
     throw new Error(
       "Public graph stats metadata is missing for incremental indexing; " +
-      "clean generated graph/internal/lexical artifacts and run a full reindex."
+      `${generatedDatabaseRecoveryInstruction()}.`
     );
   }
   if (current.revision !== expectedRevision) {
     throw new Error(
       `Public graph stats revision ${current.revision} does not match incremental parent ${expectedRevision}; ` +
-      "clean generated graph/internal/lexical artifacts and run a full reindex."
+      `${generatedDatabaseRecoveryInstruction()}.`
     );
   }
 

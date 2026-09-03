@@ -6,22 +6,20 @@ import { createIndexRunContext } from "./context.js";
 import { applyIncrementalRepoMutation, prepareIncrementalWorkspaceIndex, prepareRepoIndex, runBatchedFullIndex, runDependencyRebuild, runFullCopyBulkIndex, runPerRepoIndex, type IndexCounters, type PreparedRepoIndex } from "./orchestrator.js";
 import type { IndexLogger, IndexOptions, IndexResult } from "./types.js";
 import { autoDetectAndRegisterPlugins } from "../plugins/register.js";
-import { refreshSucceededIndexStateLexicalMetrics } from "./stateCommit.js";
 import { runIndexStateCommitPhase } from "./stateCommit.js";
 import { SchemaGenerationStore } from "../schema/generationStore.js";
 import { createBatchId } from "../graph-model/batchWriter.js";
 import { toRepoNode } from "../workspace/repoRegistry.js";
 import { RepositoryPreparationProgress } from "../../shared/progress.js";
+import { generatedDatabaseRecoveryInstruction } from "../../shared/branding.js";
 
 import { chunk } from "../../shared/chunk.js";
 import {
   createIncrementalIndexMutationSet,
-  buildCombinedIncrementalLexicalMutation,
   incrementalMutationIsEmpty,
   validateIncrementalIndexMutationSet
 } from "./incrementalMutation.js";
 import { validateIncrementalIndexMutationEndpoints } from "./incrementalValidation.js";
-import { LEXICAL_PROJECTION_SCHEMA_VERSION } from "../retrieval/types.js";
 import { SCHEMA_INDEX_VERSION } from "../schema/model.js";
 import type { SchemaBehaviorFingerprint } from "../schema/model.js";
 import { schemaBehaviorMatchesImplementation } from "../schema/typeSystem.js";
@@ -45,59 +43,8 @@ function addCounters(target: IndexCounters, increment: IndexCounters): void {
   target.filesChanged += increment.filesChanged;
 }
 
-function requireNonNegativeSafeInteger(value: number, label: string): number {
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new Error(`${label} must be a non-negative safe integer.`);
-  }
-  return value;
-}
-
-async function cleanupCommittedBatchJournals(input: {
-  db: GraphDB;
-  lexicalStore: Awaited<ReturnType<typeof createIndexRunContext>>["lexicalStore"];
-  workspaceId: string;
-  batchIds: readonly string[];
-  logger: IndexLogger;
-}): Promise<void> {
-  for (const batchId of [...new Set(input.batchIds)].reverse()) {
-    const cleanupErrors: string[] = [];
-    try {
-      await input.lexicalStore.commitBatch?.({ workspaceId: input.workspaceId, batchId });
-    } catch (cleanupError) {
-      const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
-      cleanupErrors.push(`lexical: ${message}`);
-      input.logger.warn?.(`Committed lexical journal cleanup deferred for batch ${batchId}: ${message}`);
-    }
-    if (cleanupErrors.length === 0 && input.db.updateGraphWriteBatch) {
-      try {
-        await input.db.updateGraphWriteBatch({
-          batchId,
-          updatedAt: new Date().toISOString(),
-          completedStage: "gc-complete"
-        });
-      } catch (cleanupError) {
-        input.logger.warn?.(`Committed journal GC marker update deferred for batch ${batchId}: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
-      }
-    }
-  }
-}
-
-async function retryCommittedBatchJournalGc(input: {
-  db: GraphDB;
-  lexicalStore: Awaited<ReturnType<typeof createIndexRunContext>>["lexicalStore"];
-  workspaceId: string;
-  logger: IndexLogger;
-}): Promise<void> {
-  const rows = await input.db.query<{ batchId: string }>(
-    "MATCH (b:GraphWriteBatch) WHERE b.workspaceId = $workspaceId AND b.status = 'committed' AND b.completedStage <> 'gc-complete' RETURN b.batchId AS batchId;",
-    { workspaceId: input.workspaceId }
-  );
-  await cleanupCommittedBatchJournals({ ...input, batchIds: rows.map((row) => row.batchId) });
-}
-
 async function recoverAbandonedGenerationBatches(input: {
   db: GraphDB;
-  lexicalStore: Awaited<ReturnType<typeof createIndexRunContext>>["lexicalStore"];
   workspaceId: string;
   generation: string;
   logger: IndexLogger;
@@ -105,17 +52,7 @@ async function recoverAbandonedGenerationBatches(input: {
   const recovered = await input.db.recoverIncompleteGraphWriteBatches({
     workspaceId: input.workspaceId,
     generation: input.generation,
-    updatedAt: new Date().toISOString(),
-    cleanupBatch: async (journal) => {
-      await input.lexicalStore.deleteGeneration({
-        workspaceId: journal.workspaceId,
-        generation: journal.generation
-      });
-      await input.lexicalStore.cleanupBatch({
-        workspaceId: journal.workspaceId,
-        batchId: journal.batchId
-      });
-    }
+    updatedAt: new Date().toISOString()
   });
   for (const journal of recovered) {
     input.logger.warn?.(
@@ -157,7 +94,6 @@ export async function runIndexing(
   ctx.publicationMode = planning.publicationMode;
   const schemaGenerations = new SchemaGenerationStore(db, ctx.workspaceId);
   if (options.changedOnly) await schemaGenerations.assertIncrementalCompatible("changed-only");
-  await retryCommittedBatchJournalGc({ db, lexicalStore: ctx.lexicalStore, workspaceId: ctx.workspaceId, logger });
   const expiredReservation = await schemaGenerations.recoverExpiredReservation();
   if (expiredReservation) {
     const reservationId = expiredReservation.kind === "full"
@@ -181,18 +117,12 @@ export async function runIndexing(
     try {
       await recoverAbandonedGenerationBatches({
         db,
-        lexicalStore: ctx.lexicalStore,
         workspaceId: ctx.workspaceId,
         generation: pendingGeneration,
         logger
       });
     } catch (error) {
       cleanupErrors.push(`journal: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    try {
-      await ctx.lexicalStore.deleteGeneration({ workspaceId: ctx.workspaceId, generation: pendingGeneration });
-    } catch (error) {
-      cleanupErrors.push(`lexical: ${error instanceof Error ? error.message : String(error)}`);
     }
     try {
       await db.deletePublicGraphGeneration({ workspaceId: ctx.workspaceId, generation: pendingGeneration });
@@ -305,31 +235,21 @@ export async function runIndexing(
         throw new Error("Incremental indexing requires an active physical generation.");
       }
       const scope = { workspaceId: ctx.workspaceId, generation: planning.activeGeneration };
-      const [storedStats, lexicalHealth] = await Promise.all([
-        db.readPublicGraphStats(scope),
-        ctx.lexicalStore.health({ ...scope, revision: planning.activeRevision })
-      ]);
+      const storedStats = await db.readPublicGraphStats(scope);
       if (!storedStats) {
         throw new Error(
           "Public graph stats metadata is missing for incremental indexing; " +
-          "clean generated graph/internal/lexical artifacts and run a full reindex."
+          `${generatedDatabaseRecoveryInstruction()}.`
         );
       }
       if (storedStats.revision !== planning.activeRevision) {
         throw new Error(
           `Public graph stats revision ${storedStats.revision} does not match active revision ${planning.activeRevision ?? "missing"}; ` +
-          "clean generated graph/internal/lexical artifacts and run a full reindex."
-        );
-      }
-      if (lexicalHealth.status !== "healthy") {
-        throw new Error(
-          `Lexical index is unhealthy at active revision ${planning.activeRevision ?? "missing"}` +
-          `${lexicalHealth.reasons.length > 0 ? ` (${lexicalHealth.reasons.join(", ")})` : ""}; ` +
-          "clean generated graph/internal/lexical artifacts and run a full reindex."
+          `${generatedDatabaseRecoveryInstruction()}.`
         );
       }
       const stats = storedStats;
-      logger.log?.(`Incremental indexing is a no-op: scanned=${preparedTotals.filesScanned} changed=0 graphWrites=0 lexicalWrites=0`);
+      logger.log?.(`Incremental indexing is a no-op: scanned=${preparedTotals.filesScanned} changed=0 graphWrites=0`);
       return {
         filesScanned: preparedTotals.filesScanned,
         filesChanged: 0,
@@ -338,14 +258,7 @@ export async function runIndexing(
         callEdges: stats.callEdges,
         importEdges: stats.importEdges,
         entities: stats.entities,
-        durationMs: Date.now() - started,
-        lexicalDocumentCount: lexicalHealth.metrics.documentCount,
-        lexicalIndexSizeBytes: lexicalHealth.metrics.indexSizeBytes,
-        lexicalProjectionSchemaVersion: lexicalHealth.projectionSchemaVersion,
-        lexicalTokenizerVersion: lexicalHealth.tokenizerVersion,
-        lexicalIndexStatus: lexicalHealth.status,
-        lexicalProjectionDurationMs: 0,
-        lexicalWriteDurationMs: 0
+        durationMs: Date.now() - started
       };
     }
 
@@ -378,19 +291,12 @@ export async function runIndexing(
       });
     } else {
       ctx.targetGeneration = generation;
-      // Full publication starts with an empty physical generation. Passing no
-      // parent initializes lexical metadata without reading or copying the
-      // active document corpus.
-      await ctx.lexicalStore.initializeGeneration({ workspaceId: ctx.workspaceId, generation });
     }
     logger.log?.(`Index setup: ${((Date.now() - setupStarted) / 1000).toFixed(2)}s`);
     const totals: IndexCounters = { filesScanned: 0, filesChanged: 0 };
-    let lexicalProjectionDurationMs = 0;
-    let lexicalWriteDurationMs = 0;
-    const successfulRepoIds: string[] = [];
 
     // The command layer now only chooses the indexing route and aggregates the
-    // public IndexResult. Scanning, parsing, graph writes, semantic writes, stale
+    // public IndexResult. Scanning, parsing, graph writes, stale
     // marking, and state commits live behind phase orchestration helpers.
     if (planning.runPath === "batched-full") {
       if (planning.writeMode !== "auto" && planning.writeMode !== "bulk") {
@@ -406,9 +312,6 @@ export async function runIndexing(
         preparedRepos
       });
       addCounters(totals, result);
-      lexicalProjectionDurationMs += result.lexicalProjectionDurationMs;
-      lexicalWriteDurationMs += result.lexicalWriteDurationMs;
-      successfulRepoIds.push(...result.repos.map((repo) => repo.id));
       stagedBatchIds.push(...result.batchIds ?? [result.batchId]);
       const rebuildStarted = Date.now();
       await runDependencyRebuild({ db, ctx });
@@ -418,9 +321,6 @@ export async function runIndexing(
       if (options.changedOnly) throw new Error("Bulk write mode currently supports full empty-graph imports only; use merge mode for --changed-only.");
       const result = await runFullCopyBulkIndex({ db, ctx, planning, options, preparedRepos });
       addCounters(totals, result);
-      lexicalProjectionDurationMs += result.lexicalProjectionDurationMs;
-      lexicalWriteDurationMs += result.lexicalWriteDurationMs;
-      successfulRepoIds.push(...result.repos.map((repo) => repo.id));
       stagedBatchIds.push(...result.batchIds ?? [result.batchId]);
     } else {
       const indexedRepoIds: string[] = [];
@@ -431,9 +331,7 @@ export async function runIndexing(
           preparedRepos: [...preparedRepos.values()]
         });
         addCounters(totals, result);
-        lexicalProjectionDurationMs += result.lexicalProjectionDurationMs;
         indexedRepoIds.push(...result.repos.map((repo) => repo.id));
-        successfulRepoIds.push(...result.repos.map((repo) => repo.id));
         stagedBatchIds.push(...result.batchIds ?? [result.batchId]);
       } else {
         const writeJobs = await runIndexQueue(
@@ -445,10 +343,7 @@ export async function runIndexing(
             if (!prepared) throw new Error(`Missing prepared index facts for ${repoConfig.name}.`);
             const result = await runPerRepoIndex({ db, ctx, repoConfig, options, prepared });
             addCounters(totals, result);
-            lexicalProjectionDurationMs += result.lexicalProjectionDurationMs;
-            lexicalWriteDurationMs += result.lexicalWriteDurationMs;
             indexedRepoIds.push(...result.repos.map((repo) => repo.id));
-            successfulRepoIds.push(...result.repos.map((repo) => repo.id));
             stagedBatchIds.push(...result.batchIds ?? [result.batchId]);
           },
           (repoConfig) => `stage:${repoConfig.name}`
@@ -502,9 +397,6 @@ export async function runIndexing(
         graphFacts: ctx.incrementalMutationSet.repoMutations.map((mutation) => mutation.publicGraph.facts),
         schema: schemaDelta
       });
-      ctx.incrementalMutationSet.lexicalMutation = buildCombinedIncrementalLexicalMutation(
-        ctx.incrementalMutationSet
-      );
     }
 
     // Compatibility metadata advances only after every prepared delta and the
@@ -516,9 +408,6 @@ export async function runIndexing(
     await schemaGenerations.renewLease(generation);
 
     let stats: Awaited<ReturnType<GraphDB["stats"]>>;
-    let lexicalHealth: Awaited<ReturnType<typeof ctx.lexicalStore.health>>;
-    let lexicalDocumentCount: number;
-    let lexicalIndexSizeBytes: number;
 
     if (planning.publicationMode === "incremental") {
       const mutationSet = ctx.incrementalMutationSet;
@@ -532,11 +421,10 @@ export async function runIndexing(
         expectedActiveGeneration: mutationSet.targetGeneration,
         expectedActiveRevision: mutationSet.expectedActiveRevision,
         nextRevision: mutationSet.nextRevision,
-        schemaIndexVersion: SCHEMA_INDEX_VERSION,
-        lexicalProjectionVersion: LEXICAL_PROJECTION_SCHEMA_VERSION
+        schemaIndexVersion: SCHEMA_INDEX_VERSION
       }, async () => {
         for (const mutation of mutationSet.repoMutations) {
-          await applyIncrementalRepoMutation({ db, ctx, mutation, deferLexicalWrite: true });
+          await applyIncrementalRepoMutation({ db, ctx, mutation });
         }
         await applyIncrementalSchemaMutation({
           db,
@@ -554,34 +442,8 @@ export async function runIndexing(
           },
           plan: mutationSet.schemaSupportGc!
         });
-        const lexicalMutationStarted = Date.now();
-        await ctx.lexicalStore.applyIncrementalMutation({
-          workspaceId: ctx.workspaceId,
-          generation: mutationSet.targetGeneration,
-          expectedRevision: mutationSet.expectedActiveRevision,
-          nextRevision: mutationSet.nextRevision,
-          upsertDocuments: mutationSet.lexicalMutation!.upsertDocuments,
-          deleteDocumentIds: mutationSet.lexicalMutation!.deleteDocumentIds
-        });
-        lexicalWriteDurationMs += Date.now() - lexicalMutationStarted;
-        const lexicalAfterMutation = await ctx.lexicalStore.health({
-          workspaceId: ctx.workspaceId,
-          generation: mutationSet.targetGeneration,
-          revision: mutationSet.nextRevision
-        });
         for (const mutation of mutationSet.repoMutations) {
           if (!mutation.applied) throw new Error(`Incremental batch ${mutation.batchId} was not applied.`);
-          mutation.applied.lexicalWrite = {
-            phase: "lexical-write",
-            durationMs: lexicalWriteDurationMs,
-            documentCount: mutationSet.lexicalMutation!.upsertDocuments.length,
-            reconciledRepoIds: [],
-            providerHealth: lexicalAfterMutation,
-            projectionSchemaVersion: lexicalAfterMutation.projectionSchemaVersion,
-            tokenizerVersion: lexicalAfterMutation.tokenizerVersion,
-            indexStatus: lexicalAfterMutation.status,
-            indexReasons: [...lexicalAfterMutation.reasons]
-          };
         }
         await applyIncrementalDependencyMutation(db, {
           scope: {
@@ -598,34 +460,10 @@ export async function runIndexing(
           nextRevision: mutationSet.nextRevision,
           delta: mutationSet.publicGraphStatsDelta!
         });
-        const committedLexicalHealth = await ctx.lexicalStore.health({
-          workspaceId: ctx.workspaceId,
-          generation: mutationSet.targetGeneration,
-          revision: mutationSet.nextRevision
-        });
-        const committedDocumentCount = requireNonNegativeSafeInteger(
-          committedLexicalHealth.metrics.documentCount,
-          "Lexical document count"
-        );
-        const committedIndexSizeBytes = requireNonNegativeSafeInteger(
-          committedLexicalHealth.metrics.indexSizeBytes,
-          "Lexical index size in bytes"
-        );
         for (const [, commitIndexState] of [...ctx.pendingIndexStateCommits.entries()]
           .sort(([left], [right]) => left.localeCompare(right))) {
           await commitIndexState();
         }
-        await refreshSucceededIndexStateLexicalMetrics({
-          db,
-          repoIds: successfulRepoIds,
-          lexicalDocumentCount: committedDocumentCount,
-          lexicalIndexSizeBytes: committedIndexSizeBytes,
-          lexicalProjectionSchemaVersion: committedLexicalHealth.projectionSchemaVersion,
-          lexicalTokenizerVersion: committedLexicalHealth.tokenizerVersion,
-          lexicalIndexStatus: committedLexicalHealth.status,
-          lexicalProjectionDurationMs,
-          lexicalWriteDurationMs
-        });
         for (const batchId of [...new Set(stagedBatchIds)]) {
           await db.commitGraphWriteBatch({
             batchId,
@@ -633,49 +471,17 @@ export async function runIndexing(
             completedStage: "workspace-committed"
           });
         }
-        return {
-          stats: committedStats,
-          lexicalHealth: committedLexicalHealth,
-          lexicalDocumentCount: committedDocumentCount,
-          lexicalIndexSizeBytes: committedIndexSizeBytes
-        };
+        return committedStats;
       });
-      stats = committed.stats;
-      lexicalHealth = committed.lexicalHealth;
-      lexicalDocumentCount = committed.lexicalDocumentCount;
-      lexicalIndexSizeBytes = committed.lexicalIndexSizeBytes;
+      stats = committed;
     } else {
       stats = await db.computePublicGraphStats({ workspaceId: ctx.workspaceId, generation });
-      const committed = await withTransaction(db, async () => {
+      await withTransaction(db, async () => {
         await schemaGenerations.validateFull(generation);
-        await ctx.lexicalStore.commitVersions();
-        const committedLexicalHealth = await ctx.lexicalStore.pendingHealth({
-          workspaceId: ctx.workspaceId,
-          generation
-        });
-        const committedDocumentCount = requireNonNegativeSafeInteger(
-          committedLexicalHealth.metrics.documentCount,
-          "Lexical document count"
-        );
-        const committedIndexSizeBytes = requireNonNegativeSafeInteger(
-          committedLexicalHealth.metrics.indexSizeBytes,
-          "Lexical index size in bytes"
-        );
         for (const [, commitIndexState] of [...ctx.pendingIndexStateCommits.entries()]
           .sort(([left], [right]) => left.localeCompare(right))) {
           await commitIndexState();
         }
-        await refreshSucceededIndexStateLexicalMetrics({
-          db,
-          repoIds: successfulRepoIds,
-          lexicalDocumentCount: committedDocumentCount,
-          lexicalIndexSizeBytes: committedIndexSizeBytes,
-          lexicalProjectionSchemaVersion: committedLexicalHealth.projectionSchemaVersion,
-          lexicalTokenizerVersion: committedLexicalHealth.tokenizerVersion,
-          lexicalIndexStatus: committedLexicalHealth.status,
-          lexicalProjectionDurationMs,
-          lexicalWriteDurationMs
-        });
         for (const batchId of [...new Set(stagedBatchIds)]) {
           await db.commitGraphWriteBatch({
             batchId,
@@ -689,27 +495,11 @@ export async function runIndexing(
           stats
         );
         await schemaGenerations.commitFull(generation);
-        return {
-          lexicalHealth: committedLexicalHealth,
-          lexicalDocumentCount: committedDocumentCount,
-          lexicalIndexSizeBytes: committedIndexSizeBytes
-        };
       });
-      lexicalHealth = committed.lexicalHealth;
-      lexicalDocumentCount = committed.lexicalDocumentCount;
-      lexicalIndexSizeBytes = committed.lexicalIndexSizeBytes;
     }
     workspaceCommitted = true;
-    await cleanupCommittedBatchJournals({
-      db,
-      lexicalStore: ctx.lexicalStore,
-      workspaceId: ctx.workspaceId,
-      batchIds: stagedBatchIds,
-      logger
-    });
     for (const supersededGeneration of supersededGenerationGc) {
       try {
-        await ctx.lexicalStore.deleteGeneration({ workspaceId: ctx.workspaceId, generation: supersededGeneration });
         await db.deletePublicGraphGeneration({ workspaceId: ctx.workspaceId, generation: supersededGeneration });
         await schemaGenerations.rollback(supersededGeneration);
       } catch (cleanupError) {
@@ -728,14 +518,7 @@ export async function runIndexing(
       callEdges: stats.callEdges,
       importEdges: stats.importEdges,
       entities: stats.entities,
-      durationMs: Date.now() - started,
-      lexicalDocumentCount,
-      lexicalIndexSizeBytes,
-      lexicalProjectionSchemaVersion: lexicalHealth.projectionSchemaVersion,
-      lexicalTokenizerVersion: lexicalHealth.tokenizerVersion,
-      lexicalIndexStatus: lexicalHealth.status,
-      lexicalProjectionDurationMs,
-      lexicalWriteDurationMs
+      durationMs: Date.now() - started
     };
   } catch (error) {
     await stopLeaseHeartbeat();
@@ -786,12 +569,6 @@ export async function runIndexing(
           safeToDelete = true;
         } catch (cleanupError) {
           cleanupErrors.push(`reservation: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
-        }
-        try {
-          if (!safeToDelete) throw new Error("generation reservation was not released");
-          await ctx.lexicalStore.deleteGeneration({ workspaceId: ctx.workspaceId, generation });
-        } catch (cleanupError) {
-          cleanupErrors.push(`lexical: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
         }
         try {
           if (!safeToDelete) throw new Error("generation reservation was not released");

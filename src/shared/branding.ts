@@ -16,14 +16,12 @@ export const BRAND = {
 
 export const BRAND_PATHS = {
   graph: `${BRAND.configDirName}/graph`,
-  semanticIndex: `${BRAND.configDirName}/semantic-index.json`,
   logs: `${BRAND.configDirName}/logs`,
   mcpPid: `${BRAND.configDirName}/mcp.pid`,
   batchStaging: `${BRAND.configDirName}/tmp/batches`
 } as const;
 
 export const BRAND_DEFAULTS = {
-  chromaCollection: BRAND.cliName,
   mcpProcessName: `${BRAND.cliName}-mcp-server`
 } as const;
 
@@ -77,4 +75,8 @@ export function allInstallerSectionMarkers(): Array<{ start: string; end: string
 
 export function brandedWorkspaceDirNames(): string[] {
   return [BRAND.configDirName];
+}
+
+export function generatedDatabaseRecoveryInstruction(): string {
+  return `remove the configured Kuzu graph directory or clear/use a fresh ${BRAND.displayName} Neo4j database, then run a full reindex`;
 }

@@ -10,7 +10,7 @@ const leaseMutationTails = new WeakMap<GraphDB, Promise<void>>();
 /**
  * Kuzu permits concurrent readers but only one writer. Read leases are tiny
  * writes that can otherwise collide when callers issue many reads in parallel
- * (for example a retrieval evaluation corpus). Keep only lease mutations
+ * (for example a long-running contract audit). Keep only lease mutations
  * ordered per provider instance; the protected graph reads remain concurrent.
  */
 async function serializeLeaseMutation<T>(db: GraphDB, operation: () => Promise<T>): Promise<T> {

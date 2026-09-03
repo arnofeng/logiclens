@@ -1,6 +1,6 @@
 import { hashText } from "../../shared/hash.js";
 
-export const SCHEMA_INDEX_VERSION = "9";
+export const SCHEMA_INDEX_VERSION = "10";
 
 export interface ResolutionScopeIdentity {
   languageId: string;

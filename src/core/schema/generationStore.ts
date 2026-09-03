@@ -1,8 +1,8 @@
 import { type GraphDB, type GraphValue, withTransaction } from "../graph-model/db.js";
-import { LEXICAL_PROJECTION_SCHEMA_VERSION } from "../retrieval/types.js";
 import { canonicalSerialize, SCHEMA_INDEX_VERSION, stableFactId } from "./model.js";
 import type { ResolutionScopeIdentity } from "./model.js";
 import { assertNoLivePublicGraphReadLeases } from "../graph-model/readSnapshot.js";
+import { generatedDatabaseRecoveryInstruction } from "../../shared/branding.js";
 
 export type SchemaInternalFactKind =
   | "declarations"
@@ -115,7 +115,7 @@ export interface ValidatedIncrementalSchemaRevision {
 
 export interface SchemaContributionView {
   rootReferenceId: string;
-  entityKind: "schema-spec" | "logical-relation" | "lexical-document";
+  entityKind: "schema-spec" | "logical-relation";
   entityId: string;
   payload?: unknown;
 }
@@ -355,14 +355,12 @@ export class SchemaGenerationStore {
       }
       await this.db.query(
         "MATCH (g:SchemaGeneration {id: $generation}) " +
-        "SET g.status=$status, g.activeRevision=$revision, g.schemaIndexVersion=$schemaIndexVersion, " +
-        "g.lexicalProjectionVersion=$lexicalProjectionVersion, g.updatedAt=$updatedAt;",
+        "SET g.status=$status, g.activeRevision=$revision, g.schemaIndexVersion=$schemaIndexVersion, g.updatedAt=$updatedAt;",
         {
           generation,
           revision: generation,
           status: "active",
           schemaIndexVersion: SCHEMA_INDEX_VERSION,
-          lexicalProjectionVersion: LEXICAL_PROJECTION_SCHEMA_VERSION,
           updatedAt: new Date().toISOString()
         }
       );
@@ -370,8 +368,8 @@ export class SchemaGenerationStore {
         "MATCH (s:SchemaGenerationState {id: $id}) " +
         "SET s.workspaceId=$workspaceId, s.activeGeneration=$generation, s.activeRevision=$revision, " +
         "s.pendingGeneration='', s.pendingRevision='', s.pendingParentGeneration='', s.pendingParentRevision='', s.pendingLeaseUntil='', " +
-        "s.schemaIndexVersion=$schemaIndexVersion, s.lexicalProjectionVersion=$lexicalProjectionVersion;",
-        { id: `schema-generation-state:${this.workspaceId}`, workspaceId: this.workspaceId, generation, revision: generation, schemaIndexVersion: SCHEMA_INDEX_VERSION, lexicalProjectionVersion: LEXICAL_PROJECTION_SCHEMA_VERSION }
+        "s.schemaIndexVersion=$schemaIndexVersion;",
+        { id: `schema-generation-state:${this.workspaceId}`, workspaceId: this.workspaceId, generation, revision: generation, schemaIndexVersion: SCHEMA_INDEX_VERSION }
       );
     });
   }
@@ -392,7 +390,7 @@ export class SchemaGenerationStore {
   /**
    * Advances only the logical revision of the active physical dataset. The
    * provider-level incremental mutation entry point calls this from its outer
-   * transaction after every graph/internal/lexical delta has succeeded.
+   * transaction after every graph/internal delta has succeeded.
    */
   async commitIncremental(revision: string): Promise<void> {
     await withTransaction(this.db, async () => {
@@ -405,14 +403,12 @@ export class SchemaGenerationStore {
       await this.assertPhysicalGenerationRevision(validated);
       await this.db.query(
         "MATCH (g:SchemaGeneration {id: $generation}) WHERE g.workspaceId=$workspaceId AND g.status='active' " +
-        "SET g.activeRevision=$revision, g.schemaIndexVersion=$schemaIndexVersion, " +
-        "g.lexicalProjectionVersion=$lexicalProjectionVersion, g.updatedAt=$updatedAt;",
+        "SET g.activeRevision=$revision, g.schemaIndexVersion=$schemaIndexVersion, g.updatedAt=$updatedAt;",
         {
           generation: validated.generation,
           workspaceId: this.workspaceId,
           revision,
           schemaIndexVersion: SCHEMA_INDEX_VERSION,
-          lexicalProjectionVersion: LEXICAL_PROJECTION_SCHEMA_VERSION,
           updatedAt: new Date().toISOString()
         }
       );
@@ -420,12 +416,11 @@ export class SchemaGenerationStore {
         "MATCH (s:SchemaGenerationState {id: $id}) " +
         "SET s.activeRevision=$revision, s.pendingGeneration='', s.pendingRevision='', " +
         "s.pendingParentGeneration='', s.pendingParentRevision='', s.pendingLeaseUntil='', " +
-        "s.schemaIndexVersion=$schemaIndexVersion, s.lexicalProjectionVersion=$lexicalProjectionVersion;",
+        "s.schemaIndexVersion=$schemaIndexVersion;",
         {
           id: this.stateId(),
           revision,
-          schemaIndexVersion: SCHEMA_INDEX_VERSION,
-          lexicalProjectionVersion: LEXICAL_PROJECTION_SCHEMA_VERSION
+          schemaIndexVersion: SCHEMA_INDEX_VERSION
         }
       );
     });
@@ -648,24 +643,18 @@ export class SchemaGenerationStore {
       activeGeneration?: GraphValue;
       activeRevision?: GraphValue;
       schemaIndexVersion?: GraphValue;
-      lexicalProjectionVersion?: GraphValue;
     }>(
       "MATCH (s:SchemaGenerationState {id: $id}) RETURN s.activeGeneration AS activeGeneration, " +
-      "s.activeRevision AS activeRevision, s.schemaIndexVersion AS schemaIndexVersion, " +
-      "s.lexicalProjectionVersion AS lexicalProjectionVersion;",
+      "s.activeRevision AS activeRevision, s.schemaIndexVersion AS schemaIndexVersion;",
       { id: `schema-generation-state:${this.workspaceId}` }
     );
     const row = rows[0];
     const version = row?.schemaIndexVersion;
     if (version !== SCHEMA_INDEX_VERSION) {
-      throw new Error(`Schema index version ${String(version ?? "missing")} is incompatible with ${mode}; clean generated graph/internal/lexical artifacts and run a full reindex (required version ${SCHEMA_INDEX_VERSION}).`);
-    }
-    const lexicalVersion = row?.lexicalProjectionVersion;
-    if (lexicalVersion !== LEXICAL_PROJECTION_SCHEMA_VERSION) {
-      throw new Error(`Lexical projection version ${String(lexicalVersion ?? "missing")} is incompatible with ${mode}; clean generated graph/internal/lexical artifacts and run a full reindex (required version ${LEXICAL_PROJECTION_SCHEMA_VERSION}).`);
+      throw new Error(`Schema index version ${String(version ?? "missing")} is incompatible with ${mode}; ${generatedDatabaseRecoveryInstruction()} (required version ${SCHEMA_INDEX_VERSION}).`);
     }
     if (!this.stringValue(row?.activeGeneration) || !this.stringValue(row?.activeRevision)) {
-      throw new Error(`Schema generation/revision state is incomplete and incompatible with ${mode}; clean generated graph/internal/lexical artifacts and run a full reindex.`);
+      throw new Error(`Schema generation/revision state is incomplete and incompatible with ${mode}; ${generatedDatabaseRecoveryInstruction()}.`);
     }
   }
 
@@ -857,7 +846,7 @@ export class SchemaGenerationStore {
     return [...roots.values()].sort((left, right) => left.id.localeCompare(right.id));
   }
 
-  async activeContributionCount(entityKind: "schema-spec" | "logical-relation" | "lexical-document", entityId: string): Promise<number> {
+  async activeContributionCount(entityKind: "schema-spec" | "logical-relation", entityId: string): Promise<number> {
     const generation = await this.activeGeneration();
     if (!generation) return 0;
     const rows = await this.db.query<{ count?: GraphValue }>(
@@ -954,7 +943,7 @@ export class SchemaGenerationStore {
   ): SchemaContributionView[] {
     return rows.flatMap((row) => {
       if (typeof row.rootReferenceId !== "string" || typeof row.entityId !== "string"
-        || (row.entityKind !== "schema-spec" && row.entityKind !== "logical-relation" && row.entityKind !== "lexical-document")) return [];
+        || (row.entityKind !== "schema-spec" && row.entityKind !== "logical-relation")) return [];
       const contribution: SchemaContributionView = {
         rootReferenceId: row.rootReferenceId,
         entityKind: row.entityKind,
@@ -1157,7 +1146,7 @@ export class SchemaGenerationStore {
       "MERGE (s:SchemaGenerationState {id: $id}) " +
       "ON CREATE SET s.workspaceId=$workspaceId, s.activeGeneration='', s.activeRevision='', " +
       "s.pendingGeneration='', s.pendingRevision='', s.pendingParentGeneration='', s.pendingParentRevision='', " +
-      "s.pendingLeaseUntil='', s.schemaIndexVersion=$schemaIndexVersion, s.lexicalProjectionVersion=$lexicalProjectionVersion " +
+      "s.pendingLeaseUntil='', s.schemaIndexVersion=$schemaIndexVersion " +
       "SET s.protocolNonce=$nonce " +
       "RETURN s.activeGeneration AS activeGeneration, s.activeRevision AS activeRevision, " +
       "s.pendingGeneration AS pendingGeneration, s.pendingRevision AS pendingRevision, " +
@@ -1167,7 +1156,6 @@ export class SchemaGenerationStore {
         id: this.stateId(),
         workspaceId: this.workspaceId,
         schemaIndexVersion: SCHEMA_INDEX_VERSION,
-        lexicalProjectionVersion: LEXICAL_PROJECTION_SCHEMA_VERSION,
         nonce
       }
     );

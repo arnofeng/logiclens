@@ -84,7 +84,7 @@ export type GraphDatabaseErrorClassifier = (
   error: unknown
 ) => GraphDatabaseOperationalFailureKind | undefined;
 
-/** A provider/database execution failure safe for retrieval degradation. */
+/** A provider/database execution failure with a stable classification. */
 export class GraphDatabaseOperationalError extends Error {
   readonly operation = "query";
   readonly kind: GraphDatabaseOperationalFailureKind;
@@ -130,7 +130,6 @@ export type IncrementalIndexCommitRequest = {
   expectedActiveRevision: string;
   nextRevision: string;
   schemaIndexVersion: string;
-  lexicalProjectionVersion: string;
 };
 
 export function validateIncrementalIndexCommitRequest(
@@ -230,11 +229,10 @@ export interface GraphDB {
     workspaceId?: string;
     generation?: string;
     updatedAt: string;
-    cleanupBatch?: (journal: GraphWriteBatchJournal) => Promise<void>;
   }): Promise<GraphWriteBatchJournal[]>;
   cleanupGraphWriteBatch(batchId: string): Promise<void>;
   markRepoArtifactsStale(input: { repoId: string; activeFileIds: string[]; batchId: string; indexedAt: string }, scope: PublicGraphGenerationScope): Promise<number>;
-  upsertIndexState(state: { repoId: string; repoName: string; lastBatchId: string; lastIndexedAt: string; lastCommitSha: string; filesScanned: number; filesChanged: number; filesStale: number; status: string; error?: string; graphWriteAtomicity?: GraphWriteAtomicityMode; graphWriteStatus?: GraphWriteBatchStatus; lexicalDocumentCount?: number; lexicalIndexSizeBytes?: number; lexicalProjectionSchemaVersion?: string; lexicalTokenizerVersion?: string; lexicalIndexStatus?: string; lexicalProjectionDurationMs?: number; lexicalWriteDurationMs?: number }): Promise<void>;
+  upsertIndexState(state: { repoId: string; repoName: string; lastBatchId: string; lastIndexedAt: string; lastCommitSha: string; filesScanned: number; filesChanged: number; filesStale: number; status: string; error?: string; graphWriteAtomicity?: GraphWriteAtomicityMode; graphWriteStatus?: GraphWriteBatchStatus }): Promise<void>;
   /** Returns a map of known file IDs to their content hashes for a given repo. */
   knownFileHashes(repoId: string, scope: PublicGraphGenerationScope): Promise<Map<string, string>>;
   /** Returns the total number of Repo nodes in the graph. */
