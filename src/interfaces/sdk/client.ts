@@ -1,6 +1,6 @@
 import path from "node:path";
 import fs from "node:fs";
-import { repoId } from "../../shared/path.js";
+import { parseFileId, repoId } from "../../shared/path.js";
 import { loadConfig, defaultConfig } from "../../config/loadConfig.js";
 import type { AppConfig } from "../../config/schema.js";
 import type { GraphDB, GraphValue, Stats } from "../../core/graph-model/db.js";
@@ -554,9 +554,7 @@ export class AppClient {
     const fileContents = new Map<string, string>();
     const readPromises = Array.from(filesToRead).map(async (key) => {
       const { repoId, fileId } = fileIdToParams.get(key)!;
-      const parts = fileId.split(":");
-      const fRepoName = parts[1] ?? repoId;
-      const relativePath = parts.slice(2).join(":");
+      const { repoName: fRepoName, filePath: relativePath } = parseFileId(fileId, repoId);
       if (!relativePath) return;
 
       const repoPath = repoPaths.get(fRepoName) ?? path.join(this.cwd, fRepoName);

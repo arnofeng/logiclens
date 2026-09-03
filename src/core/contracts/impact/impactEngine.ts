@@ -33,6 +33,7 @@ import { findFieldReferences } from "./fieldSearch.js";
 import { assessHttpEndpointChange, classifyHttpEndpointTargetChange } from "./rules/httpImpactRules.js";
 import { assessEventChange, classifyEventTargetChange } from "./rules/eventImpactRules.js";
 import { assessSchemaFieldChange, classifySchemaTargetChange } from "./rules/schemaImpactRules.js";
+import { parseFileId, repoNameFromId } from "../../../shared/path.js";
 import { assessGrpcMethodChange, classifyGrpcMethodTargetChange } from "./rules/grpcImpactRules.js";
 import { assessDubboMethodChange, classifyDubboMethodTargetChange } from "./rules/dubboImpactRules.js";
 import { assessGraphqlOperationChange, classifyGraphqlOperationTargetChange } from "./rules/graphqlImpactRules.js";
@@ -337,7 +338,11 @@ export function analyzeImpact(
   }
 
   // -- Step 4: Deduplicate and aggregate ------------------------------------
-  const deduped = deduplicateImpacts(impacts);
+  const deduped = deduplicateImpacts(impacts).map((impact) => ({
+    ...impact,
+    repoName: impact.repoName ?? repoNameFromId(impact.repoId),
+    filePath: parseFileId(impact.filePath, impact.repoId).filePath,
+  }));
 
   let overallSeverity: ImpactSeverity = "compatible";
   let breaking = 0, risky = 0, compatible = 0;
@@ -349,7 +354,7 @@ export function analyzeImpact(
   }
 
   const recommendedFiles = [...new Set(
-    deduped.filter((i) => i.filePath).map((i) => `${i.repoId}/${i.filePath}`)
+    deduped.filter((i) => i.filePath).map((i) => `${i.repoName ?? repoNameFromId(i.repoId)}/${i.filePath}`)
   )].sort();
 
   return {

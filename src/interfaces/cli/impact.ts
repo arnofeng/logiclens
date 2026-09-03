@@ -294,10 +294,8 @@ function impactRoleLabel(role: SemanticImpactRole | undefined): string {
   }
 }
 
-function printImpactReport(report: ImpactReport): void {
-  const severityIcon = report.overallSeverity === "breaking" ? "馃敶"
-    : report.overallSeverity === "risky" ? "馃煛"
-    : "馃煝";
+export function printImpactReport(report: ImpactReport): void {
+  const severityIcon = severityMarker(report.overallSeverity);
 
   console.log(`${severityIcon} Severity: ${report.overallSeverity}`);
   console.log("");
@@ -314,12 +312,11 @@ function printImpactReport(report: ImpactReport): void {
 
   console.log("Direct impacts:");
   for (const imp of report.impacts) {
-    const icon = imp.severity === "breaking" ? "馃敶"
-      : imp.severity === "risky" ? "馃煛"
-      : "馃煝";
+    const icon = severityMarker(imp.severity);
     const lineInfo = imp.line ? `:${imp.line}` : "";
-    console.log(`  ${icon} [${imp.severity}] ${imp.repoId} ${imp.symbol} (confidence=${formatConfidence(imp.confidence)})`);
-    console.log(`    evidence: ${imp.repoId}/${imp.filePath}${lineInfo} '${imp.evidence}'`);
+    const repoName = imp.repoName ?? repoOf(imp.repoId);
+    console.log(`  ${icon} [${imp.severity}] ${repoName} ${imp.symbol} (confidence=${formatConfidence(imp.confidence)})`);
+    console.log(`    evidence: ${repoName}/${imp.filePath}${lineInfo} '${imp.evidence}'`);
   }
 
   if (report.recommendedFiles.length > 0) {
@@ -329,6 +326,12 @@ function printImpactReport(report: ImpactReport): void {
       console.log(`  ${file}`);
     }
   }
+}
+
+function severityMarker(severity: ImpactReport["overallSeverity"]): string {
+  return severity === "breaking" ? "[!]"
+    : severity === "risky" ? "[~]"
+    : "[OK]";
 }
 
 function formatConfidence(confidence: number): string {

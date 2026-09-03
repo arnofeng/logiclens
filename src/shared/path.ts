@@ -16,6 +16,47 @@ export function fileId(repoIdValue: string, relativePath: string): string {
   return `file:${repoIdValue}:${toPosixPath(relativePath)}`;
 }
 
+export type ParsedFileId = {
+  repoName: string;
+  filePath: string;
+};
+
+export function repoNameFromId(repoIdValue: string): string {
+  return repoIdValue.replace(/^repo:/, "");
+}
+
+/**
+ * Converts an internal file identity back into the repository name and
+ * repository-relative path used at the CLI and filesystem boundaries.
+ *
+ * Canonical IDs have the form `file:repo:<repo-name>:<relative-path>`. The
+ * fallback also accepts legacy `file:<repo-name>:<relative-path>` values and
+ * already-normalized relative paths.
+ */
+export function parseFileId(fileIdValue: string, fallbackRepoId = ""): ParsedFileId {
+  const fallbackRepoName = repoNameFromId(fallbackRepoId);
+  const parts = fileIdValue.split(":");
+
+  if (parts[0] === "file" && parts[1] === "repo" && parts.length >= 4) {
+    return {
+      repoName: parts[2] ?? fallbackRepoName,
+      filePath: parts.slice(3).join(":"),
+    };
+  }
+
+  if (parts[0] === "file" && parts.length >= 3) {
+    return {
+      repoName: parts[1] ?? fallbackRepoName,
+      filePath: parts.slice(2).join(":"),
+    };
+  }
+
+  return {
+    repoName: fallbackRepoName,
+    filePath: fileIdValue.replace(/^file:/, ""),
+  };
+}
+
 export function sourceDirectory(relativePath: string): string {
   return path.posix.dirname(toPosixPath(relativePath));
 }

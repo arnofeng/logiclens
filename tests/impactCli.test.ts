@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ImpactReport } from "../src/core/contracts/impact/types.js";
 import type { SemanticImpactReport } from "../src/core/contracts/impact/semanticImpact.js";
-import { printSemanticImpactReport } from "../src/interfaces/cli/impact.js";
+import { printImpactReport, printSemanticImpactReport } from "../src/interfaces/cli/impact.js";
 
 function node(input: {
   specId: string;
@@ -124,5 +125,40 @@ describe("semantic impact CLI output", () => {
     expect(text.indexOf(`reason: ${rpcProvider.reason}`)).toBeLessThan(
       text.indexOf("[Hop 2] [implementation dependency]")
     );
+  });
+
+  it("prints readable severity markers and normalized repository paths", () => {
+    const report: ImpactReport = {
+      change: { target: "ActivityCreateDTO", changeType: "field-removed", detail: "activityType" },
+      overallSeverity: "breaking",
+      impacts: [{
+        severity: "breaking",
+        repoId: "repo:mp-groupon-center",
+        repoName: "mp-groupon-center",
+        filePath: "src/ActivityCreateDTO.java",
+        symbol: "ActivityCreateDTO.activityType",
+        relationKind: "IMPACTS",
+        description: "field removed",
+        evidence: "schema field",
+        specId: "spec:dto",
+        confidence: 0.75,
+      }],
+      summary: { breaking: 1, risky: 0, compatible: 0 },
+      recommendedFiles: ["mp-groupon-center/src/ActivityCreateDTO.java"],
+      traversedEdgeCount: 0,
+      inspectedSpecCount: 1,
+    };
+    const output: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((value?: unknown) => {
+      output.push(value === undefined ? "" : String(value));
+    });
+
+    printImpactReport(report);
+
+    const text = output.join("\n");
+    expect(text).toContain("[!] Severity: breaking");
+    expect(text).toContain("[breaking] mp-groupon-center ActivityCreateDTO.activityType");
+    expect(text).toContain("evidence: mp-groupon-center/src/ActivityCreateDTO.java");
+    expect(text).not.toContain("repo:mp-groupon-center/file:repo:");
   });
 });
