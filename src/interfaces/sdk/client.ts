@@ -3,19 +3,10 @@ import fs from "node:fs";
 import { repoId } from "../../shared/path.js";
 import { loadConfig, defaultConfig } from "../../config/loadConfig.js";
 import type { AppConfig } from "../../config/schema.js";
-import type { GraphDB, Stats } from "../../core/graph-model/db.js";
+import type { GraphDB, GraphValue, Stats } from "../../core/graph-model/db.js";
 import {
   createGraphDB
 } from "../../core/graph-model/factory.js";
-import {
-  resolveLexicalProvider,
-  resolveWorkspaceLexicalStore,
-  summarizeLexicalProviderGate,
-  type LexicalProviderGateResult,
-  type LexicalProviderGateSummary,
-  type WorkspaceLexicalStore
-} from "../../core/retrieval/provider.js";
-import { registerBuiltinEmbeddingProviders } from "../../adapters/embeddings/builtinProviders.js";
 import {
   listDependencies,
   listContracts,
@@ -35,16 +26,6 @@ import {
 } from "../../core/graph-model/queries.js";
 import type { EdgeRow } from "../../core/graph-model/subgraph.js";
 import type { SemanticImpactReport } from "../../core/contracts/impact/semanticImpact.js";
-import { retrieveForQuestion, type RetrievalResult } from "../../features/ask/retrieve.js";
-import { createQueryPlanningContext, type QueryPlanningContext } from "../../features/ask/planningContext.js";
-import { loadWorkspacePluginPlanningSnapshot } from "../../core/plugins/register.js";
-import { answerQuestion } from "../../features/ask/answer.js";
-import {
-  normalizeRetrieveOptions,
-  type AskOptions,
-  type NormalizedRetrieveOptions,
-  type RetrieveOptions,
-} from "../../features/ask/options.js";
 import { rebuildRepoDependenciesInNewGeneration } from "../../core/graph-model/rebuildGeneration.js";
 import { discoverGitRepos } from "../../core/workspace/repoDiscovery.js";
 import { toRepoNode } from "../../core/workspace/repoRegistry.js";
@@ -63,6 +44,7 @@ import {
   tryWithPublicGraphReadSnapshot,
   withPublicGraphReadSnapshot
 } from "../../core/graph-model/readSnapshot.js";
+import { SCHEMA_INDEX_VERSION } from "../../core/schema/model.js";
 
 /**
  * Represents the result of an impact analysis, including contract traces,
@@ -117,12 +99,9 @@ export type AppClientOptions = {
   config?: AppConfig;
   /** Custom logger implementation */
   logger?: AppLogger;
-  /** Precomputed immutable query-planning snapshot for an embedding host. */
-  queryPlanningContext?: QueryPlanningContext;
 };
 
 export type ClientOptions = AppClientOptions;
-export type { AskOptions, RetrieveOptions } from "../../features/ask/options.js";
 
 export type AppIndexOptions = IndexOptions & {
   queueSource?: IndexQueueSource;
@@ -139,14 +118,9 @@ export class AppClient {
   private dbInstance?: GraphDB;
   private dbPromise?: Promise<GraphDB>;
   private closed = false;
-  private providersRegistered = false;
   private logger: Required<AppLogger>;
   private watcher?: FileWatcher;
   private indexQueue = new SingleProcessIndexQueue();
-  private planningContextPromise?: Promise<QueryPlanningContext>;
-  private lexicalProviderGatePromise?: Promise<LexicalProviderGateResult>;
-  private lexicalProviderGateGeneration?: string;
-  private readonly configuredPlanningContext?: QueryPlanningContext;
 
   constructor(options: ClientOptions, config: AppConfig) {
     this.config = config;
@@ -155,33 +129,6 @@ export class AppClient {
       ...defaultLogger,
       ...options.logger
     };
-    this.configuredPlanningContext = options.queryPlanningContext;
-    this.ensureProviders();
-  }
-
-  private getQueryPlanningContext(): Promise<QueryPlanningContext> {
-    if (this.configuredPlanningContext) return Promise.resolve(this.configuredPlanningContext);
-    if (!this.planningContextPromise) {
-      this.planningContextPromise = loadWorkspacePluginPlanningSnapshot({
-        config: this.config,
-        cwd: this.cwd,
-        repoConfigs: this.config.repos,
-        warn: (message) => this.logger.warn(message)
-      }).then((snapshot) => createQueryPlanningContext({
-        activePluginManifests: snapshot.activePluginManifests,
-        activeParsers: snapshot.activeLanguageParsers,
-        repoIds: this.config.repos.map((repo) => repoId(repo.name)),
-        repos: this.config.repos.map((repo) => ({ id: repoId(repo.name), name: repo.name }))
-      })).catch((error) => {
-        this.planningContextPromise = undefined;
-        throw error;
-      });
-    }
-    return this.planningContextPromise;
-  }
-
-  private invalidateQueryPlanningContext(): void {
-    if (!this.configuredPlanningContext) this.planningContextPromise = undefined;
   }
 
   /**
@@ -220,6 +167,7 @@ export class AppClient {
     });
     try {
       await db.initSchema(this.config.systemName);
+      await this.assertCompatibleIndexSchema(db);
       this.dbInstance = db;
       return db;
     } catch (error) {
@@ -231,70 +179,25 @@ export class AppClient {
     }
   }
 
-  private async resolveLexicalStore(): Promise<WorkspaceLexicalStore> {
-    return resolveWorkspaceLexicalStore({
-      db: () => this.getDb(),
-      graphProvider: this.config.graph.provider,
-      lexicalProvider: this.config.retrieval.lexical.provider,
-      scope: this.config.retrieval.lexical.scope
-    });
-  }
-
-  private invalidateLexicalProviderGate(): void {
-    this.lexicalProviderGatePromise = undefined;
-    this.lexicalProviderGateGeneration = undefined;
-  }
-
-  private getLexicalProviderGate(generation: string, refresh = false): Promise<LexicalProviderGateResult> {
-    if (this.closed) return Promise.reject(new Error("Client is closed"));
-    if (refresh || this.lexicalProviderGateGeneration !== generation) this.invalidateLexicalProviderGate();
-    if (!this.lexicalProviderGatePromise) {
-      const promise = resolveLexicalProvider({
-        db: () => this.getDb(),
-        graphProvider: this.config.graph.provider,
-        lexicalProvider: this.config.retrieval.lexical.provider,
-        scope: this.config.retrieval.lexical.scope,
-        workspaceId: deriveWorkspaceId(this.config.systemName),
-        generation
-      }).catch((error) => {
-        if (this.lexicalProviderGatePromise === promise) {
-          this.lexicalProviderGatePromise = undefined;
-        }
-        throw error;
-      });
-      this.lexicalProviderGatePromise = promise;
-      this.lexicalProviderGateGeneration = generation;
-    }
-    return this.lexicalProviderGatePromise;
-  }
-
-  async getLexicalProviderStatus(options: { refresh?: boolean } = {}): Promise<LexicalProviderGateSummary> {
-    const db = await this.getDb();
+  private async assertCompatibleIndexSchema(db: GraphDB): Promise<void> {
     const workspaceId = deriveWorkspaceId(this.config.systemName);
-    const summary = await tryWithPublicGraphReadSnapshot(db, workspaceId, async (snapshot) =>
-      summarizeLexicalProviderGate(
-        await this.getLexicalProviderGate(snapshot.generation, options.refresh === true)
-      ));
-    if (!summary) {
-      this.invalidateLexicalProviderGate();
-      const configuredProvider = this.config.retrieval.lexical.provider;
-      return Object.freeze({
-        configuredProvider,
-        effectiveProvider: configuredProvider === "auto" ? this.config.graph.provider : configuredProvider,
-        status: "unavailable",
-        reasonCodes: Object.freeze(["index_unavailable" as const])
-      });
+    const rows = await db.query<{ schemaIndexVersion?: GraphValue }>(
+      "MATCH (s:SchemaGenerationState {id: $id}) RETURN s.schemaIndexVersion AS schemaIndexVersion;",
+      { id: `schema-generation-state:${workspaceId}` }
+    );
+    const state = rows[0];
+    if (!state) {
+      const repoRows = await db.query<{ count?: GraphValue }>("MATCH (r:Repo) RETURN count(r) AS count;");
+      const count = Number(repoRows[0]?.count ?? 0);
+      if (count === 0) return;
+    } else if (state.schemaIndexVersion === SCHEMA_INDEX_VERSION) {
+      return;
     }
-    return summary;
-  }
-
-  /**
-   * Ensures built-in providers are registered for this process.
-   */
-  ensureProviders(): void {
-    if (this.providersRegistered) return;
-    registerBuiltinEmbeddingProviders(this.config);
-    this.providersRegistered = true;
+    throw new Error(
+      `Schema index version ${String(state?.schemaIndexVersion ?? "missing")} is incompatible with this build; ` +
+      "remove the configured Kuzu graph directory or clear/use a fresh RepoHelix Neo4j database, then run a full reindex " +
+      `(required version ${SCHEMA_INDEX_VERSION}).`
+    );
   }
 
   /**
@@ -315,7 +218,6 @@ export class AppClient {
     const repos = this.config.repos.filter((repo) => repo.name !== name);
     repos.push({ name, path: storedPath });
     this.config = { ...this.config, repos };
-    this.invalidateQueryPlanningContext();
     return { name, storedPath };
   }
 
@@ -349,7 +251,6 @@ export class AppClient {
     }
     const repos = [...byName.values()];
     this.config = { ...this.config, repos };
-    this.invalidateQueryPlanningContext();
 
     const addedRepos = discovery.repos.map((r) => ({
       name: r.name,
@@ -383,20 +284,14 @@ export class AppClient {
    */
   async index(options?: AppIndexOptions): Promise<IndexResult> {
     const { queueSource = "manual", queueLabel, ...indexOptions } = options ?? {};
-    try {
-      return await this.indexQueue.enqueue({
-        source: queueSource,
-        label: queueLabel ?? describeIndexOptions(indexOptions),
-        run: async () => {
-          this.ensureProviders();
-          const db = await this.getDb();
-          return runIndexing(db, this.config, { ...indexOptions, cwd: this.cwd, logger: this.logger });
-        }
-      });
-    } finally {
-      this.invalidateQueryPlanningContext();
-      this.invalidateLexicalProviderGate();
-    }
+    return this.indexQueue.enqueue({
+      source: queueSource,
+      label: queueLabel ?? describeIndexOptions(indexOptions),
+      run: async () => {
+        const db = await this.getDb();
+        return runIndexing(db, this.config, { ...indexOptions, cwd: this.cwd, logger: this.logger });
+      }
+    });
   }
 
   getIndexQueueStatus(): IndexQueueStatusSnapshot {
@@ -421,28 +316,22 @@ export class AppClient {
       throw new Error(`Unknown repo: ${options.repo}`);
     }
 
-    try {
-      return await this.indexQueue.enqueue({
-        source: "sdk",
-        label: options?.repo && !options.full
-          ? `rebuild-relations:${options.repo}`
-          : "rebuild-relations:workspace",
-        run: async () => {
-          const db = await this.getDb();
-          const lexicalStore = await this.resolveLexicalStore();
-          const dependencies = await rebuildRepoDependenciesInNewGeneration({
-            db,
-            lexicalStore,
-            workspaceId: deriveWorkspaceId(this.config.systemName),
-            repoIds: targetRepoIds,
-            logger: this.logger
-          });
-          return { rebuiltCount: dependencies.length };
-        }
-      });
-    } finally {
-      this.invalidateLexicalProviderGate();
-    }
+    return this.indexQueue.enqueue({
+      source: "sdk",
+      label: options?.repo && !options.full
+        ? `rebuild-relations:${options.repo}`
+        : "rebuild-relations:workspace",
+      run: async () => {
+        const db = await this.getDb();
+        const dependencies = await rebuildRepoDependenciesInNewGeneration({
+          db,
+          workspaceId: deriveWorkspaceId(this.config.systemName),
+          repoIds: targetRepoIds,
+          logger: this.logger
+        });
+        return { rebuiltCount: dependencies.length };
+      }
+    });
   }
 
   /**
@@ -705,68 +594,6 @@ export class AppClient {
       hasCodeSymbolMatch(db, snapshot, target));
   }
 
-  /**
-   * Retrieves relevant context (code, docs, entities) from the database to answer a question.
-   * 
-   * @param question - The user query or question.
-   * @returns The structured context retrieval result.
-   */
-  private async retrieveNormalized(
-    question: string,
-    retrieval: NormalizedRetrieveOptions,
-  ): Promise<RetrievalResult> {
-    const db = await this.getDb();
-    const planningContext = await this.getQueryPlanningContext();
-    const workspaceId = deriveWorkspaceId(this.config.systemName);
-    return withPublicGraphReadSnapshot(db, workspaceId, async (publicGraphSnapshot) => {
-      const lexicalProviderGate = await this.getLexicalProviderGate(publicGraphSnapshot.generation);
-      // Preserve a successfully bound store for delayed evidence loading even
-      // when the release gate disables lexical full-text search.
-      const lexicalStore = lexicalProviderGate.store;
-      return retrieveForQuestion(db, question, {
-        cwd: this.cwd,
-        config: this.config,
-        planningContext,
-        lexicalStore,
-        lexicalStoreUnavailable: !lexicalStore,
-        lexicalProviderGate,
-        publicGraphSnapshot,
-        retrieval,
-      });
-    });
-  }
-
-  async retrieve(
-    question: string,
-    options?: RetrieveOptions,
-  ): Promise<RetrievalResult> {
-    return this.retrieveNormalized(question, normalizeRetrieveOptions(options));
-  }
-
-  /**
-   * Answers a user question by retrieving context and querying the configured LLM.
-   * 
-   * @param question - The question to ask.
-   * @returns The LLM-generated or fallback answer.
-   */
-  async ask(question: string, options?: AskOptions): Promise<string> {
-    const normalized = normalizeRetrieveOptions(options);
-    const retrieval = await this.retrieveNormalized(question, normalized);
-    return answerQuestion(
-      question,
-      retrieval,
-      this.config.llm.model,
-      this.config.llm.apiKey ?? process.env.OPENAI_API_KEY,
-      this.config.llm.baseUrl ?? process.env.OPENAI_BASE_URL,
-      { maxContextChars: normalized.contextBudget },
-      {
-        retry: this.config.llm.retry,
-        budget: this.config.llm.budget,
-        rateLimit: this.config.llm.rateLimit
-      }
-    );
-  }
-
   log(message: string): void {
     this.logger.log(message);
   }
@@ -942,7 +769,6 @@ export class AppClient {
       this.dbInstance = undefined;
     }
     this.dbPromise = undefined;
-    this.invalidateLexicalProviderGate();
     this.closed = true;
   }
 

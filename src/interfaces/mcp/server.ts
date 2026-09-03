@@ -9,13 +9,6 @@ import { appVersion } from "../../shared/version.js";
 import { BRAND, BRAND_DEFAULTS, BRAND_PATHS, brandedMcpToolName, configFilePath } from "../../shared/branding.js";
 import { startMcpOwnerRpcServer } from "./ownerRpc.js";
 import { z } from "zod";
-import {
-  RETRIEVE_OPTION_LIMITS,
-  type RetrieveOptions,
-} from "../../features/ask/options.js";
-import type { RetrievalDiagnostics } from "../../features/ask/diagnostics.js";
-import type { RetrievalResult } from "../../features/ask/retrieve.js";
-import type { LexicalProviderGateSummary } from "../../core/retrieval/provider.js";
 
 type CatchUpState = WatchStatus["catchUp"];
 
@@ -26,7 +19,6 @@ const MCP_TOOLS = {
   listContracts: brandedMcpToolName("list_contracts"),
   trace: brandedMcpToolName("trace"),
   impactAnalysis: brandedMcpToolName("impact_analysis"),
-  askQuestion: brandedMcpToolName("ask_question"),
 } as const;
 
 export const MCP_IMPACT_ANALYSIS_DESCRIPTION =
@@ -36,7 +28,7 @@ export const MCP_IMPACT_ANALYSIS_DESCRIPTION =
   `change mode does not analyze arbitrary code symbols, classes, methods, fields, enums, packages, or config entries. ` +
   `Call ${MCP_TOOLS.listContracts} first unless the target is already known to be an indexed contract. When \`change\` ` +
   `is omitted, the tool performs a legacy broad symbol/entity impact survey and does not assess a specific proposed ` +
-  `change. Do not use ${MCP_TOOLS.askQuestion} for change risk.`;
+   `change. Use host-native file/code search for free-text implementation discovery.`;
 
 export const MCP_IMPACT_TARGET_DESCRIPTION =
   `Required impact target. With \`change\`, use an exact indexed contract identifier from ${MCP_TOOLS.listContracts}, ` +
@@ -59,104 +51,19 @@ const MCP_RESOURCE_URIS = {
   contracts: `${BRAND.mcpServerName}://contracts`
 } as const;
 
-const integerOption = (name: keyof typeof RETRIEVE_OPTION_LIMITS) => {
-  const bounds = RETRIEVE_OPTION_LIMITS[name];
-  return z.number().finite().int().min(bounds.min).max(bounds.max).optional();
-};
-
-export const ASK_QUESTION_INPUT_SCHEMA = z.strictObject({
-  question: z.string().trim().min(1).max(1024),
-  lexical: z.boolean().optional(),
-  semantic: z.boolean().optional(),
-  topK: integerOption("topK"),
-  graphHops: integerOption("graphHops"),
-  contextBudget: integerOption("contextBudget"),
-});
-
-export type McpAskQuestionInput = z.infer<typeof ASK_QUESTION_INPUT_SCHEMA>;
-
-export type McpSelectedEvidence = Readonly<{
-  documentId: string;
-  canonicalId: string;
-  repoId: string;
-  sourceKind: string;
-  path: string;
-  startLine?: number;
-  endLine?: number;
-  confidence: string;
-  matchReasons: readonly string[];
-  renderRef: string;
-}>;
-
-export type McpAskQuestionResponse = Readonly<{
-  outcome: RetrievalResult["outcome"];
-  selectedEvidence: readonly McpSelectedEvidence[];
-  diagnostics: RetrievalDiagnostics;
-}>;
-
-export function projectAskQuestionResponse(
-  retrieval: RetrievalResult,
-): McpAskQuestionResponse {
-  const selectedEvidence = retrieval.loadedEvidence.map((evidence) => Object.freeze({
-    documentId: evidence.document.id,
-    canonicalId: evidence.document.canonicalId,
-    repoId: evidence.document.repoId,
-    sourceKind: evidence.document.kind,
-    path: evidence.parsedRenderRef.path!,
-    ...(evidence.parsedRenderRef.startLine ? { startLine: evidence.parsedRenderRef.startLine } : {}),
-    ...(evidence.parsedRenderRef.endLine ? { endLine: evidence.parsedRenderRef.endLine } : {}),
-    confidence: evidence.candidate.confidence,
-    matchReasons: Object.freeze([...evidence.candidate.matchReasons]),
-    renderRef: evidence.document.renderRef,
-  }));
-  const diagnostics: RetrievalDiagnostics = Object.freeze({
-    routes: retrieval.diagnostics.routes,
-    timings: retrieval.diagnostics.timings,
-    queries: retrieval.diagnostics.queries,
-    compatibility: retrieval.diagnostics.compatibility,
-    // Ordinary MCP responses expose route status only. The complete, safe
-    // lexical provider summary belongs to get_watch_status.
-    providers: Object.freeze({
-      lexical: Object.freeze({ status: retrieval.diagnostics.providers.lexical.status }),
-      semantic: retrieval.diagnostics.providers.semantic
-    }),
-    sourceLoading: retrieval.diagnostics.sourceLoading,
-  });
-  return Object.freeze({
-    outcome: retrieval.outcome,
-    selectedEvidence: Object.freeze(selectedEvidence),
-    diagnostics,
-  });
-}
-
-export async function handleAskQuestion(
-  client: Pick<InstanceType<typeof GraphClient>, "retrieve">,
-  input: McpAskQuestionInput,
-): Promise<McpAskQuestionResponse> {
-  const parsed = ASK_QUESTION_INPUT_SCHEMA.parse(input);
-  const { question, ...options } = parsed;
-  const retrieval = await client.retrieve(question, options as RetrieveOptions);
-  return projectAskQuestionResponse(retrieval);
-}
-
-export type McpWorkspaceHealthStatus = WatchStatus & Readonly<{
-  lexical: LexicalProviderGateSummary;
-}>;
+export type McpWorkspaceHealthStatus = WatchStatus;
 
 export function buildWorkspaceHealthStatus(
-  watchStatus: WatchStatus,
-  lexical: LexicalProviderGateSummary
+  watchStatus: WatchStatus
 ): McpWorkspaceHealthStatus {
-  return Object.freeze({ ...watchStatus, lexical });
+  return Object.freeze({ ...watchStatus });
 }
 
 export async function loadWorkspaceHealthStatus(
-  client: Pick<InstanceType<typeof GraphClient>, "getWatchStatus" | "getLexicalProviderStatus">,
-  catchUp?: CatchUpState,
-  options: { refresh?: boolean } = {}
+  client: Pick<InstanceType<typeof GraphClient>, "getWatchStatus">,
+  catchUp?: CatchUpState
 ): Promise<McpWorkspaceHealthStatus> {
-  const lexical = await client.getLexicalProviderStatus({ refresh: options.refresh });
-  return buildWorkspaceHealthStatus(client.getWatchStatus(catchUp), lexical);
+  return buildWorkspaceHealthStatus(client.getWatchStatus(catchUp));
 }
 
 function createCatchUpState(mode: CatchUpState["mode"], repos: string[]): CatchUpState {
@@ -282,7 +189,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
         "of a change. The graph is derived statically from source code and every answer carries " +
         "evidence (file:line), so treat it as ground truth instead of guessing cross-repo relationships.\n\n" +
         `Reach for ${BRAND.displayName} whenever you are about to change code that other repositories may depend on. ` +
-        "Prefer precise graph tools over broad retrieval:\n" +
+        "Use precise graph tools for indexed contract relationships:\n" +
         `  - ${MCP_TOOLS.impactAnalysis}: FIRST choice before editing an indexed API endpoint, event, DTO/schema, ` +
         "gRPC method, Dubbo method, or GraphQL operation. Pass `change` for structured ContractSpec change risk; " +
         "omit it only for the legacy broad symbol/entity survey.\n" +
@@ -291,8 +198,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
         "or \"graphql Mutation.createOrder\".\n" +
         `  - ${MCP_TOOLS.listContracts}: use to discover exact contract targets before tracing or impact analysis.\n` +
         `  - ${MCP_TOOLS.listDependencies}: use to inspect repository-to-repository dependency evidence.\n` +
-        `  - ${MCP_TOOLS.askQuestion}: LAST resort only for broad exploratory questions when no known contract, ` +
-        "repo, or symbol can be named. Do not use it for impact analysis, dependency listing, or contract tracing.",
+        "For free-text implementation discovery or questions without an indexed contract target, use the host's native file and code search.",
     }
   );
 
@@ -371,14 +277,11 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
   server.registerTool(
     MCP_TOOLS.getWatchStatus,
     {
-      description: `Use when a tool response says freshness is stale or lexical search is unavailable, or when checking whether ${BRAND.displayName} indexing/watch coverage is current. Returns separate graph freshness and lexical provider health details. Do not use for code relationship analysis.`,
-      inputSchema: {
-        refresh: z.boolean().optional().describe("Refresh lexical provider health instead of using the client cache.")
-      }
+      description: `Use when checking whether ${BRAND.displayName} indexing/watch coverage is current. Returns graph freshness, queue, and catch-up details. Do not use for code relationship analysis.`
     },
-    async ({ refresh }) => {
-      return wrapToolCall(MCP_TOOLS.getWatchStatus, { refresh }, async () => {
-        const status = await loadWorkspaceHealthStatus(client, catchUpState, { refresh });
+    async () => {
+      return wrapToolCall(MCP_TOOLS.getWatchStatus, {}, async () => {
+        const status = await loadWorkspaceHealthStatus(client, catchUpState);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(status, null, 2) }],
         };
@@ -485,28 +388,12 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
     }
   );
 
-  server.registerTool(
-    MCP_TOOLS.askQuestion,
-    {
-      description: `LAST RESORT broad retrieval. Use only when the user asks an exploratory natural-language question and no exact repository, contract, API/event/schema/RPC/GraphQL target, or symbol is known. Accuracy is lower than graph-specific tools. Do not use for dependency lists, contract discovery, contract tracing, or change impact; prefer ${MCP_TOOLS.listDependencies}, ${MCP_TOOLS.listContracts}, ${MCP_TOOLS.trace}, and ${MCP_TOOLS.impactAnalysis}.`,
-      inputSchema: ASK_QUESTION_INPUT_SCHEMA,
-    },
-    async (input) => {
-      return wrapToolCall(MCP_TOOLS.askQuestion, input, async () => {
-        const response = await handleAskQuestion(client, input);
-        return {
-          content: [{ type: "text" as const, text: JSON.stringify(response, null, 2) }],
-        };
-      });
-    }
-  );
-
   // Phase 4.1: Semantic trace over SEMANTIC_REL edges
   server.registerTool(
     MCP_TOOLS.trace,
     {
       description:
-        `Use FIRST when the user names a known API endpoint, event, schema/DTO, RPC, GraphQL operation, package, or other contract and wants producers, consumers, request/response/payload schemas, or cross-repo flow. Prefer \`target\` natural identifiers; call ${MCP_TOOLS.listContracts} first if the exact target is unknown. Do not use ${MCP_TOOLS.askQuestion} for known contracts.\n` +
+        `Use FIRST when the user names a known API endpoint, event, schema/DTO, RPC, GraphQL operation, package, or other contract and wants producers, consumers, request/response/payload schemas, or cross-repo flow. Prefer \`target\` natural identifiers; call ${MCP_TOOLS.listContracts} first if the exact target is unknown.\n` +
         "Modes:\n" +
         "  - target: natural identifier, for example \"http POST /orders\", \"event OrderCreated\", \"schema CreateOrderRequest\", \"grpc OrderService/CreateOrder\", \"dubbo com.acme.OrderService#createOrder\", \"graphql Mutation.createOrder\". Multi-hop trace returning the connected subgraph.\n" +
         "  - specId: internal ContractSpec ID only when already present in previous tool output. Single-hop trace of direct edges.\n" +
@@ -554,7 +441,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
           if (!specId) {
             throw new Error(
               "Provide either `target` (natural identifier) or `specId`. " +
-              `For contract discovery, use ${MCP_TOOLS.listContracts}. Use ${MCP_TOOLS.askQuestion} only as a last resort for broad exploratory questions.`
+              `For contract discovery, use ${MCP_TOOLS.listContracts}; use the host's native file search for broad source-code exploration.`
             );
           }
           const result = await client.semanticTrace(specId, {
@@ -683,7 +570,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
             role: "user",
             content: {
               type: "text",
-              text: `You are performing a change impact assessment for '${target}'. Use the '${MCP_TOOLS.impactAnalysis}' tool to retrieve seeds, calls, and documents, then write a structured report outlining:\n1. The blast radius (which repositories/files/symbols are affected).\n2. Integration risks (which contracts are broken or consumer systems impacted).\n3. Recommended migration or upgrade steps.`,
+              text: `You are performing a change impact assessment for '${target}'. Use the '${MCP_TOOLS.impactAnalysis}' tool to obtain seeds, calls, and documents, then write a structured report outlining:\n1. The blast radius (which repositories/files/symbols are affected).\n2. Integration risks (which contracts are broken or consumer systems impacted).\n3. Recommended migration or upgrade steps.`,
             },
           },
         ],
@@ -708,7 +595,7 @@ export async function runMcpServer(cwd = process.cwd()): Promise<void> {
             role: "user",
             content: {
               type: "text",
-              text: `Identify all cross-repository workflows and actions involving the domain entity '${entity}'. First use '${MCP_TOOLS.listContracts}' to discover relevant contracts, events, APIs, schemas, RPCs, and GraphQL operations. Use '${MCP_TOOLS.listDependencies}' if repository-level producer/consumer relationships are needed. Then use '${MCP_TOOLS.trace}' with specific contract identifiers (e.g. "event OrderCreated", "http POST /orders") to trace the full semantic dependency chain. Use '${MCP_TOOLS.askQuestion}' only as a last resort if the structured tools do not reveal a usable target. Construct a detailed sequential description showing how services consume and produce events/APIs related to this entity.`,
+              text: `Identify all cross-repository workflows and actions involving the domain entity '${entity}'. First use '${MCP_TOOLS.listContracts}' to discover relevant contracts, events, APIs, schemas, RPCs, and GraphQL operations. Use '${MCP_TOOLS.listDependencies}' if repository-level producer/consumer relationships are needed. Then use '${MCP_TOOLS.trace}' with specific contract identifiers (e.g. "event OrderCreated", "http POST /orders") to trace the full semantic dependency chain. If the structured tools do not reveal a usable target, use the host's native file search to find a concrete contract identifier and return to ${BRAND.displayName} for tracing. Construct a detailed sequential description showing how services consume and produce events/APIs related to this entity.`,
             },
           },
         ],

@@ -27,7 +27,6 @@ export function getBrandedPermissions(): string[] {
     'list_contracts',
     'trace',
     'impact_analysis',
-    'ask_question',
   ].map((name) => brandedMcpPermission(brandedMcpToolName(name)));
 }
 

@@ -79,7 +79,7 @@ export type ContractTraceRow = {
   filePath: string;
   /** The 1-based line number of the reference */
   line: number;
-  /** The evidence identity used by the lexical contract projection. */
+  /** The stable identity of the supporting contract evidence. */
   evidenceId: string;
   /** The raw code or text snippet matching the contract reference */
   raw: string;
@@ -167,8 +167,6 @@ export type ActiveSemanticGraph = {
   relations: SemanticRelationEdge[];
 };
 
-export type RepoScopedPath = Readonly<{ repoId: string; path: string }>;
-
 export type CountedQueryResult<Row> = Readonly<{
   rows: Row[];
   queryCount: number;
@@ -219,96 +217,6 @@ export function entityTraceRowKey(row: EntityTraceRow): string {
     row.entityId, row.repoName, row.sourceKind, row.sourceId ?? "", row.name,
     row.filePath, row.line, row.role, row.evidenceId ?? "", row.evidence
   ]);
-}
-
-export async function searchCode(db: GraphDB, snapshot: PublicGraphReadSnapshot, term: string, limit = 20): Promise<CodeSearchRow[]> {
-  const lowered = term.toLowerCase();
-  return db.query<CodeSearchRow>(
-    `MATCH (r:Repo)-[rf:CONTAINS]->(f:File)-[fc:CONTAINS]->(c:Code)
-     WHERE (lower(c.name) CONTAINS $term OR lower(c.qualifiedName) CONTAINS $term OR lower(c.summary) CONTAINS $term OR lower(f.path) CONTAINS $term)
-       AND ${publicGraphGenerationPredicate("r", "rf", "f", "fc", "c")}
-       AND ${publicGraphActivePredicate("f", "c")}
-     RETURN r.name AS repoName, f.path AS filePath, c.id AS codeId, c.kind AS kind, c.name AS name, c.qualifiedName AS qualifiedName, c.summary AS summary, c.signature AS signature
-     LIMIT ${limit};`,
-    withPublicGraphSnapshotParams(snapshot, { term: lowered })
-  );
-}
-
-export async function searchSections(db: GraphDB, snapshot: PublicGraphReadSnapshot, term: string, limit = 20): Promise<SectionSearchRow[]> {
-  const lowered = term.toLowerCase();
-  return db.query<SectionSearchRow>(
-    `MATCH (r:Repo)-[rf:CONTAINS]->(f:File)-[fs:CONTAINS]->(s:Section)
-     WHERE (lower(s.heading) CONTAINS $term OR lower(s.summary) CONTAINS $term OR lower(s.text) CONTAINS $term OR lower(f.path) CONTAINS $term)
-       AND ${publicGraphGenerationPredicate("r", "rf", "f", "fs", "s")}
-       AND ${publicGraphActivePredicate("f", "s")}
-     RETURN r.name AS repoName, f.path AS filePath, s.id AS sectionId, s.heading AS heading, s.level AS level, s.startLine AS startLine, s.endLine AS endLine, s.summary AS summary, s.text AS text
-     LIMIT ${limit};`,
-    withPublicGraphSnapshotParams(snapshot, { term: lowered })
-  );
-}
-
-export async function findExactCode(
-  db: GraphDB,
-  snapshot: PublicGraphReadSnapshot,
-  input: { identifiers: readonly string[]; paths: readonly string[]; scopedPaths?: readonly RepoScopedPath[]; limit: number }
-): Promise<CodeSearchRow[]> {
-  if (input.limit < 1 || (input.identifiers.length === 0 && input.paths.length === 0 && !input.scopedPaths?.length)) return [];
-  const conditions: string[] = [];
-  const params: Record<string, GraphValue> = {};
-  if (input.identifiers.length > 0) {
-    conditions.push("(c.id IN $identifiers OR c.name IN $identifiers OR c.qualifiedName IN $identifiers)");
-    params.identifiers = [...input.identifiers];
-  }
-  if (input.paths.length > 0) {
-    conditions.push("f.path IN $paths");
-    params.paths = [...input.paths];
-  }
-  for (const [index, target] of (input.scopedPaths ?? []).entries()) {
-    conditions.push(`(r.id = $scopedRepo${index} AND f.path = $scopedPath${index})`);
-    params[`scopedRepo${index}`] = target.repoId;
-    params[`scopedPath${index}`] = target.path;
-  }
-  return db.query<CodeSearchRow>(
-    `MATCH (r:Repo)-[rf:CONTAINS]->(f:File)-[fc:CONTAINS]->(c:Code)
-     WHERE (${conditions.join(" OR ")})
-       AND ${publicGraphGenerationPredicate("r", "rf", "f", "fc", "c")}
-       AND ${publicGraphActivePredicate("f", "c")}
-     RETURN r.name AS repoName, f.path AS filePath, c.id AS codeId, c.kind AS kind, c.name AS name, c.qualifiedName AS qualifiedName, c.summary AS summary, c.signature AS signature
-     ORDER BY r.name, f.path, c.qualifiedName, c.id
-     LIMIT ${input.limit};`,
-    withPublicGraphSnapshotParams(snapshot, params)
-  );
-}
-
-export async function findSectionsAtExactPaths(
-  db: GraphDB,
-  snapshot: PublicGraphReadSnapshot,
-  paths: readonly string[],
-  limit: number,
-  scopedPaths: readonly RepoScopedPath[] = []
-): Promise<SectionSearchRow[]> {
-  if (limit < 1 || (paths.length === 0 && scopedPaths.length === 0)) return [];
-  const conditions: string[] = [];
-  const params: Record<string, GraphValue> = {};
-  if (paths.length > 0) {
-    conditions.push("f.path IN $paths");
-    params.paths = [...paths];
-  }
-  for (const [index, target] of scopedPaths.entries()) {
-    conditions.push(`(r.id = $scopedRepo${index} AND f.path = $scopedPath${index})`);
-    params[`scopedRepo${index}`] = target.repoId;
-    params[`scopedPath${index}`] = target.path;
-  }
-  return db.query<SectionSearchRow>(
-    `MATCH (r:Repo)-[rf:CONTAINS]->(f:File)-[fs:CONTAINS]->(s:Section)
-     WHERE (${conditions.join(" OR ")})
-       AND ${publicGraphGenerationPredicate("r", "rf", "f", "fs", "s")}
-       AND ${publicGraphActivePredicate("f", "s")}
-     RETURN r.name AS repoName, f.path AS filePath, s.id AS sectionId, s.heading AS heading, s.level AS level, s.startLine AS startLine, s.endLine AS endLine, s.summary AS summary, s.text AS text
-     ORDER BY r.name, f.path, s.startLine, s.id
-     LIMIT ${limit};`,
-    withPublicGraphSnapshotParams(snapshot, params)
-  );
 }
 
 export async function findImpactSections(db: GraphDB, snapshot: PublicGraphReadSnapshot, term: string, limit = 50): Promise<SectionSearchRow[]> {

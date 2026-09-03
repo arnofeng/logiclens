@@ -3,7 +3,6 @@ import { Command, Option } from "commander";
 import { writeErrorLog } from "./shared/logger.js";
 import { addRepoCommand } from "./interfaces/cli/addRepo.js";
 import { addReposCommand } from "./interfaces/cli/addRepos.js";
-import { askCommand } from "./interfaces/cli/ask.js";
 import { contractsCommand } from "./interfaces/cli/contracts.js";
 import { depsCommand, type DepsCommandOptions } from "./interfaces/cli/deps.js";
 import { explainDepsCommand } from "./interfaces/cli/explainDeps.js";
@@ -31,7 +30,7 @@ const configDisplayPath = `${BRAND.configDirName}/${BRAND.configFileName}`;
 program.name(BRAND.cliName).description(`${BRAND.displayName} cross-repository semantic dependency graph CLI`).version(appVersion);
 
 program.command("init").description(`Create ${BRAND.configDirName} config and graph directories`).action(() => initCommand());
-program.command("uninit").description(`Remove ${BRAND.configDirName} config, graph, and semantic-index, and stop running MCP server`).action(() => uninitCommand());
+program.command("uninit").description(`Remove ${BRAND.configDirName} config and graph, and stop running MCP server`).action(() => uninitCommand());
 program.command("add-repo").argument("<path>").option("--name <name>").description(`Add a repository to ${configDisplayPath}`).action((repoPath: string, options: { name?: string }) => addRepoCommand(repoPath, options));
 program.command("add-repos").argument("<directory>").option("--index", "Index discovered repositories after adding them").option("--changed-only").option("--max-files <number>", "Maximum files to index per repository", (value) => Number(value)).option("--batch-size <number>", "Number of repositories to index per batch for large full imports", (value) => Number(value)).option("--write-mode <mode>", "Graph write mode: auto, merge, bulk, or bulk-upsert", "auto").description(`Add first-level Git repositories from a directory to ${configDisplayPath}`).action((directory: string, options: { index?: boolean; changedOnly?: boolean; maxFiles?: number; batchSize?: number; writeMode?: "auto" | "merge" | "bulk" | "bulk-upsert" }) => addReposCommand(directory, options));
 program.command("index").option("--repo <name>").option("--changed-only").option("--max-files <number>", "Maximum files to index", (value) => Number(value)).option("--batch-size <number>", "Number of repositories to index per batch for large full imports", (value) => Number(value)).option("--write-mode <mode>", "Graph write mode: auto, merge, bulk, or bulk-upsert", "auto").description("Index configured repositories").action((options: { repo?: string; changedOnly?: boolean; maxFiles?: number; batchSize?: number; writeMode?: "auto" | "merge" | "bulk" | "bulk-upsert" }) => indexCommand(options));
@@ -70,7 +69,6 @@ program
   .action((target: string, rest: string[], options: { maxHops?: number; direction?: string; json?: boolean }) =>
     traceCommand(target, rest, { maxHops: options.maxHops, direction: options.direction as any, json: options.json })
   );
-program.command("ask").argument("<question>").description("Answer a natural-language question from the graph").action((question: string) => askCommand(question));
 program.command("impact")
   .argument("<symbolOrEntity>")
   .option("--change <change>", "Proposed change, e.g. \"field-removed:couponCode\"")
