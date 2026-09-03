@@ -9,7 +9,6 @@ describe("legacy schema source/artifact scan contract", () => {
     expect(source).toContain("suffix-only-discovery");
     expect(source).toContain("pending-schema-relation");
     expect(source).toContain("deprecated-extractor-types");
-    expect(source).toContain("legacy-lexical-backfill");
     expect(source).toContain("Production artifact scan requires a completed build");
     expect(source).not.toMatch(/writeFile|appendFile/u);
   });

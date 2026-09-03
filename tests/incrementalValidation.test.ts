@@ -119,10 +119,7 @@ function mutationSet(facts: GraphFactsBatch): IncrementalIndexMutationSet {
       }
     },
     schema: emptySchemaMutation(),
-    lexical: { upsertDocuments: [], deleteDocumentIds: [] },
-    summaries: { kind: "none" },
-    reconcileLexicalRepos: false,
-    lexicalProjectionDurationMs: 0
+    summaries: { kind: "none" }
   };
   return {
     workspaceId: WORKSPACE_ID,
@@ -160,9 +157,7 @@ function emptySchemaMutation() {
     sourceFactReplacements: [],
     behaviorFingerprintReplacements: [],
     contributionReplacements: [],
-    visibilityChanges: [],
-    upsertLexicalDocuments: [],
-    deleteLexicalDocumentIds: []
+    visibilityChanges: []
   };
 }
 

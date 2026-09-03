@@ -488,20 +488,14 @@ describe("schema generation and incremental revision lifecycle", () => {
     }
   });
 
-  it("rejects old or incomplete revision state for changed-only and watch", async () => {
+  it("rejects old schema state for changed-only and watch", async () => {
     const { db, generations } = await store();
     try {
       await beginInitial(generations, "generation:version");
       await generations.commitFull("generation:version");
       await db.query("MATCH (s:SchemaGenerationState) SET s.schemaIndexVersion=$version;", { version: "3" });
-      await expect(generations.assertIncrementalCompatible("changed-only")).rejects.toThrow(/clean generated graph\/internal\/lexical artifacts/u);
-      await expect(generations.assertIncrementalCompatible("watch")).rejects.toThrow(/clean generated graph\/internal\/lexical artifacts/u);
-      await db.query(
-        "MATCH (s:SchemaGenerationState) SET s.schemaIndexVersion=$schemaVersion, s.lexicalProjectionVersion=$lexicalVersion;",
-        { schemaVersion: SCHEMA_INDEX_VERSION, lexicalVersion: "1" }
-      );
-      await expect(generations.assertIncrementalCompatible("changed-only")).rejects.toThrow(/Lexical projection version 1/u);
-      await expect(generations.assertIncrementalCompatible("watch")).rejects.toThrow(/clean generated graph\/internal\/lexical artifacts/u);
+      await expect(generations.assertIncrementalCompatible("changed-only")).rejects.toThrow(/remove the configured Kuzu graph directory/iu);
+      await expect(generations.assertIncrementalCompatible("watch")).rejects.toThrow(/fresh RepoHelix Neo4j database/iu);
     } finally {
       await db.close();
     }

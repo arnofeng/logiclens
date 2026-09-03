@@ -26,8 +26,7 @@ const fakeDb = { close: vi.fn() } as unknown as GraphDB;
 
 function registration(factory?: GraphDBFactory): GraphProviderRegistration {
   return {
-    factory: factory ?? { open: vi.fn().mockResolvedValue(fakeDb) },
-    capabilities: {}
+    factory: factory ?? { open: vi.fn().mockResolvedValue(fakeDb) }
   };
 }
 
@@ -64,26 +63,6 @@ describe("graph provider registry", () => {
     expect(() => registerGraphProvider("duplicate", registration())).toThrow(
       "Graph provider already registered: duplicate"
     );
-  });
-
-  it("rejects capability and binder mismatches", async () => {
-    const { registerGraphProvider } = await loadFactory();
-    const nativeFullText = {
-      scope: "workspace" as const,
-      updateConsistency: "transactional" as const,
-      supportsFieldBoost: false,
-      supportsPrefix: false
-    };
-
-    expect(() => registerGraphProvider("capability-only", {
-      ...registration(),
-      capabilities: { nativeFullText }
-    })).toThrow(/nativeFullText capability and bindLexical must be provided together/);
-
-    expect(() => registerGraphProvider("binder-only", {
-      ...registration(),
-      bindLexical: vi.fn()
-    })).toThrow(/nativeFullText capability and bindLexical must be provided together/);
   });
 
   it("returns registrations through the asynchronous resolver", async () => {
@@ -126,8 +105,7 @@ describe("graph provider registry", () => {
     const { getGraphProviderRegistration } = await loadFactory();
     const resolved = await getGraphProviderRegistration("kuzu");
 
-    expect(resolved.capabilities.nativeFullText).toMatchObject({ scope: "workspace" });
-    expect(resolved.bindLexical).toBeTypeOf("function");
+    expect(resolved.factory.open).toBeTypeOf("function");
     expect(adapterState.kuzuLoads).toBe(loadsBefore.kuzu + 1);
     expect(adapterState.neo4jLoads).toBe(loadsBefore.neo4j);
   });
@@ -137,8 +115,7 @@ describe("graph provider registry", () => {
     const { getGraphProviderRegistration } = await loadFactory();
     const resolved = await getGraphProviderRegistration("neo4j");
 
-    expect(resolved.capabilities.nativeFullText).toMatchObject({ scope: "workspace" });
-    expect(resolved.bindLexical).toBeTypeOf("function");
+    expect(resolved.factory.open).toBeTypeOf("function");
     expect(adapterState.neo4jLoads).toBe(loadsBefore.neo4j + 1);
     expect(adapterState.kuzuLoads).toBe(loadsBefore.kuzu);
   });

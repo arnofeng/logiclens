@@ -5,13 +5,11 @@ import { describe, expect, it } from "vitest";
 import { KuzuGraphDB } from "../src/core/graph-model/db.js";
 import { auditContractQuality } from "../src/features/quality/qualityRules.js";
 import { traceContract } from "../src/core/graph-model/queries.js";
-import { retrieveForQuestion } from "../src/features/ask/retrieve.js";
-import { BRAND } from "../src/shared/branding.js";
 import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
 import { stageAndActivatePublicGraphGeneration } from "./helpers/publicGraphGeneration.js";
 
 describe("Quality Closed-Loop Test Suite", () => {
-  it("runs end-to-end contract quality audits, tracing, and retrieval", async () => {
+  it("runs end-to-end contract quality audits and tracing", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-quality-closed-loop-"));
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
@@ -115,15 +113,6 @@ describe("Quality Closed-Loop Test Suite", () => {
       expect(traces.length).toBe(1);
       expect(traces[0]?.repoName).toBe("service-a");
       expect(traces[0]?.role).toBe("producer");
-
-      // --- VERIFY ASK RETRIEVAL TEST ---
-      const retrieval = await retrieveForQuestion(db, "Who calls /smart/backorder?", {
-        config: {
-          embedding: { level: "off", model: "test", apiKey: "", baseUrl: "" },
-          semantic: { provider: "json", jsonPath: `${BRAND.configDirName}/test-semantic-index.json` }
-        } as any
-      });
-      expect(retrieval.contracts.some(c => c.key === "/smart/backorder")).toBe(true);
 
     } finally {
       await db.close();

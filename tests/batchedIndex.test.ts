@@ -1,19 +1,16 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
-import { runIndexing } from "../src/core/indexing/run.js";
+import { describe, expect, it } from "vitest";
 import { defaultConfig } from "../src/config/loadConfig.js";
 import type { AppConfig } from "../src/config/schema.js";
 import { KuzuGraphDB } from "../src/core/graph-model/db.js";
 import { listContracts, listDependencies } from "../src/core/graph-model/queries.js";
-import { embeddingProviderRegistry } from "../src/core/registries/registry.js";
-import { KuzuWorkspaceLexicalStore, KUZU_WORKSPACE_FTS_INDEX } from "../src/adapters/graph-db/kuzu/KuzuWorkspaceLexicalStore.js";
-import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
-import { LEXICAL_PROJECTION_SCHEMA_VERSION, TOKENIZER_VERSION } from "../src/core/retrieval/types.js";
 import { pinPublicGraphReadSnapshot } from "../src/core/graph-model/readSnapshot.js";
+import { runIndexing } from "../src/core/indexing/run.js";
+import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
 
-const BATCHED_WORKSPACE_ID = deriveWorkspaceId(defaultConfig().systemName);
+const WORKSPACE_ID = deriveWorkspaceId(defaultConfig().systemName);
 
 function fixturePath(name: string): string {
   return path.resolve("tests/fixtures", name).replace(/\\/g, "/");
@@ -39,165 +36,64 @@ async function withDb<T>(fn: (db: KuzuGraphDB, cwd: string) => Promise<T>): Prom
   }
 }
 
-async function dependencyKeys(db: KuzuGraphDB): Promise<string[]> {
-  const snapshot = await pinPublicGraphReadSnapshot(db, BATCHED_WORKSPACE_ID);
-  const rows = await listDependencies(db, snapshot, { limit: 1000 });
-  return rows.map((row) => `${row.fromRepo}->${row.toRepo}:${row.dependencyType}:${row.contractKind}:${row.contractKey}:${row.filePath}:${row.line}:${row.rule}`).sort();
+async function graphSnapshot(db: KuzuGraphDB) {
+  const snapshot = await pinPublicGraphReadSnapshot(db, WORKSPACE_ID);
+  const [stats, dependencies, contracts] = await Promise.all([
+    db.stats(snapshot),
+    listDependencies(db, snapshot, { limit: 1000 }),
+    listContracts(db, snapshot, { limit: 1000 })
+  ]);
+  return {
+    stats: {
+      repos: stats.repos,
+      files: stats.files,
+      codeNodes: stats.codeNodes,
+      sectionNodes: stats.sectionNodes,
+      entities: stats.entities
+    },
+    dependencies: dependencies.map((row) => `${row.fromRepo}->${row.toRepo}:${row.dependencyType}:${row.contractKind}:${row.contractKey}:${row.filePath}:${row.line}:${row.rule}`).sort(),
+    contracts: contracts.map((row) => `${row.kind}:${row.key}:${row.producers}:${row.consumers}:${row.shared}`).sort()
+  };
 }
 
-async function contractKeys(db: KuzuGraphDB): Promise<string[]> {
-  const snapshot = await pinPublicGraphReadSnapshot(db, BATCHED_WORKSPACE_ID);
-  const rows = await listContracts(db, snapshot, { limit: 1000 });
-  return rows.map((row) => `${row.kind}:${row.key}:${row.producers}:${row.consumers}:${row.shared}`).sort();
-}
-
-async function lexicalSnapshot(db: KuzuGraphDB): Promise<string[]> {
-  const snapshot = await pinPublicGraphReadSnapshot(db, BATCHED_WORKSPACE_ID);
-  const rows = await db.query<{ documentId: string; canonicalId: string; sourceHash: string }>(
-    "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.active = true RETURN n.documentId AS documentId, n.canonicalId AS canonicalId, n.sourceHash AS sourceHash;",
-    snapshot
-  );
-  return rows.map((row) => `${row.documentId}|${row.canonicalId}|${row.sourceHash}`).sort();
-}
-
-async function activeStats(db: KuzuGraphDB) {
-  const snapshot = await pinPublicGraphReadSnapshot(db, BATCHED_WORKSPACE_ID);
-  return db.stats(snapshot);
-}
-
-describe("batched indexing", () => {
-  it("matches full bulk indexing for fixture repos when batchSize is set", async () => {
+describe("batched graph indexing", () => {
+  it("converges to the same graph as bulk indexing", async () => {
     const repos = ["service-a", "service-b", "service-c", "service-d"];
     const bulk = await withDb(async (db, cwd) => {
-      const result = await runIndexing(db, configFor(repos), { cwd, writeMode: "auto" });
-      return {
-        result,
-        stats: await activeStats(db),
-        dependencies: await dependencyKeys(db),
-        contracts: await contractKeys(db),
-        lexical: await lexicalSnapshot(db)
-      };
+      await runIndexing(db, configFor(repos), { cwd, writeMode: "auto" });
+      return graphSnapshot(db);
     });
-
     const batched = await withDb(async (db, cwd) => {
       const logs: string[] = [];
-      const commitVersions = vi.spyOn(KuzuWorkspaceLexicalStore.prototype, "commitVersions");
-      const ensureSchema = vi.spyOn(KuzuWorkspaceLexicalStore.prototype, "ensureSchema");
-      const config = configFor(repos, 2);
-      const result = await runIndexing(db, config, { cwd, writeMode: "auto", batchSize: 2, logger: { log: (message) => logs.push(message) } });
+      await runIndexing(db, configFor(repos, 2), {
+        cwd,
+        writeMode: "auto",
+        batchSize: 2,
+        logger: { log: (message) => logs.push(message) }
+      });
       expect(logs.some((message) => message.includes("Batched indexing: batches=2 batchSize=2"))).toBe(true);
-      for (const expected of [
-        "lexical projection start:",
-        "lexical projection complete: documents=",
-        "graph write start: writer=",
-        "lexical write start: documents=",
-        "lexical write complete: documents=",
-        "graph write complete: writer="
-      ]) {
-        expect(logs.some((message) => message.toLowerCase().includes(expected))).toBe(true);
-      }
-      expect(commitVersions).toHaveBeenCalledTimes(1);
-      expect(ensureSchema).toHaveBeenCalledTimes(1);
-      commitVersions.mockRestore();
-      ensureSchema.mockRestore();
-      const workspaceId = deriveWorkspaceId(config.systemName);
-      const snapshot = await pinPublicGraphReadSnapshot(db, workspaceId);
-      const hits = await new KuzuWorkspaceLexicalStore(db).search({
-        workspaceId,
-        generation: snapshot.generation,
-        text: "order inventory"
-      }, { topK: 30 });
-      const indexes = await db.query<{ index_name: string }>("CALL SHOW_INDEXES() WHERE table_name = 'LexicalDocument' RETURN index_name;");
-      const stateCounts = await db.query<{ lexicalDocumentCount: number; projectionVersion: string; tokenizerVersion: string; lexicalIndexStatus: string }>(
-        "MATCH (s:IndexState) RETURN s.lexicalDocumentCount AS lexicalDocumentCount, s.lexicalProjectionSchemaVersion AS projectionVersion, s.lexicalTokenizerVersion AS tokenizerVersion, s.lexicalIndexStatus AS lexicalIndexStatus;"
-      );
-      return {
-        result,
-        stats: await db.stats(snapshot),
-        dependencies: await dependencyKeys(db),
-        contracts: await contractKeys(db),
-        lexical: await lexicalSnapshot(db),
-        hitRepos: new Set(hits.map((hit) => hit.repoId)).size,
-        indexes,
-        stateCounts
-      };
+      expect(logs.some((message) => message.toLowerCase().includes("graph write start:"))).toBe(true);
+      expect(logs.some((message) => message.toLowerCase().includes("graph write complete:"))).toBe(true);
+      return graphSnapshot(db);
     });
 
-    expect({
-      repos: batched.stats.repos,
-      files: batched.stats.files,
-      codeNodes: batched.stats.codeNodes,
-      sectionNodes: batched.stats.sectionNodes,
-      entities: batched.stats.entities
-    }).toEqual({
-      repos: bulk.stats.repos,
-      files: bulk.stats.files,
-      codeNodes: bulk.stats.codeNodes,
-      sectionNodes: bulk.stats.sectionNodes,
-      entities: bulk.stats.entities
-    });
-    expect(batched.dependencies).toEqual(bulk.dependencies);
-    expect(batched.contracts).toEqual(bulk.contracts);
-    expect(batched.lexical).toEqual(bulk.lexical);
-    expect(batched.result.lexicalDocumentCount).toBe(bulk.result.lexicalDocumentCount);
-    expect(batched.result.lexicalProjectionDurationMs).toBeGreaterThanOrEqual(0);
-    expect(batched.result.lexicalWriteDurationMs).toBeGreaterThanOrEqual(0);
-    expect(batched.hitRepos).toBeGreaterThan(1);
-    expect(batched.indexes).toEqual([{ index_name: KUZU_WORKSPACE_FTS_INDEX }]);
-    expect(batched.stateCounts.every((state) => state.lexicalDocumentCount === batched.result.lexicalDocumentCount)).toBe(true);
-    expect(batched.stateCounts.every((state) =>
-      state.projectionVersion === LEXICAL_PROJECTION_SCHEMA_VERSION &&
-      state.tokenizerVersion === TOKENIZER_VERSION &&
-      state.lexicalIndexStatus === "healthy"
-    )).toBe(true);
+    expect(batched).toEqual(bulk);
   }, 30000);
 
-  it("can rerun after a partial batched import without duplicating repo containment", async () => {
+  it("reruns after a partial batched import without duplicating containment", async () => {
     await withDb(async (db, cwd) => {
       await runIndexing(db, configFor(["service-a"], 1), { cwd, writeMode: "auto", batchSize: 1 });
       await runIndexing(db, configFor(["service-a", "service-b"], 1), { cwd, writeMode: "auto", batchSize: 1 });
 
-      const stats = await activeStats(db);
-      expect(stats.repos).toBe(2);
-      expect(stats.files).toBeGreaterThan(0);
-
-      const snapshot = await pinPublicGraphReadSnapshot(db, BATCHED_WORKSPACE_ID);
-      const systemContains = await db.query<{ count: number }>(
+      const snapshot = await pinPublicGraphReadSnapshot(db, WORKSPACE_ID);
+      const contains = await db.query<{ count: number }>(
         "MATCH (s:System)-[r:CONTAINS]->(repo:Repo) WHERE s.workspaceId = $workspaceId AND s.generation = $generation AND r.workspaceId = $workspaceId AND r.generation = $generation AND repo.workspaceId = $workspaceId AND repo.generation = $generation RETURN count(r) AS count;",
         snapshot
       );
-      expect(Number(systemContains[0]?.count ?? 0)).toBe(2);
-      expect(await dependencyKeys(db)).toEqual(expect.arrayContaining([
+      expect(Number(contains[0]?.count ?? 0)).toBe(2);
+      expect((await graphSnapshot(db)).dependencies).toEqual(expect.arrayContaining([
         expect.stringContaining("service-b->service-a:api:")
       ]));
-    });
-  }, 30000);
-
-  it("records semantic index fallback warnings in index state", async () => {
-    await withDb(async (db, cwd) => {
-      embeddingProviderRegistry.register({
-        name: "test-fallback",
-        async embedTexts(texts) { return texts.map(() => undefined); },
-        async embedText() { return undefined; }
-      });
-
-      const config = configFor(["service-a"]);
-      config.embedding = { ...config.embedding, provider: "test-fallback", level: "file" };
-      config.semantic = {
-        ...config.semantic,
-        provider: "chroma",
-        chroma: { ...config.semantic.chroma, url: "http://127.0.0.1:1" }
-      };
-
-      await runIndexing(db, config, { cwd, writeMode: "merge" });
-
-      const rows = await db.query<{ status: string; error: string }>(
-        "MATCH (s:IndexState) WHERE s.repoName = $repoName RETURN s.status AS status, s.error AS error;",
-        { repoName: "service-a" }
-      );
-      expect(rows[0]?.status).toBe("succeeded");
-      expect(rows[0]?.error).toContain("Semantic index used fallback storage");
-      expect(rows[0]?.error).toContain("records:");
     });
   }, 30000);
 });

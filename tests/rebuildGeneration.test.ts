@@ -3,7 +3,6 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { KuzuGraphDB } from "../src/adapters/graph-db/kuzu/KuzuGraphDB.js";
-import { KuzuWorkspaceLexicalStore } from "../src/adapters/graph-db/kuzu/KuzuWorkspaceLexicalStore.js";
 import type { PublicGraphGenerationScope } from "../src/core/graph-model/publicGraphGeneration.js";
 import { runGenerationSafeRelationRebuild } from "../src/core/graph-model/rebuildGeneration.js";
 import type { RepoDependencyEdge, RepoNode } from "../src/core/parsing/types.js";
@@ -16,7 +15,6 @@ const PARENT_GENERATION = "generation:relation-rebuild-parent";
 type Fixture = {
   directory: string;
   db: KuzuGraphDB;
-  lexicalStore: KuzuWorkspaceLexicalStore;
   generations: SchemaGenerationStore;
   parentScope: PublicGraphGenerationScope;
   consumer: RepoNode;
@@ -62,8 +60,6 @@ async function openFixture(): Promise<Fixture> {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-rebuild-generation-"));
   const db = await KuzuGraphDB.open(path.join(directory, "graph.kuzu"));
   await db.initSchema("relation-rebuild-generation");
-  const lexicalStore = new KuzuWorkspaceLexicalStore(db);
-  await lexicalStore.ensureSchema();
   const generations = new SchemaGenerationStore(db, WORKSPACE_ID);
   const parentScope = { workspaceId: WORKSPACE_ID, generation: PARENT_GENERATION };
   const consumer = repo("consumer");
@@ -76,7 +72,6 @@ async function openFixture(): Promise<Fixture> {
     expectedActiveGeneration: null,
     expectedActiveRevision: null
   });
-  await lexicalStore.initializeGeneration(parentScope);
   await db.upsertRepo(consumer, parentScope);
   await db.upsertRepo(producer, parentScope);
   await db.addRepoDependency(original, parentScope);
@@ -100,7 +95,6 @@ async function openFixture(): Promise<Fixture> {
   const fixture = {
     directory,
     db,
-    lexicalStore,
     generations,
     parentScope,
     consumer,
@@ -152,7 +146,6 @@ describe("generation-safe relation rebuild", () => {
 
     await expect(runGenerationSafeRelationRebuild({
       db: fixture.db,
-      lexicalStore: fixture.lexicalStore,
       workspaceId: WORKSPACE_ID
     }, async (scope) => {
       callbackGeneration = scope.generation;
@@ -179,11 +172,9 @@ describe("generation-safe relation rebuild", () => {
     const fixture = await openFixture();
     const replacement = dependency(fixture.consumer, fixture.producer, "new");
     const originalRevision = await fixture.generations.activeRevision();
-    const lexicalBefore = await fixture.lexicalStore.health(fixture.parentScope);
 
     const rebuilt = await runGenerationSafeRelationRebuild({
       db: fixture.db,
-      lexicalStore: fixture.lexicalStore,
       workspaceId: WORKSPACE_ID
     }, async (scope) => {
       await fixture.db.clearRepoDependencies(undefined, scope);
@@ -206,29 +197,20 @@ describe("generation-safe relation rebuild", () => {
     )).toEqual([
       expect.objectContaining({ id: "declaration:consumer:model" })
     ]);
-    expect((await fixture.lexicalStore.health({
-      workspaceId: WORKSPACE_ID,
-      generation: activeGeneration!
-    })).metrics).toEqual(lexicalBefore.metrics);
   }, 30_000);
 
-  it("does not initialize or garbage-collect a physical generation for an incremental rebuild", async () => {
+  it("does not garbage-collect a physical generation for an incremental rebuild", async () => {
     const fixture = await openFixture();
     const graphDelete = vi.spyOn(fixture.db, "deletePublicGraphGeneration");
-    const lexicalInitialize = vi.spyOn(fixture.lexicalStore, "initializeGeneration");
-    const lexicalDelete = vi.spyOn(fixture.lexicalStore, "deleteGeneration");
     const originalRevision = await fixture.generations.activeRevision();
 
     await expect(runGenerationSafeRelationRebuild({
       db: fixture.db,
-      lexicalStore: fixture.lexicalStore,
       workspaceId: WORKSPACE_ID
     }, async () => [])).resolves.toEqual([]);
 
     expect(await fixture.generations.activeGeneration()).toBe(PARENT_GENERATION);
     expect(await fixture.generations.activeRevision()).not.toBe(originalRevision);
     expect(graphDelete).not.toHaveBeenCalled();
-    expect(lexicalInitialize).not.toHaveBeenCalled();
-    expect(lexicalDelete).not.toHaveBeenCalled();
   }, 30_000);
 });

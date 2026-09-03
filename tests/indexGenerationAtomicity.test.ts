@@ -40,7 +40,7 @@ async function activeNodeIds(
 }
 
 describe("index generation atomicity", () => {
-  it("rolls back graph, internal, and lexical state when final validation fails", async () => {
+  it("rolls back graph and internal state when final validation fails", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-generation-atomicity-"));
     directories.push(directory);
     const repoPath = path.join(directory, "repo");
@@ -182,7 +182,6 @@ describe("index generation atomicity", () => {
         .filter((spec) => spec.specKind === "schema")
         .map((spec) => spec.id));
       expect(activeSchemaIds).toHaveLength(2);
-      expect(oneRoot.lexical.filter((document) => activeSchemaIds.has(document.canonicalId))).toHaveLength(2);
       expect(await activeNodeIds(db, workspaceId, "Contract", [...initialSchemaContractIds])).toHaveLength(2);
       expect(await activeNodeIds(db, workspaceId, "Evidence", [...initialSchemaEvidenceIds])).toHaveLength(2);
       expect(await activeNodeIds(db, workspaceId, "Entity", [...initialSchemaEntityIds])).toHaveLength(2);
@@ -193,7 +192,6 @@ describe("index generation atomicity", () => {
       await runIndexing(db, config, { cwd: directory, writeMode: "auto", changedOnly: true });
       const noRoots = await captureSchemaBaselineSnapshot(db, workspaceId);
       expect(noRoots.publicGraph.contractSpecs.filter((spec) => spec.specKind === "schema")).toHaveLength(0);
-      expect(noRoots.lexical.filter((document) => document.kind === "contractSpec")).toHaveLength(0);
       expect(await activeNodeIds(db, workspaceId, "Contract", [...initialSchemaContractIds])).toHaveLength(0);
       expect(await activeNodeIds(db, workspaceId, "Evidence", [...initialSchemaEvidenceIds])).toHaveLength(0);
       expect(noRoots.internalIndex.declarations.items).toHaveLength(2);

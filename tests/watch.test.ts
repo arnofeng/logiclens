@@ -1,8 +1,6 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { shouldWatchRepo, shouldEnableWatcher, __resetWslCacheForTests } from "../src/features/watch/policy.js";
 import { FileMatcher, FileWatcher, WatchRepoIndex, planRecursiveWatchRoots } from "../src/features/watch/watcher.js";
@@ -12,8 +10,6 @@ import { SingleProcessIndexQueue } from "../src/core/indexing/scheduler.js";
 import { BRAND, BRAND_PATHS } from "../src/shared/branding.js";
 import { parserRegistry } from "../src/core/registries/registry.js";
 import { PLUGIN_API_VERSION } from "@repohelix/plugin-sdk";
-
-const execFileAsync = promisify(execFile);
 
 async function makeTempWorkspace(): Promise<string> {
   return await fs.mkdtemp(path.join(os.tmpdir(), "test-watch-test-"));
@@ -195,26 +191,6 @@ describe(`${BRAND.displayName} File Watcher Subsystem`, () => {
   });
 
   describe("FileWatcher Instance Integration", () => {
-    it("propagates create, modify, rename, delete, and paused-repo isolation into lexical search", async () => {
-      const cwd = await makeTempWorkspace();
-      try {
-        const { stdout } = await execFileAsync(process.execPath, [
-          path.resolve("node_modules/tsx/dist/cli.mjs"),
-          path.resolve("tests/helpers/watchLexicalScenario.ts"),
-          cwd
-        ], {
-          cwd: path.resolve("."),
-          env: { ...process.env, REPOHELIX_KUZU_CLOSE_MODE: "managed" },
-          timeout: 60000
-        });
-        expect(stdout).toContain("watch lexical scenario passed");
-      } finally {
-        // The child process owns Kuzu. Its exit releases the managed native
-        // handle before this parent removes the complete temporary workspace.
-        await fs.rm(cwd, { recursive: true, force: true });
-      }
-    }, 70000);
-
     it("queues active plugin source create, modify, and delete events", async () => {
       const cwd = await makeTempWorkspace();
       const repoDir = path.join(cwd, "my-repo");

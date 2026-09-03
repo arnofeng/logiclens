@@ -8,7 +8,6 @@ import { scanAndParseRepo } from "../src/core/indexing/scanParse.js";
 import type { ParsedFile, RepoNode } from "../src/core/parsing/types.js";
 import type { SchemaSpec } from "../src/core/contracts/spec.js";
 import { canonicalSerialize } from "../src/core/schema/model.js";
-import { projectContractSpecDocuments } from "../src/core/retrieval/projection.js";
 import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
 import { repoId } from "../src/shared/path.js";
 
@@ -76,10 +75,6 @@ describe("JS-006..JS-008 Java deterministic schema discovery", () => {
     if (activityPage?.spec.shape.kind === "object") {
       expect(activityPage.spec.shape.fields.map((field) => field.serializedName)).toEqual(["values", "total"]);
     }
-    const lexical = projectContractSpecDocuments(facts, deriveWorkspaceId(config.systemName));
-    const activityPageDocument = lexical.find((document) => document.canonicalId === activityPage?.node.id);
-    expect(activityPageDocument?.searchableText).toContain("values");
-    expect(activityPageDocument?.searchableText).toContain("ActivityGoodsQueryVO");
     const activeSpecIds = new Set(facts.contractSpecs.map((node) => node.id));
     expect(facts.semanticRelations.every((relation) => activeSpecIds.has(relation.fromSpecId) && activeSpecIds.has(relation.toSpecId))).toBe(true);
     expect(facts.crossRepo.schemaInternalFacts.roots.length).toBeGreaterThan(0);

@@ -281,16 +281,12 @@ describe("JS-010..JS-012 deterministic Java framework schema discovery", () => {
       await runIndexing(cleanDb, config, { cwd: directory, writeMode: "auto" });
       const clean = await captureSchemaBaselineSnapshot(cleanDb, workspaceId);
       expect(incremental).toEqual(clean);
-      const activitySchemaIds = new Set(clean.publicGraph.contractSpecs
+      const activitySchemas = clean.publicGraph.contractSpecs
         .filter((spec) => spec.specKind === "schema"
           && typeof spec.specJson === "string"
           && spec.specJson.includes('"displayName":"Activity"'))
-        .map((spec) => spec.id));
-      const activityDocuments = clean.lexical.filter((document) => document.kind === "contractSpec"
-        && typeof document.canonicalId === "string"
-        && activitySchemaIds.has(document.canonicalId));
-      expect(activityDocuments).toHaveLength(1);
-      expect(activityDocuments[0]!.searchableText).toContain("revision");
+      expect(activitySchemas).toHaveLength(1);
+      expect(String(activitySchemas[0]!.specJson)).toContain("revision");
       const javaGrpc = clean.publicGraph.contractSpecs.find((spec) => spec.specKind === "grpc-method"
         && spec.framework === "grpc-java");
       const grpcDiagnostics = clean.internalIndex.diagnostics.items.filter((item) => typeof item.payload === "string"

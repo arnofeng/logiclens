@@ -9,7 +9,6 @@ import { analyzeImpact } from "../src/core/contracts/impact/impactEngine.js";
 import { javaSchemaExtractor } from "../src/core/contracts/extraction/builtin/javaSchemaExtractor.js";
 import { buildGraphFactsBatch } from "../src/core/graph-model/facts.js";
 import { KuzuGraphDB } from "../src/core/graph-model/db.js";
-import { KuzuWorkspaceLexicalStore } from "../src/adapters/graph-db/kuzu/KuzuWorkspaceLexicalStore.js";
 import { runIndexing } from "../src/core/indexing/run.js";
 import { scanAndParseRepo } from "../src/core/indexing/scanParse.js";
 import type { RepoNode } from "../src/core/parsing/types.js";
@@ -17,7 +16,6 @@ import { registerBuiltinParsers } from "../src/core/parsing/parserRegistry.js";
 import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
 import { normalizeName, repoId } from "../src/shared/path.js";
 import { assertNormalizedSchemaSnapshot, captureSchemaBaselineSnapshot, runSchemaSnapshotConformance } from "./helpers/schemaBaselineSnapshot.js";
-import { pinPublicGraphReadSnapshot } from "../src/core/graph-model/readSnapshot.js";
 
 type BaselineTarget = {
   currentCharacterization: {
@@ -105,7 +103,7 @@ function schemaNames(specs: Array<{ specKind: string; specJson: string }>): stri
 }
 
 describe("Java schema deterministic discovery lifecycle", () => {
-  it("closes the suffix/pending baseline through graph, impact, and lexical projection", async () => {
+  it("closes the suffix and pending baseline through graph and impact analysis", async () => {
     const target = JSON.parse(await fs.readFile(path.join(fixtureRoot, "baseline-target.json"), "utf8")) as BaselineTarget;
     const coverage = JSON.parse(await fs.readFile(path.join(fixtureRoot, "coverage-matrix.json"), "utf8")) as Record<string, string[]>;
     expect(Object.keys(coverage)).toHaveLength(13);
@@ -189,38 +187,9 @@ describe("Java schema deterministic discovery lifecycle", () => {
       const activeSpecIds = new Set(snapshot.publicGraph.contractSpecs.map((spec) => spec.id));
       expect(snapshot.publicGraph.semanticRelations.every((relation) => activeSpecIds.has(String(relation.fromSpecId)) && activeSpecIds.has(String(relation.toSpecId)))).toBe(true);
 
-      const activityCode = snapshot.lexical.filter((document) =>
-        document.kind === "code" && String(document.searchableText).includes("ActivityGoodsQueryVO")
-      );
-      const activityContractSpecs = snapshot.lexical.filter((document) =>
-        document.kind === "contractSpec" && String(document.searchableText).includes("ActivityGoodsQueryVO")
-      );
-      expect(activityCode.length).toBeGreaterThan(0);
-      expect(activityContractSpecs.length).toBeGreaterThan(0);
-      expect(snapshot.lexical.every((document) => typeof document.sourceHash === "string" && document.sourceHash.length > 0)).toBe(true);
-      const readSnapshot = await pinPublicGraphReadSnapshot(db, deriveWorkspaceId(config.systemName));
-      const activityHits = await new KuzuWorkspaceLexicalStore(db).search(
-        { workspaceId: readSnapshot.workspaceId, generation: readSnapshot.generation, text: "ActivityGoodsQueryVO" },
-        { topK: 50 }
-      );
-      expect(activityHits.some((hit) => hit.kind === "code" && activityCode.some((document) => document.canonicalId === hit.canonicalId))).toBe(true);
-      const documentsById = new Map(snapshot.lexical.map((document) => [document.id, document]));
-      const targetContractSpecHits = activityHits.filter((hit) => {
-        if (hit.kind !== "contractSpec") return false;
-        const document = documentsById.get(hit.documentId);
-        return document?.canonicalId === "ActivityGoodsQueryVO" ||
-          String(document?.searchableText ?? "").includes("ActivityGoodsQueryVO");
-      });
-      expect(targetContractSpecHits.length).toBeGreaterThan(0);
-      const lexicalKinds = new Set(snapshot.lexical.map((document) => document.kind));
-      expect(["code", "file", "contract", "contractSpec"].every((kind) => lexicalKinds.has(kind))).toBe(true);
-
       const schemaSpec = snapshot.publicGraph.contractSpecs.find((spec) => spec.specKind === "schema");
-      const schemaDocument = snapshot.lexical.find((document) => document.kind === "contractSpec" && document.canonicalId === schemaSpec?.id);
       expect(schemaSpec?.id).not.toContain(normalizeName(String(schemaSpec?.evidenceId)));
       expect(schemaSpec?.id).toMatch(/^spec:schema:[a-f0-9]{64}$/u);
-      expect(schemaDocument).toMatchObject({ canonicalId: schemaSpec?.id, active: true });
-      expect(String(schemaDocument?.id)).not.toBe(schemaSpec?.id);
     } finally {
       await db.close();
     }
@@ -276,7 +245,7 @@ describe("Java schema deterministic discovery lifecycle", () => {
     expect(reordered.snapshot).toEqual(automatic.snapshot);
   }, 120000);
 
-  it("keeps changed-only graph/internal/lexical output equal to a clean reindex after source replacement", async () => {
+  it("keeps changed-only graph and internal output equal to a clean reindex after source replacement", async () => {
     const workingCopy = await fs.mkdtemp(path.join(os.tmpdir(), "test-java-schema-changed-copy-"));
     temporaryDirectories.push(workingCopy);
     await fs.cp(fixtureRoot, workingCopy, { recursive: true });
@@ -297,10 +266,8 @@ describe("Java schema deterministic discovery lifecycle", () => {
         const clean = await captureSchemaBaselineSnapshot(cleanDb.db, workspaceId);
         assertNormalizedSchemaSnapshot(incremental);
         assertNormalizedSchemaSnapshot(clean);
-        // JS-003 replaces source-owned public and lexical facts atomically, so
-        // the JS-001 characterization divergence is intentionally eliminated.
+        // JS-003 replaces source-owned public and internal facts atomically.
         expect(incremental).toEqual(clean);
-        expect(clean.lexical.some((document) => document.active === false)).toBe(false);
       } finally {
         await cleanDb.db.close();
       }
@@ -340,7 +307,6 @@ describe("Java schema deterministic discovery lifecycle", () => {
       expect(logs.some((message) => message.includes("forcing a clean workspace rebuild"))).toBe(true);
       expect(rebuilt.publicGraph).toEqual(clean.publicGraph);
       expect(rebuilt.internalIndex).toEqual(clean.internalIndex);
-      expect(rebuilt.lexical).toEqual(clean.lexical);
     } finally {
       await db.close();
     }

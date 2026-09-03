@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { KuzuGraphDB } from "../src/core/graph-model/db.js";
 import { writeGraphFactsWithKuzuBulkUpsert } from "../src/core/graph-model/bulkWriter.js";
 import { buildGraphFactsBatch } from "../src/core/graph-model/facts.js";
-import { listCode, listDependencies, searchCode, traceContract } from "../src/core/graph-model/queries.js";
+import { findImpact, listCode, listDependencies, traceContract } from "../src/core/graph-model/queries.js";
 import { rejectEvidence } from "../src/features/quality/quality.js";
 import { rebuildRepoDependencies } from "../src/core/graph-model/rebuildRelations.js";
 import { upsertParsedFiles } from "../src/core/graph-model/upsert.js";
@@ -13,70 +13,59 @@ import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import { repoId } from "../src/shared/path.js";
 import { runIndexing } from "../src/core/indexing/run.js";
 import { defaultConfig } from "../src/config/loadConfig.js";
-import { KuzuWorkspaceLexicalStore } from "../src/adapters/graph-db/kuzu/KuzuWorkspaceLexicalStore.js";
 import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
 import { stageAndActivatePublicGraphGeneration } from "./helpers/publicGraphGeneration.js";
 import { pinPublicGraphReadSnapshot } from "../src/core/graph-model/readSnapshot.js";
 
 describe("maintenance lifecycle", () => {
-  it("keeps changed-only lexical content, rename, delete, empty-repo, and repo isolation conformant", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-lexical-maintenance-"));
+  it("keeps changed-only graph rename, delete, empty-repo, and repo isolation conformant", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-graph-maintenance-"));
     const repoAPath = path.join(dir, "service-a");
     const repoBPath = path.join(dir, "service-b");
     await fs.cp(path.resolve("tests/fixtures/service-a"), repoAPath, { recursive: true });
     await fs.cp(path.resolve("tests/fixtures/service-b"), repoBPath, { recursive: true });
     const db = await KuzuGraphDB.open(path.join(dir, "graph"));
     try {
-      await db.initSchema("lexical-maintenance-test");
+      await db.initSchema("graph-maintenance-test");
       const base = defaultConfig();
       const config = {
         ...base,
-        systemName: "lexical-maintenance-test",
+        systemName: "graph-maintenance-test",
         repos: [
           { name: "service-a", path: repoAPath.replace(/\\/g, "/") },
           { name: "service-b", path: repoBPath.replace(/\\/g, "/") }
         ]
       };
       const workspaceId = deriveWorkspaceId(config.systemName);
-      const store = new KuzuWorkspaceLexicalStore(db);
       await runIndexing(db, config, { cwd: dir, writeMode: "auto" });
       const initialSnapshot = await pinPublicGraphReadSnapshot(db, workspaceId);
-      const before = await db.query<{ id: string; canonicalId: string; kind: string; sourceHash: string }>(
-        "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.path = 'src/OrderService.ts' AND n.active = true RETURN n.documentId AS id, n.canonicalId AS canonicalId, n.kind AS kind, n.sourceHash AS sourceHash ORDER BY n.documentId;",
+      const before = await db.query<{ id: string; hash: string }>(
+        "MATCH (n:File) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.path = 'src/OrderService.ts' AND n.active = true RETURN n.id AS id, n.hash AS hash;",
         initialSnapshot
       );
       const repoBActive = (await db.query<{ count: number }>(
-        "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.repoId = $repoId AND n.active = true RETURN count(n) AS count;",
+        "MATCH (n:File) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.repoId = $repoId AND n.active = true RETURN count(n) AS count;",
         { ...initialSnapshot, repoId: repoId("service-b") }
       ))[0]?.count ?? 0;
 
       const originalPath = path.join(repoAPath, "src", "OrderService.ts");
       const originalSource = await fs.readFile(originalPath, "utf8");
-      await fs.writeFile(originalPath, originalSource.replace("export class OrderService", "/** lexicaldeleteproof */\nexport class OrderService"), "utf8");
+      await fs.writeFile(originalPath, originalSource.replace("export class OrderService", "/** graph-change-proof */\nexport class OrderService"), "utf8");
       await runIndexing(db, config, { cwd: dir, repo: "service-a", changedOnly: true, writeMode: "auto" });
       const modifiedSnapshot = await pinPublicGraphReadSnapshot(db, workspaceId);
-      const afterModify = await db.query<{ id: string; canonicalId: string; kind: string; sourceHash: string }>(
-        "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.path = 'src/OrderService.ts' AND n.active = true RETURN n.documentId AS id, n.canonicalId AS canonicalId, n.kind AS kind, n.sourceHash AS sourceHash ORDER BY n.documentId;",
+      const afterModify = await db.query<{ id: string; hash: string }>(
+        "MATCH (n:File) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.path = 'src/OrderService.ts' AND n.active = true RETURN n.id AS id, n.hash AS hash;",
         modifiedSnapshot
       );
-      const beforeFile = before.find((row) => row.kind === "file");
-      const afterFile = afterModify.find((row) => row.kind === "file");
-      expect(afterFile?.canonicalId).toBe(beforeFile?.canonicalId);
-      expect(afterFile?.id).toBe(beforeFile?.id);
-      expect(afterFile?.sourceHash).not.toBe(beforeFile?.sourceHash);
-      const markerDocuments = await db.query<{ id: string; title: string; searchableText: string }>(
-        "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.active = true AND n.searchableText CONTAINS 'lexical' RETURN n.documentId AS id, n.title AS title, n.searchableText AS searchableText;",
-        modifiedSnapshot
-      );
-      expect(markerDocuments).not.toEqual([]);
-      expect(await store.search({ ...modifiedSnapshot, text: "lexicaldeleteproof" }, { topK: 10 })).not.toHaveLength(0);
+      expect(afterModify[0]?.id).toBe(before[0]?.id);
+      expect(afterModify[0]?.hash).not.toBe(before[0]?.hash);
 
       const renamedPath = path.join(repoAPath, "src", "RenamedOrderService.ts");
       await fs.rename(originalPath, renamedPath);
       await runIndexing(db, config, { cwd: dir, repo: "service-a", changedOnly: true, writeMode: "auto" });
       const renamedSnapshot = await pinPublicGraphReadSnapshot(db, workspaceId);
       const renameStates = await db.query<{ path: string; active: boolean }>(
-        "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.path IN ['src/OrderService.ts', 'src/RenamedOrderService.ts'] RETURN n.path AS path, n.active AS active;",
+        "MATCH (n:File) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.path IN ['src/OrderService.ts', 'src/RenamedOrderService.ts'] RETURN n.path AS path, n.active AS active;",
         renamedSnapshot
       );
       expect(renameStates.filter((row) => row.path === "src/OrderService.ts").every((row) => !row.active)).toBe(true);
@@ -87,16 +76,10 @@ describe("maintenance lifecycle", () => {
       expect(deletion.filesChanged).toBe(0);
       const deletedSnapshot = await pinPublicGraphReadSnapshot(db, workspaceId);
       const activeDeletedRows = await db.query<{ id: string; fileId: string; path: string }>(
-        "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.path = 'src/RenamedOrderService.ts' AND n.active = true RETURN n.documentId AS id, n.fileId AS fileId, n.path AS path;",
+        "MATCH (n:File) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.path = 'src/RenamedOrderService.ts' AND n.active = true RETURN n.id AS id, n.path AS path;",
         deletedSnapshot
       );
       expect(activeDeletedRows).toEqual([]);
-      const activeMarkerRows = await db.query<{ id: string; path: string | null; kind: string }>(
-        "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.active = true AND n.searchableText CONTAINS 'lexicaldeleteproof' RETURN n.documentId AS id, n.path AS path, n.kind AS kind;",
-        deletedSnapshot
-      );
-      expect(activeMarkerRows).toEqual([]);
-      expect(await store.search({ ...deletedSnapshot, text: "lexicaldeleteproof" }, { topK: 10 })).toHaveLength(0);
 
       await fs.rm(repoAPath, { recursive: true, force: true });
       await fs.mkdir(repoAPath, { recursive: true });
@@ -104,11 +87,11 @@ describe("maintenance lifecycle", () => {
       await runIndexing(db, config, { cwd: dir, repo: "service-a", changedOnly: true, writeMode: "auto" });
       const emptySnapshot = await pinPublicGraphReadSnapshot(db, workspaceId);
       expect((await db.query<{ count: number }>(
-        "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.repoId = $repoId AND n.fileId IS NOT NULL AND n.active = true RETURN count(n) AS count;",
+        "MATCH (n:File) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.repoId = $repoId AND n.active = true RETURN count(n) AS count;",
         { ...emptySnapshot, repoId: repoId("service-a") }
       ))[0]?.count ?? 0).toBe(0);
       expect((await db.query<{ count: number }>(
-        "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.repoId = $repoId AND n.active = true RETURN count(n) AS count;",
+        "MATCH (n:File) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND n.repoId = $repoId AND n.active = true RETURN count(n) AS count;",
         { ...emptySnapshot, repoId: repoId("service-b") }
       ))[0]?.count ?? 0).toBe(repoBActive);
     } finally {
@@ -151,7 +134,7 @@ describe("maintenance lifecycle", () => {
         indexedAt: new Date().toISOString()
       }, scope);
       expect(staleCount).toBeGreaterThan(0);
-      expect(await searchCode(db, snapshot, "PaymentService")).toHaveLength(0);
+      expect(await findImpact(db, snapshot, "PaymentService")).toHaveLength(0);
       expect((await traceContract(db, snapshot, "api", "/api/order/:id")).map((row) => row.repoName)).not.toContain("service-b");
       expect((await listDependencies(db, snapshot)).map((row) => row.fromRepo)).not.toContain("service-b");
 
@@ -260,7 +243,7 @@ describe("maintenance lifecycle", () => {
       const paths = (await listCode(db, generations.snapshot, 1000)).map((row) => row.filePath);
       expect(paths).toContain("src/controllers/OrderController.ts");
       expect(paths).not.toContain("src/OrderController.ts");
-      expect((await searchCode(db, generations.snapshot, "OrderController")).map((row) => row.filePath)).not.toContain("src/OrderController.ts");
+      expect((await findImpact(db, generations.snapshot, "OrderController")).map((row) => row.filePath)).not.toContain("src/OrderController.ts");
     } finally {
       await db.close();
     }

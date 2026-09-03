@@ -16,9 +16,6 @@ type GroundTruth = {
   forbiddenSchemas: string[];
   forbiddenRelations: string[];
   diagnostics: string[];
-  lexicalContractSpecs: string[];
-  lexicalKinds: string[];
-  searchQueries: Array<{ query: string; expectedSchema?: string; expectedContractKind?: string }>;
 };
 
 type Manifest = {
@@ -49,8 +46,7 @@ export async function prepareContractSchemaReleaseCorpus(): Promise<{
     ...base,
     systemName: "contract-schema-release",
     repos: manifest.repositories.map((repo) => ({ name: repo.name, path: path.join(directory, repo.path) })),
-    indexing: { ...base.indexing, batchSize: 0, llmSummaryLevel: "off" },
-    embedding: { ...base.embedding, level: "off" }
+    indexing: { ...base.indexing, batchSize: 0, llmSummaryLevel: "off" }
   };
   return { directory, config, groundTruth, manifest };
 }
@@ -69,7 +65,6 @@ export async function runContractSchemaReleaseConformance(input: {
   const logical = logicalSnapshot(initial);
   assertGroundTruth(logical, input.groundTruth);
   await assertNoOrphans(input.db, workspaceId, generation);
-  await assertLexicalQueries(input.db, workspaceId, generation, logical, input.groundTruth);
 
   const sharedRoot = path.join(input.corpusDirectory, input.manifest.mutations.deleteSharedRoot);
   const lastRoot = path.join(input.corpusDirectory, input.manifest.mutations.deleteLastRoot);
@@ -140,14 +135,11 @@ export function logicalSnapshot(snapshot: SchemaBaselineSnapshot) {
     const limitIdentity = limit ? `${String(limit.kind ?? "")}:${String(limit.value ?? "")}` : "";
     return `${owner?.label ?? String(item.ownerSpecId)}|${String(item.code)}|${String(item.symbol ?? "")}|${fieldPath}|${limitIdentity}`;
   }).sort();
-  const lexicalContractSpecs = snapshot.lexical.filter((row) => row.kind === "contractSpec").map((row) => specs.get(String(row.canonicalId))?.label ?? String(row.canonicalId)).sort();
   return {
     roots,
     schemaCanonicalNames: [...specs.values()].flatMap((spec) => spec.schemaName ? [spec.schemaName] : []).sort(),
     relations,
     diagnostics,
-    lexicalContractSpecs,
-    lexicalKinds: [...new Set(snapshot.lexical.map((row) => String(row.kind)))].sort(),
     specLabelsById: specs
   };
 }
@@ -157,38 +149,17 @@ function assertGroundTruth(logical: ReturnType<typeof logicalSnapshot>, groundTr
   assert.deepEqual(logical.schemaCanonicalNames, sorted(groundTruth.schemaCanonicalNames), "release SchemaSpecs differ from the complete ground truth");
   assert.deepEqual(logical.relations, sorted(groundTruth.relations), "release semantic relations differ from the complete ground truth");
   assert.deepEqual(logical.diagnostics, sorted(groundTruth.diagnostics), "release diagnostics differ from the complete ground truth");
-  assert.deepEqual(logical.lexicalContractSpecs, sorted(groundTruth.lexicalContractSpecs), "lexical contractSpec documents differ from the complete ground truth");
-  assert.deepEqual(logical.lexicalKinds, sorted(groundTruth.lexicalKinds), "lexical document kinds differ from the complete ground truth");
   for (const forbidden of groundTruth.forbiddenSchemas) assert(!logical.schemaCanonicalNames.includes(forbidden), `forbidden SchemaSpec exists: ${forbidden}`);
   for (const forbidden of groundTruth.forbiddenRelations) assert(!logical.relations.some((item) => item.includes(forbidden)), `forbidden semantic relation exists: ${forbidden}`);
-  assert.deepEqual(logical.lexicalContractSpecs, [...logical.specLabelsById.values()].map((spec) => spec.label).sort(), "lexical contractSpec documents do not exactly match active ContractSpecs");
 }
 
 function sorted(values: string[]): string[] {
   return [...values].sort();
 }
 
-async function assertLexicalQueries(db: GraphDB, workspaceId: string, generation: string, logical: ReturnType<typeof logicalSnapshot>, groundTruth: GroundTruth): Promise<void> {
-  for (const query of groundTruth.searchQueries) {
-    const tokens = query.query.toLowerCase().split(/[^a-z0-9]+/u).filter(Boolean);
-    const hits = await db.query<{ canonicalId?: GraphValue; kind?: GraphValue }>(
-      "MATCH (n:LexicalDocument) WHERE n.workspaceId=$workspaceId AND n.generation=$generation AND (n.active IS NULL OR n.active=true) RETURN n.canonicalId AS canonicalId, n.kind AS kind, n.searchableText AS searchableText;",
-      { workspaceId, generation }
-    );
-    const matching = hits.filter((hit) => tokens.every((token) => String((hit as Record<string, GraphValue>).searchableText ?? "").toLowerCase().includes(token)));
-    if (query.expectedSchema) {
-      assert(matching.some((hit) => logical.specLabelsById.get(String(hit.canonicalId))?.schemaName === query.expectedSchema), `lexical query did not hit schema ${query.expectedSchema}: ${query.query}; candidates=${JSON.stringify(hits.filter((hit) => logical.specLabelsById.get(String(hit.canonicalId))?.schemaName === query.expectedSchema))}`);
-    }
-    if (query.expectedContractKind) {
-      assert(matching.some((hit) => logical.specLabelsById.get(String(hit.canonicalId))?.kind === query.expectedContractKind), `lexical query did not hit ${query.expectedContractKind}: ${query.query}`);
-    }
-  }
-}
-
 async function assertNoOrphans(db: GraphDB, workspaceId: string, generation: string): Promise<void> {
   const checks = [
-    "MATCH (c:SchemaContribution) WHERE c.generation=$generation AND NOT EXISTS { MATCH (r:SchemaRootFact) WHERE r.generation=$generation AND (r.rootReferenceId=c.rootReferenceId OR c.rootReferenceId STARTS WITH 'declaration:') } RETURN count(c) AS count",
-    "MATCH (d:LexicalDocument) WHERE d.workspaceId=$workspaceId AND d.generation=$generation AND d.active=true AND d.kind='contractSpec' AND NOT EXISTS { MATCH (s:ContractSpec {workspaceId:$workspaceId, generation:$generation, id:d.canonicalId}) } RETURN count(d) AS count"
+    "MATCH (c:SchemaContribution) WHERE c.generation=$generation AND NOT EXISTS { MATCH (r:SchemaRootFact) WHERE r.generation=$generation AND (r.rootReferenceId=c.rootReferenceId OR c.rootReferenceId STARTS WITH 'declaration:') } RETURN count(c) AS count"
   ];
   for (const cypher of checks) {
     const rows = await db.query<{ count?: GraphValue }>(cypher, cypher.includes("$workspaceId") ? { workspaceId, generation } : { generation });
@@ -216,7 +187,7 @@ async function currentGeneration(db: GraphDB, workspaceId: string): Promise<stri
 }
 
 async function assertGenerationAlignment(db: GraphDB, workspaceId: string, generation: string): Promise<void> {
-  for (const label of ["Contract", "ContractSpec", "LexicalDocument"]) {
+  for (const label of ["Contract", "ContractSpec"]) {
     const rows = await db.query<{ generations?: GraphValue }>(
       `MATCH (n:${label}) WHERE n.workspaceId=$workspaceId RETURN collect(DISTINCT n.generation) AS generations;`,
       { workspaceId }

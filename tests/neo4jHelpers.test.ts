@@ -22,7 +22,7 @@ import { decodeJournalRow, decodeList, neo4jQueryAccessMode, toNeo4jParams, toNe
 
 describe("Neo4j query access mode", () => {
   it("uses write sessions for schema removal and read sessions for inspection", () => {
-    expect(neo4jQueryAccessMode("DROP INDEX workspace_lexical IF EXISTS")).toBe("WRITE");
+    expect(neo4jQueryAccessMode("DROP INDEX workspace_contracts IF EXISTS")).toBe("WRITE");
     expect(neo4jQueryAccessMode("SHOW INDEXES YIELD name RETURN name")).toBe("READ");
   });
 });

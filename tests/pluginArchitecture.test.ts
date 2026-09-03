@@ -18,11 +18,6 @@ import { joinHttpPaths, normalizeRouteTemplate } from "@repohelix/plugin-sdk/uti
 import { defaultConfig } from "../src/config/loadConfig.js";
 import { scanAndParseRepo } from "../src/core/indexing/scanParse.js";
 import { repoId } from "../src/shared/path.js";
-import { createQueryPlanningContext } from "../src/features/ask/planningContext.js";
-import { planQuestion } from "../src/features/ask/planner.js";
-import { AppClient } from "../src/interfaces/sdk/client.js";
-import type { QueryPlanningContext } from "../src/features/ask/planningContext.js";
-import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
 
 async function installFixtureLanguagePlugin(repo: string): Promise<void> {
   const pluginDir = path.join(repo, ".repohelix", "plugins", "fixture-csharp");
@@ -101,70 +96,6 @@ async function installPlanningLanguagePlugin(cwd: string, name: string, language
   };`, "utf8");
 }
 
-async function readProductionSources(roots: readonly string[]): Promise<Array<{ file: string; source: string }>> {
-  const files: string[] = [];
-  async function visit(directory: string): Promise<void> {
-    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
-      const target = path.join(directory, entry.name);
-      if (entry.isDirectory()) await visit(target);
-      else if (entry.isFile() && /\.(?:ts|tsx|js|mjs|cjs)$/.test(entry.name)) files.push(target);
-    }
-  }
-  for (const root of roots) await visit(path.resolve(root));
-  return Promise.all(files.sort().map(async (file) => ({
-    file: path.relative(process.cwd(), file),
-    source: await fs.readFile(file, "utf8")
-  })));
-}
-
-type ProductionSource = { file: string; source: string };
-
-const PROVIDER_SOURCE_BOUNDARIES = [
-  {
-    provider: "Kuzu",
-    allowedRoot: "src/adapters/graph-db/kuzu/",
-    markers: [
-      ["FTS extension DDL", /LOAD\s+EXTENSION\s+FTS/i],
-      ["FTS index DDL", /CREATE_FTS_INDEX/i],
-      ["FTS query procedure", /QUERY_FTS_INDEX/i],
-      ["raw-score normalization", /(?:normalizeKuzu(?:Raw)?Score|kuzuRawScoreTo(?:Rank|Score))/i]
-    ]
-  },
-  {
-    provider: "Neo4j",
-    allowedRoot: "src/adapters/graph-db/neo4j/",
-    markers: [
-      ["full-text index DDL", /CREATE\s+FULLTEXT\s+INDEX/i],
-      ["full-text query procedure", /db\.index\.fulltext\.queryNodes/i],
-      ["raw-score normalization", /(?:normalizeNeo4j(?:Raw)?Score|neo4jRawScoreTo(?:Rank|Score))/i]
-    ]
-  }
-] as const;
-
-const GRAPH_ADAPTER_ROOTS = PROVIDER_SOURCE_BOUNDARIES.map(({ allowedRoot }) => allowedRoot);
-const PROVIDER_RAW_SCORE_MARKER = /(?:normalizeProvider(?:Raw)?Score|(?:rawScore|providerScore)To(?:Rank|Score)|(?:Number|parseFloat)\(\s*(?:row\.)?(?:rawScore|providerScore)\s*\))/i;
-
-function findProviderSourceBoundaryViolations(sources: readonly ProductionSource[]): string[] {
-  const violations: string[] = [];
-  for (const { file, source } of sources) {
-    const normalizedFile = file.replaceAll("\\", "/");
-    for (const { provider, allowedRoot, markers } of PROVIDER_SOURCE_BOUNDARIES) {
-      for (const [name, marker] of markers) {
-        if (marker.test(source) && !normalizedFile.startsWith(allowedRoot)) {
-          violations.push(`${normalizedFile}: ${provider} ${name} must stay under ${allowedRoot}`);
-        }
-      }
-    }
-    if (
-      PROVIDER_RAW_SCORE_MARKER.test(source)
-      && !GRAPH_ADAPTER_ROOTS.some((allowedRoot) => normalizedFile.startsWith(allowedRoot))
-    ) {
-      violations.push(`${normalizedFile}: provider raw-score normalization must stay in a graph provider adapter`);
-    }
-  }
-  return violations;
-}
-
 describe("plugin architecture foundation", () => {
   it("never falls back to a foreign scoped parser and restores extension override stacks", () => {
     const registry = new ParserRegistry();
@@ -208,34 +139,6 @@ describe("plugin architecture foundation", () => {
     expect(source).not.toMatch(/csharp|\.csproj|\.sln|(?:["'`])\.cs(?:["'`])/i);
   });
 
-  it("keeps provider-specific full-text implementation details inside each owning graph adapter", async () => {
-    const sources = await readProductionSources(["src"]);
-    expect(findProviderSourceBoundaryViolations(sources)).toEqual([]);
-  });
-
-  it("reports provider details placed outside or across graph adapter boundaries", () => {
-    const violations = findProviderSourceBoundaryViolations([
-      { file: "src/core/retrieval/kuzuQuery.ts", source: "CALL QUERY_FTS_INDEX('LexicalDocument', 'workspace', $text)" },
-      { file: "src/adapters/graph-db/neo4j/MisplacedKuzu.ts", source: "LOAD EXTENSION FTS;" },
-      { file: "src/adapters/graph-db/kuzu/MisplacedNeo4j.ts", source: "CALL db.index.fulltext.queryNodes($index, $text)" },
-      { file: "src/shared/providerScore.ts", source: "const rank = rawScoreToRank(rawScore);" }
-    ]);
-
-    expect(violations).toEqual([
-      "src/core/retrieval/kuzuQuery.ts: Kuzu FTS query procedure must stay under src/adapters/graph-db/kuzu/",
-      "src/adapters/graph-db/neo4j/MisplacedKuzu.ts: Kuzu FTS extension DDL must stay under src/adapters/graph-db/kuzu/",
-      "src/adapters/graph-db/kuzu/MisplacedNeo4j.ts: Neo4j full-text query procedure must stay under src/adapters/graph-db/neo4j/",
-      "src/shared/providerScore.ts: provider raw-score normalization must stay in a graph provider adapter"
-    ]);
-  });
-
-  it("accepts provider details only in their owning graph adapter", () => {
-    expect(findProviderSourceBoundaryViolations([
-      { file: "src/adapters/graph-db/kuzu/KuzuLexical.ts", source: "CALL QUERY_FTS_INDEX('LexicalDocument', 'workspace', $text); const rank = rawScoreToRank(rawScore);" },
-      { file: "src/adapters/graph-db/neo4j/Neo4jLexical.ts", source: "CALL db.index.fulltext.queryNodes($index, $text); const rank = providerScoreToRank(providerScore);" }
-    ])).toEqual([]);
-  });
-
   it("activates, scans, parses, scopes, and removes a manifest-defined source language", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-plugin-source-"));
     const activeRepo = path.join(cwd, "active");
@@ -257,12 +160,9 @@ describe("plugin architecture foundation", () => {
     expect(Number((globalThis as Record<string, unknown>).__repohelixFixtureCsharpLoads ?? 0)).toBe(beforeLoads + 1);
     expect(bootstrap.activePluginSourceGlobsByRepo.get(activeRepo)).toEqual(["**/*.cs"]);
     expect(bootstrap.activePluginSourceGlobsByRepo.get(inactiveRepo)).toBeUndefined();
-    const planningContext = createQueryPlanningContext({
-      activePluginManifests: bootstrap.activePluginManifests,
-      activeParsers: bootstrap.activeLanguageParsers,
-      repoIds: config.repos.map((configuredRepo) => repoId(configuredRepo.name))
-    });
-    expect(planQuestion("Open Order.cs", planningContext).paths).toEqual(["Order.cs"]);
+    expect(bootstrap.activeLanguageParsers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ language: "csharp", extensions: [".cs"] })
+    ]));
 
     const repo = {
       id: repoId("active"), name: "active", path: activeRepo, remoteUrl: "", branch: "", commitSha: "",
@@ -283,14 +183,10 @@ describe("plugin architecture foundation", () => {
     const repeated = await autoDetectAndRegisterPlugins({ config, cwd, repoConfigs: config.repos });
     expect(repeated.activePluginSourceGlobsByRepo.get(activeRepo)).toBeUndefined();
     expect(parserRegistry.resolve({ language: "csharp" })).toBeUndefined();
-    expect(createQueryPlanningContext({
-      activePluginManifests: repeated.activePluginManifests,
-      activeParsers: repeated.activeLanguageParsers,
-      repoIds: config.repos.map((configuredRepo) => repoId(configuredRepo.name))
-    }).fileExtensions).not.toContain(".cs");
+    expect(repeated.activeLanguageParsers.flatMap((parser) => parser.extensions)).not.toContain(".cs");
   });
 
-  it("caches workspace-owned planning snapshots and isolates concurrent clients", async () => {
+  it("isolates workspace-owned plugin snapshots", async () => {
     const firstCwd = await fs.mkdtemp(path.join(os.tmpdir(), "query-planning-first-"));
     const secondCwd = await fs.mkdtemp(path.join(os.tmpdir(), "query-planning-second-"));
     const firstRepo = path.join(firstCwd, "repo");
@@ -306,50 +202,16 @@ describe("plugin architecture foundation", () => {
     const registryBefore = parserRegistry.parsers();
 
     const scopedSnapshot = await loadWorkspacePluginPlanningSnapshot({ config: firstConfig, cwd: firstCwd, repoConfigs: firstConfig.repos });
+    const secondSnapshot = await loadWorkspacePluginPlanningSnapshot({ config: secondConfig, cwd: secondCwd, repoConfigs: secondConfig.repos });
     expect(scopedSnapshot.activeLanguageParsers).toEqual(expect.arrayContaining([
       expect.objectContaining({ language: "csharp", extensions: [".cs"], scopeRepoId: repoId("first") })
     ]));
+    expect(scopedSnapshot.activeLanguageParsers.flatMap((parser) => parser.extensions)).not.toContain(".fs");
+    expect(secondSnapshot.activeLanguageParsers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ language: "fsharp", extensions: [".fs"], scopeRepoId: repoId("second") })
+    ]));
+    expect(secondSnapshot.activeLanguageParsers.flatMap((parser) => parser.extensions)).not.toContain(".cs");
     expect(parserRegistry.parsers()).toEqual(registryBefore);
-
-    const firstClient = new AppClient({ cwd: firstCwd }, firstConfig);
-    const secondClient = new AppClient({ cwd: secondCwd }, secondConfig);
-    const planning = (client: AppClient) => (client as unknown as {
-      getQueryPlanningContext(): Promise<QueryPlanningContext>;
-    }).getQueryPlanningContext();
-    const [first, repeated, second] = await Promise.all([
-      planning(firstClient), planning(firstClient), planning(secondClient)
-    ]);
-    expect(repeated).toBe(first);
-    expect(first.fileExtensions).toContain(".cs");
-    expect(first.fileExtensions).not.toContain(".fs");
-    expect(second.fileExtensions).toContain(".fs");
-    expect(second.fileExtensions).not.toContain(".cs");
-    expect(parserRegistry.parsers()).toEqual(registryBefore);
-
-    const queryClient = new AppClient({ cwd: firstCwd }, firstConfig);
-    (queryClient as unknown as { getDb(): Promise<unknown> }).getDb = async () => ({
-      async query(cypher: string) {
-        return cypher.includes("SchemaGenerationState")
-          ? [{
-            activeGeneration: "generation:planning-test",
-            activeRevision: "revision:planning-test"
-          }]
-          : [];
-      }
-    });
-    (queryClient as unknown as { getLexicalProviderGate(): Promise<unknown> }).getLexicalProviderGate = async () => ({
-      workspaceId: deriveWorkspaceId(firstConfig.systemName),
-      generation: "generation:planning-test",
-      configuredProvider: "auto",
-      effectiveProvider: "planning-test",
-      status: "unavailable",
-      reason: "native_full_text_unsupported",
-      reasonCodes: ["native_full_text_unsupported"]
-    });
-    await queryClient.retrieve("Open Order.cs");
-    const cachedPromise = (queryClient as unknown as { planningContextPromise: Promise<QueryPlanningContext> }).planningContextPromise;
-    await queryClient.retrieve("Open Order.cs");
-    expect((queryClient as unknown as { planningContextPromise: Promise<QueryPlanningContext> }).planningContextPromise).toBe(cachedPromise);
   });
 
   it("makes a workspace plugin available to every matching repository", async () => {
@@ -1061,13 +923,4 @@ describe("plugin architecture foundation", () => {
     await expect(fs.stat(path.resolve("src/core/plugins/bundled"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("keeps query planning free of registries, config, and providers", async () => {
-    const sources = await Promise.all([
-      "src/features/ask/planner.ts",
-      "src/features/ask/queryTargets.ts",
-      "src/features/ask/queryLexer.ts"
-    ].map((file) => fs.readFile(path.resolve(file), "utf8")));
-    const combined = sources.join("\n");
-    expect(combined).not.toMatch(/registries\/registry|config\/|adapters\/|retrieval\/provider|semantic\/embeddings|graph-model\/db/);
-  });
 });

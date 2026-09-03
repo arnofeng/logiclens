@@ -8,7 +8,6 @@ const rules: Rule[] = [
   { id: "pending-schema-relation", pattern: /\b(?:PendingSchemaRelation|pendingSchemaRelation|pendingSchemaRelations)\b/u, description: "removed pending relation writer protocol" },
   { id: "extractor-compat-shim", pattern: /\bcompatExtractor\b/u, description: "removed extractor compatibility shim" },
   { id: "deprecated-extractor-types", pattern: /\b(?:ExtractorFactBundle|ExtractedRelation)\b/u, description: "removed deprecated extraction types" },
-  { id: "legacy-lexical-backfill", pattern: /\b(?:LegacyFileIdentityRow|migrateFileIds|migratePayloadSizes|rebuildWorkspaceStats)\b|lexical-stats:legacy:/u, description: "removed lexical projection backfill protocol" },
   { id: "simple-name-resolver", pattern: /\b(?:WorkspaceSimpleNameResolver|GlobalSimpleNameResolver|resolveSchemaBySimpleName)\b/u, description: "removed workspace-global simple-name fallback" },
   { id: "old-schema-id-helper", pattern: /\b(?:legacySchemaSpecId|legacySchemaRootId|legacyTypeInstanceId|oldSchemaSpecId|oldSchemaRootId)\b/u, description: "removed schema identity helper" },
   { id: "suffix-only-discovery", pattern: /\b(?:suffixOnlySchema|schemaSuffixCandidate|materializeSchemaBySuffix|discoverSchemaBySuffix)\b/u, description: "removed suffix-only schema discovery" }

@@ -7,21 +7,6 @@ describe("release test suite manifest", () => {
     expect(new Set(files).size).toBe(files.length);
   });
 
-  it("covers lexical contracts, quality, Ask, and native Kuzu lifecycle gates", () => {
-    expect(filesForSuite("retrieval-release")).toEqual(expect.arrayContaining([
-      "tests/lexicalContracts.test.ts",
-      "tests/lexicalProjectionPerformance.test.ts",
-      "tests/retrievalProviderContracts.test.ts",
-      "tests/providerLexicalConformance.test.ts",
-      "tests/kuzuLexicalLifecycle.test.ts",
-      "tests/kuzuWorkspaceLexicalSpike.test.ts",
-      "tests/retrieval/workspaceLifecycleConformance.test.ts",
-      "tests/workspaceRetrievalQuality.test.ts",
-      "tests/workspaceAskRetrieval.test.ts",
-      "tests/workspaceUnifiedRetrieval.e2e.test.ts",
-    ]));
-  });
-
   it("keeps contract/schema correctness as an independent Kuzu hard gate", () => {
     expect(filesForSuite("contract-schema-release")).toEqual(expect.arrayContaining([
       "tests/contractSchemaRelease.test.ts",
@@ -32,11 +17,8 @@ describe("release test suite manifest", () => {
     ]));
   });
 
-  it("covers the new Neo4j E2E and both existing real Neo4j conformance suites", () => {
+  it("covers Neo4j graph and contract conformance", () => {
     expect(filesForSuite("neo4j-integration")).toEqual(expect.arrayContaining([
-      "tests/neo4jWorkspaceUnifiedRetrieval.e2e.test.ts",
-      "tests/neo4jWorkspaceLexicalSpike.test.ts",
-      "tests/retrieval/neo4jWorkspaceLifecycleConformance.test.ts",
       "tests/neo4jContractSchemaRelease.test.ts",
     ]));
   });

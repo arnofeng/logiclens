@@ -29,7 +29,6 @@ export type SchemaBaselineSnapshot = {
     diagnostics: SnapshotPartition;
     activeGeneration: SnapshotPartition;
   };
-  lexical: SnapshotRow[];
 };
 
 const INTERNAL_PARTITIONS = [
@@ -95,7 +94,7 @@ async function rows(db: GraphDB, cypher: string, params: Record<string, GraphVal
  */
 export async function captureSchemaBaselineSnapshot(db: GraphDB, workspaceId: string): Promise<SchemaBaselineSnapshot> {
   const generationState = await db.query<SnapshotRow>(
-    "MATCH (n:SchemaGenerationState {id: $stateId}) RETURN n.activeGeneration AS activeGeneration, n.schemaIndexVersion AS schemaIndexVersion, n.lexicalProjectionVersion AS lexicalProjectionVersion;",
+    "MATCH (n:SchemaGenerationState {id: $stateId}) RETURN n.activeGeneration AS activeGeneration, n.schemaIndexVersion AS schemaIndexVersion;",
     { stateId: `schema-generation-state:${workspaceId}` }
   );
   const activeGeneration = generationState[0]?.activeGeneration;
@@ -103,13 +102,12 @@ export async function captureSchemaBaselineSnapshot(db: GraphDB, workspaceId: st
     throw new Error(`No active schema generation exists for workspace ${workspaceId}.`);
   }
   const snapshotParams = { workspaceId, generation: activeGeneration };
-  const [contracts, contractSpecs, hasSpec, semanticRelations, evidenceRows, lexical] = await Promise.all([
+  const [contracts, contractSpecs, hasSpec, semanticRelations, evidenceRows] = await Promise.all([
     rows(db, "MATCH (n:Contract) WHERE n.workspaceId = $workspaceId AND n.generation = $generation RETURN n.id AS id, n.kind AS kind, n.key AS key, n.name AS name, n.description AS description;", snapshotParams),
     rows(db, "MATCH (n:ContractSpec) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND (n.active IS NULL OR n.active = true) RETURN n.id AS id, n.contractId AS contractId, n.specKind AS specKind, n.repoId AS repoId, n.fileId AS fileId, n.evidenceId AS evidenceId, n.sourceSymbolId AS sourceSymbolId, n.canonicalKey AS canonicalKey, n.httpMethod AS httpMethod, n.pathTemplate AS pathTemplate, n.eventTopic AS eventTopic, n.framework AS framework, n.version AS version, n.specJson AS specJson, n.confidence AS confidence, n.active AS active;", snapshotParams),
     rows(db, "MATCH (a:Contract)-[r:HAS_SPEC]->(b:ContractSpec) WHERE a.workspaceId = $workspaceId AND a.generation = $generation AND r.workspaceId = $workspaceId AND r.generation = $generation AND b.workspaceId = $workspaceId AND b.generation = $generation AND (r.active IS NULL OR r.active = true) AND (b.active IS NULL OR b.active = true) RETURN a.id AS contractId, b.id AS specId, r.evidenceId AS evidenceId, r.confidence AS confidence, r.active AS active;", snapshotParams),
     rows(db, "MATCH (a:ContractSpec)-[r:SEMANTIC_REL]->(b:ContractSpec) WHERE a.workspaceId = $workspaceId AND a.generation = $generation AND r.workspaceId = $workspaceId AND r.generation = $generation AND b.workspaceId = $workspaceId AND b.generation = $generation AND (a.active IS NULL OR a.active = true) AND (r.active IS NULL OR r.active = true) AND (b.active IS NULL OR b.active = true) RETURN a.id AS fromSpecId, b.id AS toSpecId, r.kind AS kind, r.evidenceId AS evidenceId, r.reason AS reason, r.confidence AS confidence, r.active AS active;", snapshotParams),
-    rows(db, "MATCH (n:Evidence) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND (n.active IS NULL OR n.active = true) RETURN n.id AS id, n.repoId AS repoId, n.fileId AS fileId, n.filePath AS filePath, n.line AS line, n.raw AS raw, n.rule AS rule, n.confidence AS confidence, n.active AS active;", snapshotParams),
-    rows(db, "MATCH (n:LexicalDocument) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND (n.active IS NULL OR n.active = true) RETURN n.documentId AS id, n.canonicalId AS canonicalId, n.repoId AS repoId, n.kind AS kind, n.title AS title, n.qualifiedName AS qualifiedName, n.path AS path, n.searchableText AS searchableText, n.tokens AS tokens, n.active AS active, n.sourceHash AS sourceHash, n.renderRef AS renderRef;", snapshotParams)
+    rows(db, "MATCH (n:Evidence) WHERE n.workspaceId = $workspaceId AND n.generation = $generation AND (n.active IS NULL OR n.active = true) RETURN n.id AS id, n.repoId AS repoId, n.fileId AS fileId, n.filePath AS filePath, n.line AS line, n.raw AS raw, n.rule AS rule, n.confidence AS confidence, n.active AS active;", snapshotParams)
   ]);
   const evidenceIds = new Set([
     ...contractSpecs.map((item) => item.evidenceId),
@@ -126,7 +124,7 @@ export async function captureSchemaBaselineSnapshot(db: GraphDB, workspaceId: st
     fingerprints: "MATCH (n:SchemaBehaviorFingerprintFact) WHERE n.generation = $generation RETURN n.id AS id, n.generation AS generation, n.repoId AS repoId, n.fileId AS fileId, n.payload AS payload;",
     provenance: "MATCH (n:SchemaProvenanceFact) WHERE n.generation = $generation RETURN n.id AS id, n.generation AS generation, n.repoId AS repoId, n.fileId AS fileId, n.payload AS payload;",
     diagnostics: "MATCH (n:SchemaDiagnosticFact) WHERE n.generation = $generation RETURN n.id AS id, n.generation AS generation, n.repoId AS repoId, n.fileId AS fileId, n.payload AS payload;",
-    activeGeneration: "MATCH (n:SchemaGenerationState {id: $stateId}) RETURN n.activeGeneration AS activeGeneration, n.schemaIndexVersion AS schemaIndexVersion, n.lexicalProjectionVersion AS lexicalProjectionVersion;"
+    activeGeneration: "MATCH (n:SchemaGenerationState {id: $stateId}) RETURN n.activeGeneration AS activeGeneration, n.schemaIndexVersion AS schemaIndexVersion;"
   };
   const internalEntries = await Promise.all(INTERNAL_PARTITIONS.map(async (key) => [key, {
     status: "available" as const,
@@ -144,8 +142,7 @@ export async function captureSchemaBaselineSnapshot(db: GraphDB, workspaceId: st
       provenance: evidenceRows.filter((item) => typeof item.id === "string" && evidenceIds.has(item.id)),
       diagnostics: []
     },
-    internalIndex,
-    lexical
+    internalIndex
   };
 }
 
@@ -156,8 +153,7 @@ export function assertNormalizedSchemaSnapshot(snapshot: SchemaBaselineSnapshot)
     snapshot.publicGraph.hasSpec,
     snapshot.publicGraph.semanticRelations,
     snapshot.publicGraph.provenance,
-    snapshot.publicGraph.diagnostics,
-    snapshot.lexical
+    snapshot.publicGraph.diagnostics
   ]) {
     assert.deepEqual(rowsToCheck, normalizeRows(rowsToCheck));
     const serialized = JSON.stringify(rowsToCheck);

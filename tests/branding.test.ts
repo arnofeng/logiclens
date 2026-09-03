@@ -6,7 +6,6 @@ import { configPath, defaultConfig } from "../src/config/loadConfig.js";
 import {
   allInstallerSectionMarkers,
   BRAND,
-  BRAND_DEFAULTS,
   BRAND_PATHS,
   brandedInstallerSectionMarkers,
   brandedTempDirPrefix,
@@ -30,8 +29,6 @@ describe("branding", () => {
   it("uses branded default storage names", () => {
     const config = defaultConfig();
     expect(config.graph.path).toBe(BRAND_PATHS.graph);
-    expect(config.semantic.jsonPath).toBe(BRAND_PATHS.semanticIndex);
-    expect(config.semantic.chroma.collection).toBe(BRAND_DEFAULTS.chromaCollection);
   });
 
   it("reads current branded environment variables", () => {

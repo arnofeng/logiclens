@@ -98,16 +98,11 @@ describe("generation-scoped graph write journal", () => {
         { id: file(batchId).id, workspaceId }
       )).toEqual([{ count: 2 }]);
 
-      const lexicalCleanup: Array<{ generation: string; batchId: string }> = [];
       await db.recoverIncompleteGraphWriteBatches({
         workspaceId,
-        updatedAt: "2026-06-22T00:01:00.000Z",
-        cleanupBatch: async (journal) => {
-          lexicalCleanup.push({ generation: journal.generation, batchId: journal.batchId });
-        }
+        updatedAt: "2026-06-22T00:01:00.000Z"
       });
 
-      expect(lexicalCleanup).toEqual([{ generation: pendingScope.generation, batchId }]);
       expect((await db.stats(parentScope)).files).toBe(1);
       expect((await db.computePublicGraphStats(pendingScope)).files).toBe(0);
       expect(await db.query<{ hash: string; batchId: string }>(
@@ -130,8 +125,7 @@ describe("generation-scoped graph write journal", () => {
 
       expect(await db.recoverIncompleteGraphWriteBatches({
         workspaceId,
-        updatedAt: "2026-06-22T00:01:00.000Z",
-        cleanupBatch: async () => {}
+        updatedAt: "2026-06-22T00:01:00.000Z"
       })).toEqual([]);
       expect((await db.stats(parentScope)).files).toBe(1);
       expect((await db.stats(pendingScope)).files).toBe(1);
@@ -150,7 +144,7 @@ describe("generation-scoped graph write journal", () => {
       await beginPending(db, batchId);
       await writePendingBaseline(db, batchId);
       await db.query(
-        "MERGE (s:SchemaGenerationState {id: $id}) SET s.workspaceId = $workspaceId, s.activeGeneration = $generation, s.pendingGeneration = '', s.schemaIndexVersion = $version, s.lexicalProjectionVersion = $version;",
+        "MERGE (s:SchemaGenerationState {id: $id}) SET s.workspaceId = $workspaceId, s.activeGeneration = $generation, s.pendingGeneration = '', s.schemaIndexVersion = $version;",
         {
           id: `schema-generation-state:${workspaceId}`,
           workspaceId,
@@ -167,58 +161,6 @@ describe("generation-scoped graph write journal", () => {
     }
   });
 
-  it("keeps awaiting-cleanup when lexical cleanup fails and retries idempotently", async () => {
-    const { db } = await tempGraph();
-    try {
-      await writeParent(db);
-      const batchId = "batch:journal-lexical-retry";
-      await beginPending(db, batchId);
-      await writePendingBaseline(db, batchId);
-      let lexicalAttempts = 0;
-      await expect(db.recoverIncompleteGraphWriteBatches({
-        workspaceId,
-        updatedAt: "2026-06-22T00:01:00.000Z",
-        cleanupBatch: async () => {
-          lexicalAttempts++;
-          throw new Error("lexical cleanup failed");
-        }
-      })).rejects.toThrow("lexical cleanup failed");
-
-      expect((await db.stats(parentScope)).files).toBe(1);
-      expect((await db.computePublicGraphStats(pendingScope)).files).toBe(0);
-      await db.recoverIncompleteGraphWriteBatches({
-        workspaceId,
-        updatedAt: "2026-06-22T00:02:00.000Z",
-        cleanupBatch: async () => { lexicalAttempts++; }
-      });
-      expect(lexicalAttempts).toBe(2);
-      expect(await db.query<{ status: string }>(
-        "MATCH (b:GraphWriteBatch {id: $id}) RETURN b.status AS status;",
-        { id: `graph-write:${batchId}` }
-      )).toEqual([{ status: "recovered" }]);
-    } finally {
-      await db.close();
-    }
-  });
-
-  it("requires lexical cleanup before marking a workspace journal recovered", async () => {
-    const { db } = await tempGraph();
-    try {
-      const batchId = "batch:journal-missing-lexical-cleanup";
-      await beginPending(db, batchId);
-      await expect(db.recoverIncompleteGraphWriteBatches({
-        workspaceId,
-        updatedAt: "2026-06-22T00:01:00.000Z"
-      })).rejects.toThrow("cleanup callback is required");
-      expect(await db.query<{ status: string }>(
-        "MATCH (b:GraphWriteBatch {id: $id}) RETURN b.status AS status;",
-        { id: `graph-write:${batchId}` }
-      )).toEqual([{ status: "awaiting-cleanup" }]);
-    } finally {
-      await db.close();
-    }
-  });
-
   it("recovers only the requested workspace", async () => {
     const { db } = await tempGraph();
     try {
@@ -229,8 +171,7 @@ describe("generation-scoped graph write journal", () => {
       });
       const recovered = await db.recoverIncompleteGraphWriteBatches({
         workspaceId,
-        updatedAt: "2026-06-22T00:01:00.000Z",
-        cleanupBatch: async () => {}
+        updatedAt: "2026-06-22T00:01:00.000Z"
       });
       expect(recovered.map((journal) => journal.batchId)).toEqual(["batch:requested"]);
       expect(await db.query<{ batchId: string; status: string }>(
@@ -256,8 +197,7 @@ describe("generation-scoped graph write journal", () => {
       const recovered = await db.recoverIncompleteGraphWriteBatches({
         workspaceId,
         generation: pendingScope.generation,
-        updatedAt: "2026-06-22T00:01:00.000Z",
-        cleanupBatch: async () => {}
+        updatedAt: "2026-06-22T00:01:00.000Z"
       });
 
       expect(recovered.map((journal) => journal.batchId)).toEqual(["batch:requested-generation"]);

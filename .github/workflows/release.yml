@@ -63,9 +63,6 @@ jobs:
       - name: Type check
         run: pnpm run typecheck
 
-      - name: Lexical retrieval release gate
-        run: pnpm run test:retrieval-release
-
       - name: Contract schema release gate
         run: pnpm run test:contract-schema-release
 

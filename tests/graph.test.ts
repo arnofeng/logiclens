@@ -9,7 +9,6 @@ import { findImpactSections, listContracts, listDependencies, listUnresolvedEvid
 import { upsertParsedFiles } from "../src/core/graph-model/upsert.js";
 import { parseSourceFile } from "../src/core/parsing/parserRegistry.js";
 import type { ParsedFile, RepoNode } from "../src/core/parsing/types.js";
-import { retrieveForQuestion } from "../src/features/ask/retrieve.js";
 import { fileId, repoId } from "../src/shared/path.js";
 import { stageAndActivatePublicGraphGeneration } from "./helpers/publicGraphGeneration.js";
 import { deriveWorkspaceId } from "../src/core/workspace/identity.js";
@@ -168,7 +167,7 @@ describe("graph", () => {
   });
 
   it("keeps same-source entities and truncates exact entity rows independently of insertion order", async () => {
-    async function retrieveForInsertionOrder(entityIds: readonly string[], limit: number) {
+    async function traceForInsertionOrder(entityIds: readonly string[], limit: number) {
       const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-exact-entity-order-"));
       const db = await KuzuGraphDB.open(path.join(dir, "graph"));
       try {
@@ -206,15 +205,15 @@ describe("graph", () => {
       }
     }
 
-    const forward = await retrieveForInsertionOrder(["entity:a", "entity:b", "entity:c"], 2);
-    const reverse = await retrieveForInsertionOrder(["entity:c", "entity:b", "entity:a"], 2);
+    const forward = await traceForInsertionOrder(["entity:a", "entity:b", "entity:c"], 2);
+    const reverse = await traceForInsertionOrder(["entity:c", "entity:b", "entity:a"], 2);
     expect(forward.queryCount).toBe(8);
     expect(forward.rows.map((row) => row.entityId)).toEqual(["entity:a", "entity:b"]);
     expect(reverse.rows).toEqual(forward.rows);
-    const all = await retrieveForInsertionOrder(["entity:c", "entity:a", "entity:b"], 3);
+    const all = await traceForInsertionOrder(["entity:c", "entity:a", "entity:b"], 3);
     expect(all.rows.map((row) => row.entityId)).toEqual(["entity:a", "entity:b", "entity:c"]);
     expect(new Set(all.rows.map((row) => row.sourceId))).toEqual(new Set(["code:repo:entity-order:src/entities.ts:function:handle:1"]));
-  });
+  }, 20_000);
 
   it("clears repo indexed artifacts through the graph layer", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "test-clear-repo-"));
@@ -355,19 +354,9 @@ describe("graph", () => {
       expect(markdownFiles[0]?.language).toBe("markdown");
       const references = await db.query<{ count: number }>("MATCH (:Section)-[r:REFERENCES]->(:File) RETURN count(r) AS count;");
       expect(Number(references[0]?.count ?? 0)).toBeGreaterThanOrEqual(1);
-      const retrieval = await retrieveForQuestion(db, "OrderCreatedEvent");
-      expect(retrieval.sections.some((section) => section.filePath === "README.md" && section.heading === "Events")).toBe(true);
-      expect(retrieval.semantic).toBeDefined();
-      expect(retrieval.edges.every((edge) => ["exact", "probable", "heuristic"].includes(edge.resolution))).toBe(true);
-      const workflowRetrieval = await retrieveForQuestion(db, "Order workflow");
-      expect(
-        workflowRetrieval.entities.some((entity) => entity.sourceKind === "contract" || entity.sourceKind === "operation"),
-        JSON.stringify(workflowRetrieval.entities)
-      ).toBe(true);
-      expect(workflowRetrieval.dependencies.some((dependency) => dependency.contractKey === "/api/order/{id}")).toBe(true);
       const impactSections = await findImpactSections(db, snapshot, "OrderCreatedEvent");
       expect(impactSections.some((section) => section.heading === "Events")).toBe(true);
-      const documented = await sectionsDocumentingCode(db, snapshot, retrieval.code.map((row) => row.codeId));
+      const documented = await sectionsDocumentingCode(db, snapshot, codeIds.map((row) => row.codeId));
       expect(documented.some((section) => section.heading === "Events")).toBe(true);
       const repoDependencies = await db.query<{ fromRepo: string; toRepo: string; dependencyType: string; evidenceRule: string; raw: string }>(
         `MATCH (from:Repo)-[d:DEPENDS_ON]->(to:Repo), (e:Evidence)

@@ -6,7 +6,6 @@ import type { CrossRepoExtraction } from "../src/core/contracts/extraction/cross
 import { applyIncrementalSchemaMutation, buildCombinedIncrementalSchemaVisibility, stageSchemaGenerationFacts } from "../src/core/schema/staging.js";
 import type { FullSchemaGenerationInput, SchemaGenerationStore } from "../src/core/schema/generationStore.js";
 import { stableFactId } from "../src/core/schema/model.js";
-import type { LexicalDocument } from "../src/core/retrieval/types.js";
 import { KuzuGraphDB } from "../src/adapters/graph-db/kuzu/KuzuGraphDB.js";
 import type { ContractSpecNode, SemanticRelationEdge } from "../src/core/parsing/types.js";
 
@@ -122,8 +121,6 @@ describe("schema generation contribution staging", () => {
           sourceFactReplacements: [],
           behaviorFingerprintReplacements: [],
           contributionReplacements: [],
-          upsertLexicalDocuments: [],
-          deleteLexicalDocumentIds: [],
           visibilityChanges: [
             {
               entityKind: "schema-spec",
@@ -159,8 +156,6 @@ describe("schema generation contribution staging", () => {
           sourceFactReplacements: [],
           behaviorFingerprintReplacements: [],
           contributionReplacements: [],
-          upsertLexicalDocuments: [],
-          deleteLexicalDocumentIds: [],
           visibilityChanges: [
             {
               entityKind: "logical-relation",
@@ -198,60 +193,6 @@ describe("schema generation contribution staging", () => {
     }
   }, 20000);
 
-  it("does not rewrite a semantically unchanged lexical document when only its contribution count changes", async () => {
-    const document = {
-      id: "lexical:schema:shared",
-      canonicalId: "spec:schema:shared",
-      workspaceId: "workspace:test",
-      repoId: "repo:one",
-      kind: "contractSpec",
-      title: "Shared",
-      path: "src/shared.ts",
-      searchableText: "shared schema payload",
-      tokens: ["shared", "schema", "payload"],
-      active: true,
-      sourceHash: "hash:shared",
-      batchId: "batch:previous",
-      renderRef: "render:shared"
-    } satisfies LexicalDocument;
-    const store = {
-      contributionVisibilityForReplacements: vi.fn(async () => [{
-        entityKind: "lexical-document" as const,
-        entityId: document.id,
-        previousCount: 2,
-        nextCount: 1,
-        previousContributions: [{
-          rootReferenceId: "root:a",
-          entityKind: "lexical-document" as const,
-          entityId: document.id,
-          payload: document
-        }],
-        contributions: [{
-          rootReferenceId: "root:b",
-          entityKind: "lexical-document" as const,
-          entityId: document.id,
-          payload: { ...document, batchId: "batch:next" }
-        }]
-      }])
-    } as unknown as SchemaGenerationStore;
-
-    const mutation = await buildCombinedIncrementalSchemaVisibility({
-      store,
-      generation: "generation:active",
-      mutations: [{
-        sourceFactReplacements: [],
-        behaviorFingerprintReplacements: [],
-        contributionReplacements: [{ rootReferenceId: "root:a", contributions: [] }],
-        visibilityChanges: [],
-        upsertLexicalDocuments: [],
-        deleteLexicalDocumentIds: []
-      }]
-    });
-
-    expect(mutation.upsertLexicalDocuments).toEqual([]);
-    expect(mutation.deleteLexicalDocumentIds).toEqual([]);
-  });
-
   it("stages one evidence-independent logical relation contribution with deterministic evidence attributes", async () => {
     let staged: FullSchemaGenerationInput | undefined;
     const store = {
@@ -261,8 +202,7 @@ describe("schema generation contribution staging", () => {
     await stageSchemaGenerationFacts({
       store,
       generation: "generation:pending",
-      extraction: extraction(),
-      lexicalDocuments: []
+      extraction: extraction()
     });
 
     const logicalRelations = staged!.contributions
@@ -316,8 +256,7 @@ describe("schema generation contribution staging", () => {
     await stageSchemaGenerationFacts({
       store,
       generation: "generation:pending",
-      extraction: value,
-      lexicalDocuments: []
+      extraction: value
     });
 
     const evidenceByRoot = new Map(staged!.contributions
@@ -352,8 +291,7 @@ describe("schema generation contribution staging", () => {
     await stageSchemaGenerationFacts({
       store,
       generation: "generation:pending",
-      extraction: value,
-      lexicalDocuments: []
+      extraction: value
     });
 
     expect(staged!.facts.dependencies)
@@ -383,8 +321,7 @@ describe("schema generation contribution staging", () => {
     await stageSchemaGenerationFacts({
       store,
       generation: "generation:pending",
-      extraction: value,
-      lexicalDocuments: []
+      extraction: value
     });
 
     expect(staged!.facts.fingerprints).toEqual([expect.objectContaining({

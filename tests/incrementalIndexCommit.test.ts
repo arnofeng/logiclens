@@ -73,8 +73,7 @@ const request: IncrementalIndexCommitRequest = {
   expectedActiveGeneration: generation,
   expectedActiveRevision: "revision:one",
   nextRevision: "revision:two",
-  schemaIndexVersion: "schema:v-next",
-  lexicalProjectionVersion: "lexical:v-next"
+  schemaIndexVersion: "schema:v-next"
 };
 const futureLease = "2999-01-01T00:00:00.000Z";
 const tempDirs: string[] = [];
@@ -135,7 +134,7 @@ async function seedKuzuReservation(db: KuzuGraphDB, input = request): Promise<vo
     "MERGE (g:SchemaGeneration {id: $generation}) " +
     "SET g.workspaceId=$workspaceId, g.parentGeneration='', g.status='active', " +
     "g.activeRevision=$activeRevision, g.schemaIndexVersion='schema:old', " +
-    "g.lexicalProjectionVersion='lexical:old', g.createdAt=$createdAt, g.updatedAt=$createdAt;",
+    "g.createdAt=$createdAt, g.updatedAt=$createdAt;",
     {
       generation: input.expectedActiveGeneration,
       workspaceId: input.workspaceId,
@@ -149,8 +148,7 @@ async function seedKuzuReservation(db: KuzuGraphDB, input = request): Promise<vo
     "s.activeRevision=$activeRevision, s.pendingGeneration='', " +
     "s.pendingRevision=$pendingRevision, s.pendingParentGeneration=$activeGeneration, " +
     "s.pendingParentRevision=$activeRevision, s.pendingLeaseUntil=$pendingLeaseUntil, " +
-    "s.protocolNonce='reserved', s.schemaIndexVersion='schema:old', " +
-    "s.lexicalProjectionVersion='lexical:old';",
+    "s.protocolNonce='reserved', s.schemaIndexVersion='schema:old';",
     {
       id: `schema-generation-state:${input.workspaceId}`,
       workspaceId: input.workspaceId,
@@ -267,13 +265,11 @@ function defineKuzuTests(): void {
       }]);
       expect(await db.query(
         "MATCH (g:SchemaGeneration {id: $generation}) " +
-        "RETURN g.activeRevision AS activeRevision, g.schemaIndexVersion AS schemaIndexVersion, " +
-        "g.lexicalProjectionVersion AS lexicalProjectionVersion;",
+        "RETURN g.activeRevision AS activeRevision, g.schemaIndexVersion AS schemaIndexVersion;",
         { generation }
       )).toEqual([{
         activeRevision: request.nextRevision,
-        schemaIndexVersion: request.schemaIndexVersion,
-        lexicalProjectionVersion: request.lexicalProjectionVersion
+        schemaIndexVersion: request.schemaIndexVersion
       }]);
       const failedRequest: IncrementalIndexCommitRequest = {
         ...request,
@@ -297,8 +293,8 @@ function defineKuzuTests(): void {
           "MERGE (n:IndexState {id: $id}) SET n.status=$status;",
           { id: "rolled-back-marker", status: "pending" }
         );
-        throw new Error("injected lexical failure");
-      })).rejects.toThrow("injected lexical failure");
+        throw new Error("injected participant failure");
+      })).rejects.toThrow("injected participant failure");
 
       expect(await db.query<{ count: GraphValue }>(
         "MATCH (n:IndexState {id: $id}) RETURN count(n) AS count;",

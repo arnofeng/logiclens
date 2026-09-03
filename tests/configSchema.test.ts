@@ -1,9 +1,5 @@
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import { configSchema, type AppConfig } from "../src/config/schema.js";
-import { defaultConfig, loadConfig, pruneConfig, writeConfig } from "../src/config/loadConfig.js";
 import { BRAND_PATHS } from "../src/shared/branding.js";
 
 describe("config schema - graph provider", () => {
@@ -96,56 +92,16 @@ describe("config schema - graph provider", () => {
   });
 });
 
-describe("config schema - lexical retrieval", () => {
-  it("defaults retrieval when it is omitted", () => {
-    expect(configSchema.parse({}).retrieval).toEqual({
-      lexical: { provider: "auto", scope: "workspace" }
-    });
-  });
-
-  it.each([
-    [{ retrieval: {} }, { provider: "auto", scope: "workspace" }],
-    [{ retrieval: { lexical: {} } }, { provider: "auto", scope: "workspace" }],
-    [{ retrieval: { lexical: { provider: "companion" } } }, { provider: "companion", scope: "workspace" }],
-    [{ retrieval: { lexical: { scope: "workspace" } } }, { provider: "auto", scope: "workspace" }]
-  ])("fills lexical defaults for partial configuration", (input, expected) => {
-    expect(configSchema.parse(input).retrieval.lexical).toEqual(expected);
-  });
-
-  it("preserves an explicit lexical provider ID", () => {
+describe("config schema - removed search configuration", () => {
+  it("strips legacy retrieval, embedding, and vector semantic fields", () => {
     const result = configSchema.parse({
-      retrieval: { lexical: { provider: "custom/lexical:v1" } }
+      retrieval: { lexical: { provider: "auto" } },
+      embedding: { provider: "off" },
+      semantic: { provider: "json", jsonPath: "semantic-index.json" }
     });
-    expect(result.retrieval.lexical.provider).toBe("custom/lexical:v1");
-  });
 
-  it.each(["", " ", "\t\r\n"])("rejects an empty or whitespace lexical provider ID", (provider) => {
-    expect(() => configSchema.parse({ retrieval: { lexical: { provider } } })).toThrow(
-      "Provider ID must contain at least one non-whitespace character"
-    );
-  });
-
-  it("rejects a non-workspace lexical scope", () => {
-    expect(() => configSchema.parse({
-      retrieval: { lexical: { scope: "repo" } }
-    })).toThrow();
-  });
-
-  it("prunes the default retrieval configuration", () => {
-    expect(pruneConfig(defaultConfig())).not.toHaveProperty("retrieval");
-  });
-
-  it("round-trips a custom lexical provider through a temporary config", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "repohelix-config-schema-"));
-    const config = {
-      ...defaultConfig(),
-      retrieval: {
-        lexical: { provider: "custom/lexical:v1", scope: "workspace" as const }
-      }
-    };
-
-    await writeConfig(config, cwd);
-
-    expect((await loadConfig(cwd)).retrieval).toEqual(config.retrieval);
+    expect(result).not.toHaveProperty("retrieval");
+    expect(result).not.toHaveProperty("embedding");
+    expect(result).not.toHaveProperty("semantic");
   });
 });

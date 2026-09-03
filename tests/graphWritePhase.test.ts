@@ -29,7 +29,6 @@ import { configSchema } from "../src/config/schema.js";
 import type { GraphDB } from "../src/core/graph-model/db.js";
 import type { GraphFactsBatch } from "../src/core/graph-model/facts.js";
 import type { ParsedFile, RepoNode } from "../src/core/parsing/types.js";
-import type { WorkspaceLexicalStore } from "../src/core/retrieval/provider.js";
 
 const repo: RepoNode = { id: "repo:a", name: "service-a", path: "service-a", remoteUrl: "", branch: "main", commitSha: "abc", language: "typescript", indexedAt: "2026-07-18T00:00:00.000Z" };
 
@@ -67,16 +66,8 @@ function fakeDb(events: string[]): GraphDB & Record<string, ReturnType<typeof vi
   } as unknown as GraphDB & Record<string, ReturnType<typeof vi.fn>>;
 }
 
-function fakeStore(events: string[]): WorkspaceLexicalStore & Record<string, ReturnType<typeof vi.fn>> {
-  return {
-    cleanupBatch: vi.fn(async () => { events.push("lexical-cleanup"); })
-  } as unknown as WorkspaceLexicalStore & Record<string, ReturnType<typeof vi.fn>>;
-}
-
 async function runMerge(input: {
   db: GraphDB;
-  store: WorkspaceLexicalStore;
-  write: () => Promise<unknown>;
   deferWorkspaceCommit?: boolean;
   skipRecovery?: boolean;
 }) {
@@ -86,8 +77,7 @@ async function runMerge(input: {
     selection: { mode: "merge", fast: false, fallbackToMerge: false },
     facts: emptyFacts(), repos: [repo], parsedFiles: [], config: configSchema.parse({ indexing: { llmSummaryLevel: "off" } }),
     llmSummaryLevel: "off", label: "test", createProgressBar: () => ({ update: () => {}, reporter: () => () => {}, complete: () => {} }),
-    log: () => {}, warn: () => {}, deferWorkspaceCommit: input.deferWorkspaceCommit, skipRecovery: input.skipRecovery,
-    lexical: { store: input.store, workspaceId: "workspace:a", write: input.write }
+    log: () => {}, warn: () => {}, deferWorkspaceCommit: input.deferWorkspaceCommit, skipRecovery: input.skipRecovery
   });
 }
 
@@ -329,13 +319,12 @@ describe("graph write phase", () => {
     });
   });
 
-  it("commits only after graph and lexical writes both succeed", async () => {
+  it("commits after the graph write succeeds", async () => {
     writerMocks.neo4j.mockResolvedValueOnce(undefined);
     const events: string[] = [];
     const db = fakeDb(events);
-    const store = fakeStore(events);
-    await runMerge({ db, store, write: async () => { events.push("lexical-write"); } });
-    expect(events).toEqual(["recover", "begin", "graph-written", "lexical-write", "lexical-written", "commit"]);
+    await runMerge({ db });
+    expect(events).toEqual(["recover", "begin", "graph-written", "commit"]);
     expect(db.beginGraphWriteBatch).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: "workspace:a" }));
   });
 
@@ -343,15 +332,12 @@ describe("graph write phase", () => {
     writerMocks.neo4j.mockResolvedValueOnce(undefined);
     const events: string[] = [];
     const db = fakeDb(events);
-    const store = fakeStore(events);
     const result = await runMerge({
       db,
-      store,
-      write: async () => { events.push("lexical-write"); },
       deferWorkspaceCommit: true,
       skipRecovery: true
     });
-    expect(events).toEqual(["begin", "graph-written", "lexical-write", "lexical-written", "workspace-pending"]);
+    expect(events).toEqual(["begin", "graph-written", "workspace-pending"]);
     expect(db.commitGraphWriteBatch).not.toHaveBeenCalled();
     expect(result.journalStatus).toBe("started");
   });
@@ -360,7 +346,6 @@ describe("graph write phase", () => {
     writerMocks.neo4j.mockResolvedValueOnce(undefined);
     const events: string[] = [];
     const db = fakeDb(events);
-    const store = fakeStore(events);
     const facts = emptyFacts();
     const touchedFileId = "file:repo:a:src/model.ts";
     facts.files.push({
@@ -400,8 +385,7 @@ describe("graph write phase", () => {
       label: "prepared replacement",
       createProgressBar: () => ({ update: () => {}, reporter: () => () => {}, complete: () => {} }),
       log: () => {},
-      warn: () => {},
-      lexical: { store, workspaceId: facts.workspaceId, write: async () => {} }
+      warn: () => {}
     });
     const finalTransactionQueries = (db.query as ReturnType<typeof vi.fn>).mock.calls.map(([cypher]) => String(cypher));
     expect(finalTransactionQueries.length).toBeGreaterThan(0);
@@ -421,7 +405,6 @@ describe("graph write phase", () => {
       };
     });
     const db = fakeDb(events);
-    const store = fakeStore(events);
     const facts = emptyFacts();
     const config = configSchema.parse({ indexing: { llmSummaryLevel: "repo" } });
 
@@ -440,8 +423,7 @@ describe("graph write phase", () => {
       expectedActiveGeneration: facts.generation,
       expectedActiveRevision: "revision:active",
       nextRevision: "revision:next",
-      schemaIndexVersion: "test-schema-version",
-      lexicalProjectionVersion: "test-lexical-version"
+      schemaIndexVersion: "test-schema-version"
     }, async () => runGraphWritePhase({
       db,
       cwd: process.cwd(),
@@ -469,8 +451,7 @@ describe("graph write phase", () => {
       createProgressBar: () => ({ update: () => {}, reporter: () => () => {}, complete: () => {} }),
       log: () => {},
       warn: () => {},
-      skipRecovery: true,
-      lexical: { store, workspaceId: facts.workspaceId, write: async () => {} }
+      skipRecovery: true
     }));
 
     expect(summaryMocks.summarizeGraphWithProgress).toHaveBeenCalledTimes(1);
@@ -487,105 +468,62 @@ describe("graph write phase", () => {
     );
   });
 
-  it("preserves a lexical staging error without compensating against either provider", async () => {
-    writerMocks.neo4j.mockResolvedValueOnce(undefined);
-    const events: string[] = [];
-    const db = fakeDb(events);
-    const store = fakeStore(events);
-    const original = new Error("lexical exploded");
-    await expect(runMerge({ db, store, write: async () => { throw original; } })).rejects.toMatchObject({ cause: original });
-    expect(events).toEqual(["recover", "begin", "graph-written", "awaiting-cleanup", "awaiting-cleanup"]);
-    expect(db.commitGraphWriteBatch).not.toHaveBeenCalled();
-    expect(db.cleanupGraphWriteBatch).not.toHaveBeenCalled();
-    expect(store.cleanupBatch).not.toHaveBeenCalled();
-  });
-
   it("leaves pending-generation cleanup to the workspace lifecycle when graph staging fails", async () => {
     writerMocks.neo4j.mockRejectedValueOnce(new Error("graph exploded"));
     const events: string[] = [];
     const db = fakeDb(events);
-    const store = fakeStore(events);
-    await expect(runMerge({ db, store, write: async () => { events.push("lexical-write"); } })).rejects.toThrow("graph exploded");
+    await expect(runMerge({ db })).rejects.toThrow("graph exploded");
     expect(events).toEqual(["recover", "begin", "awaiting-cleanup"]);
     expect(events.at(-1)).toBe("awaiting-cleanup");
     expect(db.cleanupGraphWriteBatch).not.toHaveBeenCalled();
-    expect(store.cleanupBatch).not.toHaveBeenCalled();
   });
 
-  it("does not invoke graph cleanup when lexical staging fails", async () => {
-    writerMocks.neo4j.mockResolvedValueOnce(undefined);
-    const events: string[] = [];
-    const db = fakeDb(events);
-    const store = fakeStore(events);
-    await expect(runMerge({ db, store, write: async () => { throw new Error("lexical exploded"); } })).rejects.toThrow("lexical exploded");
-    expect(events.at(-1)).toBe("awaiting-cleanup");
-    expect(db.cleanupGraphWriteBatch).not.toHaveBeenCalled();
-    expect(store.cleanupBatch).not.toHaveBeenCalled();
-  });
-
-  it("does not call legacy compensating cleanup callbacks", async () => {
+  it("does not call the legacy graph cleanup callback", async () => {
     writerMocks.neo4j.mockRejectedValueOnce(new Error("graph exploded"));
     const events: string[] = [];
     const db = fakeDb(events);
-    const store = fakeStore(events);
     (db.cleanupGraphWriteBatch as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => { events.push("graph-cleanup"); throw new Error("graph cleanup exploded"); });
-    (store.cleanupBatch as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => { events.push("lexical-cleanup"); throw new Error("lexical cleanup exploded"); });
-    await expect(runMerge({ db, store, write: async () => {} })).rejects.toThrow("graph exploded");
+    await expect(runMerge({ db })).rejects.toThrow("graph exploded");
     expect(db.cleanupGraphWriteBatch).not.toHaveBeenCalled();
-    expect(store.cleanupBatch).not.toHaveBeenCalled();
     expect(events.at(-1)).toBe("awaiting-cleanup");
   });
 
-  it("writes lexical data once after a successful fast-writer fallback", async () => {
+  it("commits once after a successful fast-writer fallback", async () => {
     writerMocks.upsert.mockRejectedValueOnce(new Error("fast failed"));
     writerMocks.merge.mockResolvedValueOnce(undefined);
     const events: string[] = [];
     const db = fakeDb(events);
-    const store = fakeStore(events);
-    const lexicalWrite = vi.fn(async () => { events.push("lexical-write"); });
     await runGraphWritePhase({
       db, cwd: process.cwd(), selection: { mode: "bulk-upsert", fast: true, fallbackToMerge: true }, facts: emptyFacts(), repos: [repo], parsedFiles: [],
       config: configSchema.parse({ indexing: { llmSummaryLevel: "off" } }), llmSummaryLevel: "off", label: "test",
-      createProgressBar: () => ({ update: () => {}, reporter: () => () => {}, complete: () => {} }), log: () => {}, warn: () => {},
-      lexical: { store, workspaceId: "workspace:a", write: lexicalWrite }
+      createProgressBar: () => ({ update: () => {}, reporter: () => () => {}, complete: () => {} }), log: () => {}, warn: () => {}
     });
-    expect(lexicalWrite).toHaveBeenCalledTimes(1);
     expect(db.beginGraphWriteBatch).toHaveBeenCalledTimes(2);
     expect(db.commitGraphWriteBatch).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["graph", "lexical"] as const)("enters fallback without invoking legacy %s cleanup", async (provider) => {
+  it("enters fallback without invoking legacy graph cleanup", async () => {
     writerMocks.upsert.mockRejectedValueOnce(new Error("fast failed"));
     const mergeCallCount = writerMocks.merge.mock.calls.length;
     const events: string[] = [];
     const db = fakeDb(events);
-    const store = fakeStore(events);
-    if (provider === "graph") {
-      (db.cleanupGraphWriteBatch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("graph cleanup failed"));
-    } else {
-      (store.cleanupBatch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("lexical cleanup failed"));
-    }
+    (db.cleanupGraphWriteBatch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("graph cleanup failed"));
     await expect(runGraphWritePhase({
       db, cwd: process.cwd(), selection: { mode: "bulk-upsert", fast: true, fallbackToMerge: true }, facts: emptyFacts(), repos: [repo], parsedFiles: [],
       config: configSchema.parse({ indexing: { llmSummaryLevel: "off" } }), llmSummaryLevel: "off", label: "test",
-      createProgressBar: () => ({ update: () => {}, reporter: () => () => {}, complete: () => {} }), log: () => {}, warn: () => {},
-      lexical: { store, workspaceId: "workspace:a", write: async () => {} }
+      createProgressBar: () => ({ update: () => {}, reporter: () => () => {}, complete: () => {} }), log: () => {}, warn: () => {}
     })).resolves.toMatchObject({ fallback: true, fallbackError: "fast failed" });
     expect(db.beginGraphWriteBatch).toHaveBeenCalledTimes(2);
     expect(writerMocks.merge.mock.calls).toHaveLength(mergeCallCount + 1);
     expect(db.cleanupGraphWriteBatch).not.toHaveBeenCalled();
-    expect(store.cleanupBatch).not.toHaveBeenCalled();
   });
 
   it("does not compensate provider state when marking the pending journal fails", async () => {
     writerMocks.neo4j.mockRejectedValueOnce(new Error("graph exploded"));
     const events: string[] = [];
     const db = fakeDb(events);
-    const store = fakeStore(events);
     (db.failGraphWriteBatch as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("journal update failed"));
-    const original = new Error("unused");
-    await expect(runMerge({ db, store, write: async () => { throw original; } })).rejects.toThrow("graph exploded");
+    await expect(runMerge({ db })).rejects.toThrow("graph exploded");
     expect(db.cleanupGraphWriteBatch).not.toHaveBeenCalled();
-    expect(store.cleanupBatch).not.toHaveBeenCalled();
   });
 });

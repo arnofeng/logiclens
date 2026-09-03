@@ -8,11 +8,6 @@ import {
   type IncrementalRepoMutation
 } from "../src/core/indexing/incrementalMutation.js";
 import type { RepoNode } from "../src/core/parsing/types.js";
-import {
-  LEXICAL_PROJECTION_SCHEMA_VERSION,
-  type LexicalDocument,
-  type LexicalIndexHealth
-} from "../src/core/retrieval/types.js";
 import { toRepoNode } from "../src/core/workspace/repoRegistry.js";
 
 const mocks = vi.hoisted(() => ({
@@ -29,7 +24,6 @@ const mocks = vi.hoisted(() => ({
   applyIncrementalSchemaMutation: vi.fn(),
   prepareIncrementalDependencyMutation: vi.fn(),
   applyIncrementalDependencyMutation: vi.fn(),
-  refreshSucceededIndexStateLexicalMetrics: vi.fn(),
   runIndexStateCommitPhase: vi.fn(),
   generation: {
     assertIncrementalCompatible: vi.fn(),
@@ -81,7 +75,6 @@ vi.mock("../src/core/graph-model/rebuildRelations.js", () => ({
 }));
 
 vi.mock("../src/core/indexing/stateCommit.js", () => ({
-  refreshSucceededIndexStateLexicalMetrics: mocks.refreshSucceededIndexStateLexicalMetrics,
   runIndexStateCommitPhase: mocks.runIndexStateCommitPhase
 }));
 
@@ -108,25 +101,12 @@ const WORKSPACE_ID = "workspace:changed-only-delta";
 const ACTIVE_GENERATION = "generation:active";
 const ACTIVE_REVISION = "revision:active";
 
-function lexicalHealth(documentCount: number): LexicalIndexHealth {
-  return {
-    providerVersion: "test-provider",
-    projectionSchemaVersion: LEXICAL_PROJECTION_SCHEMA_VERSION,
-    tokenizerVersion: "1",
-    status: "healthy",
-    reasons: [],
-    metrics: { documentCount, indexSizeBytes: documentCount * 10 }
-  };
-}
-
 function emptySchemaMutation() {
   return {
     sourceFactReplacements: [],
     behaviorFingerprintReplacements: [],
     contributionReplacements: [],
-    visibilityChanges: [],
-    upsertLexicalDocuments: [],
-    deleteLexicalDocumentIds: []
+    visibilityChanges: []
   };
 }
 
@@ -217,16 +197,6 @@ function createFixture(changed: boolean) {
     imports: [],
     calls: []
   };
-  const initializeGeneration = vi.fn();
-  const applyIncrementalMutation = vi.fn();
-  const lexicalStore = {
-    initializeGeneration,
-    applyIncrementalMutation,
-    health: vi.fn(async () => lexicalHealth(changed ? 1 : 7)),
-    commitBatch: vi.fn(),
-    deleteGeneration: vi.fn(),
-    cleanupBatch: vi.fn()
-  };
   const applyIncrementalIndexMutation = vi.fn(async <T>(
     _request: unknown,
     apply: () => Promise<T>
@@ -270,7 +240,6 @@ function createFixture(changed: boolean) {
   } as unknown as GraphDB;
   const ctx = {
     workspaceId: WORKSPACE_ID,
-    lexicalStore,
     pendingIndexStateCommits: new Map(),
     logger: {},
     config
@@ -310,8 +279,6 @@ function createFixture(changed: boolean) {
     repo,
     fileId,
     parsedFile,
-    lexicalStore,
-    initializeGeneration,
     applyIncrementalIndexMutation,
     db
   };
@@ -345,7 +312,7 @@ describe("changed-only incremental orchestration", () => {
     });
   });
 
-  it("does no graph or lexical writes for a no-op changed-only run", async () => {
+  it("does no graph writes for a no-op changed-only run", async () => {
     const fixture = createFixture(false);
 
     const result = await runIndexing(fixture.db, fixture.config, {
@@ -356,24 +323,13 @@ describe("changed-only incremental orchestration", () => {
 
     expect(result).toMatchObject({
       filesScanned: 20,
-      filesChanged: 0,
-      lexicalDocumentCount: 7,
-      lexicalProjectionDurationMs: 0,
-      lexicalWriteDurationMs: 0
+      filesChanged: 0
     });
-    expect(fixture.initializeGeneration).not.toHaveBeenCalled();
     expect(fixture.applyIncrementalIndexMutation).not.toHaveBeenCalled();
-    expect(fixture.lexicalStore.applyIncrementalMutation).not.toHaveBeenCalled();
     expect(mocks.runPerRepoIndex).not.toHaveBeenCalled();
     expect(mocks.generation.reserveIncremental).not.toHaveBeenCalled();
     expect(fixture.db.readPublicGraphStats).toHaveBeenCalledOnce();
     expect(fixture.db.stats).not.toHaveBeenCalled();
-    expect(fixture.lexicalStore.health).toHaveBeenCalledOnce();
-    expect(fixture.lexicalStore.health).toHaveBeenCalledWith({
-      workspaceId: WORKSPACE_ID,
-      generation: ACTIVE_GENERATION,
-      revision: ACTIVE_REVISION
-    });
   });
 
   it("forces a clean workspace rebuild when behavior changes without source changes", async () => {
@@ -419,31 +375,6 @@ describe("changed-only incremental orchestration", () => {
     expect(fixture.db.readPublicGraphStats).not.toHaveBeenCalled();
   });
 
-  it("rejects a missing active lexical stats revision without performing writes", async () => {
-    const fixture = createFixture(false);
-    fixture.lexicalStore.health.mockResolvedValue({
-      ...lexicalHealth(0),
-      status: "unhealthy",
-      reasons: ["lexical_stats_revision_missing"]
-    });
-
-    await expect(runIndexing(fixture.db, fixture.config, {
-      cwd: fixture.cwd,
-      changedOnly: true,
-      writeMode: "merge"
-    })).rejects.toThrow(/lexical_stats_revision_missing.*clean generated graph\/internal\/lexical artifacts/u);
-
-    expect(fixture.lexicalStore.health).toHaveBeenCalledWith({
-      workspaceId: WORKSPACE_ID,
-      generation: ACTIVE_GENERATION,
-      revision: ACTIVE_REVISION
-    });
-    expect(fixture.initializeGeneration).not.toHaveBeenCalled();
-    expect(fixture.applyIncrementalIndexMutation).not.toHaveBeenCalled();
-    expect(fixture.lexicalStore.applyIncrementalMutation).not.toHaveBeenCalled();
-    expect(mocks.generation.reserveIncremental).not.toHaveBeenCalled();
-  });
-
   it("rejects stale stats metadata on a no-op changed-only run without scanning graph labels", async () => {
     const fixture = createFixture(false);
     vi.mocked(fixture.db.readPublicGraphStats).mockResolvedValue({
@@ -464,27 +395,11 @@ describe("changed-only incremental orchestration", () => {
     })).rejects.toThrow("does not match active revision");
     expect(fixture.db.stats).not.toHaveBeenCalled();
     expect(fixture.applyIncrementalIndexMutation).not.toHaveBeenCalled();
-    expect(fixture.lexicalStore.applyIncrementalMutation).not.toHaveBeenCalled();
   });
 
-  it("publishes only the changed file lexical delta without cloning either active corpus", async () => {
+  it("publishes only the changed file graph delta without cloning the active graph", async () => {
     const fixture = createFixture(true);
     const batchId = "batch:changed-file";
-    const changedDocument: LexicalDocument = {
-      id: "lexical:file:new",
-      canonicalId: fixture.fileId,
-      workspaceId: WORKSPACE_ID,
-      repoId: fixture.repo.id,
-      kind: "file",
-      title: "models.ts",
-      path: "src/models.ts",
-      searchableText: "changed lexical document",
-      tokens: ["changed", "lexical", "document"],
-      active: true,
-      sourceHash: "hash:new",
-      batchId,
-      renderRef: "render-ref:changed"
-    };
     const repoMutation: IncrementalRepoMutation = {
       batchId,
       indexedAt: "2026-08-02T00:00:00.000Z",
@@ -515,13 +430,7 @@ describe("changed-only incremental orchestration", () => {
         }
       },
       schema: emptySchemaMutation(),
-      lexical: {
-        upsertDocuments: [changedDocument],
-        deleteDocumentIds: ["lexical:file:old"]
-      },
-      summaries: { kind: "none" },
-      reconcileLexicalRepos: false,
-      lexicalProjectionDurationMs: 1
+      summaries: { kind: "none" }
     };
     mocks.prepareIncrementalWorkspaceIndex.mockImplementation(async ({ ctx }: {
       ctx: { incrementalMutationSet?: IncrementalIndexMutationSet };
@@ -541,16 +450,12 @@ describe("changed-only incremental orchestration", () => {
         filesScanned: 20,
         filesChanged: 1,
         repos: [fixture.repo],
-        batchId,
-        lexicalProjectionDurationMs: 1,
-        lexicalWriteDurationMs: 0
+        batchId
       };
     });
-    mocks.applyIncrementalRepoMutation.mockImplementation(async ({ mutation, deferLexicalWrite }: {
+    mocks.applyIncrementalRepoMutation.mockImplementation(async ({ mutation }: {
       mutation: IncrementalRepoMutation;
-      deferLexicalWrite?: boolean;
     }) => {
-      expect(deferLexicalWrite).toBe(true);
       const applied = {
         graphWrite: {
           writerMode: "merge" as const,
@@ -575,19 +480,7 @@ describe("changed-only incremental orchestration", () => {
     });
 
     expect(result.filesChanged).toBe(1);
-    expect(fixture.initializeGeneration).not.toHaveBeenCalled();
     expect(fixture.applyIncrementalIndexMutation).toHaveBeenCalledTimes(1);
-    expect(fixture.lexicalStore.applyIncrementalMutation).toHaveBeenCalledOnce();
-    expect(fixture.lexicalStore.applyIncrementalMutation).toHaveBeenCalledWith({
-      workspaceId: WORKSPACE_ID,
-      generation: ACTIVE_GENERATION,
-      expectedRevision: ACTIVE_REVISION,
-      nextRevision: expect.stringMatching(/^schema-generation:/),
-      upsertDocuments: [changedDocument],
-      deleteDocumentIds: ["lexical:file:old"]
-    });
-    const writtenDocuments = fixture.lexicalStore.applyIncrementalMutation.mock.calls
-      .flatMap(([request]) => request.upsertDocuments);
-    expect(writtenDocuments).toEqual([changedDocument]);
+    expect(mocks.applyIncrementalRepoMutation).toHaveBeenCalledOnce();
   });
 });

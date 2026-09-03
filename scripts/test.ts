@@ -11,26 +11,9 @@ export const TEST_SUITES = Object.freeze({
     "tests/schemaAdapterContract.test.ts",
     "tests/schemaQuality.test.ts",
   ]),
-  "retrieval-release": Object.freeze([
-    "tests/kuzuLexicalAppendStatsRollback.test.ts",
-    "tests/kuzuLexicalLifecycle.test.ts",
-    "tests/kuzuWorkspaceLexicalSpike.test.ts",
-    "tests/lexicalContracts.test.ts",
-    "tests/lexicalProjectionPerformance.test.ts",
-    "tests/providerLexicalConformance.test.ts",
-    "tests/retrieval/workspaceLifecycleConformance.test.ts",
-    "tests/retrievalProviderContracts.test.ts",
-    "tests/workspaceAskRetrieval.test.ts",
-    "tests/workspaceRetrievalQuality.test.ts",
-    "tests/workspaceUnifiedRetrieval.e2e.test.ts",
-  ]),
   "neo4j-integration": Object.freeze([
     "tests/neo4jContractSchemaRelease.test.ts",
-    "tests/neo4jLexicalLifecycle.test.ts",
     "tests/neo4jTestEnvironment.test.ts",
-    "tests/neo4jWorkspaceLexicalSpike.test.ts",
-    "tests/neo4jWorkspaceUnifiedRetrieval.e2e.test.ts",
-    "tests/retrieval/neo4jWorkspaceLifecycleConformance.test.ts",
   ]),
 } as const);
 
@@ -80,7 +63,7 @@ function parseSuite(args: readonly string[]): TestSuiteName {
   const suiteIndex = args.indexOf("--suite");
   if (suiteIndex < 0) return "all";
   const value = args[suiteIndex + 1];
-  if (value === "all" || value === "contract-schema-release" || value === "retrieval-release" || value === "neo4j-integration") return value;
+  if (value === "all" || value === "contract-schema-release" || value === "neo4j-integration") return value;
   throw new Error(`Unknown test suite: ${value ?? "<missing>"}.`);
 }
 
